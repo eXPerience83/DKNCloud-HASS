@@ -42,6 +42,8 @@ class AirzonePowerSwitch(SwitchEntity):
         self._device_id = device_data.get("id")
         self._state = bool(int(device_data.get("power", 0)))
         self.hass = hass
+        # Save the installation id if available (used in async_update)
+        self._installation_id = device_data.get("installation_id")
         self._hass_loop = hass.loop
 
     @property
@@ -104,3 +106,21 @@ class AirzonePowerSwitch(SwitchEntity):
             asyncio.run_coroutine_threadsafe(self._api.send_event(payload), self._hass_loop)
         else:
             _LOGGER.error("No hass loop available; cannot send command.")
+
+    async def async_update(self):
+        """Update the switch state by polling the device status from the API."""
+        if not self._installation_id:
+            _LOGGER.error("No installation id available for device %s", self._device_id)
+            return
+
+        installations = await self._api.fetch_installations()
+        for relation in installations:
+            installation = relation.get("installation")
+            if installation and installation.get("id") == self._installation_id:
+                devices = await self._api.fetch_devices(self._installation_id)
+                for dev in devices:
+                    if dev.get("id") == self._device_id:
+                        self._device_data = dev
+                        self._state = bool(int(dev.get("power", 0)))
+                        break
+        self.async_write_ha_state()
