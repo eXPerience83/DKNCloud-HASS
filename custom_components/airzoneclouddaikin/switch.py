@@ -42,19 +42,22 @@ class AirzonePowerSwitch(SwitchEntity):
         self._device_id = device_data.get("id")
         self._state = bool(int(device_data.get("power", 0)))
         self.hass = hass
-        # Save the installation id if available (used in async_update)
         self._installation_id = device_data.get("installation_id")
         self._hass_loop = hass.loop
+
+        # Assign unique ID as an attribute so that HA can create an entity_id
+        self._attr_unique_id = f"{self._device_id}_power"
+        self._attr_name = self._name
 
     @property
     def unique_id(self):
         """Return a unique ID for this switch."""
-        return f"{self._device_id}_power"
+        return self._attr_unique_id
 
     @property
     def name(self):
         """Return the name of the switch."""
-        return self._name
+        return self._attr_name
 
     @property
     def is_on(self):
