@@ -1,5 +1,6 @@
 """Switch platform for DKN Cloud for HASS."""
 import asyncio
+import hashlib
 import logging
 from homeassistant.components.switch import SwitchEntity
 from .const import DOMAIN
@@ -40,17 +41,17 @@ class AirzonePowerSwitch(SwitchEntity):
         self._config = config
         self._name = f"{device_data.get('name', 'Airzone Device')} Power"
         self._device_id = device_data.get("id")
+        self._installation_id = device_data.get("installation_id")
         self._state = bool(int(device_data.get("power", 0)))
         self.hass = hass
-        self._installation_id = device_data.get("installation_id")
         self._hass_loop = hass.loop
 
-        # Asignar unique_id correctamente
+        # Asignar unique_id de manera segura
         if self._device_id:
             self._attr_unique_id = f"{self._device_id}_power"
         else:
-            _LOGGER.error("No device ID found for power switch entity.")
-            self._attr_unique_id = None
+            _LOGGER.warning("No device ID found; generating unique_id from name.")
+            self._attr_unique_id = hashlib.sha256(self._name.encode("utf-8")).hexdigest()
 
         self._attr_name = self._name
 
