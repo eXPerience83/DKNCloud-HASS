@@ -1,4 +1,4 @@
 {
-    "name": "Airzone Cloud Daikin",
-    "domains": ["climate"]
+    "name": "DKN Cloud for HASS",
+    "domains": ["climate", "sensor"]
 }
