@@ -1,11 +1,11 @@
 {
   "domain": "airzoneclouddaikin",
-  "name": "Airzone Cloud Daikin",
-  "documentation": "https://github.com/max13fr/AirzonecloudDaikin-HomeAssistant",
-  "issue_tracker": "https://github.com/max13fr/AirzonecloudDaikin-HomeAssistant/issues",
+  "name": "DKN Cloud for HASS",
+  "documentation": "https://github.com/eXPerience83/DKNCloud-HASS",
+  "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
   "dependencies": [],
   "after_dependencies": ["http"],
-  "codeowners": ["@max13fr"],
-  "version": "0.4.0",
-  "requirements": ["AirzoneCloudDaikin==0.4.0"]
+  "codeowners": ["@max13fr", "@fitamix", "eXPerience83"],
+  "version": "0.2.5",
+  "config_flow": true
 }
