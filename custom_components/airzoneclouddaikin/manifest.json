@@ -5,7 +5,7 @@
   "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
   "dependencies": [],
   "after_dependencies": ["http"],
-  "codeowners": ["@max13fr", "@fitamix", "eXPerience83"],
+  "codeowners": ["@max13fr", "eXPerience83"],
   "version": "0.2.5",
   "config_flow": true
 }
