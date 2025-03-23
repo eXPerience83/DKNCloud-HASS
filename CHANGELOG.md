@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.6] - 2025-03-23  
+
+### **Fixed**  
+- **Switch Entity (`switch.py`)**:  
+  - Resolved an issue where the power switch entity (`AirzonePowerSwitch`) was not updating its state when the device was turned on/off manually or from other entities.  
+  - Implemented periodic polling of the device status to fetch the latest `power` state.  
+  - Ensured `unique_id` is always assigned before adding the entity to Home Assistant.  
+  - Added a safeguard to prevent `async_write_ha_state()` from being called when `unique_id` is missing, preventing `NoEntitySpecifiedError`.  
+  - Improved logging to help debug state updates and API response handling.  
+
+### **Changed**  
+- Enhanced `async_update()` in `switch.py` to check for missing `installation_id` before fetching data.  
+
+### **Notes**  
+- This update improves power state synchronization between Home Assistant and the Airzone Cloud Daikin API.  
+- Restart Home Assistant after updating to apply these fixes.  
+
 ## [0.2.5] - 2025-03-20
 ### Added
 - Updated version to 0.2.5.
