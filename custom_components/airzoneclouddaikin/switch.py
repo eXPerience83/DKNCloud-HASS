@@ -45,8 +45,13 @@ class AirzonePowerSwitch(SwitchEntity):
         self._installation_id = device_data.get("installation_id")
         self._hass_loop = hass.loop
 
-        # Assign unique ID as an attribute so that HA can create an entity_id
-        self._attr_unique_id = f"{self._device_id}_power"
+        # Asignar unique_id correctamente
+        if self._device_id:
+            self._attr_unique_id = f"{self._device_id}_power"
+        else:
+            _LOGGER.error("No device ID found for power switch entity.")
+            self._attr_unique_id = None
+
         self._attr_name = self._name
 
     @property
@@ -125,5 +130,7 @@ class AirzonePowerSwitch(SwitchEntity):
                     if dev.get("id") == self._device_id:
                         self._device_data = dev
                         self._state = bool(int(dev.get("power", 0)))
+                        _LOGGER.info("Power state updated: %s", self._state)
+                        if self._attr_unique_id:
+                            self.async_write_ha_state()
                         break
-        self.async_write_ha_state()
