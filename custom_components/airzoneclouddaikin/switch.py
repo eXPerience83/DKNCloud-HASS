@@ -8,7 +8,6 @@ from .airzone_api import AirzoneAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up the switch platform from a config entry."""
     config = entry.data
@@ -32,14 +31,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
             switches.append(AirzonePowerSwitch(api, device, config, hass))
     async_add_entities(switches, True)
 
-
 class AirzonePowerSwitch(SwitchEntity):
     """Representation of a power switch for an Airzone device."""
-
-    # Enable polling so that HA periodically calls async_update.
-    @property
-    def should_poll(self):
-        return True
 
     def __init__(self, api: AirzoneAPI, device_data: dict, config: dict, hass):
         """Initialize the power switch."""
@@ -61,7 +54,7 @@ class AirzonePowerSwitch(SwitchEntity):
             self._attr_unique_id = hashlib.sha256(self._name.encode("utf-8")).hexdigest()
 
         self._attr_name = self._name
-        # Explicitly set entity_id for HA 2025.3 compatibility.
+        # Explicitly set entity_id for HA 2025.3 compatibility. 
         self.entity_id = f"switch.{self._attr_unique_id}"
 
     @property
@@ -109,6 +102,22 @@ class AirzonePowerSwitch(SwitchEntity):
         """Turn off the device."""
         self._send_command("P1", 0)
 
+    def _send_command(self, option, value):
+        """Send a command to the device using the events endpoint."""
+        payload = {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": self._device_id,
+                "option": option,
+                "value": value,
+            }
+        }
+        _LOGGER.info("Sending power command: %s", payload)
+        if self._hass_loop:
+            asyncio.run_coroutine_threadsafe(self._api.send_event(payload), self._hass_loop)
+        else:
+            _LOGGER.error("No hass loop available; cannot send command.")
+
     async def async_update(self):
         """Update the switch state by polling the device status from the API."""
         if not self._installation_id:
@@ -125,21 +134,8 @@ class AirzonePowerSwitch(SwitchEntity):
                         self._device_data = dev
                         self._state = bool(int(dev.get("power", 0)))
                         _LOGGER.info("Power state updated: %s", self._state)
-                        self.async_write_ha_state()
-                        return
-
-    def _send_command(self, option, value):
-        """Send a command to the device using the events endpoint."""
-        payload = {
-            "event": {
-                "cgi": "modmaquina",
-                "device_id": self._device_id,
-                "option": option,
-                "value": value,
-            }
-        }
-        _LOGGER.info("Sending power command: %s", payload)
-        if self._hass_loop:
-            asyncio.run_coroutine_threadsafe(self._api.send_event(payload), self._hass_loop)
-        else:
-            _LOGGER.error("No hass loop available; cannot send command.")
+                        if self._attr_unique_id:
+                            self.async_write_ha_state()
+                        else:
+                            _LOGGER.error("Unique ID is missing! Cannot update entity state.")
+                        break
