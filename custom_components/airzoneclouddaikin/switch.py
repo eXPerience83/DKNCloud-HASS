@@ -8,55 +8,6 @@ from .airzone_api import AirzoneAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up the switch platform from a config entry."""
-    config = entry.data
-    from homeassistant.helpers.aiohttp_client import async_get_clientsession
-    session = async_get_clientsession(hass)
-    api = AirzoneAPI(config.get("username"), config.get("password"), session)
-    if not await api.login():
-        _LOGGER.error("Login to Airzone API failed in switch setup.")
-        return
-    installations = await api.fetch_installations()
-    switches = []
-    for relation in installations:
-        installation = relation.get("installation")
-        if not installation:
-            continue
-        installation_id = installation.get("id")
-        if not installation_id:
-            continue
-        devices = await api.fetch_devices(installation_id)
-        for device in devices:
-            switches.append(AirzonePowerSwitch(api, device, config, hass))
-    async_add_entities(switches, True)
-
-class AirzonePowerSwitch(SwitchEntity):
-    """Representation of a power switch for an Airzone device."""
-
-    def __init__(self, api: AirzoneAPI, device_data: dict, config: dict, hass):
-        """Initialize the power switch."""
-        self._api = api
-        self._device_data = device_data
-        self._config = config
-        self._name = f"{device_data.get('name', 'Airzone Device')} Power"
-        self._device_id = device_data.get("id")
-        self._installation_id = device_data.get("installation_id")
-        self._state = bool(int(device_data.get("power", 0)))
-        self.hass = hass
-        self._hass_loop = hass.loop
-
-        # Safely assign unique_id. HA uses _attr_unique_id to auto-generate entity_id if not provided.
-        if self._device_id:
-"""Switch platform for DKN Cloud for HASS."""
-import asyncio
-import hashlib
-import logging
-from homeassistant.components.switch import SwitchEntity
-from .const import DOMAIN
-from .airzone_api import AirzoneAPI
-
-_LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up the switch platform from a config entry."""
@@ -81,6 +32,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
             switches.append(AirzonePowerSwitch(api, device, config, hass))
     async_add_entities(switches, True)
 
+
 class AirzonePowerSwitch(SwitchEntity):
     """Representation of a power switch for an Airzone device."""
 
@@ -96,7 +48,7 @@ class AirzonePowerSwitch(SwitchEntity):
         self.hass = hass
         self._hass_loop = hass.loop
 
-        # Safely assign unique_id.
+        # Assign unique_id safely using the device id.
         if self._device_id:
             self._attr_unique_id = f"{self._device_id}_power"
         else:
@@ -104,22 +56,8 @@ class AirzonePowerSwitch(SwitchEntity):
             self._attr_unique_id = hashlib.sha256(self._name.encode("utf-8")).hexdigest()
 
         self._attr_name = self._name
-        # Note: We do not manually assign self.entity_id here.
-        # Instead, we'll set it in async_added_to_hass if necessary.
-
-    async def async_added_to_hass(self):
-        """Called when entity is added to hass.
-        
-        Ensure that an entity ID is assigned; if not, assign one as a fallback.
-        """
-        # Ensure the hass loop is available.
-        if not hasattr(self, "_hass_loop"):
-            self._hass_loop = self.hass.loop
-
-        # Check if the entity already has an entity_id; if not, assign one.
-        if not self.entity_id:
-            self._attr_entity_id = f"switch.{self._attr_unique_id}"
-            _LOGGER.debug("Manually setting entity_id for switch: %s", self.entity_id)
+        # For compatibility with HA 2025.3, we explicitly set entity_id.
+        self.entity_id = f"switch.{self._attr_unique_id}"
 
     @property
     def unique_id(self):
@@ -181,22 +119,3 @@ class AirzonePowerSwitch(SwitchEntity):
             asyncio.run_coroutine_threadsafe(self._api.send_event(payload), self._hass_loop)
         else:
             _LOGGER.error("No hass loop available; cannot send command.")
-
-    async def async_update(self):
-        """Update the switch state by polling the device status from the API."""
-        if not self._installation_id:
-            _LOGGER.error("No installation id available for device %s", self._device_id)
-            return
-
-        installations = await self._api.fetch_installations()
-        for relation in installations:
-            installation = relation.get("installation")
-            if installation and installation.get("id") == self._installation_id:
-                devices = await self._api.fetch_devices(self._installation_id)
-                for dev in devices:
-                    if dev.get("id") == self._device_id:
-                        self._device_data = dev
-                        self._state = bool(int(dev.get("power", 0)))
-                        _LOGGER.info("Power state updated: %s", self._state)
-                        self.async_write_ha_state()
-                        break
