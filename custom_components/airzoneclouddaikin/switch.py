@@ -46,7 +46,7 @@ class AirzonePowerSwitch(SwitchEntity):
         self.hass = hass
         self._hass_loop = hass.loop
 
-        # Set unique_id using device id if available.
+        # Safely assign unique_id. HA uses _attr_unique_id to auto-generate entity_id if not provided.
         if self._device_id:
             self._attr_unique_id = f"{self._device_id}_power"
         else:
@@ -54,6 +54,20 @@ class AirzonePowerSwitch(SwitchEntity):
             self._attr_unique_id = hashlib.sha256(self._name.encode("utf-8")).hexdigest()
 
         self._attr_name = self._name
+        # We no longer manually assign self.entity_id here
+
+    async def async_added_to_hass(self):
+        """Called when entity is added to hass.
+        
+        Ensure that an entity_id is assigned. If not, assign one manually.
+        """
+        # Store hass loop for thread-safe commands
+        if not hasattr(self, "_hass_loop"):
+            self._hass_loop = self.hass.loop
+        # If entity_id is not set by HA, set it explicitly as a fallback.
+        if not self.entity_id:
+            self.entity_id = f"switch.{self._attr_unique_id}"
+            _LOGGER.debug("Manually setting entity_id for switch: %s", self.entity_id)
 
     @property
     def unique_id(self):
