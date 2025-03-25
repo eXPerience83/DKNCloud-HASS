@@ -54,7 +54,7 @@ class AirzonePowerSwitch(SwitchEntity):
             self._attr_unique_id = hashlib.sha256(self._name.encode("utf-8")).hexdigest()
 
         self._attr_name = self._name
-        # Explicitly set entity_id for HA 2025.3 compatibility. 
+        # Explicitly set entity_id for HA 2025.3 compatibility.
         self.entity_id = f"switch.{self._attr_unique_id}"
 
     @property
@@ -83,16 +83,16 @@ class AirzonePowerSwitch(SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs):
-        """Turn on the device by sending P1=1."""
+        """Turn on the device by sending P1=1 and schedule an update."""
         await self.hass.async_add_executor_job(self.turn_on)
         self._state = True
-        self.async_write_ha_state()
+        self.schedule_update_ha_state()  # Ensure HA reflects the change immediately
 
     async def async_turn_off(self, **kwargs):
-        """Turn off the device by sending P1=0."""
+        """Turn off the device by sending P1=0 and schedule an update."""
         await self.hass.async_add_executor_job(self.turn_off)
         self._state = False
-        self.async_write_ha_state()
+        self.schedule_update_ha_state()  # Ensure HA reflects the change immediately
 
     def turn_on(self):
         """Turn on the device."""
@@ -134,8 +134,5 @@ class AirzonePowerSwitch(SwitchEntity):
                         self._device_data = dev
                         self._state = bool(int(dev.get("power", 0)))
                         _LOGGER.info("Power state updated: %s", self._state)
-                        if self._attr_unique_id:
-                            self.async_write_ha_state()
-                        else:
-                            _LOGGER.error("Unique ID is missing! Cannot update entity state.")
+                        self.schedule_update_ha_state()  # Ensure HA updates the entity state
                         break
