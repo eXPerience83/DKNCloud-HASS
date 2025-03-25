@@ -46,7 +46,7 @@ class AirzonePowerSwitch(SwitchEntity):
         self.hass = hass
         self._hass_loop = hass.loop
 
-        # Asignar unique_id de manera segura
+        # Set unique_id using device id if available.
         if self._device_id:
             self._attr_unique_id = f"{self._device_id}_power"
         else:
@@ -54,7 +54,6 @@ class AirzonePowerSwitch(SwitchEntity):
             self._attr_unique_id = hashlib.sha256(self._name.encode("utf-8")).hexdigest()
 
         self._attr_name = self._name
-        self.entity_id = f"switch.{self._attr_unique_id}"
 
     @property
     def unique_id(self):
@@ -133,8 +132,5 @@ class AirzonePowerSwitch(SwitchEntity):
                         self._device_data = dev
                         self._state = bool(int(dev.get("power", 0)))
                         _LOGGER.info("Power state updated: %s", self._state)
-                        if self._attr_unique_id:
-                            self.async_write_ha_state()
-                        else:
-                            _LOGGER.error("Unique ID is missing! Cannot update entity state.")
+                        self.async_write_ha_state()
                         break
