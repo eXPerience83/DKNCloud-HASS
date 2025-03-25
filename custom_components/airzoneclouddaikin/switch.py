@@ -36,6 +36,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
 class AirzonePowerSwitch(SwitchEntity):
     """Representation of a power switch for an Airzone device."""
 
+    # Enable polling so that HA periodically calls async_update.
+    @property
+    def should_poll(self):
+        return True
+
     def __init__(self, api: AirzoneAPI, device_data: dict, config: dict, hass):
         """Initialize the power switch."""
         self._api = api
