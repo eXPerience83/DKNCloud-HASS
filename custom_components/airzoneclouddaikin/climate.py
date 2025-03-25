@@ -9,9 +9,8 @@ from .airzone_api import AirzoneAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-# Define forced auto mode constant
-HVAC_MODE_AUTO = HVACMode("auto")
-
+# We use HVACMode.AUTO directly (no separate forced constant)
+ 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up the climate platform from a config entry."""
     config = entry.data
@@ -45,7 +44,7 @@ class AirzoneClimate(ClimateEntity):
 
     def __init__(self, api: AirzoneAPI, device_data: dict, config: dict, hass):
         """Initialize the climate entity.
-
+        
         :param api: The AirzoneAPI instance.
         :param device_data: Dictionary with device information.
         :param config: Integration configuration.
@@ -86,7 +85,7 @@ class AirzoneClimate(ClimateEntity):
         """Return the list of supported HVAC modes."""
         modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY]
         if self._config.get("force_hvac_mode_auto", False):
-            modes.append(HVAC_MODE_AUTO)
+            modes.append(HVACMode.AUTO)
         return modes
 
     @property
@@ -122,10 +121,9 @@ class AirzoneClimate(ClimateEntity):
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": self._device_data.get("brand", "Unknown"),  # Brand is the machine model
-            "sw_version": self._device_data.get("firmware", "Unknown"),  # Use firmware field
+            "model": self._device_data.get("brand", "Unknown"),
+            "sw_version": self._device_data.get("firmware", "Unknown"),
             "via_device": (DOMAIN, self._device_id),
-            # Removed "extra" as it is not accepted by Home Assistant.
         }
 
     async def async_update(self):
@@ -155,7 +153,7 @@ class AirzoneClimate(ClimateEntity):
                                 self._hvac_mode = HVACMode.DRY
                                 self._fan_mode = ""
                             elif mode_val == "4":
-                                self._hvac_mode = HVAC_MODE_AUTO
+                                self._hvac_mode = HVACMode.AUTO
                                 self._target_temperature = int(float(dev.get("heat_consign", "0")))
                                 self._fan_mode = str(dev.get("heat_speed", ""))
                             else:
@@ -195,8 +193,11 @@ class AirzoneClimate(ClimateEntity):
          - HVACMode.HEAT -> P2=2
          - HVACMode.FAN_ONLY -> P2=3
          - HVACMode.DRY -> P2=5
-         - HVAC_MODE_AUTO -> P2=4
+         - HVACMode.AUTO -> P2=4
         """
+        # If the device is off and a non-OFF mode is requested, power it on first.
+        if self._hvac_mode == HVACMode.OFF and hvac_mode != HVACMode.OFF:
+            self.turn_on()
         if hvac_mode == HVACMode.OFF:
             self.turn_off()
             return
@@ -205,7 +206,7 @@ class AirzoneClimate(ClimateEntity):
             HVACMode.HEAT: "2",
             HVACMode.FAN_ONLY: "3",
             HVACMode.DRY: "5",
-            HVAC_MODE_AUTO: "4",
+            HVACMode.AUTO: "4",
         }
         if hvac_mode in mode_mapping:
             self._send_command("P2", mode_mapping[hvac_mode])
@@ -220,7 +221,7 @@ class AirzoneClimate(ClimateEntity):
         Must be called after changing the mode.
         For HEAT or AUTO modes, use P8; for COOL mode use P7.
         Temperature adjustments are disabled in DRY and FAN_ONLY modes.
-        The value is constrained to the device limits and sent as an integer with ".0".
+        The value is constrained to the device limits and sent as an integer with ".0" appended.
         """
         if self._hvac_mode in [HVACMode.DRY, HVACMode.FAN_ONLY]:
             _LOGGER.warning("Temperature adjustment not supported in mode %s", self._hvac_mode)
@@ -228,7 +229,7 @@ class AirzoneClimate(ClimateEntity):
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is not None:
             temp = int(float(temp))
-            if self._hvac_mode in [HVACMode.HEAT, HVAC_MODE_AUTO]:
+            if self._hvac_mode in [HVACMode.HEAT, HVACMode.AUTO]:
                 min_temp = int(float(self._device_data.get("min_limit_heat", 16)))
                 max_temp = int(float(self._device_data.get("max_limit_heat", 32)))
                 command = "P8"
@@ -260,21 +261,12 @@ class AirzoneClimate(ClimateEntity):
             return
         if self._hvac_mode in [HVACMode.COOL, HVACMode.FAN_ONLY]:
             self._send_command("P3", speed)
-        elif self._hvac_mode in [HVACMode.HEAT, HVAC_MODE_AUTO]:
+        elif self._hvac_mode in [HVACMode.HEAT, HVACMode.AUTO]:
             self._send_command("P4", speed)
         else:
             _LOGGER.warning("Fan speed adjustment not supported in mode %s", self._hvac_mode)
             return
         self._fan_mode = str(speed)
-        self.schedule_update_ha_state()
-
-    def set_preset_mode(self, preset_mode):
-        """Set the preset mode (if supported). Supported values: 'away', 'none'."""
-        if preset_mode not in ["away", "none"]:
-            _LOGGER.error("Unsupported preset mode: %s", preset_mode)
-            return
-        self._send_command("P5", preset_mode)
-        self._device_data["preset_mode"] = preset_mode
         self.schedule_update_ha_state()
 
     @property
@@ -299,7 +291,6 @@ class AirzoneClimate(ClimateEntity):
         }
         _LOGGER.info("Sending command: %s", payload)
         if self._hass_loop:
-            # Use thread-safe coroutine execution on the hass loop.
             asyncio.run_coroutine_threadsafe(self._api.send_event(payload), self._hass_loop)
         else:
             _LOGGER.error("No hass loop available; cannot send command.")
