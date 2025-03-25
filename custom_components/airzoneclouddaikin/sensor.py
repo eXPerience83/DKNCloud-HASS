@@ -72,6 +72,12 @@ class AirzoneTemperatureSensor(SensorEntity):
         return self._attr_native_value
 
     @property
+    def accuracy_decimals(self):
+        """Return the number of decimals to use for the sensor state."""
+        # This ensures that the state is displayed as an integer.
+        return 0
+
+    @property
     def device_info(self):
         """Return device info to link this sensor to a device in Home Assistant."""
         return {
