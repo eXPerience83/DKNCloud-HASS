@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.7] - 2025-03-26  
+
+### **Fixed**  
+- **Switch Entity (`switch.py`)**:  
+  - Resolved an issue where the switch entity (`AirzonePowerSwitch`) was not updating its state properly when the device was manually turned on/off.  
+  - Implemented `schedule_update_ha_state()` in `async_turn_on()`, `async_turn_off()`, and `async_update()` to ensure real-time state updates in Home Assistant.  
+  - Ensured that polling the device state correctly updates the power switch status.
+
+- **Climate Entity (`climate.py`)**:  
+  - Fixed an issue where setting a new HVAC mode while the device was off did not turn it on automatically.  
+  - Now, if the HVAC mode is OFF and a new mode is set, the system first turns on the device before applying the selected mode.
+
+### **Changed**  
+- **Code Refactoring & Consistency**:  
+  - Renamed `HVAC_MODE_AUTO` to `HVACMode.AUTO` for consistency across all files.  
+  - Removed unused `set_preset_mode()` function from `climate.py` since preset modes are not yet implemented.  
+  - Ensured all comments and logs are in English for consistency and readability.  
+  - Improved error handling and logging for better debugging and traceability.
+
+### **Improved**  
+- **Temperature Sensor (`sensor.py`)**:  
+  - Added predefined display precision to show temperature as whole numbers instead of decimals (e.g., `22°C` instead of `22.0°C`).  
+  - This improves visual consistency as the Airzone API only returns integer values for temperature.
+
+### **Notes**  
+- This update enhances synchronization between Home Assistant and the Airzone Cloud Daikin API, ensuring real-time updates of device states.
+- Restart Home Assistant after updating to apply all fixes.
+
 ## [0.2.6] - 2025-03-23  
 
 ### **Fixed**  
