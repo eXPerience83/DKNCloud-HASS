@@ -48,7 +48,7 @@ class AirzonePowerSwitch(SwitchEntity):
         self.hass = hass
         self._hass_loop = hass.loop
 
-        # Assign unique_id safely using the device id.
+        # Assign unique_id using the device id.
         if self._device_id:
             self._attr_unique_id = f"{self._device_id}_power"
         else:
@@ -56,7 +56,7 @@ class AirzonePowerSwitch(SwitchEntity):
             self._attr_unique_id = hashlib.sha256(self._name.encode("utf-8")).hexdigest()
 
         self._attr_name = self._name
-        # For compatibility with HA 2025.3, we explicitly set entity_id.
+        # Explicitly set entity_id for HA 2025.3 compatibility.
         self.entity_id = f"switch.{self._attr_unique_id}"
 
     @property
@@ -103,6 +103,25 @@ class AirzonePowerSwitch(SwitchEntity):
     def turn_off(self):
         """Turn off the device."""
         self._send_command("P1", 0)
+
+    async def async_update(self):
+        """Update the switch state by polling the device status from the API."""
+        if not self._installation_id:
+            _LOGGER.error("No installation id available for device %s", self._device_id)
+            return
+
+        installations = await self._api.fetch_installations()
+        for relation in installations:
+            installation = relation.get("installation")
+            if installation and installation.get("id") == self._installation_id:
+                devices = await self._api.fetch_devices(self._installation_id)
+                for dev in devices:
+                    if dev.get("id") == self._device_id:
+                        self._device_data = dev
+                        self._state = bool(int(dev.get("power", 0)))
+                        _LOGGER.info("Power state updated: %s", self._state)
+                        self.async_write_ha_state()
+                        return
 
     def _send_command(self, option, value):
         """Send a command to the device using the events endpoint."""
