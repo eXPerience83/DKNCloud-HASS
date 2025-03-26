@@ -6,6 +6,6 @@
   "dependencies": [],
   "after_dependencies": ["http"],
   "codeowners": ["@max13fr", "eXPerience83"],
-  "version": "0.2.7",
+  "version": "0.2.7.1",
   "config_flow": true
 }
