@@ -2,7 +2,7 @@
 import asyncio
 import logging
 from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode, PRESET_MODE_AWAY, PRESET_MODE_NONE
+from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
 from .const import DOMAIN
 from .airzone_api import AirzoneAPI
@@ -141,7 +141,7 @@ class AirzoneClimate(ClimateEntity):
     @property
     def fan_speed_range(self):
         """Return a list of valid fan speeds based on 'availables_speeds' from device data.
-        
+
         Reads the 'availables_speeds' field and returns a list of integers from 1 to that number.
         """
         speeds_str = self._device_data.get("availables_speeds", "3")
