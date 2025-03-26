@@ -2,15 +2,13 @@
 import asyncio
 import logging
 from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
+from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode, PRESET_MODE_AWAY, PRESET_MODE_NONE
 from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
 from .const import DOMAIN
 from .airzone_api import AirzoneAPI
 
 _LOGGER = logging.getLogger(__name__)
 
-# We use HVACMode.AUTO directly (no separate forced constant)
- 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up the climate platform from a config entry."""
     config = entry.data
@@ -44,7 +42,7 @@ class AirzoneClimate(ClimateEntity):
 
     def __init__(self, api: AirzoneAPI, device_data: dict, config: dict, hass):
         """Initialize the climate entity.
-        
+
         :param api: The AirzoneAPI instance.
         :param device_data: Dictionary with device information.
         :param config: Integration configuration.
@@ -58,6 +56,7 @@ class AirzoneClimate(ClimateEntity):
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
         self._fan_mode = None  # current fan speed as string
+        self._preset_mode = None  # current preset mode (e.g., "occupied", "vacant", "sleep")
         self.hass = hass
         self._hass_loop = None  # will be set in async_added_to_hass
 
@@ -115,16 +114,42 @@ class AirzoneClimate(ClimateEntity):
         return self._fan_mode
 
     @property
+    def preset_modes(self):
+        """Return a list of supported preset modes.
+        
+        Supported values: 'occupied', 'vacant', 'sleep'
+        """
+        return ["occupied", "vacant", "sleep"]
+
+    @property
+    def preset_mode(self):
+        """Return the current preset mode."""
+        return self._preset_mode
+
+    @property
     def device_info(self):
         """Return device info to group this entity with others in the device registry."""
         return {
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": self._device_data.get("brand", "Unknown"),
-            "sw_version": self._device_data.get("firmware", "Unknown"),
+            "model": self._device_data.get("brand", "Unknown"),  # 'brand' contains the machine model
+            "sw_version": self._device_data.get("firmware", "Unknown"),  # Use firmware field for version
             "via_device": (DOMAIN, self._device_id),
         }
+
+    @property
+    def fan_speed_range(self):
+        """Return a list of valid fan speeds based on 'availables_speeds' from device data.
+        
+        Reads the 'availables_speeds' field and returns a list of integers from 1 to that number.
+        """
+        speeds_str = self._device_data.get("availables_speeds", "3")
+        try:
+            speeds = int(speeds_str)
+        except ValueError:
+            speeds = 3
+        return list(range(1, speeds + 1))
 
     async def async_update(self):
         """Poll updated device data from the API and update state."""
@@ -157,11 +182,14 @@ class AirzoneClimate(ClimateEntity):
                                 self._target_temperature = int(float(dev.get("heat_consign", "0")))
                                 self._fan_mode = str(dev.get("heat_speed", ""))
                             else:
+                                # Fallback: default to HEAT mode
                                 self._hvac_mode = HVACMode.HEAT
                                 self._target_temperature = int(float(dev.get("heat_consign", "0")))
                                 self._fan_mode = str(dev.get("heat_speed", ""))
                         else:
                             self._hvac_mode = HVACMode.OFF
+                        # Update preset mode from the device data ("scenary" field)
+                        self._preset_mode = dev.get("scenary")
                         break
         self.schedule_update_ha_state()
 
@@ -269,15 +297,20 @@ class AirzoneClimate(ClimateEntity):
         self._fan_mode = str(speed)
         self.schedule_update_ha_state()
 
-    @property
-    def fan_speed_range(self):
-        """Return a list of valid fan speeds based on 'availables_speeds' from device data."""
-        speeds_str = self._device_data.get("availables_speeds", "3")
-        try:
-            speeds = int(speeds_str)
-        except ValueError:
-            speeds = 3
-        return list(range(1, speeds + 1))
+    async def async_set_preset_mode(self, preset_mode):
+        """Set the preset mode asynchronously.
+        
+        Supported values: 'occupied', 'vacant', 'sleep'.
+        This sends a PUT request to update the device's 'scenary' field.
+        """
+        if preset_mode not in self.preset_modes:
+            _LOGGER.error("Unsupported preset mode: %s", preset_mode)
+            return
+        # Call the API method to set the preset mode.
+        result = await self._api.set_preset_mode(self._device_id, preset_mode)
+        # Update internal preset mode state from the API response (fallback to requested mode if not provided)
+        self._preset_mode = result.get("device", {}).get("scenary", preset_mode)
+        self.schedule_update_ha_state()
 
     def _send_command(self, option, value):
         """Send a command to the device using the events endpoint."""
