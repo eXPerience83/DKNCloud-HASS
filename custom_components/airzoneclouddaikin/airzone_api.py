@@ -120,3 +120,19 @@ class AirzoneAPI:
         async with self._session.post(url, json=payload, params=params, headers=headers) as response:
             response.raise_for_status()
             return await response.json()
+
+    async def update_device(self, device_id: str, data: dict) -> dict:
+        """Update device configuration using a PUT request.
+        
+        This method updates device parameters (such as preset mode) by sending a PUT request.
+        """
+        url = f"{BASE_URL}/devices/{device_id}"
+        params = {"format": "json", "user_email": self._username, "user_token": self.token}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Content-Type": "application/json;charset=UTF-8",
+            "Accept": "application/json, text/plain, */*"
+        }
+        async with self._session.put(url, json=data, params=params, headers=headers) as response:
+            response.raise_for_status()
+            return await response.json()
