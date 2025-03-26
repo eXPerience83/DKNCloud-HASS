@@ -5,13 +5,14 @@ This module implements:
 - Fetching installations via the /installation_relations endpoint.
 - Fetching devices for a given installation via the /devices endpoint.
 - Sending events via the /events endpoint.
-Endpoints are imported from const.py.
+- Updating device preset mode via a PUT request.
+Endpoints and constants are imported from const.py.
 """
 
 import logging
 import aiohttp
 from typing import List, Dict
-from .const import API_LOGIN, API_INSTALLATION_RELATIONS, API_DEVICES, API_EVENTS, BASE_URL
+from .const import API_LOGIN, API_INSTALLATION_RELATIONS, API_DEVICES, API_EVENTS, BASE_URL, USER_AGENT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class AirzoneAPI:
         """
         url = f"{BASE_URL}{API_LOGIN}"
         payload = {"email": self._username, "password": self._password}
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
         try:
             async with self._session.post(url, json=payload, headers=headers) as response:
                 if response.status == 201:
@@ -64,7 +65,7 @@ class AirzoneAPI:
             return []
         url = f"{BASE_URL}{API_INSTALLATION_RELATIONS}"
         params = {"format": "json", "user_email": self._username, "user_token": self.token}
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": USER_AGENT}
         try:
             async with self._session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
@@ -92,7 +93,7 @@ class AirzoneAPI:
             "user_email": self._username,
             "user_token": self.token
         }
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": USER_AGENT}
         try:
             async with self._session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
@@ -112,7 +113,7 @@ class AirzoneAPI:
         url = f"{BASE_URL}{API_EVENTS}"
         params = {"format": "json", "user_email": self._username, "user_token": self.token}
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "User-Agent": USER_AGENT,
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/json;charset=UTF-8",
             "Accept": "application/json, text/plain, */*"
@@ -121,18 +122,27 @@ class AirzoneAPI:
             response.raise_for_status()
             return await response.json()
 
-    async def update_device(self, device_id: str, data: dict) -> dict:
-        """Update device configuration using a PUT request.
-        
-        This method updates device parameters (such as preset mode) by sending a PUT request.
+    async def set_preset_mode(self, device_id: str, preset_mode: str) -> dict:
+        """Update the device preset mode via a PUT request.
+
+        :param device_id: The ID of the device.
+        :param preset_mode: The new preset mode (e.g., "occupied", "vacant", "sleep").
+        :return: The API response as a dictionary.
         """
-        url = f"{BASE_URL}/devices/{device_id}"
-        params = {"format": "json", "user_email": self._username, "user_token": self.token}
+        url = f"{BASE_URL}/devices/{device_id}?format=json"
+        params = {"user_email": self._username, "user_token": self.token}
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "User-Agent": USER_AGENT,
             "Content-Type": "application/json;charset=UTF-8",
             "Accept": "application/json, text/plain, */*"
         }
-        async with self._session.put(url, json=data, params=params, headers=headers) as response:
-            response.raise_for_status()
-            return await response.json()
+        payload = {"device": {"scenary": preset_mode}}
+        try:
+            async with self._session.put(url, json=payload, params=params, headers=headers) as response:
+                response.raise_for_status()
+                data = await response.json()
+                _LOGGER.debug("Preset mode updated: %s", data)
+                return data
+        except Exception as err:
+            _LOGGER.error("Exception updating preset mode: %s", err)
+            return {}
