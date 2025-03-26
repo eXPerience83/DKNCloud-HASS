@@ -56,7 +56,7 @@ class AirzoneClimate(ClimateEntity):
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
         self._fan_mode = None  # current fan speed as string
-        self._preset_mode = None  # current preset mode (e.g., "occupied", "vacant", "sleep")
+        self._preset_mode = device_data.get("scenary", "occupied")
         self.hass = hass
         self._hass_loop = None  # will be set in async_added_to_hass
 
@@ -99,7 +99,7 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def supported_features(self):
-        """Return supported features: target temperature and fan mode."""
+        """Return supported features: target temperature, fan mode, and preset mode."""
         return ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
 
     @property
@@ -141,7 +141,7 @@ class AirzoneClimate(ClimateEntity):
     @property
     def fan_speed_range(self):
         """Return a list of valid fan speeds based on 'availables_speeds' from device data.
-
+        
         Reads the 'availables_speeds' field and returns a list of integers from 1 to that number.
         """
         speeds_str = self._device_data.get("availables_speeds", "3")
@@ -182,7 +182,6 @@ class AirzoneClimate(ClimateEntity):
                                 self._target_temperature = int(float(dev.get("heat_consign", "0")))
                                 self._fan_mode = str(dev.get("heat_speed", ""))
                             else:
-                                # Fallback: default to HEAT mode
                                 self._hvac_mode = HVACMode.HEAT
                                 self._target_temperature = int(float(dev.get("heat_consign", "0")))
                                 self._fan_mode = str(dev.get("heat_speed", ""))
@@ -204,6 +203,8 @@ class AirzoneClimate(ClimateEntity):
     def turn_on(self):
         """Turn on the device by sending P1=1."""
         self._send_command("P1", 1)
+        # When turning on, ensure preset mode is set to 'occupied'
+        self._preset_mode = "occupied"
         self.schedule_update_ha_state()
 
     def turn_off(self):
@@ -306,9 +307,7 @@ class AirzoneClimate(ClimateEntity):
         if preset_mode not in self.preset_modes:
             _LOGGER.error("Unsupported preset mode: %s", preset_mode)
             return
-        # Call the API method to set the preset mode.
         result = await self._api.set_preset_mode(self._device_id, preset_mode)
-        # Update internal preset mode state from the API response (fallback to requested mode if not provided)
         self._preset_mode = result.get("device", {}).get("scenary", preset_mode)
         self.schedule_update_ha_state()
 
