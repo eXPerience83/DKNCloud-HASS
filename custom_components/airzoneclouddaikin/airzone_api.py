@@ -5,7 +5,6 @@ This module implements:
 - Fetching installations via the /installation_relations endpoint.
 - Fetching devices for a given installation via the /devices endpoint.
 - Sending events via the /events endpoint.
-- Updating device preset mode via a PUT request.
 Endpoints and constants are imported from const.py.
 """
 
@@ -121,28 +120,3 @@ class AirzoneAPI:
         async with self._session.post(url, json=payload, params=params, headers=headers) as response:
             response.raise_for_status()
             return await response.json()
-
-    async def set_preset_mode(self, device_id: str, preset_mode: str) -> dict:
-        """Update the device preset mode via a PUT request.
-
-        :param device_id: The ID of the device.
-        :param preset_mode: The new preset mode (e.g., "occupied", "vacant", "sleep").
-        :return: The API response as a dictionary.
-        """
-        url = f"{BASE_URL}/devices/{device_id}?format=json"
-        params = {"user_email": self._username, "user_token": self.token}
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json;charset=UTF-8",
-            "Accept": "application/json, text/plain, */*"
-        }
-        payload = {"device": {"scenary": preset_mode}}
-        try:
-            async with self._session.put(url, json=payload, params=params, headers=headers) as response:
-                response.raise_for_status()
-                data = await response.json()
-                _LOGGER.debug("Preset mode updated: %s", data)
-                return data
-        except Exception as err:
-            _LOGGER.error("Exception updating preset mode: %s", err)
-            return {}
