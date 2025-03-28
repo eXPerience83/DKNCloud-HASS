@@ -110,10 +110,7 @@ class AirzoneClimate(ClimateEntity):
     @property
     def supported_features(self):
         """Return supported features: target temperature, fan mode, and preset mode."""
-        return (
-            ClimateEntityFeature.TARGET_TEMPERATURE 
-            | ClimateEntityFeature.FAN_MODE
-        )
+        return ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
 
     @property
     def fan_modes(self):
@@ -125,6 +122,17 @@ class AirzoneClimate(ClimateEntity):
     def fan_mode(self):
         """Return the current fan speed."""
         return self._fan_mode
+
+    @property
+    def extra_state_attributes(self):
+        """Return additional attributes for the climate device."""
+        return {
+            "preset_mode": self._preset_mode,
+            "min_temp_unoccupied": self._device_data.get("min_temp_unoccupied"),
+            "max_temp_unoccupied": self._device_data.get("max_temp_unoccupied"),
+            "sleep_time": self._device_data.get("sleep_time"),
+            "scenary": self._device_data.get("scenary")
+        }
 
     @property
     def device_info(self):
