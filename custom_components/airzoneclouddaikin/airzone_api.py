@@ -5,13 +5,13 @@ This module implements:
 - Fetching installations via the /installation_relations endpoint.
 - Fetching devices for a given installation via the /devices endpoint.
 - Sending events via the /events endpoint.
-Endpoints and constants are imported from const.py.
+Endpoints are imported from const.py.
 """
 
 import logging
 import aiohttp
 from typing import List, Dict
-from .const import API_LOGIN, API_INSTALLATION_RELATIONS, API_DEVICES, API_EVENTS, BASE_URL, USER_AGENT
+from .const import API_LOGIN, API_INSTALLATION_RELATIONS, API_DEVICES, API_EVENTS, BASE_URL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class AirzoneAPI:
         """
         url = f"{BASE_URL}{API_LOGIN}"
         payload = {"email": self._username, "password": self._password}
-        headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         try:
             async with self._session.post(url, json=payload, headers=headers) as response:
                 if response.status == 201:
@@ -64,7 +64,7 @@ class AirzoneAPI:
             return []
         url = f"{BASE_URL}{API_INSTALLATION_RELATIONS}"
         params = {"format": "json", "user_email": self._username, "user_token": self.token}
-        headers = {"User-Agent": USER_AGENT}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         try:
             async with self._session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
@@ -92,7 +92,7 @@ class AirzoneAPI:
             "user_email": self._username,
             "user_token": self.token
         }
-        headers = {"User-Agent": USER_AGENT}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         try:
             async with self._session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
@@ -112,7 +112,7 @@ class AirzoneAPI:
         url = f"{BASE_URL}{API_EVENTS}"
         params = {"format": "json", "user_email": self._username, "user_token": self.token}
         headers = {
-            "User-Agent": USER_AGENT,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/json;charset=UTF-8",
             "Accept": "application/json, text/plain, */*"
