@@ -5,13 +5,13 @@ This module implements:
 - Fetching installations via the /installation_relations endpoint.
 - Fetching devices for a given installation via the /devices endpoint.
 - Sending events via the /events endpoint.
-Endpoints are imported from const.py.
+Endpoints and constants are imported from const.py.
 """
 
 import logging
 import aiohttp
 from typing import List, Dict
-from .const import API_LOGIN, API_INSTALLATION_RELATIONS, API_DEVICES, API_EVENTS, BASE_URL
+from .const import API_LOGIN, API_INSTALLATION_RELATIONS, API_DEVICES, API_EVENTS, BASE_URL, USER_AGENT
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,13 +28,16 @@ class AirzoneAPI:
 
     async def login(self) -> bool:
         """Authenticate with the API and obtain a token.
-        
+
         Sends a POST request to the /users/sign_in endpoint.
         Returns True if successful, False otherwise.
         """
         url = f"{BASE_URL}{API_LOGIN}"
         payload = {"email": self._username, "password": self._password}
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Content-Type": "application/json"
+        }
         try:
             async with self._session.post(url, json=payload, headers=headers) as response:
                 if response.status == 201:
@@ -55,7 +58,7 @@ class AirzoneAPI:
 
     async def fetch_installations(self) -> List[Dict]:
         """Fetch installations using the obtained token.
-        
+
         Sends a GET request to the /installation_relations endpoint.
         Returns a list of installations if successful.
         """
@@ -64,7 +67,7 @@ class AirzoneAPI:
             return []
         url = f"{BASE_URL}{API_INSTALLATION_RELATIONS}"
         params = {"format": "json", "user_email": self._username, "user_token": self.token}
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": USER_AGENT}
         try:
             async with self._session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
@@ -81,7 +84,7 @@ class AirzoneAPI:
 
     async def fetch_devices(self, installation_id: str) -> List[Dict]:
         """Fetch devices for a given installation using the obtained token.
-        
+
         Sends a GET request to the /devices endpoint with the installation_id parameter.
         Returns a list of devices if successful.
         """
@@ -92,7 +95,7 @@ class AirzoneAPI:
             "user_email": self._username,
             "user_token": self.token
         }
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        headers = {"User-Agent": USER_AGENT}
         try:
             async with self._session.get(url, params=params, headers=headers) as response:
                 if response.status == 200:
@@ -112,7 +115,7 @@ class AirzoneAPI:
         url = f"{BASE_URL}{API_EVENTS}"
         params = {"format": "json", "user_email": self._username, "user_token": self.token}
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "User-Agent": USER_AGENT,
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/json;charset=UTF-8",
             "Accept": "application/json, text/plain, */*"
