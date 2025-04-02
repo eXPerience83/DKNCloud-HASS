@@ -10,54 +10,38 @@ from .airzone_api import AirzoneAPI
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up the climate platform from a config entry."""
+    """Set up the climate platform from a config entry using the DataUpdateCoordinator."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
     coordinator = data.get("coordinator")
     config = entry.data
-    # Create climate entities for each device found in coordinator.data
-    entities = []
+    climates = []
+    # Create a climate entity for each device in the coordinator data.
     for device_id, device in coordinator.data.items():
-        entities.append(AirzoneClimate(coordinator, device, config, hass))
-    async_add_entities(entities, True)
+        climates.append(AirzoneClimate(coordinator, device, config))
+    async_add_entities(climates, True)
 
 class AirzoneClimate(ClimateEntity):
     """Representation of an Airzone Cloud Daikin climate device."""
 
-    def __init__(self, coordinator, device_data: dict, config: dict, hass):
+    def __init__(self, coordinator, device_data: dict, config: dict):
         """Initialize the climate entity.
 
         :param coordinator: The DataUpdateCoordinator instance.
         :param device_data: Dictionary with device information.
         :param config: Integration configuration.
-        :param hass: Home Assistant instance.
         """
         self.coordinator = coordinator
         self._device_data = device_data
         self._config = config
-        self._name = device_data.get("name", "Airzone Device")
-        self._device_id = device_data.get("id")
+        self._attr_name = device_data.get("name", "Airzone Device")
+        self._attr_unique_id = device_data.get("id")
+        self._attr_temperature_unit = UnitOfTemperature.CELSIUS
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
-        self._fan_mode = None  # current fan speed as string
-        self.hass = hass
-
-    @property
-    def unique_id(self):
-        """Return a unique ID for this climate entity."""
-        return self._device_id
-
-    @property
-    def name(self):
-        """Return the name of the climate entity."""
-        return self._name
-
-    @property
-    def temperature_unit(self):
-        """Return the unit of measurement."""
-        return UnitOfTemperature.CELSIUS
+        self._fan_mode = None
 
     @property
     def hvac_modes(self):
@@ -97,18 +81,18 @@ class AirzoneClimate(ClimateEntity):
     def device_info(self):
         """Return device info to group this entity with others in the device registry."""
         return {
-            "identifiers": {(DOMAIN, self._device_id)},
+            "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
             "model": self._device_data.get("brand", "Unknown"),
             "sw_version": self._device_data.get("firmware", "Unknown"),
-            "via_device": (DOMAIN, self._device_id),
+            "via_device": (DOMAIN, self._device_data.get("id")),
         }
 
     async def async_update(self):
         """Update the climate entity from the coordinator data."""
         await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self._device_id)
+        device = self.coordinator.data.get(self._device_data.get("id"))
         if device:
             self._device_data = device
             if int(device.get("power", 0)) == 1:
@@ -137,20 +121,18 @@ class AirzoneClimate(ClimateEntity):
                     self._fan_mode = str(device.get("heat_speed", ""))
             else:
                 self._hvac_mode = HVACMode.OFF
-        self.async_schedule_update_ha_state()
+        self.async_write_ha_state()
 
-    # The rest of the methods (turn_on, turn_off, set_hvac_mode, set_temperature, set_fan_speed)
-    # remain as in the previous version.
     def turn_on(self):
         """Turn on the device by sending P1=1."""
         self._send_command("P1", 1)
-        self.async_schedule_update_ha_state()
+        self.async_write_ha_state()
 
     def turn_off(self):
         """Turn off the device by sending P1=0."""
         self._send_command("P1", 0)
         self._hvac_mode = HVACMode.OFF
-        self.async_schedule_update_ha_state()
+        self.async_write_ha_state()
 
     def set_hvac_mode(self, hvac_mode):
         """Set the HVAC mode.
@@ -178,7 +160,7 @@ class AirzoneClimate(ClimateEntity):
         if hvac_mode in mode_mapping:
             self._send_command("P2", mode_mapping[hvac_mode])
             self._hvac_mode = hvac_mode
-            self.async_schedule_update_ha_state()
+            self.async_write_ha_state()
         else:
             _LOGGER.error("Unsupported HVAC mode: %s", hvac_mode)
 
@@ -210,7 +192,7 @@ class AirzoneClimate(ClimateEntity):
                 temp = max_temp
             self._send_command(command, f"{temp}.0")
             self._target_temperature = temp
-            self.async_schedule_update_ha_state()
+            self.async_write_ha_state()
 
     def set_fan_speed(self, speed):
         """Set the fan speed.
@@ -234,7 +216,7 @@ class AirzoneClimate(ClimateEntity):
             _LOGGER.warning("Fan speed adjustment not supported in mode %s", self._hvac_mode)
             return
         self._fan_mode = str(speed)
-        self.async_schedule_update_ha_state()
+        self.async_write_ha_state()
 
     @property
     def fan_speed_range(self):
@@ -251,13 +233,15 @@ class AirzoneClimate(ClimateEntity):
         payload = {
             "event": {
                 "cgi": "modmaquina",
-                "device_id": self._device_id,
+                "device_id": self._device_data.get("id"),
                 "option": option,
                 "value": value,
             }
         }
         _LOGGER.info("Sending command: %s", payload)
         if self.hass and self.hass.loop:
-            asyncio.run_coroutine_threadsafe(self._api.send_event(payload), self.hass.loop)
+            asyncio.run_coroutine_threadsafe(
+                self.coordinator.api.send_event(payload), self.hass.loop
+            )
         else:
             _LOGGER.error("No hass loop available; cannot send command.")
