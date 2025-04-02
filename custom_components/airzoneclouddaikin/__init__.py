@@ -29,7 +29,7 @@ async def _async_update_data(api: AirzoneAPI) -> dict:
         for device in devices:
             device_id = device.get("id")
             if not device_id:
-                # Fallback: use a hash of the device data
+                # Fallback: use a hash of the device data if no id is provided
                 device_id = f"{hash(str(device))}"
                 device["id"] = device_id
             data[device_id] = device
@@ -58,14 +58,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_method=lambda: _async_update_data(api),
         update_interval=timedelta(seconds=scan_interval),
     )
+    # Attach the API instance to the coordinator so that entities can use it.
+    coordinator.api = api
+
     try:
         await coordinator.async_config_entry_first_refresh()
     except Exception as err:
         _LOGGER.error("Failed to fetch initial data: %s", err)
         raise UpdateFailed(err) from err
-
-    # Attach the API instance to the coordinator for easy access in entities.
-    coordinator.api = api
 
     hass.data[DOMAIN][entry.entry_id] = {"api": api, "coordinator": coordinator}
     # Forward setups for climate, sensor, and switch platforms.
