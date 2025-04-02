@@ -58,13 +58,13 @@ class AirzonePowerSwitch(SwitchEntity):
         """Turn on the device by sending P1=1 and update state."""
         await self.hass.async_add_executor_job(self.turn_on)
         self._device_data["power"] = "1"
-        self.async_write_ha_state()
+        # Do not call async_write_ha_state() here; HA will update automatically
 
     async def async_turn_off(self, **kwargs):
         """Turn off the device by sending P1=0 and update state."""
         await self.hass.async_add_executor_job(self.turn_off)
         self._device_data["power"] = "0"
-        self.async_write_ha_state()
+        # Do not call async_write_ha_state() here; HA will update automatically
 
     def turn_on(self):
         """Turn on the device."""
@@ -86,7 +86,6 @@ class AirzonePowerSwitch(SwitchEntity):
         }
         _LOGGER.info("Sending power command: %s", payload)
         if self.hass and self.hass.loop:
-            # Use the API from the coordinator stored in hass.data
             asyncio.run_coroutine_threadsafe(
                 self.coordinator.api.send_event(payload), self.hass.loop
             )
@@ -99,6 +98,5 @@ class AirzonePowerSwitch(SwitchEntity):
         device = self.coordinator.data.get(self._device_data.get("id"))
         if device:
             self._device_data = device
-            # Update state based on the 'power' field
             self._device_data["power"] = str(device.get("power", "0"))
-        self.async_write_ha_state()
+        # Do not call async_write_ha_state() here; HA will handle it after the coordinator refresh.
