@@ -27,7 +27,12 @@ async def _async_update_data(api: AirzoneAPI) -> dict:
             continue
         devices = await api.fetch_devices(installation_id)
         for device in devices:
-            data[device["id"]] = device
+            device_id = device.get("id")
+            if not device_id:
+                # Fallback: use hash of the device data
+                device_id = f"{hash(str(device))}"
+                device["id"] = device_id
+            data[device_id] = device
     return data
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -42,10 +47,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Login to Airzone API failed.")
         return False
 
-    # Create a DataUpdateCoordinator to poll API data every scan_interval seconds.
+    # Create a DataUpdateCoordinator to poll API data every scan_interval seconds. 
     scan_interval = config.get("scan_interval", 30)
     if scan_interval < 10:
         scan_interval = 10
+
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
