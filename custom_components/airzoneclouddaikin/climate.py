@@ -37,6 +37,7 @@ class AirzoneClimate(ClimateEntity):
         self._device_data = device_data
         self._config = config
         self._attr_name = device_data.get("name", "Airzone Device")
+        # Set unique_id using the device id
         self._attr_unique_id = device_data.get("id")
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
         self._hvac_mode = HVACMode.OFF
@@ -121,18 +122,18 @@ class AirzoneClimate(ClimateEntity):
                     self._fan_mode = str(device.get("heat_speed", ""))
             else:
                 self._hvac_mode = HVACMode.OFF
-        self.async_write_ha_state()
+        # Do not call async_write_ha_state() here; HA will update state automatically after coordinator refresh.
 
     def turn_on(self):
         """Turn on the device by sending P1=1."""
         self._send_command("P1", 1)
-        self.async_write_ha_state()
+        # No direct call to async_write_ha_state() here.
 
     def turn_off(self):
         """Turn off the device by sending P1=0."""
         self._send_command("P1", 0)
         self._hvac_mode = HVACMode.OFF
-        self.async_write_ha_state()
+        # No direct call to async_write_ha_state() here.
 
     def set_hvac_mode(self, hvac_mode):
         """Set the HVAC mode.
@@ -160,7 +161,6 @@ class AirzoneClimate(ClimateEntity):
         if hvac_mode in mode_mapping:
             self._send_command("P2", mode_mapping[hvac_mode])
             self._hvac_mode = hvac_mode
-            self.async_write_ha_state()
         else:
             _LOGGER.error("Unsupported HVAC mode: %s", hvac_mode)
 
@@ -192,7 +192,6 @@ class AirzoneClimate(ClimateEntity):
                 temp = max_temp
             self._send_command(command, f"{temp}.0")
             self._target_temperature = temp
-            self.async_write_ha_state()
 
     def set_fan_speed(self, speed):
         """Set the fan speed.
@@ -216,7 +215,6 @@ class AirzoneClimate(ClimateEntity):
             _LOGGER.warning("Fan speed adjustment not supported in mode %s", self._hvac_mode)
             return
         self._fan_mode = str(speed)
-        self.async_write_ha_state()
 
     @property
     def fan_speed_range(self):
