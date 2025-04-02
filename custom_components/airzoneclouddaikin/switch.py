@@ -57,14 +57,15 @@ class AirzonePowerSwitch(SwitchEntity):
     async def async_turn_on(self, **kwargs):
         """Turn on the device by sending P1=1 and update state."""
         await self.hass.async_add_executor_job(self.turn_on)
+        # Update device data locally
         self._device_data["power"] = "1"
-        # Do not call async_write_ha_state() here; HA will update automatically
+        # HA will update the state after coordinator refresh
 
     async def async_turn_off(self, **kwargs):
         """Turn off the device by sending P1=0 and update state."""
         await self.hass.async_add_executor_job(self.turn_off)
         self._device_data["power"] = "0"
-        # Do not call async_write_ha_state() here; HA will update automatically
+        # HA will update the state after coordinator refresh
 
     def turn_on(self):
         """Turn on the device."""
@@ -98,5 +99,4 @@ class AirzonePowerSwitch(SwitchEntity):
         device = self.coordinator.data.get(self._device_data.get("id"))
         if device:
             self._device_data = device
-            self._device_data["power"] = str(device.get("power", "0"))
-        # Do not call async_write_ha_state() here; HA will handle it after the coordinator refresh.
+        # HA will update the state automatically after coordinator refresh
