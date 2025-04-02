@@ -9,14 +9,18 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up the sensor platform from a config entry using the DataUpdateCoordinator."""
+    """Set up the sensor platform from a config entry using the DataUpdateCoordinator.
+
+    This function retrieves the coordinator from hass.data and creates a sensor entity
+    for each device using the coordinator's data.
+    """
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
     coordinator = data.get("coordinator")
     sensors = []
-    # Create a sensor entity for each device in the coordinator data
+    # Create a sensor entity for each device in the coordinator data.
     for device_id, device in coordinator.data.items():
         sensors.append(AirzoneTemperatureSensor(coordinator, device))
     async_add_entities(sensors, True)
@@ -35,7 +39,7 @@ class AirzoneTemperatureSensor(SensorEntity):
         # Construct sensor name: "<Device Name> Temperature"
         name = f"{device_data.get('name', 'Airzone Device')} Temperature"
         self._attr_name = name
-        # Set unique_id using the device id plus a suffix
+        # Set unique_id using the device id plus a suffix.
         device_id = device_data.get("id")
         if device_id and device_id.strip():
             self._attr_unique_id = f"{device_id}_temperature"
@@ -71,8 +75,9 @@ class AirzoneTemperatureSensor(SensorEntity):
 
     async def async_update(self):
         """Update the sensor state from the coordinator data.
-        
-        This method requests a refresh of the coordinator data and updates the sensor state.
+
+        This method requests a refresh of the coordinator data and then updates
+        the sensor state using the latest device data.
         """
         await self.coordinator.async_request_refresh()
         # Retrieve the updated device data using its id
@@ -80,7 +85,7 @@ class AirzoneTemperatureSensor(SensorEntity):
         if device:
             self._device_data = device
         self.update_state()
-        self.async_write_ha_state()
+        # Do not call async_write_ha_state() here because HA will update the state automatically
 
     def update_state(self):
         """Update the native value from device data."""
