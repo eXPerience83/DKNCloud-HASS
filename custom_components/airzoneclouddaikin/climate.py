@@ -5,8 +5,7 @@ from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
 from .const import DOMAIN
-# Note: We now use the API instance directly (passed as _api)
- 
+
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -29,7 +28,7 @@ class AirzoneClimate(ClimateEntity):
 
     def __init__(self, coordinator, api, device_data: dict, config: dict):
         """Initialize the climate entity.
-
+        
         :param coordinator: The DataUpdateCoordinator instance.
         :param api: The AirzoneAPI instance.
         :param device_data: Dictionary with device information.
@@ -125,16 +124,18 @@ class AirzoneClimate(ClimateEntity):
                     self._fan_mode = str(device.get("heat_speed", ""))
             else:
                 self._hvac_mode = HVACMode.OFF
-        # Do not call async_write_ha_state() here because HA updates automatically after the coordinator refresh.
+        # No need to call async_write_ha_state() here as the coordinator update will refresh the state.
 
     def turn_on(self):
-        """Turn on the device by sending P1=1."""
+        """Turn on the device by sending P1=1 and update state immediately."""
         self._send_command("P1", 1)
+        self.async_write_ha_state()
 
     def turn_off(self):
-        """Turn off the device by sending P1=0."""
+        """Turn off the device by sending P1=0 and update state immediately."""
         self._send_command("P1", 0)
         self._hvac_mode = HVACMode.OFF
+        self.async_write_ha_state()
 
     def set_hvac_mode(self, hvac_mode):
         """Set the HVAC mode.
@@ -162,6 +163,7 @@ class AirzoneClimate(ClimateEntity):
         if hvac_mode in mode_mapping:
             self._send_command("P2", mode_mapping[hvac_mode])
             self._hvac_mode = hvac_mode
+            self.async_write_ha_state()
         else:
             _LOGGER.error("Unsupported HVAC mode: %s", hvac_mode)
 
@@ -193,6 +195,7 @@ class AirzoneClimate(ClimateEntity):
                 temp = max_temp
             self._send_command(command, f"{temp}.0")
             self._target_temperature = temp
+            self.async_write_ha_state()
 
     def set_fan_speed(self, speed):
         """Set the fan speed.
@@ -216,6 +219,7 @@ class AirzoneClimate(ClimateEntity):
             _LOGGER.warning("Fan speed adjustment not supported in mode %s", self._hvac_mode)
             return
         self._fan_mode = str(speed)
+        self.async_write_ha_state()
 
     @property
     def fan_speed_range(self):
@@ -238,7 +242,6 @@ class AirzoneClimate(ClimateEntity):
             }
         }
         _LOGGER.info("Sending command: %s", payload)
-        # Use the API instance (self._api) to send the event
         if self.hass and self.hass.loop:
             asyncio.run_coroutine_threadsafe(
                 self._api.send_event(payload), self.hass.loop
