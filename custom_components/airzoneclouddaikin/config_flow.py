@@ -9,11 +9,10 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Add scan_interval option (default 30 seconds, minimum 10)
+# Remove scan_interval from the schema; the update interval is fixed at 10 seconds.
 DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_USERNAME): cv.string,
     vol.Required(CONF_PASSWORD): cv.string,
-    vol.Optional("scan_interval", default=30): vol.All(vol.Coerce(int), vol.Range(min=10)),
     vol.Optional("force_hvac_mode_auto", default=False): bool,
 })
 
