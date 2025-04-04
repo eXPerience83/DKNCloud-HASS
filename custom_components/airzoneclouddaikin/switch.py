@@ -4,7 +4,6 @@ import hashlib
 import logging
 from homeassistant.components.switch import SwitchEntity
 from .const import DOMAIN
-
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -18,27 +17,27 @@ async def async_setup_entry(hass, entry, async_add_entities):
     switches = []
     # Create a switch entity for each device in the coordinator data.
     for device_id, device in coordinator.data.items():
-        switches.append(AirzonePowerSwitch(coordinator, api, device))
+        switches.append(AirzonePowerSwitch(coordinator, api, device, hass))
     async_add_entities(switches, True)
 
 class AirzonePowerSwitch(SwitchEntity):
     """Representation of a power switch for an Airzone device."""
 
-    def __init__(self, coordinator, api, device_data: dict):
+    def __init__(self, coordinator, api, device_data: dict, hass):
         """
         Initialize the power switch.
         
         :param coordinator: The DataUpdateCoordinator instance.
         :param api: The AirzoneAPI instance.
         :param device_data: Dictionary with device information.
+        :param hass: Home Assistant instance.
         """
         self.coordinator = coordinator
         self._api = api
         self._device_data = device_data
-        # Construct the entity name.
+        self.hass = hass
         name = f"{device_data.get('name', 'Airzone Device')} Power"
         self._attr_name = name
-        # Set the unique_id using the device 'id'; fallback to a hash if missing.
         device_id = device_data.get("id")
         if device_id and device_id.strip():
             self._attr_unique_id = f"{device_id}_power"
@@ -61,16 +60,16 @@ class AirzonePowerSwitch(SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs):
-        """Turn on the device by sending P1=1 and update state."""
+        """Turn on the device by sending P1=1."""
         await self.hass.async_add_executor_job(self.turn_on)
         self._device_data["power"] = "1"
-        # Let the coordinator handle state refresh
+        # The coordinator will refresh the state
 
     async def async_turn_off(self, **kwargs):
-        """Turn off the device by sending P1=0 and update state."""
+        """Turn off the device by sending P1=0."""
         await self.hass.async_add_executor_job(self.turn_off)
         self._device_data["power"] = "0"
-        # Let the coordinator handle state refresh
+        # The coordinator will refresh the state
 
     def turn_on(self):
         """Turn on the device."""
@@ -101,8 +100,7 @@ class AirzonePowerSwitch(SwitchEntity):
     async def async_update(self):
         """Update the switch state from the coordinator data."""
         await self.coordinator.async_request_refresh()
-        # Retrieve the updated device data using the device's unique id
         device = self.coordinator.data.get(self._device_data.get("id"))
         if device:
             self._device_data = device
-        # The state will be updated by the coordinator; no need to call async_write_ha_state() here.
+        # The coordinator will update the entity state automatically
