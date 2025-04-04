@@ -9,10 +9,10 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Remove scan_interval from the schema; the update interval is fixed at 10 seconds.
 DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_USERNAME): cv.string,
     vol.Required(CONF_PASSWORD): cv.string,
+    vol.Optional("scan_interval", default=10): vol.All(vol.Coerce(int), vol.Range(min=10)),
     vol.Optional("force_hvac_mode_auto", default=False): bool,
 })
 
@@ -37,8 +37,5 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors=errors,
                 )
             return self.async_create_entry(title="DKN Cloud for HASS", data=user_input)
-        return self.async_show_form(
-            step_id="user",
-            data_schema=DATA_SCHEMA,
-            errors=errors,
-        )
+        return self.async_show_
+        form
