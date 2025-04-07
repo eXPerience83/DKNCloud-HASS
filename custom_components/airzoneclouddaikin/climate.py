@@ -51,9 +51,9 @@ class AirzoneClimate(ClimateEntity):
     @property
     def hvac_modes(self):
         """Return the list of supported HVAC modes."""
-        modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY]
+        modes = {HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY}
         if self._config.get("force_hvac_mode_auto", False):
-            modes.append(HVACMode.AUTO)
+            modes.add(HVACMode.AUTO)
         return modes
 
     @property
@@ -67,24 +67,24 @@ class AirzoneClimate(ClimateEntity):
         
         Return None when temperature adjustments are not supported (FAN_ONLY, DRY, OFF).
         """
-        if self._hvac_mode in [HVACMode.FAN_ONLY, HVACMode.DRY, HVACMode.OFF]:
+        if self._hvac_mode in {HVACMode.FAN_ONLY, HVACMode.DRY, HVACMode.OFF}:
             return None
         return self._target_temperature
 
     @property
     def supported_features(self):
-        """Return supported features dynamically.
-        
-        - In DRY or OFF, no temperature or fan adjustments are supported.
-        - In FAN_ONLY mode, only fan mode is supported.
-        - Otherwise, both target temperature and fan mode are supported.
+        """Return supported features as a set.
+
+        - In OFF and DRY modes: no temperature or fan controls.
+        - In FAN_ONLY mode: only fan control.
+        - Otherwise: temperature and fan control.
         """
-        if self._hvac_mode in [HVACMode.DRY, HVACMode.OFF]:
-            return 0
+        if self._hvac_mode in {HVACMode.DRY, HVACMode.OFF}:
+            return set()
         elif self._hvac_mode == HVACMode.FAN_ONLY:
-            return ClimateEntityFeature.FAN_MODE
+            return {ClimateEntityFeature.FAN_MODE}
         else:
-            return ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
+            return {ClimateEntityFeature.TARGET_TEMPERATURE, ClimateEntityFeature.FAN_MODE}
 
     @property
     def fan_modes(self):
@@ -95,10 +95,10 @@ class AirzoneClimate(ClimateEntity):
     @property
     def fan_mode(self):
         """Return the current fan speed.
-        
-        In DRY, OFF, or FAN_ONLY mode, no fan mode is applicable (FAN_ONLY shows fan speed but not temperature).
+
+        In DRY or OFF modes, no fan mode is applicable.
         """
-        if self._hvac_mode in [HVACMode.DRY, HVACMode.OFF]:
+        if self._hvac_mode in {HVACMode.DRY, HVACMode.OFF}:
             return None
         return self._fan_mode
 
@@ -150,7 +150,7 @@ class AirzoneClimate(ClimateEntity):
                 self._hvac_mode = HVACMode.OFF
                 self._target_temperature = None
                 self._fan_mode = None
-        # HA will update the state automatically after coordinator refresh.
+        # We don't call async_write_ha_state here; the coordinator will update the entity.
 
     async def async_set_fan_mode(self, fan_mode):
         """Set the fan mode asynchronously (delegates to set_fan_speed)."""
@@ -162,7 +162,7 @@ class AirzoneClimate(ClimateEntity):
         self.set_fan_speed(fan_mode)
 
     def _update_local_state(self):
-        """Update local state immediately by scheduling async_write_ha_state."""
+        """Schedule an immediate state update."""
         self.hass.async_create_task(self.async_write_ha_state())
 
     def turn_on(self):
@@ -182,7 +182,7 @@ class AirzoneClimate(ClimateEntity):
 
     def set_hvac_mode(self, hvac_mode):
         """Set the HVAC mode.
-        
+
         Mapping:
          - HVACMode.OFF: call turn_off() and return.
          - HVACMode.COOL -> P2=1
@@ -206,8 +206,7 @@ class AirzoneClimate(ClimateEntity):
         if hvac_mode in mode_mapping:
             self._send_command("P2", mode_mapping[hvac_mode])
             self._hvac_mode = hvac_mode
-            # For FAN_ONLY and DRY, disable temperature adjustments.
-            if hvac_mode in [HVACMode.FAN_ONLY, HVACMode.DRY]:
+            if hvac_mode in {HVACMode.FAN_ONLY, HVACMode.DRY}:
                 self._target_temperature = None
             self._update_local_state()
         else:
@@ -215,18 +214,18 @@ class AirzoneClimate(ClimateEntity):
 
     def set_temperature(self, **kwargs):
         """Set the target temperature.
-        
+
         Must be called after changing the mode.
         For HEAT or AUTO modes, use P8; for COOL mode use P7.
         Temperature adjustments are disabled in DRY, FAN_ONLY, or OFF modes.
         """
-        if self._hvac_mode in [HVACMode.DRY, HVACMode.FAN_ONLY, HVACMode.OFF]:
+        if self._hvac_mode in {HVACMode.DRY, HVACMode.FAN_ONLY, HVACMode.OFF}:
             _LOGGER.warning("Temperature adjustment not supported in mode %s", self._hvac_mode)
             return
         temp = kwargs.get(ATTR_TEMPERATURE)
         if temp is not None:
             temp = int(float(temp))
-            if self._hvac_mode in [HVACMode.HEAT, HVACMode.AUTO]:
+            if self._hvac_mode in {HVACMode.HEAT, HVACMode.AUTO}:
                 min_temp = int(float(self._device_data.get("min_limit_heat", 16)))
                 max_temp = int(float(self._device_data.get("max_limit_heat", 32)))
                 command = "P8"
@@ -244,11 +243,11 @@ class AirzoneClimate(ClimateEntity):
 
     def set_fan_speed(self, speed):
         """Set the fan speed.
-        
+
         Uses P3 to adjust fan speed in COOL and FAN_ONLY modes and P4 in HEAT/AUTO modes.
         Fan speed adjustments are disabled in DRY, OFF, or when not supported.
         """
-        if self._hvac_mode in [HVACMode.DRY, HVACMode.OFF]:
+        if self._hvac_mode in {HVACMode.DRY, HVACMode.OFF}:
             _LOGGER.warning("Fan speed adjustment not supported in mode %s", self._hvac_mode)
             return
         try:
@@ -259,9 +258,9 @@ class AirzoneClimate(ClimateEntity):
         if speed not in self.fan_speed_range:
             _LOGGER.error("Fan speed %s not in valid range %s", speed, self.fan_speed_range)
             return
-        if self._hvac_mode in [HVACMode.COOL, HVACMode.FAN_ONLY]:
+        if self._hvac_mode in {HVACMode.COOL, HVACMode.FAN_ONLY}:
             self._send_command("P3", speed)
-        elif self._hvac_mode in [HVACMode.HEAT, HVACMode.AUTO]:
+        elif self._hvac_mode in {HVACMode.HEAT, HVACMode.AUTO}:
             self._send_command("P4", speed)
         else:
             _LOGGER.warning("Fan speed adjustment not supported in mode %s", self._hvac_mode)
