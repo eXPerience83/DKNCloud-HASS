@@ -37,4 +37,8 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors=errors,
                 )
             return self.async_create_entry(title="DKN Cloud for HASS", data=user_input)
-        return self.async_show_form
+        return self.async_show_form(
+            step_id="user",
+            data_schema=DATA_SCHEMA,
+            errors=errors,
+        )
