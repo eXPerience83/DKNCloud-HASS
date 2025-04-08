@@ -26,10 +26,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 class AirzoneClimate(ClimateEntity):
     """Representation of an Airzone Cloud Daikin climate device."""
-    
+
     def __init__(self, coordinator, api, device_data: dict, config: dict, hass):
-        """Initialize the climate entity.
-        
+        """
+        Initialize the climate entity.
+
         :param coordinator: The DataUpdateCoordinator instance.
         :param api: The AirzoneAPI instance.
         :param device_data: Dictionary with device information.
@@ -38,17 +39,19 @@ class AirzoneClimate(ClimateEntity):
         """
         self.coordinator = coordinator
         self._api = api
-        self._device_data = device_data
+        self._device_data = device_data.copy()  # Use a copy to be safe
         self._config = config
         self.hass = hass
         self._attr_name = device_data.get("name", "Airzone Device")
-        # Ensure that a unique_id exists.
+
+        # Ensure there is a valid unique ID.
         device_id = device_data.get("id")
         if not device_id or not device_id.strip():
-            # Fallback: generate a unique id by hashing the device name.
-            device_id = hashlib.sha256(self._attr_name.encode("utf-8")).hexdigest()
-            self._device_data["id"] = device_id  # Update the device data for future use.
+            # Generate unique_id as hash of the string representation of device_data.
+            device_id = hashlib.sha256(str(device_data).encode("utf-8")).hexdigest()
+            self._device_data["id"] = device_id  # Update the device data for consistency
         self._attr_unique_id = device_id
+
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
@@ -69,9 +72,9 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def target_temperature(self):
-        """Return the current target temperature.
+        """Return the target temperature.
         
-        Hide temperature control in OFF, DRY, and FAN_ONLY modes.
+        Hide temperature control in OFF, DRY, or FAN_ONLY modes.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
             return None
@@ -81,8 +84,8 @@ class AirzoneClimate(ClimateEntity):
     def supported_features(self):
         """Return supported features based on the current mode.
         
-        - OFF and DRY: no controls.
-        - FAN_ONLY: only fan control.
+        - In OFF and DRY: no controls.
+        - In FAN_ONLY: only fan control.
         - Otherwise: both temperature and fan control.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
@@ -121,7 +124,7 @@ class AirzoneClimate(ClimateEntity):
         }
 
     async def async_update(self):
-        """Update the climate entity from the coordinator data and refresh the UI immediately."""
+        """Update the climate entity from the coordinator data and force UI refresh."""
         await self.coordinator.async_request_refresh()
         device = self.coordinator.data.get(self._device_data.get("id"))
         if device:
@@ -149,7 +152,6 @@ class AirzoneClimate(ClimateEntity):
                     self._target_temperature = int(float(device.get("heat_consign", "0")))
                     self._fan_mode = str(device.get("heat_speed", ""))
                 else:
-                    # Default fallback to HEAT mode
                     self._hvac_mode = HVACMode.HEAT
                     self._target_temperature = int(float(device.get("heat_consign", "0")))
                     self._fan_mode = str(device.get("heat_speed", ""))
@@ -157,7 +159,6 @@ class AirzoneClimate(ClimateEntity):
                 self._hvac_mode = HVACMode.OFF
                 self._target_temperature = None
                 self._fan_mode = None
-        # Force immediate UI update
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode):
@@ -169,10 +170,9 @@ class AirzoneClimate(ClimateEntity):
             self._send_command("P1", 0)
         else:
             if self._hvac_mode == HVACMode.OFF:
-                # If currently off, send on command first and wait briefly
                 self._hvac_mode = hvac_mode
                 self._send_command("P1", 1)
-                await asyncio.sleep(1)  # Wait 1 second for device to power on
+                await asyncio.sleep(1)  # Wait 1 second for power on
             mode_mapping = {
                 HVACMode.COOL: "1",
                 HVACMode.HEAT: "2",
@@ -185,14 +185,13 @@ class AirzoneClimate(ClimateEntity):
                 self._hvac_mode = hvac_mode
             else:
                 _LOGGER.error("Unsupported HVAC mode: %s", hvac_mode)
-        # Force immediate UI update and refresh state
         self.async_write_ha_state()
         self._refresh_state()
 
     async def async_set_temperature(self, **kwargs):
         """Set the target temperature asynchronously.
-
-        Do nothing if the mode does not support temperature adjustments.
+        
+        Do nothing if the current mode does not support temperature changes.
         """
         if self._hvac_mode in [HVACMode.DRY, HVACMode.FAN_ONLY, HVACMode.OFF]:
             _LOGGER.warning("Temperature adjustment not supported in mode %s", self._hvac_mode)
@@ -219,8 +218,8 @@ class AirzoneClimate(ClimateEntity):
 
     async def async_set_fan_mode(self, fan_mode):
         """Set the fan mode asynchronously.
-
-        Do nothing if the current mode does not allow fan changes.
+        
+        If the mode does not allow fan adjustments, ignore the command.
         """
         if self._hvac_mode in [HVACMode.DRY, HVACMode.OFF]:
             _LOGGER.warning("Fan control not supported in mode %s", self._hvac_mode)
@@ -244,12 +243,12 @@ class AirzoneClimate(ClimateEntity):
                 _LOGGER.error("Error refreshing state: %s", err)
 
     def turn_on(self):
-        """Turn on the device by sending P1=1 and refresh state immediately."""
+        """Turn on the device by sending P1=1 and refresh state."""
         self._send_command("P1", 1)
         self._refresh_state()
 
     def turn_off(self):
-        """Turn off the device by sending P1=0 and refresh state immediately."""
+        """Turn off the device by sending P1=0 and refresh state."""
         self._send_command("P1", 0)
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
@@ -259,7 +258,7 @@ class AirzoneClimate(ClimateEntity):
     def set_fan_speed(self, speed):
         """Set the fan speed.
         
-        Uses P3 for COOL and FAN_ONLY modes and P4 for HEAT/AUTO modes.
+        Uses P3 for COOL and FAN_ONLY modes; uses P4 for HEAT/AUTO modes.
         Fan control is not allowed in DRY or OFF modes.
         """
         try:
@@ -294,7 +293,7 @@ class AirzoneClimate(ClimateEntity):
     def _send_command(self, option, value):
         """Send a command to the device using the events endpoint and wait for completion.
         
-        This method sends the command, waits synchronously for the response, and then forces a state refresh.
+        After sending the command, force a state refresh.
         """
         payload = {
             "event": {
@@ -307,6 +306,7 @@ class AirzoneClimate(ClimateEntity):
         _LOGGER.info("Sending command: %s", payload)
         if self.hass and self.hass.loop:
             try:
+                # Wait for the command to complete before continuing.
                 asyncio.run_coroutine_threadsafe(
                     self._api.send_event(payload), self.hass.loop
                 ).result()
