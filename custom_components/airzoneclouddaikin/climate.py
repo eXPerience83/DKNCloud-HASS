@@ -2,7 +2,6 @@
 import asyncio
 import hashlib
 import logging
-from datetime import timedelta
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
@@ -21,7 +20,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     api = data.get("api")
     config = entry.data
     entities = []
-    # Create a ClimateEntity for each device in the coordinator data
+    # Create a ClimateEntity for each device in the coordinator's data.
     for device_id, device in coordinator.data.items():
         entities.append(AirzoneClimate(coordinator, api, device, config, hass))
     async_add_entities(entities, True)
@@ -41,20 +40,25 @@ class AirzoneClimate(ClimateEntity):
         """
         self.coordinator = coordinator
         self._api = api
-        # Use a copy of device_data to avoid accidental modifications of the original dictionary
+        # Work with a copy of the device_data to avoid modifying the original data
         self._device_data = device_data.copy()
         self._config = config
         self.hass = hass
 
-        # Set the entity name using the device "name" field or default to "Airzone Device"
+        # Set the entity name using the "name" field or default to "Airzone Device"
         self._attr_name = self._device_data.get("name", "Airzone Device")
 
-        # Ensure unique_id is defined.
-        # If an "id" is not provided, generate one based on the device name.
+        # Ensure that unique_id is set once and remains immutable.
         device_id = self._device_data.get("id")
         if not device_id or not str(device_id).strip():
-            device_id = hashlib.sha256(self._attr_name.encode("utf-8")).hexdigest()
-            self._device_data["id"] = device_id  # update device_data for future use
+            # Generate a unique id based on static fields (name, mac, pin)
+            static_data = {
+                "name": self._device_data.get("name"),
+                "mac": self._device_data.get("mac"),
+                "pin": self._device_data.get("pin")
+            }
+            device_id = hashlib.sha256(str(static_data).encode("utf-8")).hexdigest()
+            self._device_data["id"] = device_id  # update for future use
         self._attr_unique_id = device_id
 
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
@@ -79,7 +83,7 @@ class AirzoneClimate(ClimateEntity):
     def target_temperature(self):
         """Return the target temperature.
 
-        Returns None if the current mode is OFF, DRY, or FAN_ONLY.
+        Returns None if the mode is OFF, DRY, or FAN_ONLY.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
             return None
@@ -87,11 +91,11 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def supported_features(self):
-        """Return supported features based on the current HVAC mode.
+        """Return supported features based on the current mode.
 
-        - For OFF or DRY modes: no controls.
-        - For FAN_ONLY mode: allow fan mode control.
-        - Otherwise: allow both temperature and fan mode control.
+        - OFF or DRY: no controls.
+        - FAN_ONLY: only FAN_MODE control.
+        - Otherwise: allow TARGET_TEMPERATURE and FAN_MODE.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return 0
@@ -108,7 +112,10 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def fan_mode(self):
-        """Return the current fan speed; return None if mode is OFF or DRY."""
+        """Return the current fan mode.
+
+        Returns None if the mode is OFF or DRY.
+        """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return None
         return self._fan_mode
@@ -128,35 +135,55 @@ class AirzoneClimate(ClimateEntity):
     async def async_update(self):
         """Update the climate entity from the coordinator data and refresh the UI."""
         await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self._device_data.get("id"))
-        if device:
-            self._device_data = device
-            if int(device.get("power", 0)) == 1:
-                mode_val = device.get("mode")
+        # Try to get the updated device data using the unique id stored at initialization.
+        updated_device = self.coordinator.data.get(self._attr_unique_id)
+        if not updated_device:
+            # Fallback: iterate over coordinator data to find a device matching the name.
+            for dev in self.coordinator.data.values():
+                if dev.get("name") == self._attr_name:
+                    updated_device = dev
+                    break
+        if updated_device:
+            # Update only dynamic fields, leaving the unique id unchanged.
+            self._device_data.update({
+                "power": updated_device.get("power"),
+                "mode": updated_device.get("mode"),
+                "cold_consign": updated_device.get("cold_consign"),
+                "heat_consign": updated_device.get("heat_consign"),
+                "cold_speed": updated_device.get("cold_speed"),
+                "heat_speed": updated_device.get("heat_speed"),
+                "min_limit_cold": updated_device.get("min_limit_cold"),
+                "max_limit_cold": updated_device.get("max_limit_cold"),
+                "min_limit_heat": updated_device.get("min_limit_heat"),
+                "max_limit_heat": updated_device.get("max_limit_heat"),
+            })
+            if int(updated_device.get("power", 0)) == 1:
+                mode_val = updated_device.get("mode")
                 if mode_val == "1":
                     self._hvac_mode = HVACMode.COOL
-                    self._target_temperature = int(float(device.get("cold_consign", "0")))
-                    self._fan_mode = str(device.get("cold_speed", ""))
+                    self._target_temperature = int(float(updated_device.get("cold_consign", "0")))
+                    self._fan_mode = str(updated_device.get("cold_speed", ""))
                 elif mode_val == "2":
                     self._hvac_mode = HVACMode.HEAT
-                    self._target_temperature = int(float(device.get("heat_consign", "0")))
-                    self._fan_mode = str(device.get("heat_speed", ""))
+                    self._target_temperature = int(float(updated_device.get("heat_consign", "0")))
+                    self._fan_mode = str(updated_device.get("heat_speed", ""))
                 elif mode_val == "3":
                     self._hvac_mode = HVACMode.FAN_ONLY
                     self._target_temperature = None
-                    self._fan_mode = str(device.get("cold_speed", ""))
+                    self._fan_mode = str(updated_device.get("cold_speed", ""))
                 elif mode_val == "5":
                     self._hvac_mode = HVACMode.DRY
                     self._target_temperature = None
                     self._fan_mode = None
                 elif mode_val == "4":
                     self._hvac_mode = HVACMode.AUTO
-                    self._target_temperature = int(float(device.get("heat_consign", "0")))
-                    self._fan_mode = str(device.get("heat_speed", ""))
+                    self._target_temperature = int(float(updated_device.get("heat_consign", "0")))
+                    self._fan_mode = str(updated_device.get("heat_speed", ""))
                 else:
+                    # Default fallback to HEAT mode
                     self._hvac_mode = HVACMode.HEAT
-                    self._target_temperature = int(float(device.get("heat_consign", "0")))
-                    self._fan_mode = str(device.get("heat_speed", ""))
+                    self._target_temperature = int(float(updated_device.get("heat_consign", "0")))
+                    self._fan_mode = str(updated_device.get("heat_speed", ""))
             else:
                 self._hvac_mode = HVACMode.OFF
                 self._target_temperature = None
@@ -171,11 +198,11 @@ class AirzoneClimate(ClimateEntity):
             self._fan_mode = None
             self._send_command("P1", 0)
         else:
-            # If device is off, turn it on first
+            # If the device is off, turn it on first.
             if self._hvac_mode == HVACMode.OFF:
                 self._hvac_mode = hvac_mode
                 self._send_command("P1", 1)
-                await asyncio.sleep(1)  # wait 1 second for the device to power on
+                await asyncio.sleep(1)  # Wait 1 second for the device to power on
             mode_mapping = {
                 HVACMode.COOL: "1",
                 HVACMode.HEAT: "2",
@@ -222,7 +249,7 @@ class AirzoneClimate(ClimateEntity):
     async def async_set_fan_mode(self, fan_mode):
         """Set the fan mode asynchronously.
 
-        If the current mode does not support fan control, no action is taken.
+        Does nothing if fan control is not supported in the current mode.
         """
         if self._hvac_mode in [HVACMode.DRY, HVACMode.OFF]:
             _LOGGER.warning("Fan control not supported in mode %s", self._hvac_mode)
@@ -246,12 +273,12 @@ class AirzoneClimate(ClimateEntity):
                 _LOGGER.error("Error refreshing state: %s", err)
 
     def turn_on(self):
-        """Turn on the device by sending P1=1 and refresh the state."""
+        """Turn on the device by sending P1=1 and refresh state."""
         self._send_command("P1", 1)
         self._refresh_state()
 
     def turn_off(self):
-        """Turn off the device by sending P1=0, reset mode values and refresh the state."""
+        """Turn off the device by sending P1=0, reset mode values, and refresh state."""
         self._send_command("P1", 0)
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
@@ -293,7 +320,7 @@ class AirzoneClimate(ClimateEntity):
         return list(range(1, speeds + 1))
 
     def _send_command(self, option, value):
-        """Send a command to the device using the events endpoint and wait for its completion."""
+        """Send a command to the device using the events endpoint and wait for completion."""
         payload = {
             "event": {
                 "cgi": "modmaquina",
@@ -305,7 +332,7 @@ class AirzoneClimate(ClimateEntity):
         _LOGGER.info("Sending command: %s", payload)
         if self.hass and self.hass.loop:
             try:
-                # Wait for the API response
+                # Wait for the API response.
                 asyncio.run_coroutine_threadsafe(
                     self._api.send_event(payload), self.hass.loop
                 ).result()
