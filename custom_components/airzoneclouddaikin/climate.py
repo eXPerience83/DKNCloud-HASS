@@ -74,7 +74,7 @@ class AirzoneClimate(ClimateEntity):
     @property
     def supported_features(self):
         """Return supported features as a set.
-
+        
         - In OFF and DRY modes: no temperature or fan controls.
         - In FAN_ONLY mode: only fan control.
         - Otherwise: temperature and fan control.
@@ -95,7 +95,7 @@ class AirzoneClimate(ClimateEntity):
     @property
     def fan_mode(self):
         """Return the current fan speed.
-
+        
         In DRY or OFF modes, no fan mode is applicable.
         """
         if self._hvac_mode in {HVACMode.DRY, HVACMode.OFF}:
@@ -150,20 +150,20 @@ class AirzoneClimate(ClimateEntity):
                 self._hvac_mode = HVACMode.OFF
                 self._target_temperature = None
                 self._fan_mode = None
-        # We don't call async_write_ha_state here; the coordinator will update the entity.
+        # The coordinator will update the state automatically.
 
     async def async_set_fan_mode(self, fan_mode):
         """Set the fan mode asynchronously (delegates to set_fan_speed)."""
         await self.hass.async_add_executor_job(self.set_fan_mode, fan_mode)
-        self.hass.async_create_task(self.async_write_ha_state())
+        self.hass.async_run_job(self.async_write_ha_state)
 
     def set_fan_mode(self, fan_mode):
         """Set the fan mode by calling set_fan_speed."""
         self.set_fan_speed(fan_mode)
 
     def _update_local_state(self):
-        """Schedule an immediate state update."""
-        self.hass.async_create_task(self.async_write_ha_state())
+        """Schedule an immediate state update in a thread-safe way."""
+        self.hass.async_run_job(self.async_write_ha_state)
 
     def turn_on(self):
         """Turn on the device by sending P1=1 and update local state immediately."""
@@ -182,7 +182,7 @@ class AirzoneClimate(ClimateEntity):
 
     def set_hvac_mode(self, hvac_mode):
         """Set the HVAC mode.
-
+        
         Mapping:
          - HVACMode.OFF: call turn_off() and return.
          - HVACMode.COOL -> P2=1
