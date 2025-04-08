@@ -1,6 +1,7 @@
 """Climate platform for DKN Cloud for HASS using the Airzone Cloud API with DataUpdateCoordinator."""
 import asyncio
 import hashlib
+import json
 import logging
 
 from homeassistant.components.climate import ClimateEntity
@@ -40,24 +41,24 @@ class AirzoneClimate(ClimateEntity):
         """
         self.coordinator = coordinator
         self._api = api
-        # Work with a copy of the device_data to avoid modifying the original data
+        # Work with a copy to avoid modifying the original coordinator data.
         self._device_data = device_data.copy()
         self._config = config
         self.hass = hass
 
-        # Set the entity name using the "name" field or default to "Airzone Device"
+        # Set entity name using the "name" field; default to "Airzone Device".
         self._attr_name = self._device_data.get("name", "Airzone Device")
 
-        # Ensure that unique_id is set once and remains immutable.
+        # Ensure unique_id is generated in a stable manner.
         device_id = self._device_data.get("id")
         if not device_id or not str(device_id).strip():
-            # Generate a unique id based on static fields (name, mac, pin)
-            static_data = {
+            # Generate a stable id based on static fields (name, mac, pin)
+            static_fields = {
                 "name": self._device_data.get("name"),
                 "mac": self._device_data.get("mac"),
                 "pin": self._device_data.get("pin")
             }
-            device_id = hashlib.sha256(str(static_data).encode("utf-8")).hexdigest()
+            device_id = hashlib.sha256(json.dumps(static_fields, sort_keys=True).encode("utf-8")).hexdigest()
             self._device_data["id"] = device_id  # update for future use
         self._attr_unique_id = device_id
 
@@ -81,22 +82,14 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def target_temperature(self):
-        """Return the target temperature.
-
-        Returns None if the mode is OFF, DRY, or FAN_ONLY.
-        """
+        """Return the target temperature (or None if not applicable)."""
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
             return None
         return self._target_temperature
 
     @property
     def supported_features(self):
-        """Return supported features based on the current mode.
-
-        - OFF or DRY: no controls.
-        - FAN_ONLY: only FAN_MODE control.
-        - Otherwise: allow TARGET_TEMPERATURE and FAN_MODE.
-        """
+        """Return supported features based on the current mode."""
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return 0
         elif self._hvac_mode == HVACMode.FAN_ONLY:
@@ -106,23 +99,20 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def fan_modes(self):
-        """Return a list of valid fan speeds (as strings) based on 'availables_speeds'."""
+        """Return a list of valid fan speeds (as strings) based on the 'availables_speeds' field."""
         speeds = self.fan_speed_range
         return [str(speed) for speed in speeds]
 
     @property
     def fan_mode(self):
-        """Return the current fan mode.
-
-        Returns None if the mode is OFF or DRY.
-        """
+        """Return the current fan mode, or None if not available."""
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return None
         return self._fan_mode
 
     @property
     def device_info(self):
-        """Return device info for grouping in the device registry."""
+        """Return device info for the device registry."""
         return {
             "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
@@ -133,30 +123,35 @@ class AirzoneClimate(ClimateEntity):
         }
 
     async def async_update(self):
-        """Update the climate entity from the coordinator data and refresh the UI."""
+        """Update the entity from the coordinator without altering the unique_id."""
         await self.coordinator.async_request_refresh()
-        # Try to get the updated device data using the unique id stored at initialization.
+
+        # Try to fetch updated data using the stable unique_id.
         updated_device = self.coordinator.data.get(self._attr_unique_id)
         if not updated_device:
-            # Fallback: iterate over coordinator data to find a device matching the name.
+            # Fallback: search for a device with the same name.
             for dev in self.coordinator.data.values():
                 if dev.get("name") == self._attr_name:
                     updated_device = dev
                     break
+
         if updated_device:
-            # Update only dynamic fields, leaving the unique id unchanged.
-            self._device_data.update({
-                "power": updated_device.get("power"),
-                "mode": updated_device.get("mode"),
-                "cold_consign": updated_device.get("cold_consign"),
-                "heat_consign": updated_device.get("heat_consign"),
-                "cold_speed": updated_device.get("cold_speed"),
-                "heat_speed": updated_device.get("heat_speed"),
-                "min_limit_cold": updated_device.get("min_limit_cold"),
-                "max_limit_cold": updated_device.get("max_limit_cold"),
-                "min_limit_heat": updated_device.get("min_limit_heat"),
-                "max_limit_heat": updated_device.get("max_limit_heat"),
-            })
+            # Update only dynamic properties
+            dynamic_fields = [
+                "power",
+                "mode",
+                "cold_consign",
+                "heat_consign",
+                "cold_speed",
+                "heat_speed",
+                "min_limit_cold",
+                "max_limit_cold",
+                "min_limit_heat",
+                "max_limit_heat",
+            ]
+            for field in dynamic_fields:
+                self._device_data[field] = updated_device.get(field)
+
             if int(updated_device.get("power", 0)) == 1:
                 mode_val = updated_device.get("mode")
                 if mode_val == "1":
@@ -191,18 +186,18 @@ class AirzoneClimate(ClimateEntity):
         self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode):
-        """Set the HVAC mode asynchronously with immediate UI update."""
+        """Set the HVAC mode asynchronously and update the UI immediately."""
         if hvac_mode == HVACMode.OFF:
             self._hvac_mode = HVACMode.OFF
             self._target_temperature = None
             self._fan_mode = None
             self._send_command("P1", 0)
         else:
-            # If the device is off, turn it on first.
+            # If device is off, power it on first.
             if self._hvac_mode == HVACMode.OFF:
                 self._hvac_mode = hvac_mode
                 self._send_command("P1", 1)
-                await asyncio.sleep(1)  # Wait 1 second for the device to power on
+                await asyncio.sleep(1)  # Wait 1 second for the device to turn on
             mode_mapping = {
                 HVACMode.COOL: "1",
                 HVACMode.HEAT: "2",
@@ -273,12 +268,12 @@ class AirzoneClimate(ClimateEntity):
                 _LOGGER.error("Error refreshing state: %s", err)
 
     def turn_on(self):
-        """Turn on the device by sending P1=1 and refresh state."""
+        """Turn on the device by sending P1=1 and refresh the state."""
         self._send_command("P1", 1)
         self._refresh_state()
 
     def turn_off(self):
-        """Turn off the device by sending P1=0, reset mode values, and refresh state."""
+        """Turn off the device by sending P1=0, reset mode, and refresh the state."""
         self._send_command("P1", 0)
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
@@ -311,7 +306,7 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def fan_speed_range(self):
-        """Return a list of valid fan speeds based on the 'availables_speeds' field in device data."""
+        """Return a list of valid fan speeds based on the 'availables_speeds' field from device data."""
         speeds_str = self._device_data.get("availables_speeds", "3")
         try:
             speeds = int(speeds_str)
