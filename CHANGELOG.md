@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.8] - 2025-04-09
+
+### **Fixed**  
+- **Compatibility with Home Assistant 2025.4+:**  
+  - Resolved critical errors caused by `TypeError: argument of type 'int' is not iterable` in `climate.py` when evaluating supported features.
+  - Removed unsupported checks like `if ClimateEntityFeature.X in supported_features`, replacing them with bitwise operations to avoid compatibility issues with bitmask flags.
+  - Eliminated invalid imports such as `ATTR_MIN_TEMP` and `ATTR_MAX_TEMP` from `homeassistant.const` (now imported from `homeassistant.components.climate`).
+
+### **Changed**  
+- **Climate Entity (`climate.py`):**
+  - Now hides fan controls (fan mode and fan speeds) when HVAC mode is `OFF` or `DRY`.
+  - Updated `fan_modes` and `fan_mode` properties to return empty list or `None` when fan control is not applicable.
+  - The `supported_features` property dynamically adjusts the capabilities based on the current HVAC mode, removing temperature and fan control when in unsupported modes (`OFF`, `DRY`, or `FAN_ONLY`).
+  - Improved `capability_attributes` to conditionally expose supported capabilities, avoiding crashes in Home Assistant core when rendering UI elements.
+  - Removed unnecessary overrides and obsolete code that caused entity registration failures (`NoEntitySpecifiedError` and `AttributeError: __attr_hvac_mode`).
+
+### **Improved**  
+- **Codebase Maintenance:**
+  - Refactored legacy entity attribute assignments to fully comply with Home Assistant’s internal attribute naming conventions.
+  - Ensured all inline comments are in English for consistency across the repository.
+  - Eliminated the use of `async_write_ha_state()` or thread-safe update calls that conflicted with Home Assistant's async context in 2025.4 and beyond.
+  - Improved fault tolerance in `set_temperature()` and `set_fan_speed()` by preventing unsupported operations in certain modes with clear warnings in the logs.
+
+### **Notes**
+- This version ensures full compatibility with Home Assistant 2025.4+, especially regarding the updated behavior of `ClimateEntityFeature` and entity lifecycle handling.
+- The fan control now gracefully disappears in modes where it’s not applicable (`DRY`, `OFF`), improving UI clarity and preventing invalid operations.
+- Restart Home Assistant after updating to ensure all entity states and services are reloaded correctly.
+
 ## [0.2.7] - 2025-03-26  
 
 ### **Fixed**  
