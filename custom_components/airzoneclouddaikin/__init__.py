@@ -1,9 +1,6 @@
 """DKN Cloud for HASS integration."""
-import json
-import hashlib
 import logging
 from datetime import timedelta
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -16,10 +13,8 @@ _LOGGER = logging.getLogger(__name__)
 async def _async_update_data(api: AirzoneAPI) -> dict:
     """Fetch and aggregate device data from the API.
 
-    This function retrieves installations and, for each installation,
-    fetches all devices. It generates a stable device id (if missing) 
-    based on static fields ('name' and 'mac') and returns a dictionary
-    keyed by these unique IDs.
+    This function fetches installations and then, for each installation,
+    fetches all devices. The data is aggregated into a dictionary keyed by device id.
     """
     data = {}
     installations = await api.fetch_installations()
@@ -33,14 +28,10 @@ async def _async_update_data(api: AirzoneAPI) -> dict:
         devices = await api.fetch_devices(installation_id)
         for device in devices:
             device_id = device.get("id")
-            if not device_id or not str(device_id).strip():
-                # Generate a stable id based on static fields
-                static_fields = {
-                    "name": device.get("name", ""),
-                    "mac": device.get("mac", "")
-                }
-                device_id = hashlib.sha256(json.dumps(static_fields, sort_keys=True).encode("utf-8")).hexdigest()
-                device["id"] = device_id  # Update the device data for future use
+            if not device_id:
+                # Fallback: use a hash of the device data if no id is provided.
+                device_id = f"{hash(str(device))}"
+                device["id"] = device_id
             data[device_id] = device
     return data
 
@@ -56,19 +47,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Login to Airzone API failed.")
         return False
 
-    # Set update interval to 10 seconds (or use the configured interval, ensuring a minimum of 10)
-    scan_interval = config.get("scan_interval", 10)
-    if scan_interval < 10:
-        scan_interval = 10
-
+    # Hard-code update interval to 10 seconds.
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name="airzone_data",
         update_method=lambda: _async_update_data(api),
-        update_interval=timedelta(seconds=scan_interval),
+        update_interval=timedelta(seconds=10),
     )
-    # Attach the API instance to the coordinator for use by entities.
+    # Attach the API instance to the coordinator so that entities can use it.
     coordinator.api = api
 
     try:
@@ -78,7 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise UpdateFailed(err) from err
 
     hass.data[DOMAIN][entry.entry_id] = {"api": api, "coordinator": coordinator}
-    # Forward the entry to set up the climate, sensor, and switch platforms.
+    # Forward setups for climate, sensor, and switch platforms.
     await hass.config_entries.async_forward_entry_setups(entry, ["climate", "sensor", "switch"])
     _LOGGER.info("DKN Cloud for HASS integration configured successfully.")
     return True
