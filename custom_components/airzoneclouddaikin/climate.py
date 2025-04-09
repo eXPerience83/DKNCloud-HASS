@@ -2,8 +2,11 @@
 import asyncio
 import logging
 from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
-from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
+from homeassistant.components.climate.const import (
+    ClimateEntityFeature,
+    HVACMode,
+)
+from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE, ATTR_MIN_TEMP, ATTR_MAX_TEMP, ATTR_FAN_MODES
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,7 +30,8 @@ class AirzoneClimate(ClimateEntity):
     """Representation of an Airzone Cloud Daikin climate device."""
 
     def __init__(self, coordinator, api, device_data: dict, config: dict, hass):
-        """Initialize the climate entity.
+        """
+        Initialize the climate entity.
 
         :param coordinator: The DataUpdateCoordinator instance.
         :param api: The AirzoneAPI instance.
@@ -40,10 +44,13 @@ class AirzoneClimate(ClimateEntity):
         self._device_data = device_data
         self._config = config
         self.hass = hass
-        # Initialize name and unique_id from the device data.
+
+        # Initialize name and unique_id from device data
         self._attr_name = device_data.get("name", "Airzone Device")
         self._attr_unique_id = device_data.get("id")
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+
+        # Internal state variables
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
         self._fan_mode = None
@@ -65,18 +72,38 @@ class AirzoneClimate(ClimateEntity):
     def target_temperature(self):
         """Return the current target temperature.
 
-        If the HVAC mode is OFF, DRY or FAN_ONLY, returns None.
+        Returns None if HVAC mode is OFF, DRY or FAN_ONLY.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
             return None
         return self._target_temperature
 
     @property
-    def supported_features(self):
-        """Return supported features: target temperature and fan mode.
+    def min_temp(self):
+        """Return the minimum temperature allowed depending on the mode."""
+        if self._hvac_mode in [HVACMode.HEAT, HVACMode.AUTO]:
+            return int(float(self._device_data.get("min_limit_heat", 16)))
+        elif self._hvac_mode == HVACMode.COOL:
+            return int(float(self._device_data.get("min_limit_cold", 16)))
+        # In FAN_ONLY or other modes, temperature control is not applicable.
+        return None
 
-        If the HVAC mode is OFF or DRY, disable all controls.
-        If the mode is FAN_ONLY, only fan mode is enabled.
+    @property
+    def max_temp(self):
+        """Return the maximum temperature allowed depending on the mode."""
+        if self._hvac_mode in [HVACMode.HEAT, HVACMode.AUTO]:
+            return int(float(self._device_data.get("max_limit_heat", 32)))
+        elif self._hvac_mode == HVACMode.COOL:
+            return int(float(self._device_data.get("max_limit_cold", 32)))
+        return None
+
+    @property
+    def supported_features(self):
+        """Return supported features as a bitmask.
+
+        If the HVAC mode is OFF or DRY, no controls are supported.
+        If the mode is FAN_ONLY, only fan mode control is enabled.
+        Otherwise, enable temperature and fan controls.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return 0
@@ -85,21 +112,37 @@ class AirzoneClimate(ClimateEntity):
         return ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
 
     @property
+    def capability_attributes(self):
+        """Return extra attributes for the climate entity."""
+        attributes = {}
+        # Add temperature range if temperature control is supported.
+        if self.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE:
+            min_temp = self.min_temp
+            max_temp = self.max_temp
+            if min_temp is not None:
+                attributes[ATTR_MIN_TEMP] = min_temp
+            if max_temp is not None:
+                attributes[ATTR_MAX_TEMP] = max_temp
+        # Add fan modes if fan control is supported.
+        if self.supported_features & ClimateEntityFeature.FAN_MODE:
+            attributes[ATTR_FAN_MODES] = self.fan_modes
+        return attributes
+
+    @property
     def fan_modes(self):
         """Return a list of valid fan speeds as strings.
 
-        If the HVAC mode is OFF or DRY, return an empty list.
+        If HVAC mode is OFF or DRY, return an empty list.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return []
-        speeds = self.fan_speed_range
-        return [str(speed) for speed in speeds]
+        return [str(speed) for speed in self.fan_speed_range]
 
     @property
     def fan_mode(self):
         """Return the current fan mode (as string).
 
-        If the HVAC mode is OFF or DRY, return None.
+        If HVAC mode is OFF or DRY, return None.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return None
@@ -138,7 +181,6 @@ class AirzoneClimate(ClimateEntity):
                     self._fan_mode = str(device.get("cold_speed", ""))
                 elif mode_val == "5":
                     self._hvac_mode = HVACMode.DRY
-                    # In DRY mode, we do not control temperature or fan speed.
                     self._target_temperature = None
                     self._fan_mode = None
                 elif mode_val == "4":
@@ -157,7 +199,7 @@ class AirzoneClimate(ClimateEntity):
     async def async_set_temperature(self, **kwargs):
         """Set the target temperature.
 
-        If the current HVAC mode is OFF, DRY or FAN_ONLY, a warning is emitted and no command is sent.
+        If HVAC mode is OFF, DRY or FAN_ONLY, emit a warning and do nothing.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
             _LOGGER.warning("Temperature adjustment not allowed in %s mode", self._hvac_mode)
@@ -170,7 +212,7 @@ class AirzoneClimate(ClimateEntity):
                 min_temp = int(float(self._device_data.get("min_limit_heat", 16)))
                 max_temp = int(float(self._device_data.get("max_limit_heat", 32)))
                 command = "P8"
-            else:  # HVACMode.COOL
+            else:
                 min_temp = int(float(self._device_data.get("min_limit_cold", 16)))
                 max_temp = int(float(self._device_data.get("max_limit_cold", 32)))
                 command = "P7"
@@ -184,12 +226,11 @@ class AirzoneClimate(ClimateEntity):
     async def async_set_fan_mode(self, fan_mode):
         """Set the fan mode asynchronously.
 
-        If the current HVAC mode is OFF or DRY, a warning is emitted and no command is sent.
+        If HVAC mode is OFF or DRY, emit a warning and do nothing.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             _LOGGER.warning("Fan control not allowed in %s mode", self._hvac_mode)
             return
-
         await self.hass.async_add_executor_job(self.set_fan_mode, fan_mode)
 
     def set_fan_mode(self, fan_mode):
@@ -199,7 +240,6 @@ class AirzoneClimate(ClimateEntity):
     def turn_on(self):
         """Turn on the device by sending P1=1 and refresh state."""
         self._send_command("P1", 1)
-        # Optionally, you could set a default mode here if desired.
         self._refresh_state()
 
     def turn_off(self):
@@ -214,7 +254,7 @@ class AirzoneClimate(ClimateEntity):
         """Set the HVAC mode.
         
         Mapping:
-         - HVACMode.OFF: call turn_off() and return.
+         - HVACMode.OFF: calls turn_off() and returns.
          - HVACMode.COOL -> P2=1
          - HVACMode.HEAT -> P2=2
          - HVACMode.FAN_ONLY -> P2=3
