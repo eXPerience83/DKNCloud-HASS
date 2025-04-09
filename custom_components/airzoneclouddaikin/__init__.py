@@ -29,7 +29,7 @@ async def _async_update_data(api: AirzoneAPI) -> dict:
         for device in devices:
             device_id = device.get("id")
             if not device_id:
-                # Fallback: use a hash of the device data if no id is provided.
+                # Fallback: use a hash of the device data if no id is provided
                 device_id = f"{hash(str(device))}"
                 device["id"] = device_id
             data[device_id] = device
