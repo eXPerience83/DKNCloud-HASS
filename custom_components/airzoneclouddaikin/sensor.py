@@ -4,67 +4,53 @@ import logging
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import UnitOfTemperature
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up the sensor platform from a config entry."""
-    config = entry.data
-    from homeassistant.helpers.aiohttp_client import async_get_clientsession
-    session = async_get_clientsession(hass)
-    from .airzone_api import AirzoneAPI
-    api = AirzoneAPI(config.get("username"), config.get("password"), session)
-    if not await api.login():
-        _LOGGER.error("Login to Airzone API failed in sensor setup.")
+    """Set up the sensor platform from a config entry using the DataUpdateCoordinator.
+
+    This function retrieves the coordinator from hass.data and creates a sensor entity
+    for each device using the coordinator's data.
+    """
+    data = hass.data[DOMAIN].get(entry.entry_id)
+    if not data:
+        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
-    installations = await api.fetch_installations()
+    coordinator = data.get("coordinator")
     sensors = []
-    for relation in installations:
-        installation = relation.get("installation")
-        if not installation:
-            continue
-        installation_id = installation.get("id")
-        if not installation_id:
-            continue
-        devices = await api.fetch_devices(installation_id)
-        for device in devices:
-            sensors.append(AirzoneTemperatureSensor(api, device))
-    async_add_entities(sensors)  # Let HA assign entity_id after adding entities.
+    # Create a sensor entity for each device in the coordinator data.
+    for device_id, device in coordinator.data.items():
+        sensors.append(AirzoneTemperatureSensor(coordinator, device))
+    async_add_entities(sensors, True)
 
 class AirzoneTemperatureSensor(SensorEntity):
     """Representation of a temperature sensor for an Airzone device (local_temp)."""
 
-    def __init__(self, api, device_data: dict):
+    def __init__(self, coordinator, device_data: dict):
         """Initialize the sensor entity using device data.
-        
-        :param api: The AirzoneAPI instance to use for updates.
+
+        :param coordinator: The DataUpdateCoordinator instance.
         :param device_data: Dictionary with device information.
         """
-        self._api = api
+        self.coordinator = coordinator
         self._device_data = device_data
         # Construct sensor name: "<Device Name> Temperature"
         name = f"{device_data.get('name', 'Airzone Device')} Temperature"
         self._attr_name = name
-
-        # Use the device 'id' to form a unique id; fallback to a hash of the name if not available.
+        # Set unique_id using the device id plus a suffix.
         device_id = device_data.get("id")
         if device_id and device_id.strip():
             self._attr_unique_id = f"{device_id}_temperature"
         else:
             self._attr_unique_id = hashlib.sha256(name.encode("utf-8")).hexdigest()
-
-        # Set the unit attributes explicitly for Home Assistant statistics.
-        self._attr_unit_of_measurement = UnitOfTemperature.CELSIUS
         self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-
+        self._attr_unit_of_measurement = UnitOfTemperature.CELSIUS
         self._attr_device_class = "temperature"
         self._attr_state_class = "measurement"
         self._attr_icon = "mdi:thermometer"
         self.update_state()
-
-    @property
-    def unique_id(self):
-        """Return the unique id for this sensor."""
-        return self._attr_unique_id
 
     @property
     def native_value(self):
@@ -73,15 +59,14 @@ class AirzoneTemperatureSensor(SensorEntity):
 
     @property
     def accuracy_decimals(self):
-        """Return the number of decimals to use for the sensor state."""
-        # This ensures that the state is displayed as an integer.
+        """Return 0 to display the state as an integer (e.g., 22°C)."""
         return 0
 
     @property
     def device_info(self):
         """Return device info to link this sensor to a device in Home Assistant."""
         return {
-            "identifiers": {("airzoneclouddaikin", self._device_data.get("id"))},
+            "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
             "model": self._device_data.get("brand", "Unknown"),
@@ -89,27 +74,18 @@ class AirzoneTemperatureSensor(SensorEntity):
         }
 
     async def async_update(self):
-        """Update the sensor state from the API.
-        
-        This method calls the API (via self._api) to fetch the latest device data
-        for the sensor's device (using its installation_id and id), updates the internal
-        device data, and then updates the sensor state.
+        """Update the sensor state from the coordinator data.
+
+        This method requests a refresh of the coordinator data and then updates
+        the sensor state using the latest device data.
         """
-        installation_id = self._device_data.get("installation_id")
-        device_id = self._device_data.get("id")
-        if not installation_id or not device_id:
-            _LOGGER.error("Missing installation_id or device id in sensor update.")
-            return
-
-        # Fetch the latest device data for the given installation.
-        devices = await self._api.fetch_devices(installation_id)
-        for dev in devices:
-            if dev.get("id") == device_id:
-                self._device_data = dev
-                break
-
+        await self.coordinator.async_request_refresh()
+        # Retrieve the updated device data using its id
+        device = self.coordinator.data.get(self._device_data.get("id"))
+        if device:
+            self._device_data = device
         self.update_state()
-        self.async_write_ha_state()
+        # Do not call async_write_ha_state() here because HA will update the state automatically
 
     def update_state(self):
         """Update the native value from device data."""

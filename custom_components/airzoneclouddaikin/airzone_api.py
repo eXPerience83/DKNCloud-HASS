@@ -34,10 +34,7 @@ class AirzoneAPI:
         """
         url = f"{BASE_URL}{API_LOGIN}"
         payload = {"email": self._username, "password": self._password}
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Content-Type": "application/json"
-        }
+        headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
         try:
             async with self._session.post(url, json=payload, headers=headers) as response:
                 if response.status == 201:
