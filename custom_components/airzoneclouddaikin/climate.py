@@ -37,14 +37,14 @@ class AirzoneClimate(ClimateEntity):
         """
         self.coordinator = coordinator
         self._api = api
-        self._device_data = device_data  # We assume this includes a valid "id"
+        # Use a copy of the device_data to avoid modifying the original coordinator data.
+        self._device_data = device_data.copy()
         self._config = config
         self.hass = hass
-        self._attr_name = device_data.get("name", "Airzone Device")
-        self._attr_unique_id = device_data.get("id")
+        self._attr_name = self._device_data.get("name", "Airzone Device")
+        # Use device 'id' as unique_id; assumed to be present.
+        self._attr_unique_id = self._device_data.get("id")
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
-
-        # Initialize dynamic properties
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
         self._fan_mode = None
@@ -66,7 +66,7 @@ class AirzoneClimate(ClimateEntity):
     def target_temperature(self):
         """Return the current target temperature.
 
-        Temperature control is disabled in OFF, DRY and FAN_ONLY modes.
+        Returns None if temperature control is not available (mode OFF, DRY or FAN_ONLY).
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
             return None
@@ -76,21 +76,22 @@ class AirzoneClimate(ClimateEntity):
     def supported_features(self):
         """Return supported features based on current mode.
 
-        - In OFF and DRY modes: no temperature or fan control.
-        - In FAN_ONLY mode: only fan control.
-        - Otherwise: both target temperature and fan control are supported.
+        Temperature control is disabled for modes OFF, DRY and FAN_ONLY.
+        Fan control is disabled for modes OFF and DRY.
         """
-        if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
-            return 0
-        elif self._hvac_mode == HVACMode.FAN_ONLY:
-            return ClimateEntityFeature.FAN_MODE
-        else:
-            return ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.FAN_MODE
+        features = 0
+        if self._hvac_mode not in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE
+        if self._hvac_mode not in [HVACMode.OFF, HVACMode.DRY]:
+            features |= ClimateEntityFeature.FAN_MODE
+        return features
 
     @property
     def fan_modes(self):
-        """Return a list of valid fan speeds as strings based on 'availables_speeds'."""
-        # Fan controls should only be available if the mode is not OFF or DRY.
+        """Return a list of valid fan speeds as strings.
+
+        Returns an empty list if fan control is not available (mode OFF or DRY).
+        """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return []
         speeds = self.fan_speed_range
@@ -100,7 +101,7 @@ class AirzoneClimate(ClimateEntity):
     def fan_mode(self):
         """Return the current fan speed.
 
-        Returns None if the mode is OFF or DRY.
+        Returns None if fan control is not available.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
             return None
@@ -108,7 +109,7 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def device_info(self):
-        """Return device info to group this entity with others in the device registry."""
+        """Return device info for the device registry."""
         return {
             "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
@@ -121,7 +122,6 @@ class AirzoneClimate(ClimateEntity):
     async def async_update(self):
         """Update the climate entity from the coordinator data."""
         await self.coordinator.async_request_refresh()
-        # Use the device id as key to fetch updated data from the coordinator.
         device = self.coordinator.data.get(self._device_data.get("id"))
         if device:
             self._device_data = device
@@ -155,37 +155,76 @@ class AirzoneClimate(ClimateEntity):
                 self._hvac_mode = HVACMode.OFF
                 self._target_temperature = None
                 self._fan_mode = None
-        self.async_write_ha_state()
+        # Use schedule_update_ha_state() to update the entity state
+        self.schedule_update_ha_state()
 
-    async def async_set_hvac_mode(self, hvac_mode):
-        """Set the HVAC mode asynchronously."""
+    async def async_set_fan_mode(self, fan_mode):
+        """Set the fan mode asynchronously."""
+        await self.hass.async_add_executor_job(self.set_fan_mode, fan_mode)
+        self._refresh_state()
+
+    def set_fan_mode(self, fan_mode):
+        """Set the fan mode by delegating to set_fan_speed."""
+        self.set_fan_speed(fan_mode)
+
+    def _refresh_state(self):
+        """Schedule an immediate refresh of coordinator data."""
+        if self.hass and self.hass.loop:
+            asyncio.run_coroutine_threadsafe(
+                self.coordinator.async_request_refresh(), self.hass.loop
+            )
+
+    def turn_on(self):
+        """Turn on the device by sending P1=1 and refresh state."""
+        self._send_command("P1", 1)
+        self._refresh_state()
+
+    def turn_off(self):
+        """Turn off the device by sending P1=0 and refresh state."""
+        self._send_command("P1", 0)
+        self._hvac_mode = HVACMode.OFF
+        self._target_temperature = None
+        self._fan_mode = None
+        self._refresh_state()
+
+    def set_hvac_mode(self, hvac_mode):
+        """Set the HVAC mode.
+
+        Mapping:
+         - HVACMode.OFF: call turn_off() and return.
+         - HVACMode.COOL -> P2=1
+         - HVACMode.HEAT -> P2=2
+         - HVACMode.FAN_ONLY -> P2=3
+         - HVACMode.DRY -> P2=5
+         - HVACMode.AUTO -> P2=4
+        """
+        if self._hvac_mode == HVACMode.OFF and hvac_mode != HVACMode.OFF:
+            self.turn_on()
         if hvac_mode == HVACMode.OFF:
-            self._hvac_mode = HVACMode.OFF
-            self._target_temperature = None
-            self._fan_mode = None
-            self._send_command("P1", 0)
+            self.turn_off()
+            return
+        mode_mapping = {
+            HVACMode.COOL: "1",
+            HVACMode.HEAT: "2",
+            HVACMode.FAN_ONLY: "3",
+            HVACMode.DRY: "5",
+            HVACMode.AUTO: "4",
+        }
+        if hvac_mode in mode_mapping:
+            self._send_command("P2", mode_mapping[hvac_mode])
+            self._hvac_mode = hvac_mode
+            self._refresh_state()
         else:
-            if self._hvac_mode == HVACMode.OFF:
-                self._send_command("P1", 1)
-                # Let the coordinator update the state in the next refresh.
-            mode_mapping = {
-                HVACMode.COOL: "1",
-                HVACMode.HEAT: "2",
-                HVACMode.FAN_ONLY: "3",
-                HVACMode.DRY: "5",
-                HVACMode.AUTO: "4",
-            }
-            if hvac_mode in mode_mapping:
-                self._send_command("P2", mode_mapping[hvac_mode])
-                self._hvac_mode = hvac_mode
-            else:
-                _LOGGER.error("Unsupported HVAC mode: %s", hvac_mode)
-        self.async_write_ha_state()
+            _LOGGER.error("Unsupported HVAC mode: %s", hvac_mode)
+        self.schedule_update_ha_state()
 
-    async def async_set_temperature(self, **kwargs):
-        """Set the target temperature asynchronously.
+    def set_temperature(self, **kwargs):
+        """Set the target temperature.
 
-        This action is allowed only in modes that support temperature control.
+        Must be called after changing the mode.
+        For HEAT or AUTO modes, use P8; for COOL mode use P7.
+        Temperature controls are disabled in OFF, DRY, or FAN_ONLY modes.
+        The value is constrained to the device limits and sent as an integer with '.0' appended.
         """
         if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY, HVACMode.FAN_ONLY]:
             _LOGGER.warning("Temperature adjustment not supported in mode %s", self._hvac_mode)
@@ -207,25 +246,14 @@ class AirzoneClimate(ClimateEntity):
                 temp = max_temp
             self._send_command(command, f"{temp}.0")
             self._target_temperature = temp
-            self.async_write_ha_state()
-
-    async def async_set_fan_mode(self, fan_mode):
-        """Set the fan mode asynchronously."""
-        if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
-            _LOGGER.warning("Fan control not supported in mode %s", self._hvac_mode)
-            return
-        await self.hass.async_add_executor_job(self.set_fan_mode, fan_mode)
-        self.async_write_ha_state()
-
-    def set_fan_mode(self, fan_mode):
-        """Set the fan mode by calling set_fan_speed."""
-        self.set_fan_speed(fan_mode)
+            self._refresh_state()
+        self.schedule_update_ha_state()
 
     def set_fan_speed(self, speed):
         """Set the fan speed.
 
-        Uses P3 in COOL and FAN_ONLY modes and P4 in HEAT/AUTO modes.
-        Fan control is not available in OFF or DRY modes.
+        Uses P3 to adjust fan speed in COOL and FAN_ONLY modes and P4 in HEAT/AUTO modes.
+        Fan controls are disabled in OFF or DRY modes.
         """
         try:
             speed = int(speed)
@@ -243,7 +271,8 @@ class AirzoneClimate(ClimateEntity):
             _LOGGER.warning("Fan speed adjustment not supported in mode %s", self._hvac_mode)
             return
         self._fan_mode = str(speed)
-        self.async_write_ha_state()
+        self._refresh_state()
+        self.schedule_update_ha_state()
 
     @property
     def fan_speed_range(self):
@@ -267,6 +296,9 @@ class AirzoneClimate(ClimateEntity):
         }
         _LOGGER.info("Sending command: %s", payload)
         if self.hass and self.hass.loop:
-            asyncio.run_coroutine_threadsafe(self._api.send_event(payload), self.hass.loop)
+            asyncio.run_coroutine_threadsafe(
+                self._api.send_event(payload), self.hass.loop
+            )
         else:
             _LOGGER.error("No hass loop available; cannot send command.")
+        self._refresh_state()
