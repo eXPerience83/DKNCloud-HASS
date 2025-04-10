@@ -46,17 +46,18 @@ class AirzonePowerSwitch(SwitchEntity):
         """Return True if the device is on."""
         return self._device_data.get("power", "0") == "1"
 
-    @property
-    def device_info(self):
-        """Return device info to link this sensor to a device in Home Assistant."""
-        return {
-            "identifiers": {(DOMAIN, self._device_data.get("id"))},
-            "name": self._device_data.get("name"),
-            "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
-            "connections": {("mac", self._device_data.get("mac"))},  # MAC agregada
-        }
+@property
+def device_info(self):
+    """Return device info for Home Assistant device registry."""
+    return {
+        "identifiers": {(DOMAIN, self._device_data.get("id"))},
+        "name": self._device_data.get("name"),
+        "manufacturer": "Daikin",
+        "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
+        "sw_version": self._device_data.get("firmware", "Unknown"),
+        "connections": {("mac", self._device_data.get("mac"))},
+        "configuration_url": f"https://dkn.airzonecloud.com/#/home/device?id={self._device_data.get('id')}&installation_id={self._device_data.get('installation_id')}",
+    }
 
     async def async_turn_on(self, **kwargs):
         """Turn on the device by sending P1=1."""
