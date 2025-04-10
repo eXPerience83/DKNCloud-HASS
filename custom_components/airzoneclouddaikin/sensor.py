@@ -10,10 +10,8 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up the sensor platform from a config entry using the DataUpdateCoordinator.
-
     This function retrieves the coordinator from hass.data and creates a sensor entity
-    for each device using the coordinator's data.
-    """
+    for each device using the coordinator's data."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
@@ -27,13 +25,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 class AirzoneTemperatureSensor(SensorEntity):
     """Representation of a temperature sensor for an Airzone device (local_temp)."""
-
     def __init__(self, coordinator, device_data: dict):
         """Initialize the sensor entity using device data.
-
         :param coordinator: The DataUpdateCoordinator instance.
-        :param device_data: Dictionary with device information.
-        """
+        :param device_data: Dictionary with device information."""
         self.coordinator = coordinator
         self._device_data = device_data
         # Construct sensor name: "<Device Name> Temperature"
@@ -69,16 +64,15 @@ class AirzoneTemperatureSensor(SensorEntity):
             "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": self._device_data.get("brand", "Unknown"),
+            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
             "sw_version": self._device_data.get("firmware", "Unknown"),
+            "connections": {("mac", self._device_data.get("mac"))},  # MAC agregada
         }
 
     async def async_update(self):
         """Update the sensor state from the coordinator data.
-
         This method requests a refresh of the coordinator data and then updates
-        the sensor state using the latest device data.
-        """
+        the sensor state using the latest device data."""
         await self.coordinator.async_request_refresh()
         # Retrieve the updated device data using its id
         device = self.coordinator.data.get(self._device_data.get("id"))
