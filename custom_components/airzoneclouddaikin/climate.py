@@ -87,16 +87,18 @@ class AirzoneClimate(ClimateEntity):
             return None
         return self._fan_mode
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._device_data.get("id"))},
-            "name": self._device_data.get("name"),
-            "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
-            "connections": {("mac", self._device_data.get("mac"))},  # MAC agregada
-        }
+@property
+def device_info(self):
+    """Return device info for Home Assistant device registry."""
+    return {
+        "identifiers": {(DOMAIN, self._device_data.get("id"))},
+        "name": self._device_data.get("name"),
+        "manufacturer": "Daikin",
+        "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
+        "sw_version": self._device_data.get("firmware", "Unknown"),
+        "connections": {("mac", self._device_data.get("mac"))},
+        "configuration_url": f"https://dkn.airzonecloud.com/#/home/device?id={self._device_data.get('id')}&installation_id={self._device_data.get('installation_id')}",
+    }
 
     async def async_update(self):
         """Update the climate entity from the coordinator data."""
