@@ -9,20 +9,6 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# List of diagnostic attributes disabled by default (advanced/rarely needed)
-DISABLED_DIAGNOSTICS = [
-    "update_date",
-    "ver_state_slats",
-    "ver_position_slats",
-    "hor_state_slats",
-    "hor_position_slats",
-    "ver_cold_slats",
-    "ver_heat_slats",
-    "hor_cold_slats",
-    "hor_heat_slats"
-]
-
-# Full list of all diagnostic attributes to be exposed as sensors
 DIAGNOSTIC_ATTRIBUTES = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check"),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch"),
@@ -34,9 +20,8 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("firmware", "Firmware Version", "mdi:chip"),
     ("brand", "Brand/Model", "mdi:factory"),
     ("pin", "Device PIN", "mdi:numeric"),
-    ("update_date", "Last Update", "mdi:update"),
     ("mode", "Current Mode (Raw)", "mdi:tag"),
-    # Slats fields:
+    # Slat diagnostics (optional)
     ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical"),
     ("ver_position_slats", "Vertical Slat Position", "mdi:swap-vertical"),
     ("hor_state_slats", "Horizontal Slat State", "mdi:swap-horizontal"),
@@ -49,137 +34,133 @@ DIAGNOSTIC_ATTRIBUTES = [
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """
-    Set up the sensor platform from a config entry using the DataUpdateCoordinator.
-    Creates a temperature sensor and all diagnostic sensors for each device.
+    Set up sensor platform: one temperature sensor + diagnostics per device.
     """
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
-        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
+        _LOGGER.error("No coordinator data for entry %s", entry.entry_id)
         return
     coordinator = data["coordinator"]
-    sensors = []
-    for device_id, device in coordinator.data.items():
-        sensors.append(AirzoneTemperatureSensor(coordinator, device))
+    entities = []
+
+    for device in coordinator.data.values():
+        # temperature sensor
+        entities.append(AirzoneTemperatureSensor(coordinator, device))
+        # diagnostic sensors
         for attr, name, icon in DIAGNOSTIC_ATTRIBUTES:
-            sensors.append(
-                AirzoneDiagnosticSensor(coordinator, device, attr, name, icon)
-            )
-    async_add_entities(sensors, True)
+            entities.append(AirzoneDiagnosticSensor(coordinator, device, attr, name, icon))
+
+    async_add_entities(entities, True)
+
 
 class AirzoneTemperatureSensor(SensorEntity):
-    """Representation of a temperature sensor for an Airzone device (local_temp)."""
+    """Temperature sensor for an Airzone device (local_temp)."""
+
     def __init__(self, coordinator, device_data: dict):
+        """
+        :param coordinator: DataUpdateCoordinator instance
+        :param device_data: raw device dict
+        """
         self.coordinator = coordinator
         self._device_data = device_data
-        name = f"{device_data.get('name', 'Airzone Device')} Temperature"
-        self._attr_name = name
-        device_id = device_data.get("id")
-        if device_id and device_id.strip():
-            self._attr_unique_id = f"{device_id}_temperature"
-        else:
-            self._attr_unique_id = hashlib.sha256(name.encode("utf-8")).hexdigest()
         self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
         self._attr_device_class = "temperature"
         self._attr_state_class = "measurement"
         self._attr_icon = "mdi:thermometer"
-        # Ensure this sensor is enabled by default
-        self._attr_entity_registry_enabled_default = True
+
+        name = f"{device_data.get('name')} Temperature"
+        # unique id = "<device_id>_temperature"
+        unique_id = f"{device_data['id']}_temperature"
+        self.async_set_unique_id(unique_id)
+        self._attr_name = name
+
         self.update_state()
 
     @property
     def native_value(self):
-        """Return the current temperature reading."""
+        """Return current temperature value."""
         return self._attr_native_value
 
     @property
     def accuracy_decimals(self):
-        """Return 0 to display the state as an integer (e.g., 22°C)."""
+        """Force integer display."""
         return 0
 
     @property
     def device_info(self):
-        """Link this sensor to its parent device."""
+        """Link to HA device registry."""
         return {
-            "identifiers": {(DOMAIN, self._device_data.get("id"))},
+            "identifiers": {(DOMAIN, self.unique_id)},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
-            "connections": {("mac", self._device_data.get("mac"))} if self._device_data.get("mac") else None,
+            "model": f"{self._device_data.get('brand')} (PIN: {self._device_data.get('pin')})",
+            "sw_version": self._device_data.get("firmware"),
+            "connections": {("mac", self._device_data.get("mac"))},
         }
 
     async def async_update(self):
-        """Refresh the coordinator and update the temperature."""
+        """Refresh data from coordinator and update state."""
         await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self._device_data["id"])
-        if device:
-            self._device_data = device
+        self._device_data = self.coordinator.data.get(self._device_data["id"], self._device_data)
         self.update_state()
 
     def update_state(self):
-        """Parse and store the latest temperature."""
+        """Parse and assign local_temp."""
         try:
-            self._attr_native_value = float(self._device_data.get("local_temp"))
+            self._attr_native_value = float(self._device_data.get("local_temp", 0))
         except (ValueError, TypeError):
             self._attr_native_value = None
 
+
 class AirzoneDiagnosticSensor(SensorEntity):
-    """
-    Diagnostic sensor for an Airzone device.
-    Controlled via entity_registry_enabled_default for on/off.
-    """
+    """Diagnostic sensor exposing arbitrary device attributes."""
+
     def __init__(self, coordinator, device_data: dict, attribute: str, name: str, icon: str):
+        """
+        :param coordinator: DataUpdateCoordinator
+        :param device_data: raw device dict
+        :param attribute: key in device_data
+        :param name: friendly name suffix
+        :param icon: mdi icon string
+        """
         self.coordinator = coordinator
         self._device_data = device_data
         self._attribute = attribute
-        self._attr_name = f"{device_data.get('name', 'Airzone Device')} {name}"
+
+        friendly_name = f"{device_data.get('name')} {name}"
+        unique_id = f"{device_data['id']}_{attribute}"
+        self.async_set_unique_id(unique_id)
+
+        self._attr_name = friendly_name
         self._attr_icon = icon
-        self._attr_unique_id = f"{device_data.get('id')}_{attribute}"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        # Enable or disable by default based on the attribute
-        if attribute in DISABLED_DIAGNOSTICS:
-            self._attr_entity_registry_enabled_default = False
-        else:
-            self._attr_entity_registry_enabled_default = True
 
     @property
     def native_value(self):
-        """Return the value of the diagnostic attribute, suitably converted."""
-        value = self._device_data.get(self._attribute)
+        """Return the raw attribute, casting common types."""
+        val = self._device_data.get(self._attribute)
         if self._attribute == "progs_enabled":
-            return bool(value)
+            return bool(val)
         if self._attribute in ("sleep_time", "min_temp_unoccupied", "max_temp_unoccupied"):
             try:
-                return int(float(value))
+                return int(val)
             except (TypeError, ValueError):
                 return None
-        if self._attribute in (
-            "ver_state_slats", "ver_position_slats",
-            "hor_state_slats", "hor_position_slats",
-            "ver_cold_slats", "ver_heat_slats",
-            "hor_cold_slats", "hor_heat_slats",
-        ):
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return value
-        return value
+        return val
 
     @property
     def device_info(self):
-        """Link this sensor to its parent device."""
+        """Link back to the main device entry."""
         return {
-            "identifiers": {(DOMAIN, self._device_data.get("id"))},
+            "identifiers": {(DOMAIN, self.unique_id.split("_")[0])},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
-            "connections": {("mac", self._device_data.get("mac"))} if self._device_data.get("mac") else None,
+            "model": f"{self._device_data.get('brand')} (PIN: {self._device_data.get('pin')})",
+            "sw_version": self._device_data.get("firmware"),
+            "connections": {("mac", self._device_data.get("mac"))},
         }
 
     async def async_update(self):
-        """Refresh the coordinator and update the diagnostic attribute."""
+        """Refresh raw device_data from coordinator."""
         await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self._device_data["id"])
-        if device:
-            self._device_data = device
+        self._device_data = self.coordinator.data.get(self._device_data["id"], self._device_data)
