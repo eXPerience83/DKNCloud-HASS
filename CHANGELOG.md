@@ -1,6 +1,31 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.3.0] - 2025-06-27
+
+### **Changed**
+- **Professional README.md rewrite:**  
+  - Reworked all documentation in the style of modern Home Assistant custom integrations, with shields/badges, clear features, compatibility table, roadmap, FAQs, security notice, and explicit Acknowledgments to [max13fr/AirzoneCloudDaikin](https://github.com/max13fr/AirzoneCloudDaikin).
+  - Added multi-language and roadmap notes, and improved explanation of dual setpoint (HEAT_COOL) mode.
+  - Improved documentation for slat position fields, diagnostics, and control API mapping.
+  - Security warning added about never sharing real tokens, emails, or IDs.
+
+### **Added**
+- **Diagnostic sensors:**  
+  Exposes additional diagnostic entities for modes, scene/presets, program status, sleep timer, slats positions, and temperature ranges (including fields like `ver_state_slats`, `ver_position_slats`, `hor_state_slats`, `hor_position_slats`, `ver_cold_slats`, `ver_heat_slats`, `hor_cold_slats`, `hor_heat_slats`).
+- **Dual setpoint support:**  
+  Climate entity now supports both `target_temperature_high` and `target_temperature_low` in HEAT_COOL mode, sending both P7 (cool) and P8 (heat) as needed.
+- **Roadmap section:**  
+  Added initial roadmap in README for multi-language and more diagnostics.
+- **Funding links:**  
+  Added Ko-fi and PayPal as main donation channels; enabled `.github/FUNDING.yml` for repository.
+
+### **Fixed**
+- **API/Device field documentation:**  
+  All fields in `info.md` examples are now fully anonymized, including slats and installation/location data.
+
+### **Removed**
+- **Legacy or generic mentions:**  
+  Updated documentation to clarify this fork is now a stand-alone, modern Home Assistant integration and not a simple derivative.
 
 ## [0.2.8] - 2025-04-09
 
