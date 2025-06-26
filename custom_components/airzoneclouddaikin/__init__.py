@@ -47,13 +47,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Login to Airzone API failed.")
         return False
 
-    # Hard-code update interval to 10 seconds.
+    # Use scan_interval from config or default to 10 seconds
+    scan_interval = config.get("scan_interval", 10)
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name="airzone_data",
         update_method=lambda: _async_update_data(api),
-        update_interval=timedelta(seconds=10),
+        update_interval=timedelta(seconds=scan_interval),
     )
     # Attach the API instance to the coordinator so that entities can use it.
     coordinator.api = api
