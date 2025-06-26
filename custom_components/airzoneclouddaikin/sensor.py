@@ -9,6 +9,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Extended list of diagnostic attributes to expose as sensors (with icons and human-friendly names)
 DIAGNOSTIC_ATTRIBUTES = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check"),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch"),
@@ -16,6 +17,21 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("scenary", "Scenary", "mdi:bed"),
     ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low"),
     ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high"),
+    ("machine_errors", "Machine Errors", "mdi:alert-octagon"),
+    ("firmware", "Firmware Version", "mdi:chip"),
+    ("brand", "Brand/Model", "mdi:factory"),
+    ("pin", "Device PIN", "mdi:numeric"),
+    ("update_date", "Last Update", "mdi:update"),
+    ("mode", "Current Mode (Raw)", "mdi:tag"),
+    # Slats fields (state and position for vertical/horizontal airflow, and by mode)
+    ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical"),
+    ("ver_position_slats", "Vertical Slat Position", "mdi:swap-vertical"),
+    ("hor_state_slats", "Horizontal Slat State", "mdi:swap-horizontal"),
+    ("hor_position_slats", "Horizontal Slat Position", "mdi:swap-horizontal"),
+    ("ver_cold_slats", "Vertical Cold Slats", "mdi:swap-vertical"),
+    ("ver_heat_slats", "Vertical Heat Slats", "mdi:swap-vertical"),
+    ("hor_cold_slats", "Horizontal Cold Slats", "mdi:swap-horizontal"),
+    ("hor_heat_slats", "Horizontal Heat Slats", "mdi:swap-horizontal"),
 ]
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -30,7 +46,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         return
     coordinator = data.get("coordinator")
     sensors = []
-    # Create a temperature sensor and diagnostic sensors for each device in the coordinator data.
+    # Create a temperature sensor and all diagnostic sensors for each device in the coordinator data.
     for device_id, device in coordinator.data.items():
         sensors.append(AirzoneTemperatureSensor(coordinator, device))
         for attr, name, icon in DIAGNOSTIC_ATTRIBUTES:
@@ -49,7 +65,6 @@ class AirzoneTemperatureSensor(SensorEntity):
         """
         self.coordinator = coordinator
         self._device_data = device_data
-        # Construct sensor name: "<Device Name> Temperature"
         name = f"{device_data.get('name', 'Airzone Device')} Temperature"
         self._attr_name = name
         device_id = device_data.get("id")
@@ -121,9 +136,9 @@ class AirzoneDiagnosticSensor(SensorEntity):
 
     @property
     def native_value(self):
-        """Return the value of the diagnostic attribute."""
+        """Return the value of the diagnostic attribute, formatted for display."""
         value = self._device_data.get(self._attribute)
-        # Some fields are strings that should be int/bool for better representation
+        # Custom conversions for a more readable UI
         if self._attribute == "progs_enabled":
             return bool(value)
         if self._attribute in ("sleep_time", "min_temp_unoccupied", "max_temp_unoccupied"):
@@ -131,6 +146,15 @@ class AirzoneDiagnosticSensor(SensorEntity):
                 return int(float(value))
             except (TypeError, ValueError):
                 return None
+        if self._attribute in (
+            "ver_state_slats", "ver_position_slats",
+            "hor_state_slats", "hor_position_slats",
+        ):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return value  # return as-is if not convertible
+        # For other fields, return value as-is
         return value
 
     @property
