@@ -1,4 +1,5 @@
 """Switch platform for DKN Cloud for HASS."""
+
 import logging
 from homeassistant.components.switch import SwitchEntity
 
@@ -8,82 +9,74 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up the switch platform from a config entry using the DataUpdateCoordinator."""
+    """Set up switch platform."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
-        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
+        _LOGGER.error("No data for entry %s", entry.entry_id)
         return
     coordinator = data["coordinator"]
     api = data["api"]
-    entities = [
-        AirzonePowerSwitch(coordinator, api, device, hass)
-        for device in coordinator.data.values()
-    ]
+    entities = []
+    for device_id, device in coordinator.data.items():
+        entities.append(AirzonePowerSwitch(coordinator, api, device, device_id, hass))
     async_add_entities(entities, True)
 
 
 class AirzonePowerSwitch(SwitchEntity):
-    """Representation of a power switch for an Airzone device."""
+    """Power switch for Airzone device."""
 
-    def __init__(self, coordinator, api, device_data: dict, hass):
-        """
-        :param coordinator: DataUpdateCoordinator
-        :param api: AirzoneAPI instance
-        :param device_data: raw device dict
-        :param hass: Home Assistant instance
-        """
+    def __init__(self, coordinator, api, device, device_id, hass):
+        """Initialize."""
         self.coordinator = coordinator
         self._api = api
-        self._device_data = device_data
+        self._device = device
+        self._device_id = device_id
         self.hass = hass
 
-        name = f"{device_data.get('name')} Power"
-        unique_id = f"{device_data['id']}_power"
-        self.async_set_unique_id(unique_id)
-        self._attr_name = name
+        self._attr_name = f"{device.get('name')} Power"
+        self._attr_unique_id = f"{device_id}_power"
 
     @property
     def is_on(self):
-        """Return True if the device is on."""
-        return self._device_data.get("power") == "1"
+        """Return True if on."""
+        return self._device.get("power") == "1"
 
     @property
     def device_info(self):
-        """Link to the HA device registry."""
+        """Link to device registry."""
         return {
-            "identifiers": {(DOMAIN, self.unique_id.split("_")[0])},
-            "name": self._device_data.get("name"),
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device.get("name"),
             "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware"),
-            "connections": {("mac", self._device_data.get("mac"))},
+            "model": f"{self._device.get('brand')} (PIN: {self._device.get('pin')})",
+            "sw_version": self._device.get("firmware"),
+            "connections": {("mac", self._device.get("mac"))},
         }
 
     async def async_turn_on(self, **kwargs):
-        """Turn on the device asynchronously."""
-        self._send_command("P1", 1)
+        """Turn on."""
+        self._send("P1", 1)
         await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs):
-        """Turn off the device asynchronously."""
-        self._send_command("P1", 0)
+        """Turn off."""
+        self._send("P1", 0)
         await self.coordinator.async_request_refresh()
 
-    def _send_command(self, option, value):
-        """Send a power command to the Airzone API."""
+    def _send(self, option, value):
+        """Helper to call API."""
         payload = {
             "event": {
                 "cgi": "modmaquina",
-                "device_id": self.unique_id.split("_")[0],
+                "device_id": self._device_id,
                 "option": option,
                 "value": value,
             }
         }
-        _LOGGER.debug("Sending power command: %s", payload)
-        # schedule via HA event loop
+        _LOGGER.debug("Power command %s=%s", option, value)
         self.hass.async_create_task(self._api.send_event(payload))
 
     async def async_update(self):
-        """Refresh switch state from coordinator."""
+        """Refresh state."""
         await self.coordinator.async_request_refresh()
-        self._device_data = self.coordinator.data.get(self.unique_id.split("_")[0], self._device_data)
+        self._device = self.coordinator.data.get(self._device_id, self._device)
