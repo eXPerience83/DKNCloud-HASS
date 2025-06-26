@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1] - 2025-06-27
+
+### **Added**
+- Exposed **all available diagnostic fields** from the Airzone API response as individual sensors with `EntityCategory.DIAGNOSTIC`.  
+  This includes: machine_errors, firmware, brand, pin, update_date, mode (raw), all vertical/horizontal slats states/positions (for both current and hot/cold), in addition to previously available diagnostics (scenary, program enabled, sleep time, etc).
+- Each sensor uses a unique icon and human-friendly name for clarity in the Home Assistant UI.
+
+### **Changed**
+- `sensor.py` refactored for clarity, extensibility, and clean inline documentation.
+- Now easier to add/remove diagnostic sensors by editing a single array.
+
+
 ## [0.3.0] - 2025-06-27
 
 ### **Changed**
