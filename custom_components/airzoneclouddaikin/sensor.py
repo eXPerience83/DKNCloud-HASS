@@ -9,7 +9,34 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Extended list of diagnostic attributes to expose as sensors (with icons and human-friendly names)
+# List of diagnostic attributes enabled by default (shown to users)
+ENABLED_DIAGNOSTICS = [
+    "progs_enabled",
+    "modes",
+    "sleep_time",
+    "scenary",
+    "min_temp_unoccupied",
+    "max_temp_unoccupied",
+    "machine_errors",
+    "firmware",
+    "brand",
+    "pin",
+    "mode"
+]
+# List of diagnostic attributes disabled by default (advanced/rarely needed)
+DISABLED_DIAGNOSTICS = [
+    "update_date",
+    "ver_state_slats",
+    "ver_position_slats",
+    "hor_state_slats",
+    "hor_position_slats",
+    "ver_cold_slats",
+    "ver_heat_slats",
+    "hor_cold_slats",
+    "hor_heat_slats"
+]
+
+# Full list of all diagnostic attributes to be exposed as sensors (with icons and friendly names)
 DIAGNOSTIC_ATTRIBUTES = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check"),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch"),
@@ -23,7 +50,7 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("pin", "Device PIN", "mdi:numeric"),
     ("update_date", "Last Update", "mdi:update"),
     ("mode", "Current Mode (Raw)", "mdi:tag"),
-    # Slats fields (state and position for vertical/horizontal airflow, and by mode)
+    # Slats fields:
     ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical"),
     ("ver_position_slats", "Vertical Slat Position", "mdi:swap-vertical"),
     ("hor_state_slats", "Horizontal Slat State", "mdi:swap-horizontal"),
@@ -124,6 +151,7 @@ class AirzoneDiagnosticSensor(SensorEntity):
     """
     Representation of a diagnostic sensor for an Airzone device.
     Displays additional device attributes as separate sensor entities with DIAGNOSTIC category.
+    Only selected sensors are enabled by default; others must be enabled manually by the user.
     """
     def __init__(self, coordinator, device_data: dict, attribute: str, name: str, icon: str):
         self.coordinator = coordinator
@@ -133,6 +161,11 @@ class AirzoneDiagnosticSensor(SensorEntity):
         self._attr_icon = icon
         self._attr_unique_id = f"{device_data.get('id')}_{attribute}"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        # Enable or disable sensor by default depending on your selection
+        if attribute in DISABLED_DIAGNOSTICS:
+            self._attr_entity_registry_enabled_default = False
+        else:
+            self._attr_entity_registry_enabled_default = True
 
     @property
     def native_value(self):
