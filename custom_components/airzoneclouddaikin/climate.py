@@ -1,15 +1,8 @@
-"""Climate platform for DKN Cloud for HASS using the Airzone Cloud API with DataUpdateCoordinator.
+"""Climate platform for DKN Cloud for HASS using the Airzone Cloud API."""
 
-Implements dynamic HVAC mode mapping and exposes both HEAT and COOL setpoints
-and fan speeds in HEAT_COOL mode. When setting temperatures or fan speed in HEAT_COOL,
-commands are sent to both heat and cool endpoints.
-"""
 import logging
 from homeassistant.components.climate import ClimateEntity
-from homeassistant.components.climate.const import (
-    ClimateEntityFeature,
-    HVACMode,
-)
+from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import UnitOfTemperature, ATTR_TEMPERATURE
 
 from .const import DOMAIN
@@ -18,88 +11,77 @@ _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    """Set up the climate platform from a config entry using the DataUpdateCoordinator."""
+    """Set up the climate platform from a config entry."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
-        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
+        _LOGGER.error("No data for entry %s", entry.entry_id)
         return
+
     coordinator = data["coordinator"]
     api = data["api"]
     config = entry.data
-    entities = [
-        AirzoneClimate(coordinator, api, device, config, hass)
-        for device in coordinator.data.values()
-    ]
+
+    entities = []
+    for device_id, device in coordinator.data.items():
+        entities.append(
+            AirzoneClimate(coordinator, api, device, config, hass, device_id)
+        )
     async_add_entities(entities, True)
 
 
 class AirzoneClimate(ClimateEntity):
-    """
-    Representation of an Airzone Cloud Daikin climate device.
+    """Representation of an Airzone Cloud Daikin climate device."""
 
-    Supports all HVAC modes, both single setpoint and dual setpoint (HEAT_COOL).
-    In HEAT_COOL mode, both heat and cool setpoints and fan speeds can be set.
-    """
+    MODE_MAP = {
+        "1": HVACMode.COOL,
+        "2": HVACMode.HEAT,
+        "3": HVACMode.FAN_ONLY,
+        "4": HVACMode.HEAT_COOL,
+        "5": HVACMode.DRY,
+    }
 
-    MODE_BITMASK_MAP = [
-        (0, HVACMode.COOL),
-        (1, HVACMode.HEAT),
-        (2, HVACMode.FAN_ONLY),
-        (3, HVACMode.HEAT_COOL),
-        (4, HVACMode.DRY),
-    ]
-
-    def __init__(self, coordinator, api, device_data: dict, config: dict, hass):
-        """
-        Initialize the climate entity.
-        :param coordinator: The DataUpdateCoordinator instance.
-        :param api: The AirzoneAPI instance.
-        :param device_data: Dictionary with device information.
-        :param config: Integration configuration.
-        :param hass: Home Assistant instance.
-        """
+    def __init__(self, coordinator, api, device_data, config, hass, device_id):
+        """Initialize."""
         self.coordinator = coordinator
         self._api = api
         self._device_data = device_data.copy()
         self._config = config
         self.hass = hass
 
-        # Entity attributes
         self._attr_name = device_data.get("name", "Airzone Device")
+        self._attr_unique_id = device_id
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
+
         self._hvac_mode = HVACMode.OFF
         self._target_temp_high = None
         self._target_temp_low = None
         self._fan_mode = None
 
-        # Register unique_id properly
-        unique_id = device_data.get("id")
-        self.async_set_unique_id(unique_id)
-
     @property
     def hvac_modes(self):
-        """Return supported HVAC modes based on the device's modes bitmask."""
-        modes_field = self._device_data.get("modes", "11111000")
+        """Return supported modes from bitmask, plus forced if configured."""
+        mask = self._device_data.get("modes", "")
         available = [HVACMode.OFF]
-        for idx, ha_mode in self.MODE_BITMASK_MAP:
-            if idx < len(modes_field) and modes_field[idx] == "1":
-                if ha_mode == HVACMode.HEAT_COOL and not (
-                    self._config.get("force_hvac_mode_auto", False) or modes_field[3] == "1"
+        for idx, mode_key in enumerate(["1","2","3","4","5"]):
+            if idx < len(mask) and mask[idx] == "1":
+                ha = self.MODE_MAP[mode_key]
+                if ha == HVACMode.HEAT_COOL and not (
+                    self._config.get("force_hvac_mode_auto") or mask[3] == "1"
                 ):
                     continue
-                available.append(ha_mode)
-        if self._config.get("force_hvac_mode_auto", False) and HVACMode.HEAT_COOL not in available:
+                available.append(ha)
+        if self._config.get("force_hvac_mode_auto") and HVACMode.HEAT_COOL not in available:
             available.append(HVACMode.HEAT_COOL)
         return available
 
     @property
     def hvac_mode(self):
-        """Return the current HVAC mode."""
+        """Return current mode."""
         return self._hvac_mode
 
     @property
     def target_temperature(self):
-        """Return the main setpoint in single setpoint modes."""
+        """Return single setpoint."""
         if self._hvac_mode == HVACMode.HEAT:
             return self._target_temp_high
         if self._hvac_mode == HVACMode.COOL:
@@ -108,14 +90,14 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def target_temperature_high(self):
-        """Return the high (heat) setpoint in HEAT_COOL mode."""
+        """High setpoint for HEAT_COOL."""
         if self._hvac_mode == HVACMode.HEAT_COOL:
             return self._target_temp_high
         return None
 
     @property
     def target_temperature_low(self):
-        """Return the low (cool) setpoint in HEAT_COOL mode."""
+        """Low setpoint for HEAT_COOL."""
         if self._hvac_mode == HVACMode.HEAT_COOL:
             return self._target_temp_low
         return None
@@ -134,181 +116,135 @@ class AirzoneClimate(ClimateEntity):
 
     @property
     def min_temp(self):
-        """Return minimum temperature for current mode."""
-        if self._hvac_mode in [HVACMode.HEAT, HVACMode.HEAT_COOL]:
+        """Return minimum allowed temperature."""
+        if self._hvac_mode in (HVACMode.HEAT, HVACMode.HEAT_COOL):
             return float(self._device_data.get("min_limit_heat", 16))
         return float(self._device_data.get("min_limit_cold", 16))
 
     @property
     def max_temp(self):
-        """Return maximum temperature for current mode."""
-        if self._hvac_mode in [HVACMode.HEAT, HVACMode.HEAT_COOL]:
+        """Return maximum allowed temperature."""
+        if self._hvac_mode in (HVACMode.HEAT, HVACMode.HEAT_COOL):
             return float(self._device_data.get("max_limit_heat", 32))
         return float(self._device_data.get("max_limit_cold", 32))
 
     @property
     def fan_modes(self):
-        """Return available fan speeds as strings."""
-        if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
+        """Return valid fan speeds."""
+        if self._hvac_mode in (HVACMode.OFF, HVACMode.DRY):
             return []
-        return [str(s) for s in range(1, int(self._device_data.get("availables_speeds", 3)) + 1)]
+        speeds = int(self._device_data.get("availables_speeds", 3))
+        return [str(i) for i in range(1, speeds + 1)]
 
     @property
     def fan_mode(self):
-        """Return current fan speed, or None if not applicable."""
-        if self._hvac_mode in [HVACMode.OFF, HVACMode.DRY]:
-            return None
+        """Return current fan mode."""
         return self._fan_mode
 
     @property
     def device_info(self):
         """Return device registry info."""
         return {
-            "identifiers": {(DOMAIN, self.unique_id)},
+            "identifiers": {(DOMAIN, self._attr_unique_id)},
             "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
+            "model": f"{self._device_data.get('brand')} (PIN: {self._device_data.get('pin')})",
+            "sw_version": self._device_data.get("firmware"),
             "connections": {("mac", self._device_data.get("mac"))},
         }
 
     async def async_update(self):
-        """
-        Refresh from coordinator and update local state variables.
-        """
+        """Refresh data and update internal state."""
         await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self.unique_id)
-        if not device:
+        dev = self.coordinator.data.get(self._attr_unique_id)
+        if not dev:
             return
+        self._device_data = dev
 
-        self._device_data = device
-        # parse power & mode
-        if int(device.get("power", 0)) == 1:
-            mode = device.get("mode")
-            if mode == "1":
-                self._hvac_mode = HVACMode.COOL
-                self._target_temp_low = int(float(device.get("cold_consign", 0)))
-                self._fan_mode = device.get("cold_speed")
-            elif mode == "2":
-                self._hvac_mode = HVACMode.HEAT
-                self._target_temp_high = int(float(device.get("heat_consign", 0)))
-                self._fan_mode = device.get("heat_speed")
-            elif mode == "3":
-                self._hvac_mode = HVACMode.FAN_ONLY
-                self._fan_mode = device.get("cold_speed")
-            elif mode == "5":
-                self._hvac_mode = HVACMode.DRY
+        if dev.get("power") == "1":
+            mode = dev.get("mode")
+            ha = self.MODE_MAP.get(mode, HVACMode.OFF)
+            self._hvac_mode = ha
+            if ha == HVACMode.COOL:
+                self._target_temp_low = int(float(dev.get("cold_consign", 0)))
+                self._fan_mode = dev.get("cold_speed")
+            elif ha == HVACMode.HEAT:
+                self._target_temp_high = int(float(dev.get("heat_consign", 0)))
+                self._fan_mode = dev.get("heat_speed")
+            elif ha == HVACMode.FAN_ONLY:
+                self._fan_mode = dev.get("cold_speed")
+            elif ha == HVACMode.DRY:
                 self._fan_mode = None
-            elif mode == "4":
-                self._hvac_mode = HVACMode.HEAT_COOL
-                self._target_temp_high = int(float(device.get("heat_consign", 0)))
-                self._target_temp_low = int(float(device.get("cold_consign", 0)))
-                self._fan_mode = device.get("heat_speed") or device.get("cold_speed")
-            else:
-                self._hvac_mode = HVACMode.OFF
-                self._fan_mode = None
+            elif ha == HVACMode.HEAT_COOL:
+                self._target_temp_low = int(float(dev.get("cold_consign", 0)))
+                self._target_temp_high = int(float(dev.get("heat_consign", 0)))
+                self._fan_mode = dev.get("heat_speed") or dev.get("cold_speed")
         else:
             self._hvac_mode = HVACMode.OFF
             self._fan_mode = None
 
     async def async_set_fan_mode(self, fan_mode):
-        """
-        Set the fan mode asynchronously.
-        In HEAT_COOL mode, this sets both cool (P3) and heat (P4) speeds.
-        """
-        await self.hass.async_create_task(self._async_set_fan_mode_sync(fan_mode))
+        """Set fan mode."""
+        await self.hass.async_create_task(self._send_fan(fan_mode))
 
-    async def _async_set_fan_mode_sync(self, fan_mode):
-        """Internal coroutine to send fan speed commands."""
+    async def _send_fan(self, fan_mode):
         speed = int(fan_mode)
-        if speed not in range(1, int(self._device_data.get("availables_speeds", 3)) + 1):
-            _LOGGER.error("Fan speed %s not valid", speed)
-            return
-
-        if self._hvac_mode in [HVACMode.COOL, HVACMode.FAN_ONLY]:
-            self._send_command("P3", speed)
+        if self._hvac_mode in (HVACMode.COOL, HVACMode.FAN_ONLY):
+            self._send("P3", speed)
         elif self._hvac_mode == HVACMode.HEAT:
-            self._send_command("P4", speed)
+            self._send("P4", speed)
         elif self._hvac_mode == HVACMode.HEAT_COOL:
-            self._send_command("P3", speed)
-            self._send_command("P4", speed)
-
+            self._send("P3", speed)
+            self._send("P4", speed)
         self._fan_mode = fan_mode
-        self._refresh_state()
-
-    def _refresh_state(self):
-        """Schedule an immediate refresh of coordinator data."""
-        self.hass.async_create_task(self.coordinator.async_request_refresh())
+        await self.coordinator.async_request_refresh()
 
     def turn_on(self):
-        """Turn on the device."""
-        self._send_command("P1", 1)
-        self._refresh_state()
+        """Turn on device."""
+        self._send("P1", 1)
 
     def turn_off(self):
-        """Turn off the device."""
-        self._send_command("P1", 0)
-        self._hvac_mode = HVACMode.OFF
-        self._refresh_state()
+        """Turn off device."""
+        self._send("P1", 0)
 
-    def set_hvac_mode(self, hvac_mode):
-        """Set HVAC mode with proper P2 mapping."""
-        if hvac_mode == HVACMode.OFF:
+    def set_hvac_mode(self, mode):
+        """Set HVAC mode."""
+        if mode == HVACMode.OFF:
             return self.turn_off()
-
-        mapping = {
-            HVACMode.COOL: "1",
-            HVACMode.HEAT: "2",
-            HVACMode.FAN_ONLY: "3",
-            HVACMode.HEAT_COOL: "4",
-            HVACMode.DRY: "5",
-        }
-        # ensure device is ON
-        if self._hvac_mode == HVACMode.OFF:
-            self.turn_on()
-        self._send_command("P2", mapping[hvac_mode])
-        self._hvac_mode = hvac_mode
-        self._refresh_state()
+        code = {v: k for k, v in self.MODE_MAP.items()}.get(mode)
+        if code:
+            if self._hvac_mode == HVACMode.OFF:
+                self.turn_on()
+            self._send("P2", code)
 
     def set_temperature(self, **kwargs):
-        """
-        Set temperatures: single or dual setpoint.
-        Uses P7 for cool, P8 for heat.
-        """
+        """Set temperature(s)."""
         temp = kwargs.get(ATTR_TEMPERATURE)
-        temp_high = kwargs.get("target_temp_high")
-        temp_low = kwargs.get("target_temp_low")
-
-        if self._hvac_mode in [HVACMode.DRY, HVACMode.FAN_ONLY]:
-            _LOGGER.warning("Temperature not supported in mode %s", self._hvac_mode)
-            return
-
-        commands = []
+        high = kwargs.get("target_temp_high")
+        low = kwargs.get("target_temp_low")
+        cmds = []
         if self._hvac_mode == HVACMode.HEAT_COOL:
-            if temp_high is not None:
-                commands.append(("P8", f"{int(temp_high)}.0"))
-            if temp_low is not None:
-                commands.append(("P7", f"{int(temp_low)}.0"))
+            if low is not None:
+                cmds.append(("P7", f"{int(low)}.0"))
+            if high is not None:
+                cmds.append(("P8", f"{int(high)}.0"))
         else:
-            if self._hvac_mode == HVACMode.HEAT and temp is not None:
-                commands.append(("P8", f"{int(temp)}.0"))
             if self._hvac_mode == HVACMode.COOL and temp is not None:
-                commands.append(("P7", f"{int(temp)}.0"))
+                cmds.append(("P7", f"{int(temp)}.0"))
+            if self._hvac_mode == HVACMode.HEAT and temp is not None:
+                cmds.append(("P8", f"{int(temp)}.0"))
+        for opt, val in cmds:
+            self._send(opt, val)
 
-        for opt, val in commands:
-            self._send_command(opt, val)
-        self._refresh_state()
-
-    def _send_command(self, option, value):
-        """Send an event to the Airzone API."""
+    def _send(self, option, value):
+        """Helper to fire API event."""
         payload = {
             "event": {
                 "cgi": "modmaquina",
-                "device_id": self.unique_id,
+                "device_id": self._attr_unique_id,
                 "option": option,
                 "value": value,
             }
         }
-        _LOGGER.debug("Sending command: %s", payload)
-        # schedule via HA event loop
+        _LOGGER.debug("Sending %s=%s", option, value)
         self.hass.async_create_task(self._api.send_event(payload))
