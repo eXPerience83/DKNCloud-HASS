@@ -9,29 +9,48 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Extended list of diagnostic attributes to expose as sensors (with icons and human-friendly names)
+# List of diagnostic attributes to expose as sensors
 DIAGNOSTIC_ATTRIBUTES = [
-    ("progs_enabled", "Programs Enabled", "mdi:calendar-check"),
-    ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch"),
-    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand"),
-    ("scenary", "Scenary", "mdi:bed"),
-    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low"),
-    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high"),
-    ("machine_errors", "Machine Errors", "mdi:alert-octagon"),
-    ("firmware", "Firmware Version", "mdi:chip"),
-    ("brand", "Brand/Model", "mdi:factory"),
-    ("pin", "Device PIN", "mdi:numeric"),
-    ("update_date", "Last Update", "mdi:update"),
-    ("mode", "Current Mode (Raw)", "mdi:tag"),
-    # Slats fields (state and position for vertical/horizontal airflow, and by mode)
-    ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical"),
-    ("ver_position_slats", "Vertical Slat Position", "mdi:swap-vertical"),
-    ("hor_state_slats", "Horizontal Slat State", "mdi:swap-horizontal"),
-    ("hor_position_slats", "Horizontal Slat Position", "mdi:swap-horizontal"),
-    ("ver_cold_slats", "Vertical Cold Slats", "mdi:swap-vertical"),
-    ("ver_heat_slats", "Vertical Heat Slats", "mdi:swap-vertical"),
-    ("hor_cold_slats", "Horizontal Cold Slats", "mdi:swap-horizontal"),
-    ("hor_heat_slats", "Horizontal Heat Slats", "mdi:swap-horizontal"),
+    # (attribute, friendly name, icon, enabled by default)
+    ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True),
+    ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True),
+    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True),
+    ("scenary", "Scenary", "mdi:bed", True),
+    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low", True),
+    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high", True),
+    ("machine_errors", "Machine Errors", "mdi:alert-octagon", True),
+    ("firmware", "Firmware Version", "mdi:chip", True),
+    ("brand", "Brand/Model", "mdi:factory", True),
+    ("pin", "Device PIN", "mdi:numeric", True),
+    ("power", "Power State (Raw)", "mdi:power", True),
+    ("units", "Units", "mdi:ruler", True),
+    ("availables_speeds", "Available Fan Speeds", "mdi:fan", True),
+    ("local_temp", "Current Device Temp (Raw)", "mdi:thermometer", True),
+    ("cold_consign", "Cold Setpoint (Raw)", "mdi:snowflake", True),
+    ("heat_consign", "Heat Setpoint (Raw)", "mdi:fire", True),
+    ("cold_speed", "Cold Fan Speed", "mdi:fan", True),
+    ("heat_speed", "Heat Fan Speed", "mdi:fan", True),
+    ("update_date", "Last Update", "mdi:update", False),
+    ("mode", "Current Mode (Raw)", "mdi:tag", False),
+    # Slats fields, disabled by default
+    ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical", False),
+    ("ver_position_slats", "Vertical Slat Position", "mdi:swap-vertical", False),
+    ("hor_state_slats", "Horizontal Slat State", "mdi:swap-horizontal", False),
+    ("hor_position_slats", "Horizontal Slat Position", "mdi:swap-horizontal", False),
+    ("ver_cold_slats", "Vertical Cold Slats", "mdi:swap-vertical", False),
+    ("ver_heat_slats", "Vertical Heat Slats", "mdi:swap-vertical", False),
+    ("hor_cold_slats", "Horizontal Cold Slats", "mdi:swap-horizontal", False),
+    ("hor_heat_slats", "Horizontal Heat Slats", "mdi:swap-horizontal", False),
+    # Temperature limits (diagnostics, advanced)
+    ("max_limit_cold", "Max Limit Cold", "mdi:thermometer-high", False),
+    ("min_limit_cold", "Min Limit Cold", "mdi:thermometer-low", False),
+    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-high", False),
+    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-low", False),
+    # Advanced diagnostics, mostly for debug
+    ("state", "State (Raw)", "mdi:eye", False),
+    ("status", "Status", "mdi:check-circle", False),
+    ("connection_date", "Connection Date", "mdi:clock", False),
+    ("last_event_id", "Last Event ID", "mdi:identifier", False),
 ]
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -46,23 +65,17 @@ async def async_setup_entry(hass, entry, async_add_entities):
         return
     coordinator = data.get("coordinator")
     sensors = []
-    # Create a temperature sensor and all diagnostic sensors for each device in the coordinator data.
     for device_id, device in coordinator.data.items():
         sensors.append(AirzoneTemperatureSensor(coordinator, device))
-        for attr, name, icon in DIAGNOSTIC_ATTRIBUTES:
+        for attr, name, icon, enabled_default in DIAGNOSTIC_ATTRIBUTES:
             sensors.append(
-                AirzoneDiagnosticSensor(coordinator, device, attr, name, icon)
+                AirzoneDiagnosticSensor(coordinator, device, attr, name, icon, enabled_default)
             )
     async_add_entities(sensors, True)
 
 class AirzoneTemperatureSensor(SensorEntity):
-    """Representation of a temperature sensor for an Airzone device (local_temp)."""
+    """Temperature sensor for Airzone device (local_temp)."""
     def __init__(self, coordinator, device_data: dict):
-        """
-        Initialize the sensor entity using device data.
-        :param coordinator: The DataUpdateCoordinator instance.
-        :param device_data: Dictionary with device information.
-        """
         self.coordinator = coordinator
         self._device_data = device_data
         name = f"{device_data.get('name', 'Airzone Device')} Temperature"
@@ -91,7 +104,7 @@ class AirzoneTemperatureSensor(SensorEntity):
 
     @property
     def device_info(self):
-        """Return device info to link this sensor to a device in Home Assistant.""" 
+        """Return device info to link this sensor to a device in Home Assistant."""
         return {
             "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
@@ -122,10 +135,10 @@ class AirzoneTemperatureSensor(SensorEntity):
 
 class AirzoneDiagnosticSensor(SensorEntity):
     """
-    Representation of a diagnostic sensor for an Airzone device.
-    Displays additional device attributes as separate sensor entities with DIAGNOSTIC category.
+    Diagnostic sensor for Airzone device.
+    These sensors are entity_category=DIAGNOSTIC and can be disabled by default if not essential.
     """
-    def __init__(self, coordinator, device_data: dict, attribute: str, name: str, icon: str):
+    def __init__(self, coordinator, device_data: dict, attribute: str, name: str, icon: str, enabled_default: bool):
         self.coordinator = coordinator
         self._device_data = device_data
         self._attribute = attribute
@@ -133,15 +146,21 @@ class AirzoneDiagnosticSensor(SensorEntity):
         self._attr_icon = icon
         self._attr_unique_id = f"{device_data.get('id')}_{attribute}"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_entity_registry_enabled_default = enabled_default
 
     @property
     def native_value(self):
         """Return the value of the diagnostic attribute, formatted for display."""
         value = self._device_data.get(self._attribute)
-        # Custom conversions for a more readable UI
+        # Custom conversions for better UI
         if self._attribute == "progs_enabled":
             return bool(value)
-        if self._attribute in ("sleep_time", "min_temp_unoccupied", "max_temp_unoccupied"):
+        if self._attribute == "machine_errors":
+            if value in (None, "", [], {}):
+                return "No errors"
+            return str(value)
+        if self._attribute in ("sleep_time", "min_temp_unoccupied", "max_temp_unoccupied",
+                               "max_limit_cold", "min_limit_cold", "max_limit_heat", "min_limit_heat"):
             try:
                 return int(float(value))
             except (TypeError, ValueError):
@@ -153,13 +172,12 @@ class AirzoneDiagnosticSensor(SensorEntity):
             try:
                 return int(value)
             except (TypeError, ValueError):
-                return value  # return as-is if not convertible
-        # For other fields, return value as-is
+                return value
         return value
 
     @property
     def device_info(self):
-        """Return device info to link this sensor to a device in Home Assistant.""" 
+        """Return device info to link this sensor to a device in Home Assistant."""
         return {
             "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
