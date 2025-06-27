@@ -148,6 +148,21 @@ class AirzoneDiagnosticSensor(SensorEntity):
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_entity_registry_enabled_default = enabled_default
 
+        # Assign device_class, state_class, and units for temperature and numeric sensors
+        temp_sensors = (
+            "cold_consign", "heat_consign",
+            "min_temp_unoccupied", "max_temp_unoccupied",
+            "min_limit_cold", "max_limit_cold",
+            "min_limit_heat", "max_limit_heat"
+        )
+        if self._attribute in temp_sensors:
+            self._attr_device_class = "temperature"
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+            self._attr_unit_of_measurement = UnitOfTemperature.CELSIUS
+            self._attr_state_class = "measurement"
+        if self._attribute in ("cold_speed", "heat_speed", "availables_speeds"):
+            self._attr_state_class = "measurement"
+
     @property
     def native_value(self):
         """Return the value of the diagnostic attribute, formatted for display."""
@@ -159,13 +174,17 @@ class AirzoneDiagnosticSensor(SensorEntity):
             if value in (None, "", [], {}):
                 return "No errors"
             return str(value)
-        if self._attribute in ("sleep_time", "min_temp_unoccupied", "max_temp_unoccupied",
-                               "max_limit_cold", "min_limit_cold", "max_limit_heat", "min_limit_heat"):
+        if self._attribute in (
+            "sleep_time", "min_temp_unoccupied", "max_temp_unoccupied",
+            "max_limit_cold", "min_limit_cold", "max_limit_heat", "min_limit_heat",
+            "cold_consign", "heat_consign"
+        ):
             try:
-                return int(float(value))
+                return float(value)
             except (TypeError, ValueError):
                 return None
         if self._attribute in (
+            "cold_speed", "heat_speed", "availables_speeds",
             "ver_state_slats", "ver_position_slats",
             "hor_state_slats", "hor_position_slats",
         ):
