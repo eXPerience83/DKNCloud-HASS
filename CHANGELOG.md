@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.2] - 2025-06-27
+
+### **Added**
+- Diagnostic sensors for:  
+  - `power` (raw on/off value)
+  - `units` (system units)
+  - `availables_speeds` (number of available fan speeds)
+  - `local_temp` (device temperature, raw)
+  - `cold_consign` (cooling setpoint, raw)
+  - `heat_consign` (heating setpoint, raw)
+  - `cold_speed` (current cool fan speed)
+  - `heat_speed` (current heat fan speed)
+
+### **Changed**
+- Diagnostic sensors for less commonly used fields (e.g., slats, some raw and advanced diagnostics) are now **disabled by default**—can be enabled via the Home Assistant UI.
+- Improved naming and icons for new and existing diagnostic sensors.
+- All changes maintain full backwards compatibility for existing users.
+
+### **Removed**
+- Removed location and place fields from diagnostic sensors:  
+  - `time_zone`, `spot_name`, `complete_name` are no longer exposed as entities.
+
 ## [0.3.1] - 2025-06-27
 
 ### **Added**
