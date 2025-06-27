@@ -30,7 +30,7 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("heat_consign", "Heat Setpoint (Raw)", "mdi:fire", True),
     ("cold_speed", "Cold Fan Speed", "mdi:fan", True),
     ("heat_speed", "Heat Fan Speed", "mdi:fan", True),
-    ("update_date", "Last Update", "mdi:update", True),
+    ("update_date", "Last Update", "mdi:update", False),
     ("mode", "Current Mode (Raw)", "mdi:tag", True),
     # Slats fields, disabled by default
     ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical", False),
