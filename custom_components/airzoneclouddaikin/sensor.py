@@ -30,8 +30,8 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("heat_consign", "Heat Setpoint (Raw)", "mdi:fire", True),
     ("cold_speed", "Cold Fan Speed", "mdi:fan", True),
     ("heat_speed", "Heat Fan Speed", "mdi:fan", True),
-    ("update_date", "Last Update", "mdi:update", False),
-    ("mode", "Current Mode (Raw)", "mdi:tag", False),
+    ("update_date", "Last Update", "mdi:update", True),
+    ("mode", "Current Mode (Raw)", "mdi:tag", True),
     # Slats fields, disabled by default
     ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical", False),
     ("ver_position_slats", "Vertical Slat Position", "mdi:swap-vertical", False),
@@ -42,15 +42,15 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("hor_cold_slats", "Horizontal Cold Slats", "mdi:swap-horizontal", False),
     ("hor_heat_slats", "Horizontal Heat Slats", "mdi:swap-horizontal", False),
     # Temperature limits (diagnostics, advanced)
-    ("max_limit_cold", "Max Limit Cold", "mdi:thermometer-high", False),
-    ("min_limit_cold", "Min Limit Cold", "mdi:thermometer-low", False),
-    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-high", False),
-    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-low", False),
+    ("max_limit_cold", "Max Limit Cold", "mdi:thermometer-high", True),
+    ("min_limit_cold", "Min Limit Cold", "mdi:thermometer-low", True),
+    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-high", True),
+    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-low", True),
     # Advanced diagnostics, mostly for debug
-    ("state", "State (Raw)", "mdi:eye", False),
-    ("status", "Status", "mdi:check-circle", False),
-    ("connection_date", "Connection Date", "mdi:clock", False),
-    ("last_event_id", "Last Event ID", "mdi:identifier", False),
+    ("state", "State (Raw)", "mdi:eye", True),
+    ("status", "Status", "mdi:check-circle", True),
+    ("connection_date", "Connection Date", "mdi:clock", True),
+    ("last_event_id", "Last Event ID", "mdi:identifier", True),
 ]
 
 async def async_setup_entry(hass, entry, async_add_entities):
