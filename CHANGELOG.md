@@ -1,4 +1,19 @@
-# Changelog
+# 
+
+## [0.3.3] - 2025-06-27
+
+### **Added**
+- Added `device_class = temperature`, `unit_of_measurement = °C`, and `state_class = measurement` to all sensors representing temperature values:
+  - `cold_consign`, `heat_consign`
+  - `min_temp_unoccupied`, `max_temp_unoccupied`
+  - `min_limit_cold`, `max_limit_cold`
+  - `min_limit_heat`, `max_limit_heat`
+
+### **Changed**
+- Applied `state_class = measurement` to fan speed and available speed sensors:
+  - `cold_speed`, `heat_speed`, `availables_speeds`
+- Improved visibility and UI representation of temperature-related sensors with proper device classes.
+- Refactored internal handling of `machine_errors` to display its value as-is (including future support for string or list), showing "No errors" when empty or null.
 
 ## [0.3.2] - 2025-06-27
 
