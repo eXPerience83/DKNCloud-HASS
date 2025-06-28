@@ -1,7 +1,6 @@
 """Sensor platform for DKN Cloud for HASS."""
 import hashlib
 import logging
-from homeassistant.helpers.update_coordinator import CoordinatorEntity, callback
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import UnitOfTemperature
 from homeassistant.helpers.entity import EntityCategory
@@ -53,7 +52,6 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("last_event_id", "Last Event ID", "mdi:identifier", False),
 ]
 
-
 async def async_setup_entry(hass, entry, async_add_entities):
     """
     Set up the sensor platform from a config entry using the DataUpdateCoordinator.
@@ -66,6 +64,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = data.get("coordinator")
     sensors = []
     for device_id, device in coordinator.data.items():
+        # Main temperature sensor (local_temp)
         sensors.append(AirzoneTemperatureSensor(coordinator, device))
         for attr, name, icon, enabled_default in DIAGNOSTIC_ATTRIBUTES:
             if attr == "local_temp":
@@ -75,17 +74,16 @@ async def async_setup_entry(hass, entry, async_add_entities):
             )
     async_add_entities(sensors, True)
 
-
-class AirzoneTemperatureSensor(CoordinatorEntity, SensorEntity):
+class AirzoneTemperatureSensor(SensorEntity):
     """Main temperature sensor for Airzone device (local_temp)."""
-
     def __init__(self, coordinator, device_data: dict):
-        super().__init__(coordinator)
-        self._device_id = device_data.get("id")
+        self.coordinator = coordinator
+        self._device_data = device_data
         name = f"{device_data.get('name', 'Airzone Device')} Temperature"
         self._attr_name = name
-        if self._device_id and self._device_id.strip():
-            self._attr_unique_id = f"{self._device_id}_temperature"
+        device_id = device_data.get("id")
+        if device_id and device_id.strip():
+            self._attr_unique_id = f"{device_id}_temperature"
         else:
             self._attr_unique_id = hashlib.sha256(name.encode("utf-8")).hexdigest()
         self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
@@ -93,20 +91,12 @@ class AirzoneTemperatureSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = "temperature"
         self._attr_state_class = "measurement"
         self._attr_icon = "mdi:thermometer"
-        self._attr_device_info = None
-
-    @property
-    def _device_data(self):
-        """Get latest device data from the coordinator."""
-        return self.coordinator.data.get(self._device_id, {})
+        self.update_state()
 
     @property
     def native_value(self):
         """Return the current temperature reading."""
-        try:
-            return float(self._device_data.get("local_temp"))
-        except (ValueError, TypeError):
-            return None
+        return self._attr_native_value
 
     @property
     def accuracy_decimals(self):
@@ -116,39 +106,50 @@ class AirzoneTemperatureSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self):
         """Return device info for linking this sensor to a device in Home Assistant."""
-        data = self._device_data
         return {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "name": data.get("name"),
+            "identifiers": {(DOMAIN, self._device_data.get("id"))},
+            "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": f"{data.get('brand', 'Unknown')} (PIN: {data.get('pin')})",
-            "sw_version": data.get("firmware", "Unknown"),
-            "connections": {("mac", data.get("mac"))} if data.get("mac") else None,
+            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
+            "sw_version": self._device_data.get("firmware", "Unknown"),
+            "connections": {("mac", self._device_data.get("mac"))} if self._device_data.get("mac") else None,
         }
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Update state when the coordinator has new data."""
-        self.async_write_ha_state()
+    async def async_update(self):
+        """
+        Update the sensor state from the coordinator data.
+        This method requests a refresh of the coordinator data and then updates
+        the sensor state using the latest device data.
+        """
+        await self.coordinator.async_request_refresh()
+        device = self.coordinator.data.get(self._device_data.get("id"))
+        if device:
+            self._device_data = device
+        self.update_state()
 
+    def update_state(self):
+        """Update the native value from device data."""
+        try:
+            self._attr_native_value = float(self._device_data.get("local_temp"))
+        except (ValueError, TypeError):
+            self._attr_native_value = None
 
-class AirzoneDiagnosticSensor(CoordinatorEntity, SensorEntity):
+class AirzoneDiagnosticSensor(SensorEntity):
     """
     Diagnostic sensor for Airzone device.
     These sensors are entity_category=DIAGNOSTIC and can be disabled by default if not essential.
     """
-
     def __init__(self, coordinator, device_data: dict, attribute: str, name: str, icon: str, enabled_default: bool):
-        super().__init__(coordinator)
-        self._device_id = device_data.get("id")
+        self.coordinator = coordinator
+        self._device_data = device_data
         self._attribute = attribute
         self._attr_name = f"{device_data.get('name', 'Airzone Device')} {name}"
         self._attr_icon = icon
-        self._attr_unique_id = f"{self._device_id}_{attribute}"
+        self._attr_unique_id = f"{device_data.get('id')}_{attribute}"
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_entity_registry_enabled_default = enabled_default
-        self._attr_device_info = None
 
+        # Set temperature properties for all temperature-related sensors
         temp_sensors = (
             "cold_consign", "heat_consign",
             "min_temp_unoccupied", "max_temp_unoccupied",
@@ -164,14 +165,10 @@ class AirzoneDiagnosticSensor(CoordinatorEntity, SensorEntity):
             self._attr_state_class = "measurement"
 
     @property
-    def _device_data(self):
-        """Get latest device data from the coordinator."""
-        return self.coordinator.data.get(self._device_id, {})
-
-    @property
     def native_value(self):
         """Return the value of the diagnostic attribute, formatted for display."""
         value = self._device_data.get(self._attribute)
+        # Custom conversions for better UI
         if self._attribute == "progs_enabled":
             return bool(value)
         if self._attribute == "machine_errors":
@@ -201,17 +198,18 @@ class AirzoneDiagnosticSensor(CoordinatorEntity, SensorEntity):
     @property
     def device_info(self):
         """Return device info for linking this sensor to a device in Home Assistant."""
-        data = self._device_data
         return {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "name": data.get("name"),
+            "identifiers": {(DOMAIN, self._device_data.get("id"))},
+            "name": self._device_data.get("name"),
             "manufacturer": "Daikin",
-            "model": f"{data.get('brand', 'Unknown')} (PIN: {data.get('pin')})",
-            "sw_version": data.get("firmware", "Unknown"),
-            "connections": {("mac", data.get("mac"))} if data.get("mac") else None,
+            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
+            "sw_version": self._device_data.get("firmware", "Unknown"),
+            "connections": {("mac", self._device_data.get("mac"))} if self._device_data.get("mac") else None,
         }
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Update state when the coordinator has new data."""
-        self.async_write_ha_state()
+    async def async_update(self):
+        """Update the diagnostic sensor state from the coordinator data."""
+        await self.coordinator.async_request_refresh()
+        device = self.coordinator.data.get(self._device_data.get("id"))
+        if device:
+            self._device_data = device
