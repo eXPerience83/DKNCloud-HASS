@@ -55,7 +55,8 @@ The Airzone Cloud API defines several modes via "Px" options. In our integration
 | `"5"`    | DRY                      | Dry/Dehumidify mode             |
 
 **Note on P2=4 (HEAT\_COOL/Auto Mode):**
-Several attempts were made to implement dual setpoint/auto mode (P2=4, also called HEAT\_COOL or "auto" in some APIs), but our tests (2025) show that this mode either reverts to standard cooling or is ignored by the device. The state typically returns as `"mode": "6"`, but the machine continues working as if in cooling. For this reason, we have not implemented HEAT\_COOL/auto mode in the current integration to avoid user confusion and ensure reliability.
+Several attempts were made to implement dual setpoint/auto mode (P2=4, also called HEAT\_COOL or "auto" in some APIs), but our real-world tests (2025) showed that this mode either returned `"mode": "6"` or was not properly activated. The device did not operate in dual setpoint mode, nor did it expose a usable dual-temperature state; instead, it stayed in the previously active mode or remained ambiguous.
+Because the feature could not be made stable, and for clarity/reliability, **HEAT\_COOL/auto mode is not implemented in this integration**. More research may be needed for future support.
 
 Other Px modes (6, 7, 8) are not used in this integration and their functions are unknown or not documented for these devices.
 The `"modes"` field in the device JSON (e.g., `"modes": "11101000"`) is a bitmask that tells you which P2 modes are *supported* by the device, in the following order:
@@ -249,3 +250,12 @@ Below is a fully anonymized sample device response with all slats and diagnostic
 * The `modes` field is a binary string indicating supported modes (positions 1–8; only the first five are relevant).
 * Additional fields like `progs_enabled`, `scenary`, and `sleep_time` may be useful for diagnostics and future features.
 * Always keep your real authentication token, device IDs, and installation IDs secret.
+
+---
+
+#### Historical Note on "HEAT\_COOL" Mode
+
+Several attempts were made to use dual setpoint/auto mode (P2=4, also called HEAT\_COOL or "auto") as seen in the original [AirzoneCloudDaikin](https://github.com/max13fr/AirzoneCloudDaikin), but real-world testing showed the device either returned `"mode": "6"` or never actually enabled a true dual setpoint state.
+The device continued running in its previous mode or reported an undocumented state, with no reliable way to use "dual setpoint" mode in practice.
+For maximum reliability, **HEAT\_COOL/auto mode is not exposed or implemented in this integration.**
+More investigation may be needed in the future as firmware/APIs evolve.
