@@ -23,7 +23,7 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("brand", "Brand/Model", "mdi:factory", True),
     ("pin", "Device PIN", "mdi:numeric", True),
     ("power", "Power State (Raw)", "mdi:power", True),
-    ("units", "Units", "mdi:ruler", True),
+    ("units", "Units", "mdi:ruler", False),
     ("availables_speeds", "Available Fan Speeds", "mdi:fan", True),
     ("local_temp", "Current Device Temp (Raw)", "mdi:thermometer", True),
     ("cold_consign", "Cold Setpoint (Raw)", "mdi:snowflake", True),
@@ -47,9 +47,9 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-high", True),
     ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-low", True),
     # Advanced diagnostics, mostly for debug
-    ("state", "State (Raw)", "mdi:eye", True),
-    ("status", "Status", "mdi:check-circle", True),
-    ("connection_date", "Connection Date", "mdi:clock", True),
+    ("state", "State (Raw)", "mdi:eye", False),
+    ("status", "Status", "mdi:check-circle", False),
+    ("connection_date", "Connection Date", "mdi:clock", False),
     ("last_event_id", "Last Event ID", "mdi:identifier", True),
 ]
 
