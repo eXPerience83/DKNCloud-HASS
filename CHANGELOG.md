@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.5] - 2025-06-28
+
+### **Changed**
+
+* All entities (climate and sensors) now inherit from `CoordinatorEntity`, subscribing natively to the DataUpdateCoordinator push model.
+* Removed manual `async_update` and polling patterns from climate and sensor entities.
+* All state changes in climate and sensor entities are now instantly reflected upon each coordinator refresh (every 10s by default).
+* Replaced all usages of `asyncio.run_coroutine_threadsafe` with `hass.async_create_task` for safer async scheduling and better Home Assistant compatibility.
+* Eliminated any import or legacy usage of `asyncio` in `climate.py`.
+
+### **Improved**
+
+* UI now updates climate and diagnostic sensors with near-instant feedback after remote or cloud changes, without waiting for long Home Assistant polling intervals.
+* Codebase now fully PEP8-compliant and follows Home Assistant’s best practices for async entities and coordinator-based integrations.
+* Internal access to device data is now always via the coordinator's live snapshot, ensuring all properties are always up to date.
+
+### **Fixed**
+
+* Fixed delayed updates and inconsistent state in the Home Assistant UI for climate and diagnostic sensor entities after changing modes, setpoints, or power state.
+
 ## [0.3.4] - 2025-06-28
 
 ### **Changed**
