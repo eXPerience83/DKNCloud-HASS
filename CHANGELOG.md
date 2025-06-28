@@ -1,6 +1,87 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.3.4] - 2025-06-28
+
+### **Changed**
+- Removed HEAT_COOL (dual setpoint/auto) mode from all logic, mapping, and documentation after confirming with real-world API tests that this Daikin/Airzone unit does not support it.
+- Now only COOL, HEAT, FAN_ONLY, and DRY are available HVAC modes.
+- Documentation and info.md updated with technical details about these findings.
+
+## [0.3.3] - 2025-06-27
+
+### **Added**
+- Added `device_class = temperature`, `unit_of_measurement = °C`, and `state_class = measurement` to all sensors representing temperature values:
+  - `cold_consign`, `heat_consign`
+  - `min_temp_unoccupied`, `max_temp_unoccupied`
+  - `min_limit_cold`, `max_limit_cold`
+  - `min_limit_heat`, `max_limit_heat`
+
+### **Changed**
+- Applied `state_class = measurement` to fan speed and available speed sensors:
+  - `cold_speed`, `heat_speed`, `availables_speeds`
+- Improved visibility and UI representation of temperature-related sensors with proper device classes.
+- Refactored internal handling of `machine_errors` to display its value as-is (including future support for string or list), showing "No errors" when empty or null.
+
+## [0.3.2] - 2025-06-27
+
+### **Added**
+- Diagnostic sensors for:  
+  - `power` (raw on/off value)
+  - `units` (system units)
+  - `availables_speeds` (number of available fan speeds)
+  - `local_temp` (device temperature, raw)
+  - `cold_consign` (cooling setpoint, raw)
+  - `heat_consign` (heating setpoint, raw)
+  - `cold_speed` (current cool fan speed)
+  - `heat_speed` (current heat fan speed)
+
+### **Changed**
+- Diagnostic sensors for less commonly used fields (e.g., slats, some raw and advanced diagnostics) are now **disabled by default**—can be enabled via the Home Assistant UI.
+- Improved naming and icons for new and existing diagnostic sensors.
+- All changes maintain full backwards compatibility for existing users.
+
+### **Removed**
+- Removed location and place fields from diagnostic sensors:  
+  - `time_zone`, `spot_name`, `complete_name` are no longer exposed as entities.
+
+## [0.3.1] - 2025-06-27
+
+### **Added**
+- Exposed **all available diagnostic fields** from the Airzone API response as individual sensors with `EntityCategory.DIAGNOSTIC`.  
+  This includes: machine_errors, firmware, brand, pin, update_date, mode (raw), all vertical/horizontal slats states/positions (for both current and hot/cold), in addition to previously available diagnostics (scenary, program enabled, sleep time, etc).
+- Each sensor uses a unique icon and human-friendly name for clarity in the Home Assistant UI.
+
+### **Changed**
+- `sensor.py` refactored for clarity, extensibility, and clean inline documentation.
+- Now easier to add/remove diagnostic sensors by editing a single array.
+
+
+## [0.3.0] - 2025-06-27
+
+### **Changed**
+- **Professional README.md rewrite:**  
+  - Reworked all documentation in the style of modern Home Assistant custom integrations, with shields/badges, clear features, compatibility table, roadmap, FAQs, security notice, and explicit Acknowledgments to [max13fr/AirzoneCloudDaikin](https://github.com/max13fr/AirzoneCloudDaikin).
+  - Added multi-language and roadmap notes, and improved explanation of dual setpoint (HEAT_COOL) mode.
+  - Improved documentation for slat position fields, diagnostics, and control API mapping.
+  - Security warning added about never sharing real tokens, emails, or IDs.
+
+### **Added**
+- **Diagnostic sensors:**  
+  Exposes additional diagnostic entities for modes, scene/presets, program status, sleep timer, slats positions, and temperature ranges (including fields like `ver_state_slats`, `ver_position_slats`, `hor_state_slats`, `hor_position_slats`, `ver_cold_slats`, `ver_heat_slats`, `hor_cold_slats`, `hor_heat_slats`).
+- **Dual setpoint support:**  
+  Climate entity now supports both `target_temperature_high` and `target_temperature_low` in HEAT_COOL mode, sending both P7 (cool) and P8 (heat) as needed.
+- **Roadmap section:**  
+  Added initial roadmap in README for multi-language and more diagnostics.
+- **Funding links:**  
+  Added Ko-fi and PayPal as main donation channels; enabled `.github/FUNDING.yml` for repository.
+
+### **Fixed**
+- **API/Device field documentation:**  
+  All fields in `info.md` examples are now fully anonymized, including slats and installation/location data.
+
+### **Removed**
+- **Legacy or generic mentions:**  
+  Updated documentation to clarify this fork is now a stand-alone, modern Home Assistant integration and not a simple derivative.
 
 ## [0.2.8] - 2025-04-09
 

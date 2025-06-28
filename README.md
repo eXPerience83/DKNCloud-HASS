@@ -1,107 +1,181 @@
-# DKN Cloud for HASS
+# ❄️ DKN Cloud for HASS
 
-DKN Cloud for HASS is a custom integration for Home Assistant that allows you to view and control your Daikin Airzone Cloud (dkn.airzonecloud.com) devices directly from Home Assistant.  
-This fork is designed for the "DAIKIN ES.DKNWSERVER Wifi adapter."  
-![Screenshot](https://github.com/eXPerience83/DKNCloud-HASS/blob/master/screenshot.png)
+**Control your Daikin Airzone Cloud (dkn.airzonecloud.com) HVAC systems natively from Home Assistant.**  
+Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnostics, and temperature at your fingertips.
 
-## Why this Fork?
+[![GitHub Release][release-shield]][release-url]
+[![License][license-shield]](LICENSE)
+[![hacs][hacs-shield]][hacs-url]
+[![PRs Welcome][prs-shield]][prs-url]
+[![Python][python-shield]][python-url]
+[![Made with love][love-shield]][love-url]
 
-This project is based primarily on the original [AirzoneCloudDaikin](https://pypi.org/project/AirzoneCloudDaikin/) package by [max13fr](https://github.com/max13fr/AirzoneCloudDaikin) and its Home Assistant adaptation. In this fork we have:
-- Added configuration via the Home Assistant UI.
-- Supported additional entities (including a temperature sensor and a power switch).
-- Improved device information display (MAC, PIN, firmware version, and model).
-- Enhanced HVAC mode control, including forced auto mode.
-- Made the integration compatible with Home Assistant 2025.3.
-- Simplified installation via HACS.
+[release-shield]: https://img.shields.io/github/release/eXPerience83/DKNCloud-HASS.svg?style=flat
+[release-url]: https://github.com/eXPerience83/DKNCloud-HASS/releases
+[license-shield]: https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS.svg?style=flat
+[hacs-shield]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat
+[hacs-url]: https://hacs.xyz
+[prs-shield]: https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat
+[prs-url]: https://github.com/eXPerience83/DKNCloud-HASS/pulls
+[python-shield]: https://img.shields.io/badge/python-3.9%2B-blue
+[python-url]: https://www.python.org/
+[love-shield]: https://img.shields.io/badge/made%20with-%E2%9D%A4-red
+[love-url]: https://github.com/eXPerience83
 
-For more detailed API information—including the original mode mapping from max13fr—please refer to the [info.md](./info.md) file.
+---
 
-## Introduction
+![Screenshot](https://github.com/eXPerience83/DKNCloud-HASS/raw/master/screenshot.png)
 
-This integration uses an API client (in `airzone_api.py`) to:
-- **Authenticate** via the `/users/sign_in` endpoint.
-- **Retrieve installations** via the `/installation_relations` endpoint (using `user_email` and `user_token` as query parameters).
-- **Retrieve devices** for each installation via the `/devices` endpoint.
-- **Send control events** via the `/events` endpoint.
+---
 
-Additionally, the integration provides:
-- A **climate platform** to control each air conditioner (power, HVAC mode, target temperature, and fan speed).
-- A **sensor platform** to record the temperature probe (`local_temp`).
-- A **switch platform** for device power control.
+## 🚀 Features
 
-## Key Features
+- **Fully integrated climate control:**  
+  Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
+- **Automatic device/sensor creation:**  
+  Creates climate, temperature, diagnostic, and power entities for each device.
+- **Diagnostic sensors:**  
+  Monitor device states, available modes, slats, scene/presets, and more.
+- **Zero YAML required:**  
+  All configuration via Home Assistant UI.
+- **Compatible with HACS:**  
+  Easy install & updates.
 
-- **Climate Entity**  
-  Control methods implemented in `climate.py` include:
-  - **turn_on:** Sends an event with P1=1.
-  - **turn_off:** Sends an event with P1=0.
-  - **set_hvac_mode:** Sends an event with P2. Supported mappings:
-    - HVACMode.OFF: calls `turn_off()`.
-    - HVACMode.COOL: sends P2=1.
-    - HVACMode.HEAT: sends P2=2.
-    - HVACMode.FAN_ONLY: sends P2=3.
-    - HVACMode.DRY: sends P2=5.
-    - HVACMode.AUTO (if forced via configuration): sends P2=4.
-  - **set_temperature:** Uses P8 for HEAT/AUTO modes or P7 for COOL mode. Temperature values are constrained to device limits and sent as an integer with “.0” appended.
-  - **set_fan_speed:** Uses P3 to adjust fan speed in COOL and FAN_ONLY modes and P4 in HEAT/AUTO modes.
+---
 
-- **Sensor Entity**  
-  A sensor for the temperature probe (`local_temp`) is created to record current temperature values (in °C). This sensor is updated based on the API’s response.
+## 🧭 Mode Mapping
 
-- **Switch Entity**  
-  A switch entity is provided for power control, sending P1 events to turn the device on or off.
+| P2 Value | Home Assistant Mode | Description                 |
+|----------|--------------------|-----------------------------|
+| `"1"`    | COOL               | Cooling                     |
+| `"2"`    | HEAT               | Heating                     |
+| `"3"`    | FAN_ONLY           | Ventilation only            |
+| `"5"`    | DRY                | Dehumidify                  |
 
-- **Enhanced Device Information**  
-  Additional details such as MAC address, PIN, firmware version, and model (brand) are extracted from the API and shown in the device registry.
+> **Note:**  
+> Dual setpoint/auto (HEAT_COOL) mode is not implemented. Real-world testing resulted in the device switching to an undocumented “mode 6” but never activating true dual mode. See [info.md](./info.md) for technical details and command mapping.
 
-> **Important:**  
-> Daikin climate equipment uses two consigns (one for heat and one for cold). Change the mode first (e.g., to heat) and then adjust the temperature. Although the original package defined modes up to "8", our tests indicate that only modes 1–5 produce an effect. For further details on mode mappings and example curl commands, see [info.md](./info.md).
+---
 
-## Installation
+## ⚙️ Installation
 
-### Manual Installation
-1. Create the `custom_components` folder in your Home Assistant configuration directory (if it doesn't already exist).
-2. Copy the entire `airzoneclouddaikin` folder from this repository into the `custom_components` folder.
-3. Restart Home Assistant.
+### HACS (Recommended)
+1. Go to **HACS → Integrations**
+2. Click **⋮ → Custom repositories**
+3. Add: `https://github.com/eXPerience83/DKNCloud-HASS`
+4. Search & install **DKN Cloud for HASS**
+5. **Restart** Home Assistant
 
-### Installation via HACS
-1. Open HACS in Home Assistant.
-2. Go to **Integrations**.
-3. Click the three-dot menu in the top right and select **Custom repositories**.
-4. Enter the URL of this repository:  
-   `https://github.com/eXPerience83/DKNCloud-HASS`
-5. Set the category to **Integration**.
-6. Click **Add**.
-7. Search for "DKN Cloud for HASS" in HACS and install the integration.
-8. Restart Home Assistant if prompted.
+### Manual
+1. Copy `airzoneclouddaikin` folder into `custom_components` in your HA config directory
+2. **Restart** Home Assistant
 
-## Configuration
+---
 
-After installation, add the integration via the Home Assistant UI by navigating to **Settings > Devices & Services > Add Integration**, searching for "DKN Cloud for HASS", and following the prompts.
+## 🔧 Configuration
 
-The configuration will ask for:
-- **Username and Password:** Your Airzone Cloud account credentials.
-- **Force HVAC Mode Auto:** (Optional checkbox) If enabled, the mode "auto" (HVACMode.AUTO) will be available for selection. Use this mode under your own responsibility.
+After installation, go to **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for HASS**.  
+Enter your Airzone Cloud **username** and **password**.
 
-## Usage
+**Optional parameters:**
+- **Scan interval:** Data refresh interval (seconds, default: 10)
 
-The integration retrieves your installations and devices, and creates:
-- A **climate entity** for each device (allowing control of power, HVAC mode, target temperature, and fan speed).
-- A **sensor entity** for the temperature probe (`local_temp`), with historical data storage.
-- A **switch entity** for device power control.
+> **No YAML required!**  
+> All options are set via the Home Assistant UI.
 
-When you interact with these entities, the integration sends the corresponding events (P1, P2, P7, P8, and fan speed commands P3/P4) to the API. The sensor entity updates based on the device’s reported temperature.
+---
 
-## API Examples
+## 🏷️ What You Get
 
-For further testing, please refer to the [info.md](./info.md) file for detailed information and example curl commands (using generic placeholders for sensitive data).
+- **Climate entity:**  
+  - All core modes (COOL, HEAT, FAN, DRY)
+  - Dynamic fan speed control
+- **Sensor entities:**  
+  - Current temperature (`local_temp`)
+  - Diagnostics: modes, scenes, program status, slats, etc.
+- **Switch entity:**  
+  - Power ON/OFF per device
 
-## Donations
+> Full API/command mapping and advanced usage in [info.md](./info.md).
 
-If you find this integration useful and would like to support its development, please consider donating:
-- [PayPal](https://paypal.me/eXPerience83)
+---
+
+## 📷 Screenshots
+
+![Panel Screenshot](https://github.com/eXPerience83/DKNCloud-HASS/raw/master/screenshot.png)
+
+---
+
+## 🧪 Compatibility
+
+| Home Assistant | Python | Daikin Model/Adapter         |
+|----------------|--------|-----------------------------|
+| 2025.4+        | 3.9+   | DAIKIN ES.DKNWSERVER (Cloud)|
+
+*Other Airzone or Daikin adapters may not be supported.*
+
+---
+
+## 🛣️ Roadmap
+
+- [ ] Multi-language support for sensors and diagnostics
+- [ ] More diagnostics and error reporting
+
+---
+
+## ❓ FAQ / Troubleshooting
+
+**Q: Why can't I set dual temperatures or use "auto" mode?**  
+A: Although the API and some docs suggest support for a dual setpoint (`HEAT_COOL`) or "auto" mode (P2=4), all real-world testing on the DKN/Daikin hardware resulted in the device switching to "mode 6" (undocumented) and never actually activating dual mode as intended.  
+Because the feature could not be made stable or reliable, it is not implemented in this integration. Further investigation may be needed for future versions.
+
+**Q: Can I control vertical/horizontal slats?**  
+A: Slat state/position is shown in diagnostic sensors; control is not implemented but fields are exposed for advanced users.
+
+**Q: What about scene/presets?**  
+A: Current scene (occupied, sleep, etc.) is available as a diagnostic sensor. Changing preset from HA is not yet implemented.
+
+**Q: Where can I find advanced API usage, all device fields, and curl examples?**  
+A: See [info.md](./info.md).
+
+---
+
+## 🔒 Security Notice
+
+**Never share your API token, credentials, or installation IDs in public!**  
+Always use placeholders as in this documentation.  
+For details on privacy and raw API responses, see [info.md](./info.md).
+
+---
+
+## 🤝 How to Contribute
+
+- Pull requests for features, fixes, or translations are welcome!
+- Report bugs or suggest features in [GitHub Issues](https://github.com/eXPerience83/DKNCloud-HASS/issues)
+
+---
+
+## ❤️ Contributing & Support
+
+If you find this integration useful, you can support development via:
+
 - [Ko-fi](https://ko-fi.com/experience83)
+- [PayPal](https://paypal.me/eXPerience83)
 
-## License
+---
 
-This project is licensed under the MIT License.
+## 🙏 Acknowledgments
+
+This project was inspired by and originally based on:
+
+- [AirzoneCloudDaikin (PyPI)](https://pypi.org/project/AirzoneCloudDaikin/) and its Home Assistant integration by [max13fr](https://github.com/max13fr/AirzoneCloudDaikin)
+
+Many thanks to those projects and authors for their groundwork and inspiration!
+
+---
+
+## 📜 License
+
+MIT © [eXPerience83](LICENSE)
+
+> This project is not affiliated with or endorsed by Daikin or Airzone. All trademarks are property of their respective owners.

@@ -6,6 +6,7 @@
   "dependencies": [],
   "after_dependencies": ["http"],
   "codeowners": ["@max13fr", "eXPerience83"],
-  "version": "0.2.8.1",
-  "config_flow": true
+  "version": "0.3.4",
+  "config_flow": true,
+  "iot_class": "cloud_polling"
 }
