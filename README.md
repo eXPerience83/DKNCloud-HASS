@@ -31,9 +31,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 ## 🚀 Features
 
 - **Fully integrated climate control:**  
-  Power, mode (heat/cool/fan/dry/auto), target temperature(s), and fan speed for each unit.
-- **Dual setpoint support (HEAT_COOL):**  
-  Adjust both heating and cooling consigns in compatible models.
+  Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
 - **Automatic device/sensor creation:**  
   Creates climate, temperature, diagnostic, and power entities for each device.
 - **Diagnostic sensors:**  
@@ -52,10 +50,10 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 | `"1"`    | COOL               | Cooling                     |
 | `"2"`    | HEAT               | Heating                     |
 | `"3"`    | FAN_ONLY           | Ventilation only            |
-| `"4"`    | HEAT_COOL          | Heat/Cool (dual setpoint)   |
 | `"5"`    | DRY                | Dehumidify                  |
 
-**Full API field/command mapping and advanced usage in [info.md](./info.md).**
+> **Note:**  
+> Dual setpoint/auto (HEAT_COOL) mode is not implemented. Real-world testing resulted in the device switching to an undocumented “mode 6” but never activating true dual mode. See [info.md](./info.md) for technical details and command mapping.
 
 ---
 
@@ -81,7 +79,6 @@ Enter your Airzone Cloud **username** and **password**.
 
 **Optional parameters:**
 - **Scan interval:** Data refresh interval (seconds, default: 10)
-- **Force Heat/Cool mode:** Always expose HEAT_COOL mode, even if not reported by your machine (use at your own risk)
 
 > **No YAML required!**  
 > All options are set via the Home Assistant UI.
@@ -91,8 +88,7 @@ Enter your Airzone Cloud **username** and **password**.
 ## 🏷️ What You Get
 
 - **Climate entity:**  
-  - All core modes (COOL, HEAT, FAN, DRY, HEAT_COOL)  
-  - Both heating & cooling setpoints in HEAT_COOL mode
+  - All core modes (COOL, HEAT, FAN, DRY)
   - Dynamic fan speed control
 - **Sensor entities:**  
   - Current temperature (`local_temp`)
@@ -100,7 +96,7 @@ Enter your Airzone Cloud **username** and **password**.
 - **Switch entity:**  
   - Power ON/OFF per device
 
-\* Setpoints and fan speeds are sent for both cold and heat in dual mode (see [info.md](./info.md) for API details).
+> Full API/command mapping and advanced usage in [info.md](./info.md).
 
 ---
 
@@ -129,8 +125,9 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## ❓ FAQ / Troubleshooting
 
-**Q: Why do I see both high and low setpoints in some modes?**  
-A: Dual setpoint (`HEAT_COOL`) mode lets you set minimum (cool) and maximum (heat) temperatures simultaneously if your hardware supports it.
+**Q: Why can't I set dual temperatures or use "auto" mode?**  
+A: Although the API and some docs suggest support for a dual setpoint (`HEAT_COOL`) or "auto" mode (P2=4), all real-world testing on the DKN/Daikin hardware resulted in the device switching to "mode 6" (undocumented) and never actually activating dual mode as intended.  
+Because the feature could not be made stable or reliable, it is not implemented in this integration. Further investigation may be needed for future versions.
 
 **Q: Can I control vertical/horizontal slats?**  
 A: Slat state/position is shown in diagnostic sensors; control is not implemented but fields are exposed for advanced users.
