@@ -1,4 +1,11 @@
-# 
+# Changelog
+
+## [0.3.4] - 2025-06-28
+
+### **Changed**
+- Removed HEAT_COOL (dual setpoint/auto) mode from all logic, mapping, and documentation after confirming with real-world API tests that this Daikin/Airzone unit does not support it.
+- Now only COOL, HEAT, FAN_ONLY, and DRY are available HVAC modes.
+- Documentation and info.md updated with technical details about these findings.
 
 ## [0.3.3] - 2025-06-27
 
