@@ -45,38 +45,51 @@ curl -v "https://dkn.airzonecloud.com/devices/?format=json&installation_id=YOUR_
 
 ### 4. Mode Mapping (Px Options)
 
-Airzone Cloud API defines several modes via "Px" options.
-For practical use in this integration, focus on the following (others are generally ignored by most devices):
+The Airzone Cloud API defines several modes via "Px" options. In our integration, the following modes are supported and stable for all tested devices:
 
 | P2 Value | Home Assistant HVAC Mode | Description                     |
 | -------- | ------------------------ | ------------------------------- |
 | `"1"`    | COOL                     | Cooling mode                    |
 | `"2"`    | HEAT                     | Heating mode                    |
-| `"3"`    | FAN\_ONLY                | Only ventilation (no heat/cool) |
-| `"4"`    | HEAT\_COOL               | Heat/Cool (dual setpoint)\*     |
+| `"3"`    | FAN\_ONLY                | Ventilation only (no heat/cool) |
 | `"5"`    | DRY                      | Dry/Dehumidify mode             |
 
-\* The `HEAT_COOL` mode allows both heating and cooling setpoints and fan speeds to be adjusted.
+**Note on P2=4 (HEAT\_COOL/Auto Mode):**
+Several attempts were made to implement dual setpoint/auto mode (P2=4, also called HEAT\_COOL or "auto" in some APIs), but our tests (2025) show that this mode either reverts to standard cooling or is ignored by the device. The state typically returns as `"mode": "6"`, but the machine continues working as if in cooling. For this reason, we have not implemented HEAT\_COOL/auto mode in the current integration to avoid user confusion and ensure reliability.
 
-Other Px modes (6, 7, 8) are not used in this integration.
+Other Px modes (6, 7, 8) are not used in this integration and their functions are unknown or not documented for these devices.
+The `"modes"` field in the device JSON (e.g., `"modes": "11101000"`) is a bitmask that tells you which P2 modes are *supported* by the device, in the following order:
+P2=1 (COOL), P2=2 (HEAT), P2=3 (FAN\_ONLY), P2=4 (HEAT\_COOL), P2=5 (DRY), P2=6/7/8 (unknown/not supported).
+
+#### Reference from max13fr ([AirzoneCloudDaikin/contants.py](https://github.com/max13fr/AirzoneCloudDaikin/blob/master/AirzoneCloudDaikin/contants.py)):
+
+```python
+MODES_CONVERTER = {
+    "0": {"name": "none", "type": "none", "description": "None"},
+    "1": {"name": "cool", "type": "cold", "description": "Cooling mode"},
+    "2": {"name": "heat", "type": "heat", "description": "Heating mode"},
+    "3": {"name": "ventilate", "type": "cold", "description": "Ventilation in cold mode"},
+    "4": {"name": "heat-cold-auto", "type": "cold", "description": "Auto mode"},
+    "5": {"name": "dehumidify", "type": "cold", "description": "Dry mode"},
+    "6": {"name": "cool-air", "type": "cold", "description": "Automatic cooling"},
+    "7": {"name": "heat-air", "type": "heat", "description": "Automatic heating"},
+    "8": {"name": "ventilate", "type": "heat", "description": "Ventilation in heating mode"},
+}
+```
+
+* In practice, **only P2=1, 2, 3, 5 are guaranteed to work reliably** on Daikin/Airzone (DKN) devices.
 
 ---
 
-**Control Commands**
+#### Control Commands
 
 * **P1:** Power On/Off.
 * **P2:** Select HVAC mode (see table above).
 * **P3:** Adjust fan speed in COOL and FAN\_ONLY modes.
-* **P4:** Adjust fan speed in HEAT and HEAT\_COOL modes.
+* **P4:** Adjust fan speed in HEAT mode.
 * **P7:** Set temperature for COOL mode (e.g., `"25.0"`).
-* **P8:** Set temperature for HEAT mode and for the heat setpoint in HEAT\_COOL mode (e.g., `"23.0"`).
+* **P8:** Set temperature for HEAT mode (e.g., `"23.0"`).
 * **Slats and positions:** See device data below for vertical/horizontal slat state/positions.
-
-**HEAT\_COOL Mode:**
-
-* Setting the temperature in HEAT\_COOL mode sends *both* P7 and P8 (cold and heat consigns).
-* Setting the fan speed in HEAT\_COOL mode sends *both* P3 and P4.
-* Slats and positions can be observed and possibly controlled using their fields (see below).
 
 ---
 
@@ -106,6 +119,17 @@ curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&
   -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P1\", \"value\": 0}}"
 ```
 
+#### Set Mode to COOL (P2=1)
+
+```sh
+curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"1\"}}"
+```
+
 #### Set Mode to HEAT (P2=2)
 
 ```sh
@@ -117,7 +141,7 @@ curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&
   -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"2\"}}"
 ```
 
-#### Set Mode to HEAT\_COOL (P2=4)
+#### Set Mode to FAN\_ONLY (P2=3)
 
 ```sh
 curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
@@ -125,7 +149,18 @@ curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&
   -H "Content-Type: application/json;charset=UTF-8" \
   -H "Accept: application/json, text/plain, */*" \
   -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"4\"}}"
+  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"3\"}}"
+```
+
+#### Set Mode to DRY (P2=5)
+
+```sh
+curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
+  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"5\"}}"
 ```
 
 #### Set Temperature to 23°C in HEAT mode (P8)
@@ -148,24 +183,6 @@ curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&
   -H "Accept: application/json, text/plain, */*" \
   -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
   -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P7\", \"value\": \"25.0\"}}"
-```
-
-#### Set Both Temperatures in HEAT\_COOL mode (P7 & P8)
-
-```sh
-# Set COOL setpoint (P7)
-curl ... -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P7\", \"value\": \"22.0\"}}"
-# Set HEAT setpoint (P8)
-curl ... -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P8\", \"value\": \"25.0\"}}"
-```
-
-#### Set Fan Speed in HEAT\_COOL mode (P3 & P4)
-
-```sh
-# Set COOL fan speed (P3)
-curl ... -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P3\", \"value\": 2}}"
-# Set HEAT fan speed (P4)
-curl ... -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P4\", \"value\": 2}}"
 ```
 
 ---
@@ -221,7 +238,6 @@ Below is a fully anonymized sample device response with all slats and diagnostic
     "complete_name": "LocationX,Region,Country",
     "location": {"latitude": 0.0, "longitude": 0.0}
 }
-
 ```
 
 ---
