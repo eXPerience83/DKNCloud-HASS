@@ -1,6 +1,7 @@
 """Climate platform for DKN Cloud for HASS using the Airzone Cloud API with DataUpdateCoordinator."""
 
 import logging
+import hashlib
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, callback
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import (
@@ -46,15 +47,25 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     ]
 
     def __init__(self, coordinator, api, device_data: dict, config: dict, hass):
-        """Initialize the climate entity."""
+        """Initialize the climate entity. Ensure unique_id is always valid."""
         super().__init__(coordinator)
         self.coordinator = coordinator
         self._api = api
-        self._device_id = device_data.get("id")
+
+        # --- Robust assignment for device_id/unique_id ---
+        device_id = device_data.get("id")
+        if not device_id or not str(device_id).strip():
+            # fallback: use a deterministic hash of device_data
+            device_id = hashlib.sha256(str(device_data).encode("utf-8")).hexdigest()
+            _LOGGER.warning(
+                "Device with missing or empty 'id'. Generated fallback id: %s", device_id
+            )
+        self._device_id = str(device_id)
+        self._attr_unique_id = self._device_id
+
         self._config = config
         self.hass = hass
         self._attr_name = device_data.get("name", "Airzone Device")
-        self._attr_unique_id = self._device_id
         self._attr_temperature_unit = UnitOfTemperature.CELSIUS
         self._hvac_mode = HVACMode.OFF
         self._target_temperature = None
