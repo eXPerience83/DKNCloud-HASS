@@ -16,8 +16,8 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True),
     ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True),
     ("scenary", "Scenary", "mdi:bed", True),
-    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low", True),
-    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high", True),
+    ("min_temp_unoccupied", "Min Temperature Unoccupied", "mdi:thermometer-low", True),
+    ("max_temp_unoccupied", "Max Temperature Unoccupied", "mdi:thermometer-high", True),
     ("machine_errors", "Machine Errors", "mdi:alert-octagon", True),
     ("firmware", "Firmware Version", "mdi:chip", True),
     ("brand", "Brand/Model", "mdi:factory", True),
@@ -25,10 +25,9 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("power", "Power State (Raw)", "mdi:power", True),
     ("units", "Units", "mdi:ruler", False),
     ("availables_speeds", "Available Fan Speeds", "mdi:fan", True),
-    ("local_temp", "Current Device Temp (Raw)", "mdi:thermometer", True),
-    ("cold_consign", "Cold Setpoint (Raw)", "mdi:snowflake", True),
-    ("heat_consign", "Heat Setpoint (Raw)", "mdi:fire", True),
-    ("cold_speed", "Cold Fan Speed", "mdi:fan", True),
+    ("cold_consign", "Cool Setpoint", "mdi:snowflake", True),
+    ("heat_consign", "Heat Setpoint", "mdi:fire", True),
+    ("cold_speed", "Cool Fan Speed", "mdi:fan", True),
     ("heat_speed", "Heat Fan Speed", "mdi:fan", True),
     ("update_date", "Last Update", "mdi:update", False),
     ("mode", "Current Mode (Raw)", "mdi:tag", True),
@@ -42,8 +41,8 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("hor_cold_slats", "Horizontal Cold Slats", "mdi:swap-horizontal", False),
     ("hor_heat_slats", "Horizontal Heat Slats", "mdi:swap-horizontal", False),
     # Temperature limits (diagnostics, advanced)
-    ("max_limit_cold", "Max Limit Cold", "mdi:thermometer-high", True),
-    ("min_limit_cold", "Min Limit Cold", "mdi:thermometer-low", True),
+    ("max_limit_cold", "Max Limit Cool", "mdi:thermometer-high", True),
+    ("min_limit_cold", "Min Limit Cool", "mdi:thermometer-low", True),
     ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-high", True),
     ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-low", True),
     # Advanced diagnostics, mostly for debug
@@ -56,8 +55,7 @@ DIAGNOSTIC_ATTRIBUTES = [
 async def async_setup_entry(hass, entry, async_add_entities):
     """
     Set up the sensor platform from a config entry using the DataUpdateCoordinator.
-    This function retrieves the coordinator from hass.data and creates both a temperature sensor
-    and diagnostic sensors for each device.
+    For each device, creates a main temperature sensor (local_temp) and a set of diagnostic sensors.
     """
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
@@ -66,15 +64,18 @@ async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = data.get("coordinator")
     sensors = []
     for device_id, device in coordinator.data.items():
+        # Main temperature sensor (local_temp)
         sensors.append(AirzoneTemperatureSensor(coordinator, device))
         for attr, name, icon, enabled_default in DIAGNOSTIC_ATTRIBUTES:
+            if attr == "local_temp":
+                continue
             sensors.append(
                 AirzoneDiagnosticSensor(coordinator, device, attr, name, icon, enabled_default)
             )
     async_add_entities(sensors, True)
 
 class AirzoneTemperatureSensor(SensorEntity):
-    """Temperature sensor for Airzone device (local_temp)."""
+    """Main temperature sensor for Airzone device (local_temp)."""
     def __init__(self, coordinator, device_data: dict):
         self.coordinator = coordinator
         self._device_data = device_data
@@ -104,7 +105,7 @@ class AirzoneTemperatureSensor(SensorEntity):
 
     @property
     def device_info(self):
-        """Return device info to link this sensor to a device in Home Assistant."""
+        """Return device info for linking this sensor to a device in Home Assistant."""
         return {
             "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
@@ -148,7 +149,7 @@ class AirzoneDiagnosticSensor(SensorEntity):
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_entity_registry_enabled_default = enabled_default
 
-        # Assign device_class, state_class, and units for temperature and numeric sensors
+        # Set temperature properties for all temperature-related sensors
         temp_sensors = (
             "cold_consign", "heat_consign",
             "min_temp_unoccupied", "max_temp_unoccupied",
@@ -196,7 +197,7 @@ class AirzoneDiagnosticSensor(SensorEntity):
 
     @property
     def device_info(self):
-        """Return device info to link this sensor to a device in Home Assistant."""
+        """Return device info for linking this sensor to a device in Home Assistant."""
         return {
             "identifiers": {(DOMAIN, self._device_data.get("id"))},
             "name": self._device_data.get("name"),
