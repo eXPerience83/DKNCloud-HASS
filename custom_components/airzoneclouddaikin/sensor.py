@@ -49,7 +49,7 @@ DIAGNOSTIC_ATTRIBUTES = [
     ("state", "State (Raw)", "mdi:eye", False),
     ("status", "Status", "mdi:check-circle", False),
     ("connection_date", "Connection Date", "mdi:clock", False),
-    ("last_event_id", "Last Event ID", "mdi:identifier", True),
+    ("last_event_id", "Last Event ID", "mdi:identifier", False),
 ]
 
 async def async_setup_entry(hass, entry, async_add_entities):
