@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- Hardened API client with per-request timeout (15s), exponential backoff + jitter (429/5xx), and safe PII redaction in logs.
+- New helper `put_device_scenary(device_id, scenary)` to support future `select.scenary`.
+
+### Changed
+- Setup uses `ConfigEntryNotReady` on transient login failures; coordinator raises `UpdateFailed` on update exceptions.
+
 ## [0.3.4] - 2025-06-28
 
 ### **Changed**
