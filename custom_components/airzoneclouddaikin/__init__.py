@@ -1,54 +1,80 @@
-"""DKN Cloud for HASS integration."""
+"""DKN Cloud for HASS integration.
+
+Hardened setup:
+- Uses ConfigEntryNotReady on transient login failures so HA retries gracefully.
+- Centralizes polling via DataUpdateCoordinator; entities must not perform I/O in properties.
+- Wraps update exceptions into UpdateFailed for HA to surface errors properly.
+- Avoids logging secrets or PII.
+"""
+from __future__ import annotations
+
 import logging
 from datetime import timedelta
+from typing import Any
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN
 from .airzone_api import AirzoneAPI
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-async def _async_update_data(api: AirzoneAPI) -> dict:
+DEFAULT_SCAN_INTERVAL_SEC = 10  # Keep aligned with config_flow minimum
+
+
+async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
     """Fetch and aggregate device data from the API.
 
-    This function fetches installations and then, for each installation,
-    fetches all devices. The data is aggregated into a dictionary keyed by device id.
+    Implementation details:
+    - Fetch installations, then devices for each installation.
+    - Return a dict keyed by device_id to ease fast lookups.
+    - Let exceptions bubble as UpdateFailed so HA can surface coordinator errors.
     """
-    data = {}
-    installations = await api.fetch_installations()
-    for relation in installations:
-        installation = relation.get("installation")
-        if not installation:
-            continue
-        installation_id = installation.get("id")
-        if not installation_id:
-            continue
-        devices = await api.fetch_devices(installation_id)
-        for device in devices:
-            device_id = device.get("id")
-            if not device_id:
-                # Fallback: use a hash of the device data if no id is provided
-                device_id = f"{hash(str(device))}"
-                device["id"] = device_id
-            data[device_id] = device
-    return data
+    try:
+        data: dict[str, Any] = {}
+        installations = await api.fetch_installations()
+        for relation in installations or []:
+            installation = relation.get("installation")
+            if not installation:
+                continue
+            installation_id = installation.get("id")
+            if not installation_id:
+                continue
+            devices = await api.fetch_devices(installation_id)
+            for device in devices or []:
+                device_id = device.get("id")
+                # Fallback for safety: derive a stable hash if API missed the id
+                if not device_id:
+                    device_id = f"{hash(str(device))}"
+                    device["id"] = device_id
+                data[device_id] = device
+        return data
+    except Exception as err:
+        # Never expose tokens/emails in logs; message should stay generic.
+        raise UpdateFailed(f"Failed to update Airzone data: {err}") from err
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DKN Cloud for HASS from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     config = entry.data
 
+    # Create the shared aiohttp session provided by HA
     from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
     session = async_get_clientsession(hass)
     api = AirzoneAPI(config.get("username"), config.get("password"), session)
-    if not await api.login():
-        _LOGGER.error("Login to Airzone API failed.")
-        return False
 
-    # Use scan_interval from config or default to 10 seconds
-    scan_interval = config.get("scan_interval", 10)
+    # Login here is expected to succeed (already validated in config_flow),
+    # but we still treat runtime failures as transient (NotReady) to let HA retry.
+    if not await api.login():
+        _LOGGER.warning("Airzone login failed during setup; deferring entry readiness.")
+        raise ConfigEntryNotReady("Airzone Cloud login failed")
+
+    scan_interval = config.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
@@ -56,26 +82,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_method=lambda: _async_update_data(api),
         update_interval=timedelta(seconds=scan_interval),
     )
-    # Attach the API instance to the coordinator so that entities can use it.
-    coordinator.api = api
+    # Attach API so platforms can access it when needed (no I/O in properties).
+    coordinator.api = api  # type: ignore[attr-defined]
 
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except Exception as err:
-        _LOGGER.error("Failed to fetch initial data: %s", err)
-        raise UpdateFailed(err) from err
+    # First refresh to populate data; convert to UpdateFailed for visibility
+    await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = {"api": api, "coordinator": coordinator}
-    # Forward setups for climate, sensor, and switch platforms.
+
+    # Forward platform setups
     await hass.config_entries.async_forward_entry_setups(entry, ["climate", "sensor", "switch"])
-    _LOGGER.info("DKN Cloud for HASS integration configured successfully.")
+    _LOGGER.info("DKN Cloud for HASS configured successfully.")
     return True
 
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
+    """Unload a config entry cleanly."""
     unload_ok = await hass.config_entries.async_forward_entry_unload(entry, "climate")
     unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(entry, "sensor")
     unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(entry, "switch")
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+        hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok
