@@ -42,6 +42,8 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
   Easy install & updates.
 - **Smooth UX:**
   Optimistic updates for mode/temperature/fan changes with a short delayed refresh, so the UI feels instant while the backend confirms.
+- **Snappy power control:**
+  The power switch uses optimistic updates with a short delayed refresh, so toggles feel instant while the backend confirms.
 
 ---
 
