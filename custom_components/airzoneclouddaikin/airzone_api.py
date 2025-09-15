@@ -4,11 +4,10 @@ Key improvements (Phase 3):
 - Global cooldown after HTTP 429 to avoid hammering between requests (persists beyond a single call).
 - Exponential backoff with jitter still in-place per request for 429/5xx.
 - Proper asyncio timeout handling (asyncio.TimeoutError).
-- PII-safe logging (never logs email/token).
+- PII-safe logging (never logs email/token). Debug logs sanitize query params.
 
 Do NOT perform any blocking I/O here; all methods are async.
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -119,12 +118,14 @@ class AirzoneAPI:
         if extra_headers:
             headers.update(extra_headers)
 
-        # Avoid leaking PII in logs
+        # Avoid leaking PII in logs (sanitize params only)
         safe_params = dict(params or {})
         if "user_email" in safe_params:
             safe_params["user_email"] = self._redact(str(safe_params["user_email"]))
         if "user_token" in safe_params:
             safe_params["user_token"] = self._redact(str(safe_params["user_token"]))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("HTTP %s %s params=%s", method, path, safe_params or None)
 
         # Respect any persistent cooldown (after previous 429s)
         await self._await_rate_limit_cooldown(path)
@@ -183,7 +184,7 @@ class AirzoneAPI:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
             except (
-                TimeoutError,
+                asyncio.TimeoutError,
                 aiohttp.ClientConnectionError,
                 aiohttp.ServerTimeoutError,
             ) as e:
