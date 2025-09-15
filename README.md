@@ -40,6 +40,8 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
   All configuration via Home Assistant UI.
 - **Compatible with HACS:**  
   Easy install & updates.
+- **Smooth UX:**
+  Optimistic updates for mode/temperature/fan changes with a short delayed refresh, so the UI feels instant while the backend confirms.
 
 ---
 
