@@ -4,11 +4,12 @@
 ### Added
 - Hardened API client with per-request timeout (15s), exponential backoff + jitter (429/5xx), and safe PII redaction in logs.
 - New helper `put_device_scenary(device_id, scenary)` to support future `select.scenary`.
-
 ### Changed
 - Setup uses `ConfigEntryNotReady` on transient login failures; coordinator raises `UpdateFailed` on update exceptions.
 - Climate entity now uses `CoordinatorEntity` pattern; all commands are async with optimistic UI and delayed refresh.
+- Power switch migrated to `CoordinatorEntity`, fully async commands, and optimistic UI with delayed refresh.
 - Device registry no longer shows the PIN in the `model` field (privacy hardening).
+- Device registry for the switch no longer exposes the PIN in the `model` field (privacy hardening).
 
 ## [0.3.4] - 2025-06-28
 
