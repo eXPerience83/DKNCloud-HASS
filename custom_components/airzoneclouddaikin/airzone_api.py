@@ -1,9 +1,9 @@
 """Airzone Cloud API client (adapted for dkn.airzonecloud.com).
 
-Key improvements (Phase 3):
+Key points:
 - Global cooldown after HTTP 429 to avoid hammering between requests (persists beyond a single call).
-- Exponential backoff with jitter still in-place per request for 429/5xx.
-- Proper asyncio timeout handling (asyncio.TimeoutError) guarded with an alias import to prevent autoformat rewrites.
+- Exponential backoff with jitter per request for 429/5xx/network timeouts.
+- Catch builtin TimeoutError (Py3.11: asyncio.TimeoutError is an alias), so linters/formatters won't rewrite it.
 - PII-safe logging (never logs email/token). Debug logs sanitize query params.
 
 Do NOT perform any blocking I/O here; all methods are async.
@@ -52,9 +52,7 @@ class AirzoneAPI:
 
         # Persistent cooldown state after rate-limit responses (429).
         self._rl_next_allowed_ts: float = 0.0
-        self._rl_backoff: float = (
-            0.0  # grows on consecutive 429s, decays implicitly with time
-        )
+        self._rl_backoff: float = 0.0  # grows on consecutive 429s, decays implicitly with time
 
     # ----------------------------
     # Internal helpers
@@ -91,9 +89,7 @@ class AirzoneAPI:
         """Increase the persistent cooldown window due to a 429."""
         # Start at RL_MIN_COOLDOWN, then exponential up to RL_MAX_COOLDOWN.
         self._rl_backoff = (
-            RL_MIN_COOLDOWN
-            if self._rl_backoff == 0.0
-            else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
+            RL_MIN_COOLDOWN if self._rl_backoff == 0.0 else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
         )
         jitter = random.uniform(0.0, 0.5)
         self._rl_next_allowed_ts = time.monotonic() + self._rl_backoff + jitter
@@ -185,7 +181,7 @@ class AirzoneAPI:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
             except (
-                TimeoutError,
+                TimeoutError,  # Py3.11: asyncio.TimeoutError is an alias, this is fine
                 aiohttp.ClientConnectionError,
                 aiohttp.ServerTimeoutError,
             ) as e:
