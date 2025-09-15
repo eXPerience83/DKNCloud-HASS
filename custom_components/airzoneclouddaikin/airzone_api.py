@@ -1,20 +1,19 @@
 """Airzone Cloud API client (adapted for dkn.airzonecloud.com).
 
-Key improvements:
-- Per-request timeout (15s) using aiohttp ClientTimeout.
-- Exponential backoff with jitter for 429/5xx, explicit handling for 401/403.
-- Centralized _request() helper to ensure consistent headers/params and error handling.
-- PII redaction in logs (email/token never printed).
-- Public helper put_device_scenary() prepared for future select.scenary entity.
+Key improvements (Phase 3):
+- Global cooldown after HTTP 429 to avoid hammering between requests (persists beyond a single call).
+- Exponential backoff with jitter still in-place per request for 429/5xx.
+- Proper asyncio timeout handling (asyncio.TimeoutError).
+- PII-safe logging (never logs email/token).
 
 Do NOT perform any blocking I/O here; all methods are async.
 """
-
 from __future__ import annotations
 
 import asyncio
 import logging
 import random
+import time
 from typing import Any
 
 import aiohttp
@@ -30,10 +29,14 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Retry/backoff configuration
+# Retry/backoff configuration (per request)
 TOTAL_TIMEOUT_SEC = 15
 MAX_RETRIES = 3
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
+# Global rate-limit backoff (persists across calls after a 429)
+RL_MIN_COOLDOWN = 5.0   # seconds (initial cooldown after first 429)
+RL_MAX_COOLDOWN = 60.0  # seconds (cap)
 
 
 class AirzoneAPI:
@@ -45,6 +48,10 @@ class AirzoneAPI:
         self._password = password
         self._session = session
         self.token: str = ""
+
+        # Persistent cooldown state after rate-limit responses (429).
+        self._rl_next_allowed_ts: float = 0.0
+        self._rl_backoff: float = 0.0  # grows on consecutive 429s, decays implicitly with time
 
     # ----------------------------
     # Internal helpers
@@ -64,6 +71,27 @@ class AirzoneAPI:
         if not value:
             return ""
         return "***"
+
+    async def _await_rate_limit_cooldown(self, path: str) -> None:
+        """If a cooldown is active (after recent 429), wait before issuing the next request."""
+        now = time.monotonic()
+        if now < self._rl_next_allowed_ts:
+            delay = self._rl_next_allowed_ts - now
+            _LOGGER.warning(
+                "Respecting API cooldown before calling %s (%.2fs remaining)...",
+                path,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+    def _bump_rate_limit_cooldown(self) -> None:
+        """Increase the persistent cooldown window due to a 429."""
+        # Start at RL_MIN_COOLDOWN, then exponential up to RL_MAX_COOLDOWN.
+        self._rl_backoff = (
+            RL_MIN_COOLDOWN if self._rl_backoff == 0.0 else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
+        )
+        jitter = random.uniform(0.0, 0.5)
+        self._rl_next_allowed_ts = time.monotonic() + self._rl_backoff + jitter
 
     async def _request(
         self,
@@ -93,6 +121,9 @@ class AirzoneAPI:
         if "user_token" in safe_params:
             safe_params["user_token"] = self._redact(str(safe_params["user_token"]))
 
+        # Respect any persistent cooldown (after previous 429s)
+        await self._await_rate_limit_cooldown(path)
+
         attempt = 0
         while True:
             attempt += 1
@@ -106,8 +137,11 @@ class AirzoneAPI:
                     headers=headers,
                     timeout=timeout,
                 ) as resp:
-                    # Retry on transient/ratelimit errors
+                    # If we hit a transient error/ratelimit, schedule a retry
                     if resp.status in RETRYABLE_STATUSES and attempt <= max_retries:
+                        if resp.status == 429:
+                            # Bump persistent cooldown so subsequent calls wait up-front
+                            self._bump_rate_limit_cooldown()
                         delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
                         _LOGGER.warning(
                             "Transient API error %s on %s %s (attempt %s/%s). Retrying in %.2fs...",
@@ -136,18 +170,14 @@ class AirzoneAPI:
                     # Success
                     if resp.content_type == "application/json":
                         return await resp.json()
-                    # Some endpoints might return no body; still return None
+                    # Some endpoints might return no body; still return textual content if present
                     text = await resp.text()
                     return text
 
             except aiohttp.ClientResponseError:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
-            except (
-                TimeoutError,
-                aiohttp.ClientConnectionError,
-                aiohttp.ServerTimeoutError,
-            ) as e:
+            except (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError, asyncio.TimeoutError) as e:
                 # Treat timeouts/connection errors as retryable
                 if attempt <= max_retries:
                     delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
@@ -217,7 +247,12 @@ class AirzoneAPI:
         return (data or {}).get("devices", [])
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
-        """POST /events with standard headers for event commands (P1..P8 etc.)."""
+        """POST /events with standard headers for event commands (P1..P8 etc.).
+
+        Note:
+        - This will respect any global cooldown previously set by 429 responses.
+        - Per-request retries/backoff still apply.
+        """
         params = self._auth_params()
         extra_headers = {"X-Requested-With": "XMLHttpRequest"}
         return await self._request(
@@ -229,10 +264,7 @@ class AirzoneAPI:
         )
 
     async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
-        """PUT /devices/{id} to change scenary: 'sleep' | 'occupied' | 'vacant'.
-
-        Validated via manually tested cURL commands against dkn.airzonecloud.com.
-        """
+        """PUT /devices/{id} to change scenary: 'sleep' | 'occupied' | 'vacant'."""
         params = self._auth_params()
         # Endpoint style: /devices/<id>?format=json&user_email=...&user_token=...
         path = f"{API_DEVICES}/{device_id}"
