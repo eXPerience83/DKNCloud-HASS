@@ -5,6 +5,10 @@ Key improvements:
 - Remove PIN from device_info and do not expose a PIN sensor (privacy hardening).
 - Do not call async_request_refresh() from every entity; the coordinator owns the update cycle.
 - Keep IDs stable (<device_id>_<suffix>) and set correct device/state classes where applicable.
+
+Fix in this version:
+- Diagnostic sensors now rebuild their name cleanly when the backend device name changes,
+  avoiding duplicated prefixes like "Livingroom Living Room Programs Enabled".
 """
 
 from __future__ import annotations
@@ -199,8 +203,11 @@ class AirzoneDiagnosticSensor(CoordinatorEntity, SensorEntity):
         self._device_id = device_id
         self._attribute = attribute
 
+        # Keep a stable, friendly suffix to rebuild the title on updates.
+        self._friendly_name = friendly_name
+
         base_name = self._device.get("name", "Airzone Device")
-        self._attr_name = f"{base_name} {friendly_name}"
+        self._attr_name = f"{base_name} {self._friendly_name}"
         self._attr_icon = icon
         self._attr_unique_id = (
             f"{device_id}_{attribute}"
@@ -250,11 +257,13 @@ class AirzoneDiagnosticSensor(CoordinatorEntity, SensorEntity):
 
     # ---- Coordinator hook ----------------------------------------------------
     def _handle_coordinator_update(self) -> None:
-        """Called when the coordinator updates data."""
+        """Called when the coordinator updates data.
+
+        Rebuild the full entity name using the current device name and the
+        stored friendly suffix, so we never duplicate prefixes.
+        """
         base_name = self._device.get("name", "Airzone Device")
-        # Keep name in sync if it changed remotely.
-        if base_name and self._attr_name and not self._attr_name.startswith(base_name):
-            self._attr_name = f"{base_name} {self._attr_name}"
+        self._attr_name = f"{base_name} {self._friendly_name}"
         self.async_write_ha_state()
 
     # ---- Entity properties ---------------------------------------------------
