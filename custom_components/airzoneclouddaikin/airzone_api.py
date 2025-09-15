@@ -3,7 +3,7 @@
 Key improvements (Phase 3):
 - Global cooldown after HTTP 429 to avoid hammering between requests (persists beyond a single call).
 - Exponential backoff with jitter still in-place per request for 429/5xx.
-- Proper asyncio timeout handling (asyncio.TimeoutError).
+- Proper asyncio timeout handling (asyncio.TimeoutError) guarded with an alias import to prevent autoformat rewrites.
 - PII-safe logging (never logs email/token). Debug logs sanitize query params.
 
 Do NOT perform any blocking I/O here; all methods are async.
@@ -12,6 +12,7 @@ Do NOT perform any blocking I/O here; all methods are async.
 from __future__ import annotations
 
 import asyncio
+from asyncio import TimeoutError as AsyncioTimeoutError  # <-- Guard against formatter replacing with builtin
 import logging
 import random
 import time
@@ -185,7 +186,7 @@ class AirzoneAPI:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
             except (
-                TimeoutError,
+                AsyncioTimeoutError,
                 aiohttp.ClientConnectionError,
                 aiohttp.ServerTimeoutError,
             ) as e:
