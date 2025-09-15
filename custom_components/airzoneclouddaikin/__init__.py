@@ -9,6 +9,7 @@ Hardened setup:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import timedelta
 from typing import Any
@@ -24,6 +25,24 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10  # Keep aligned with config_flow minimum
+
+
+def _derive_stable_device_id(device: dict[str, Any]) -> str:
+    """Derive a stable unique_id when backend omits 'id'.
+
+    Preference order:
+    1) Use MAC (lowercased) if present.
+    2) Use a stable SHA-256 digest of name|brand|firmware as virtual id.
+
+    NOTE: Do NOT use Python's built-in hash(), which is salted per process and
+    will produce different values across restarts (breaking unique_id).
+    """
+    mac = str(device.get("mac") or "").strip().lower()
+    if mac:
+        return mac
+    base = "|".join(str(device.get(k, "") or "") for k in ("name", "brand", "firmware"))
+    digest = hashlib.sha256(base.encode("utf-8")).hexdigest()[:12]
+    return f"virt-{digest}"
 
 
 async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
@@ -47,9 +66,9 @@ async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
             devices = await api.fetch_devices(installation_id)
             for device in devices or []:
                 device_id = device.get("id")
-                # Fallback for safety: derive a stable hash if API missed the id
+                # Fallback for safety: derive a STABLE id if API missed the id.
                 if not device_id:
-                    device_id = f"{hash(str(device))}"
+                    device_id = _derive_stable_device_id(device)
                     device["id"] = device_id
                 data[device_id] = device
         return data
