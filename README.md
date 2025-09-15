@@ -17,7 +17,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 [hacs-url]: https://hacs.xyz
 [prs-shield]: https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat
 [prs-url]: https://github.com/eXPerience83/DKNCloud-HASS/pulls
-[python-shield]: https://img.shields.io/badge/python-3.9%2B-blue
+[python-shield]: https://img.shields.io/badge/python-3.11%2B-blue
 [python-url]: https://www.python.org/
 [love-shield]: https://img.shields.io/badge/made%20with-%E2%9D%A4-red
 [love-url]: https://github.com/eXPerience83
