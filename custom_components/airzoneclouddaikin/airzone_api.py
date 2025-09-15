@@ -12,7 +12,6 @@ Do NOT perform any blocking I/O here; all methods are async.
 from __future__ import annotations
 
 import asyncio
-from asyncio import TimeoutError as AsyncioTimeoutError  # <-- Guard against formatter replacing with builtin
 import logging
 import random
 import time
@@ -186,7 +185,7 @@ class AirzoneAPI:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
             except (
-                AsyncioTimeoutError,
+                TimeoutError,
                 aiohttp.ClientConnectionError,
                 aiohttp.ServerTimeoutError,
             ) as e:
