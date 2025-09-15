@@ -8,6 +8,8 @@
 - Setup uses `ConfigEntryNotReady` on transient login failures; coordinator raises `UpdateFailed` on update exceptions.
 - Climate entity now uses `CoordinatorEntity` pattern; all commands are async with optimistic UI and delayed refresh.
 - Power switch migrated to `CoordinatorEntity`, fully async commands, and optimistic UI with delayed refresh.
+- All sensors migrated to `CoordinatorEntity`; removed per-entity `async_update()` calls to avoid redundant refreshes.
+- Privacy hardening: PIN is no longer exposed in any device_info or diagnostic sensor.
 - Device registry no longer shows the PIN in the `model` field (privacy hardening).
 - Device registry for the switch no longer exposes the PIN in the `model` field (privacy hardening).
 
