@@ -8,6 +8,7 @@ Key improvements (Phase 3):
 
 Do NOT perform any blocking I/O here; all methods are async.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -184,7 +185,7 @@ class AirzoneAPI:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
             except (
-                asyncio.TimeoutError,
+                TimeoutError,
                 aiohttp.ClientConnectionError,
                 aiohttp.ServerTimeoutError,
             ) as e:
