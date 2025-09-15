@@ -1,27 +1,16 @@
 # Changelog
 
-## [Unreleased]
-### **Fixed**
-- hassfest: manifest keys order corrected (domain, name, then alphabetical).
-- HACS: hacs.json now uses a supported schema (name, render_readme).
-- API: Catch `asyncio.TimeoutError` instead of builtin `TimeoutError` in async requests.
-### **Added**
-- Hardened API client with per-request timeout (15s), exponential backoff + jitter (429/5xx), and safe PII redaction in logs.
-- New helper `put_device_scenary(device_id, scenary)` to support future `select.scenary`.
-### **Changed**
-- Setup uses `ConfigEntryNotReady` on transient login failures; coordinator raises `UpdateFailed` on update exceptions.
-- Core: Stable fallback `unique_id` when device `id` is missing (prefer MAC; otherwise `virt-<sha256>`).
-- Climate entity now uses `CoordinatorEntity` pattern; all commands are async with optimistic UI and delayed refresh.
-- Power switch migrated to `CoordinatorEntity`, fully async commands, and optimistic UI with delayed refresh.
-- All sensors migrated to `CoordinatorEntity`; removed per-entity `async_update()` calls to avoid redundant refreshes.
-- Privacy hardening: PIN is no longer exposed in any device_info or diagnostic sensor.
-- Device registry no longer shows the PIN in the `model` field (privacy hardening).
-- Device registry for the switch no longer exposes the PIN in the `model` field (privacy hardening).
-- API: Add persistent cooldown after HTTP 429 (in addition to per-request retries), and use asyncio-specific timeouts. Keeps logs PII-safe.
-- API: Catch builtin `TimeoutError` (Py3.11: alias of `asyncio.TimeoutError`) to align with Ruff/pyupgrade and avoid formatter rewrites.
-- API: Fix minor typo in header construction (`Content-Type` line).
-### **CI**
-- HACS workflow temporarily ignores topics and brands checks until repository topics are added and branding is submitted.
+## [0.3.5-alpha.1] - 2025-09-15
+### Fixed
+- API: Catch builtin `TimeoutError` (Python 3.11 alias of `asyncio.TimeoutError`) to align with Ruff/pyupgrade and avoid formatter rewrites.
+- API: Correct minor header typo when setting `Content-Type`.
+- Diagnostics: Prevent duplicated titles in diagnostic sensors when the backend device name changes; names are rebuilt as `<DeviceName> <FriendlyName>` on each update.
+- Hassfest: Ensure manifest keys are strictly sorted (domain, name, then alphabetical).
+- HACS: `hacs.json` uses a supported minimal schema (`name`, `render_readme`).
+### Changed
+- Manifest version bumped to `0.3.5-alpha.1` for the first alpha of this phase.
+### Notes
+- If HACS complains about pre-release formatting, use `0.3.5a1` as an alternative version string in the manifest (PEP 440 compatible).
 
 ## [0.3.4] - 2025-06-28
 ### **Changed**
