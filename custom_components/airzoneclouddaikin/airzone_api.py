@@ -52,7 +52,9 @@ class AirzoneAPI:
 
         # Persistent cooldown state after rate-limit responses (429).
         self._rl_next_allowed_ts: float = 0.0
-        self._rl_backoff: float = 0.0  # grows on consecutive 429s, decays implicitly with time
+        self._rl_backoff: float = (
+            0.0  # grows on consecutive 429s, decays implicitly with time
+        )
 
     # ----------------------------
     # Internal helpers
@@ -89,7 +91,9 @@ class AirzoneAPI:
         """Increase the persistent cooldown window due to a 429."""
         # Start at RL_MIN_COOLDOWN, then exponential up to RL_MAX_COOLDOWN.
         self._rl_backoff = (
-            RL_MIN_COOLDOWN if self._rl_backoff == 0.0 else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
+            RL_MIN_COOLDOWN
+            if self._rl_backoff == 0.0
+            else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
         )
         jitter = random.uniform(0.0, 0.5)
         self._rl_next_allowed_ts = time.monotonic() + self._rl_backoff + jitter
