@@ -15,6 +15,7 @@
 - Privacy hardening: PIN is no longer exposed in any device_info or diagnostic sensor.
 - Device registry no longer shows the PIN in the `model` field (privacy hardening).
 - Device registry for the switch no longer exposes the PIN in the `model` field (privacy hardening).
+- API: Add persistent cooldown after HTTP 429 (in addition to per-request retries), and use asyncio-specific timeouts. Keeps logs PII-safe.
 ### **CI**
 - HACS workflow temporarily ignores topics and brands checks until repository topics are added and branding is submitted.
 
