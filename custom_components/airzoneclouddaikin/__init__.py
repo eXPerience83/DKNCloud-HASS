@@ -6,6 +6,7 @@ Hardened setup:
 - Wraps update exceptions into UpdateFailed for HA to surface errors properly.
 - Avoids logging secrets or PII.
 """
+
 from __future__ import annotations
 
 import logging
@@ -91,7 +92,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {"api": api, "coordinator": coordinator}
 
     # Forward platform setups
-    await hass.config_entries.async_forward_entry_setups(entry, ["climate", "sensor", "switch"])
+    await hass.config_entries.async_forward_entry_setups(
+        entry, ["climate", "sensor", "switch"]
+    )
     _LOGGER.info("DKN Cloud for HASS configured successfully.")
     return True
 
@@ -99,8 +102,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry cleanly."""
     unload_ok = await hass.config_entries.async_forward_entry_unload(entry, "climate")
-    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(entry, "sensor")
-    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(entry, "switch")
+    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(
+        entry, "sensor"
+    )
+    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(
+        entry, "switch"
+    )
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok

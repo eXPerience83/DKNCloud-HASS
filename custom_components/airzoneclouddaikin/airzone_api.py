@@ -9,12 +9,13 @@ Key improvements:
 
 Do NOT perform any blocking I/O here; all methods are async.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import random
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -48,13 +49,17 @@ class AirzoneAPI:
     # ----------------------------
     # Internal helpers
     # ----------------------------
-    def _auth_params(self) -> Dict[str, str]:
+    def _auth_params(self) -> dict[str, str]:
         """Build standard auth params for most endpoints."""
         # Never log these values; keep them internal.
-        return {"format": "json", "user_email": self._username, "user_token": self.token}
+        return {
+            "format": "json",
+            "user_email": self._username,
+            "user_token": self.token,
+        }
 
     @staticmethod
-    def _redact(value: Optional[str]) -> str:
+    def _redact(value: str | None) -> str:
         """Redact sensitive values for logging."""
         if not value:
             return ""
@@ -65,9 +70,9 @@ class AirzoneAPI:
         method: str,
         path: str,
         *,
-        params: Optional[Dict[str, Any]] = None,
-        json: Optional[Dict[str, Any]] = None,
-        extra_headers: Optional[Dict[str, str]] = None,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
         max_retries: int = MAX_RETRIES,
     ) -> Any:
         """Perform an HTTP request with timeout, retries, and safe logging."""
@@ -135,10 +140,14 @@ class AirzoneAPI:
                     text = await resp.text()
                     return text
 
-            except aiohttp.ClientResponseError as e:
+            except aiohttp.ClientResponseError:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
-            except (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError, asyncio.TimeoutError) as e:
+            except (
+                TimeoutError,
+                aiohttp.ClientConnectionError,
+                aiohttp.ServerTimeoutError,
+            ) as e:
                 # Treat timeouts/connection errors as retryable
                 if attempt <= max_retries:
                     delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
@@ -176,12 +185,15 @@ class AirzoneAPI:
         # Some backends return: {"user":{"authentication_token":"..."}} on 201
         self.token = (data or {}).get("user", {}).get("authentication_token", "")
         if not self.token:
-            _LOGGER.error("Login failed: no token received (email=%s).", self._redact(self._username))
+            _LOGGER.error(
+                "Login failed: no token received (email=%s).",
+                self._redact(self._username),
+            )
             return False
         _LOGGER.debug("Login OK (token=%s).", self._redact(self.token))
         return True
 
-    async def fetch_installations(self) -> List[Dict[str, Any]]:
+    async def fetch_installations(self) -> list[dict[str, Any]]:
         """GET /installation_relations with auth query params."""
         if not self.token:
             _LOGGER.error("Cannot fetch installations without a valid token.")
@@ -193,7 +205,7 @@ class AirzoneAPI:
         )
         return (data or {}).get("installation_relations", [])
 
-    async def fetch_devices(self, installation_id: str) -> List[Dict[str, Any]]:
+    async def fetch_devices(self, installation_id: str) -> list[dict[str, Any]]:
         """GET /devices for a given installation_id."""
         params = self._auth_params()
         params["installation_id"] = installation_id
@@ -204,7 +216,7 @@ class AirzoneAPI:
         )
         return (data or {}).get("devices", [])
 
-    async def send_event(self, payload: Dict[str, Any]) -> Any:
+    async def send_event(self, payload: dict[str, Any]) -> Any:
         """POST /events with standard headers for event commands (P1..P8 etc.)."""
         params = self._auth_params()
         extra_headers = {"X-Requested-With": "XMLHttpRequest"}

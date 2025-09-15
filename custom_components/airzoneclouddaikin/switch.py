@@ -6,6 +6,7 @@ Key improvements:
 - Optimistic UI with short TTL and delayed coordinator refresh after write operations.
 - Privacy hardening: do not expose PIN in device_info.model.
 """
+
 from __future__ import annotations
 
 import logging
@@ -85,8 +86,11 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
             self._optimistic_until = self._now() + _OPTIMISTIC_TTL_SEC
             self.async_write_ha_state()
 
-    def _schedule_delayed_refresh(self, delay: float = _POST_WRITE_REFRESH_DELAY_SEC) -> None:
+    def _schedule_delayed_refresh(
+        self, delay: float = _POST_WRITE_REFRESH_DELAY_SEC
+    ) -> None:
         """Schedule a coordinator refresh after a short delay to confirm optimistic changes."""
+
         async def _do_refresh(_now: Any) -> None:
             await self.coordinator.async_request_refresh()
 

@@ -6,6 +6,7 @@ Key improvements:
 - Do not call async_request_refresh() from every entity; the coordinator owns the update cycle.
 - Keep IDs stable (<device_id>_<suffix>) and set correct device/state classes where applicable.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -13,8 +14,8 @@ import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
-    SensorEntity,
     SensorDeviceClass,
+    SensorEntity,
     SensorStateClass,
 )
 from homeassistant.const import UnitOfTemperature
@@ -201,9 +202,11 @@ class AirzoneDiagnosticSensor(CoordinatorEntity, SensorEntity):
         base_name = self._device.get("name", "Airzone Device")
         self._attr_name = f"{base_name} {friendly_name}"
         self._attr_icon = icon
-        self._attr_unique_id = f"{device_id}_{attribute}" if device_id else hashlib.sha256(
-            f"{base_name}:{attribute}".encode("utf-8")
-        ).hexdigest()
+        self._attr_unique_id = (
+            f"{device_id}_{attribute}"
+            if device_id
+            else hashlib.sha256(f"{base_name}:{attribute}".encode()).hexdigest()
+        )
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
         self._attr_entity_registry_enabled_default = enabled_default
 

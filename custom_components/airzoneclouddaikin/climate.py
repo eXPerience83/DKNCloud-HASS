@@ -7,6 +7,7 @@ Key changes vs previous version:
 - Expose HVAC modes based on device 'modes' bitmask (OFF + supported real modes).
 - Remove PIN from device_info for privacy.
 """
+
 from __future__ import annotations
 
 import logging
@@ -101,8 +102,11 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         # Reflect changes immediately in the UI
         self.async_write_ha_state()
 
-    def _schedule_delayed_refresh(self, delay: float = _POST_WRITE_REFRESH_DELAY_SEC) -> None:
+    def _schedule_delayed_refresh(
+        self, delay: float = _POST_WRITE_REFRESH_DELAY_SEC
+    ) -> None:
         """Schedule a coordinator refresh after a short delay to confirm optimistic changes."""
+
         async def _do_refresh(_now: Any) -> None:
             await self.coordinator.async_request_refresh()
 
@@ -218,7 +222,10 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         """Return the current target temperature (single setpoint)."""
-        if self._optimistic_active() and self._optimistic_target_temperature is not None:
+        if (
+            self._optimistic_active()
+            and self._optimistic_target_temperature is not None
+        ):
             return self._optimistic_target_temperature
 
         mode = self.hvac_mode
@@ -327,7 +334,11 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         await self._send_event("P2", mode_mapping[hvac_mode])
 
         # On DRY, temperature control is disabled; on FAN_ONLY too.
-        target_opt = None if hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY) else self.target_temperature
+        target_opt = (
+            None
+            if hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY)
+            else self.target_temperature
+        )
         fan_opt = None if hvac_mode == HVACMode.DRY else self.fan_mode
 
         self._set_optimistic(hvac=hvac_mode, target=target_opt, fan=fan_opt)

@@ -4,8 +4,8 @@ This file includes API endpoints and basic configuration constants.
 """
 
 DOMAIN = "airzoneclouddaikin"
-CONF_USERNAME = "username"      # Your Airzone Cloud account email
-CONF_PASSWORD = "password"      # Your Airzone Cloud account password
+CONF_USERNAME = "username"  # Your Airzone Cloud account email
+CONF_PASSWORD = "password"  # Your Airzone Cloud account password
 
 # API Endpoints (as defined in the original package)
 API_LOGIN = "/users/sign_in"
