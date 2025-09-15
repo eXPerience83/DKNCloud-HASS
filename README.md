@@ -36,6 +36,8 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
   Creates climate, temperature, diagnostic, and power entities for each device.
 - **Diagnostic sensors:**  
   Monitor device states, available modes, slats, scene/presets, and more.
+- **Cleaner diagnostics:**
+  Sensors now follow the Coordinator pattern (no per-entity I/O), and sensitive data such as PIN is never exposed.
 - **Zero YAML required:**  
   All configuration via Home Assistant UI.
 - **Compatible with HACS:**  
