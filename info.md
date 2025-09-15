@@ -11,7 +11,7 @@ curl -v -X POST "https://dkn.airzonecloud.com/users/sign_in" \
   -H "Content-Type: application/json" \
   -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
   -d "{\"email\": \"YOUR_EMAIL@example.com\", \"password\": \"YOUR_PASSWORD\"}"
-````
+```
 
 *Expected Response:* A JSON object containing the `"authentication_token"`.
 
