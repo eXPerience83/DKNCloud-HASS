@@ -110,7 +110,7 @@ Enter your Airzone Cloud **username** and **password**.
 
 | Home Assistant | Python | Daikin Model/Adapter         |
 |----------------|--------|-----------------------------|
-| 2025.4+        | 3.9+   | DAIKIN ES.DKNWSERVER (Cloud)|
+| 2025.4+        | 3.11+   | DAIKIN ES.DKNWSERVER (Cloud)|
 
 *Other Airzone or Daikin adapters may not be supported.*
 
