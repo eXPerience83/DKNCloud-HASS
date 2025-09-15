@@ -8,6 +8,7 @@ Key improvements (Phase 3):
 
 Do NOT perform any blocking I/O here; all methods are async.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -35,7 +36,7 @@ MAX_RETRIES = 3
 RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
 
 # Global rate-limit backoff (persists across calls after a 429)
-RL_MIN_COOLDOWN = 5.0   # seconds (initial cooldown after first 429)
+RL_MIN_COOLDOWN = 5.0  # seconds (initial cooldown after first 429)
 RL_MAX_COOLDOWN = 60.0  # seconds (cap)
 
 
@@ -51,7 +52,9 @@ class AirzoneAPI:
 
         # Persistent cooldown state after rate-limit responses (429).
         self._rl_next_allowed_ts: float = 0.0
-        self._rl_backoff: float = 0.0  # grows on consecutive 429s, decays implicitly with time
+        self._rl_backoff: float = (
+            0.0  # grows on consecutive 429s, decays implicitly with time
+        )
 
     # ----------------------------
     # Internal helpers
@@ -88,7 +91,9 @@ class AirzoneAPI:
         """Increase the persistent cooldown window due to a 429."""
         # Start at RL_MIN_COOLDOWN, then exponential up to RL_MAX_COOLDOWN.
         self._rl_backoff = (
-            RL_MIN_COOLDOWN if self._rl_backoff == 0.0 else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
+            RL_MIN_COOLDOWN
+            if self._rl_backoff == 0.0
+            else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
         )
         jitter = random.uniform(0.0, 0.5)
         self._rl_next_allowed_ts = time.monotonic() + self._rl_backoff + jitter
@@ -177,7 +182,11 @@ class AirzoneAPI:
             except aiohttp.ClientResponseError:
                 # Non-retryable client response errors bubble up (coord handles them)
                 raise
-            except (aiohttp.ClientConnectionError, aiohttp.ServerTimeoutError, asyncio.TimeoutError) as e:
+            except (
+                TimeoutError,
+                aiohttp.ClientConnectionError,
+                aiohttp.ServerTimeoutError,
+            ) as e:
                 # Treat timeouts/connection errors as retryable
                 if attempt <= max_retries:
                     delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
