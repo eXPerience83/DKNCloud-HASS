@@ -18,6 +18,8 @@
 - Device registry no longer shows the PIN in the `model` field (privacy hardening).
 - Device registry for the switch no longer exposes the PIN in the `model` field (privacy hardening).
 - API: Add persistent cooldown after HTTP 429 (in addition to per-request retries), and use asyncio-specific timeouts. Keeps logs PII-safe.
+- API: Catch builtin `TimeoutError` (Py3.11: alias of `asyncio.TimeoutError`) to align with Ruff/pyupgrade and avoid formatter rewrites.
+- API: Fix minor typo in header construction (`Content-Type` line).
 ### **CI**
 - HACS workflow temporarily ignores topics and brands checks until repository topics are added and branding is submitted.
 
