@@ -7,6 +7,8 @@
 
 ### Changed
 - Setup uses `ConfigEntryNotReady` on transient login failures; coordinator raises `UpdateFailed` on update exceptions.
+- Climate entity now uses `CoordinatorEntity` pattern; all commands are async with optimistic UI and delayed refresh.
+- Device registry no longer shows the PIN in the `model` field (privacy hardening).
 
 ## [0.3.4] - 2025-06-28
 
