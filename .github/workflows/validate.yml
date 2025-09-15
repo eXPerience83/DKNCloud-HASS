@@ -18,3 +18,8 @@ jobs:
         uses: "hacs/action@main"
         with:
           category: "integration"
+          # Temporary ignores so CI passes while we set topics and/or apply to brands
+          # Remove these ignores once:
+          #  - you añadas topics en GitHub (Settings → Topics) y
+          #  - si quieres entrar en el default store, envíes PR a home-assistant/brands
+          ignore: "topics brands"
