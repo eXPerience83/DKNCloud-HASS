@@ -1,0 +1,33 @@
+# Formatting & linting configuration for DKN Cloud for HASS
+# Keep settings minimal and aligned with Pollen Levels for consistency.
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+fix = true  # Default fix when running `ruff` without flags.
+
+[tool.ruff.lint]
+# Enable core rulesets: pycodestyle/pyflakes/isort/pyupgrade/bugbear
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+  "E203", # Whitespace before ':' (conflicts with Black on slicing)
+  "E501", # Line length (Black handles wrapping)
+]
+
+[tool.ruff.lint.isort]
+# IMPORTANT: first-party must match this integration's package
+known-first-party = ["custom_components.airzoneclouddaikin"]
+combine-as-imports = true
+
+# --- Optional hardening (uncomment if needed) ---
+# [tool.ruff]
+# force-exclude = true
+# exclude = [".git", ".venv", "venv", ".mypy_cache", ".pytest_cache", "build", "dist"]
+
+# If you re-export symbols in __init__.py and want to ignore F401 there:
+# [tool.ruff.per-file-ignores]
+# "custom_components/airzoneclouddaikin/__init__.py" = ["F401"]
