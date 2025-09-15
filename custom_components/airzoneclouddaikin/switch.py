@@ -1,105 +1,175 @@
-"""Switch platform for DKN Cloud for HASS."""
-import asyncio
-import hashlib
+"""Power switch platform for DKN Cloud for HASS (Airzone Cloud).
+
+Key improvements:
+- Use CoordinatorEntity to avoid I/O in properties (read from coordinator snapshot).
+- Fully async commands (await API), no run_coroutine_threadsafe / executor jobs.
+- Optimistic UI with short TTL and delayed coordinator refresh after write operations.
+- Privacy hardening: do not expose PIN in device_info.model.
+"""
+from __future__ import annotations
+
 import logging
+import time
+from typing import Any
+
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass, entry, async_add_entities):
+# Small TTL (seconds) to keep optimistic state before backend confirmation
+_OPTIMISTIC_TTL_SEC = 2.5
+# Small delay (seconds) before asking the coordinator to refresh after a command
+_POST_WRITE_REFRESH_DELAY_SEC = 1.0
+
+
+async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
     """Set up the switch platform from a config entry using the DataUpdateCoordinator."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
-    coordinator = data.get("coordinator")
-    api = data.get("api")
-    switches = []
-    # Create a switch entity for each device in the coordinator data.
-    for device_id, device in coordinator.data.items():
-        switches.append(AirzonePowerSwitch(coordinator, api, device, hass))
-    async_add_entities(switches, True)
 
-class AirzonePowerSwitch(SwitchEntity):
+    coordinator = data.get("coordinator")
+    if coordinator is None:
+        _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
+        return
+
+    entities: list[AirzonePowerSwitch] = []
+    for device_id in list(coordinator.data.keys()):
+        entities.append(AirzonePowerSwitch(coordinator, device_id))
+
+    # Entities read from coordinator snapshot; no update_before_add needed.
+    async_add_entities(entities)
+
+
+class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
     """Representation of a power switch for an Airzone device."""
 
-    def __init__(self, coordinator, api, device_data: dict, hass):
-        """Initialize the power switch.
-        :param coordinator: The DataUpdateCoordinator instance.
-        :param api: The AirzoneAPI instance.
-        :param device_data: Dictionary with device information.
-        :param hass: Home Assistant instance."""
-        self.coordinator = coordinator
-        self._api = api
-        self._device_data = device_data
-        self.hass = hass
-        name = f"{device_data.get('name', 'Airzone Device')} Power"
-        self._attr_name = name
-        device_id = device_data.get("id")
-        if device_id and device_id.strip():
-            self._attr_unique_id = f"{device_id}_power"
-        else:
-            self._attr_unique_id = hashlib.sha256(name.encode("utf-8")).hexdigest()
+    def __init__(self, coordinator, device_id: str) -> None:
+        """Initialize the power switch bound to a device id."""
+        super().__init__(coordinator)
+        self._device_id = device_id
 
+        # Optimistic state (cleared once TTL expires or new data arrives)
+        self._optimistic_until: float = 0.0
+        self._optimistic_is_on: bool | None = None
+
+        dev = self._device
+        name = dev.get("name") or "Airzone Device"
+        self._attr_name = f"{name} Power"
+        self._attr_unique_id = f"{device_id}_power"
+
+    # -----------------------------
+    # Helpers
+    # -----------------------------
     @property
-    def is_on(self):
-        """Return True if the device is on."""
-        return self._device_data.get("power", "0") == "1"
+    def _device(self) -> dict[str, Any]:
+        """Return the current device snapshot from the coordinator."""
+        return self.coordinator.data.get(self._device_id, {})  # type: ignore[no-any-return]
 
-    @property
-    def device_info(self):
-        """Return device info to link this sensor to a device in Home Assistant.""" 
-        return {
-            "identifiers": {(DOMAIN, self._device_data.get("id"))},
-            "name": self._device_data.get("name"),
-            "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
-            "connections": {("mac", self._device_data.get("mac"))} if self._device_data.get("mac") else None,
-        }
+    def _now(self) -> float:
+        return time.monotonic()
 
-    async def async_turn_on(self, **kwargs):
-        """Turn on the device by sending P1=1."""
-        await self.hass.async_add_executor_job(self.turn_on)
-        self._device_data["power"] = "1"
-        # The coordinator will refresh the state
+    def _optimistic_active(self) -> bool:
+        return self._now() < self._optimistic_until
 
-    async def async_turn_off(self, **kwargs):
-        """Turn off the device by sending P1=0."""
-        await self.hass.async_add_executor_job(self.turn_off)
-        self._device_data["power"] = "0"
-        # The coordinator will refresh the state
+    def _set_optimistic(self, is_on: bool | None) -> None:
+        """Set optimistic 'is_on' state with a short TTL and write state."""
+        if is_on is not None:
+            self._optimistic_is_on = is_on
+            self._optimistic_until = self._now() + _OPTIMISTIC_TTL_SEC
+            self.async_write_ha_state()
 
-    def turn_on(self):
-        """Turn on the device."""
-        self._send_command("P1", 1)
+    def _schedule_delayed_refresh(self, delay: float = _POST_WRITE_REFRESH_DELAY_SEC) -> None:
+        """Schedule a coordinator refresh after a short delay to confirm optimistic changes."""
+        async def _do_refresh(_now: Any) -> None:
+            await self.coordinator.async_request_refresh()
 
-    def turn_off(self):
-        """Turn off the device."""
-        self._send_command("P1", 0)
+        async_call_later(self.hass, delay, _do_refresh)
 
-    def _send_command(self, option, value):
+    async def _send_event(self, option: str, value: Any) -> None:
         """Send a command to the device using the events endpoint."""
+        api = getattr(self.coordinator, "api", None)
+        if api is None:
+            _LOGGER.error("API not attached to coordinator; cannot send command.")
+            return
         payload = {
             "event": {
                 "cgi": "modmaquina",
-                "device_id": self._device_data.get("id"),
+                "device_id": self._device_id,
                 "option": option,
                 "value": value,
             }
         }
-        _LOGGER.info("Sending power command: %s", payload)
-        if self.hass and self.hass.loop:
-            asyncio.run_coroutine_threadsafe(
-                self._api.send_event(payload), self.hass.loop
-            )
-        else:
-            _LOGGER.error("No hass loop available; cannot send command.")
+        _LOGGER.debug("Sending event %s=%s for %s", option, value, self._device_id)
+        await api.send_event(payload)
 
-    async def async_update(self):
-        """Update the switch state from the coordinator data."""
-        await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self._device_data.get("id"))
-        if device:
-            self._device_data = device
-        # The coordinator will update the entity state automatically
+    # -----------------------------
+    # Coordinator hook
+    # -----------------------------
+    def _handle_coordinator_update(self) -> None:
+        """Called by the coordinator when data is refreshed."""
+        # Keep optimistic state until TTL expires; the new snapshot will confirm afterwards.
+        # Update the displayed name if it changes backend-side.
+        dev = self._device
+        base_name = dev.get("name") or "Airzone Device"
+        self._attr_name = f"{base_name} Power"
+        self.async_write_ha_state()
+
+    # -----------------------------
+    # Entity properties
+    # -----------------------------
+    @property
+    def available(self) -> bool:
+        """Entity is available if the device exists and has an id."""
+        return bool(self._device and self._device.get("id"))
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the device is on."""
+        if self._optimistic_active() and self._optimistic_is_on is not None:
+            return self._optimistic_is_on
+        power = str(self._device.get("power", "0"))
+        return power == "1"
+
+    @property
+    def icon(self) -> str:
+        """Return an icon matching the current state."""
+        return "mdi:power" if self.is_on else "mdi:power-off"
+
+    @property
+    def device_info(self) -> dict[str, Any]:
+        """Return device info for the device registry (without exposing the PIN)."""
+        dev = self._device
+        info: dict[str, Any] = {
+            "identifiers": {(DOMAIN, dev.get("id"))},
+            "name": dev.get("name"),
+            "manufacturer": "Daikin",
+            # Privacy: do not include PIN in model string.
+            "model": dev.get("brand") or "Unknown",
+            "sw_version": dev.get("firmware") or "Unknown",
+        }
+        mac = dev.get("mac")
+        if mac:
+            info["connections"] = {("mac", mac)}
+        return info
+
+    # -----------------------------
+    # Write operations (async + optimistic + delayed refresh)
+    # -----------------------------
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn on the device by sending P1=1."""
+        await self._send_event("P1", 1)
+        self._set_optimistic(True)
+        self._schedule_delayed_refresh()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn off the device by sending P1=0."""
+        await self._send_event("P1", 0)
+        self._set_optimistic(False)
+        self._schedule_delayed_refresh()
