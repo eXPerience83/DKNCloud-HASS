@@ -1,21 +1,15 @@
-"""Sensors for DKN Cloud for HASS (Airzone Cloud).
+"""Sensor platform for DKN Cloud for HASS (Airzone Cloud).
 
-Changes in this revision:
-- Read devices from `coordinator.data` (dict keyed by device_id), not from a "devices" list.
-- Normalize value types (int temperature, int minutes) to avoid "32,0 ºC" or "30,0" displays.
-- Make "Sleep Timer (min)" enabled by default (user-requested).
-- Add diagnostic sensors for MAC Address and PIN (disabled by default). Exposing PIN can be sensitive;
-  it is off by default and flagged as a diagnostic sensor; enable only if you understand the risk.
-- Keep timestamp sensors for "Connection Date" and "Device Update Date" but disabled by default.
-- Set proper device_class/unit for duration (minutes) to comply with HA expectations.
+Consistent creation off coordinator.data (dict by device_id).
+Core sensors enabled-by-default so they are visible out-of-the-box.
+No I/O in properties; updates come from the coordinator.
 
-All sensors use `device_class`/`state_class`/units that match HA expectations.
+Privacy: do not expose PIN as a sensor; redact secrets in logs.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -23,223 +17,131 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature, UnitOfTime
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.const import UnitOfTemperature
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 
+_LOGGER = logging.getLogger(__name__)
 
-async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
-    """Create sensors per device from the coordinator snapshot."""
+# (attribute, friendly name, icon, enabled_by_default, device_class, state_class)
+CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
+    ("local_temp", "Local Temperature", "mdi:thermometer", True, "temperature", "measurement"),
+    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, None, None),
+    ("scenary", "Scenary", "mdi:account-clock", True, None, None),
+    ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
+    ("machine_errors", "Machine Errors", "mdi:alert-octagon", True, None, None),
+    ("firmware", "Firmware Version", "mdi:chip", True, None, None),
+    ("brand", "Brand/Model", "mdi:factory", True, None, None),
+    ("availables_speeds", "Available Fan Speeds", "mdi:fan", True, None, None),
+    ("cold_consign", "Cool Setpoint", "mdi:snowflake", True, None, None),
+    ("heat_consign", "Heat Setpoint", "mdi:fire", True, None, None),
+    ("cold_speed", "Cool Fan Speed", "mdi:fan", True, None, None),
+    ("heat_speed", "Heat Fan Speed", "mdi:fan", True, None, None),
+]
+
+# Additional diagnostics (disabled by default to reduce UI noise)
+DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
+    ("progs_enabled", "Programs Enabled", "mdi:calendar-check", False, None, None),
+    ("power", "Power State (Raw)", "mdi:power", False, None, None),
+    ("units", "Units", "mdi:ruler", False, None, None),
+    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low", False, None, None),
+    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high", False, None, None),
+    ("min_limit_cold", "Min Limit Cool", "mdi:thermometer-chevron-down", False, None, None),
+    ("max_limit_cold", "Max Limit Cool", "mdi:thermometer-chevron-up", False, None, None),
+    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-chevron-down", False, None, None),
+    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-chevron-up", False, None, None),
+]
+
+async def async_setup_entry(hass, entry, async_add_entities):
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
+        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
-    coordinator: DataUpdateCoordinator = data["coordinator"]
 
-    entities: list[SensorEntity] = []
-    for device_id in coordinator.data.keys():
-        entities.extend(
-            [
-                LocalTemperatureSensor(coordinator, device_id),
-                SleepTimerSensor(coordinator, device_id),
-                ScenarySensor(coordinator, device_id),
-                ConnectionDateSensor(coordinator, device_id),
-                UpdateDateSensor(coordinator, device_id),
-                MacAddressSensor(coordinator, device_id),
-                PinSensor(coordinator, device_id),
-            ]
-        )
+    coordinator = data.get("coordinator")
+    if coordinator is None:
+        _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
+        return
+
+    entities: list[AirzoneSensor] = []
+    for device_id in list(coordinator.data.keys()):
+        for spec in CORE_SENSORS + DIAG_SENSORS:
+            entities.append(AirzoneSensor(coordinator, device_id, *spec))
 
     async_add_entities(entities)
 
 
-@dataclass
-class _Ctx:
-    device_id: str
-    name: str
-    mac: str | None
-
-
-class _BaseSensor(CoordinatorEntity, SensorEntity):
-    """Base helper for sensors tied to a single device."""
+class AirzoneSensor(CoordinatorEntity, SensorEntity):
+    """Generic read-only sensor surfacing fields from device snapshot."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
+    def __init__(
+        self,
+        coordinator,
+        device_id: str,
+        attribute: str,
+        friendly: str,
+        icon: str,
+        enabled_by_default: bool,
+        dev_class: str | None,
+        state_class: str | None,
+    ) -> None:
         super().__init__(coordinator)
-        dev = coordinator.data.get(device_id, {})
-        self._ctx = _Ctx(
-            device_id=str(device_id),
-            name=str(dev.get("name") or "Airzone Device"),
-            mac=(dev.get("mac") or None),
+        self._device_id = device_id
+        self._attribute = attribute
+        self._attr_name = friendly
+        self._attr_icon = icon
+        self._attr_unique_id = f"{device_id}_{attribute}"
+        self._attr_entity_category = (
+            EntityCategory.DIAGNOSTIC if (attribute not in ("local_temp",)) else None
         )
-        self._attr_device_info = self._device_info()
+        self._attr_should_poll = False
+        self._attr_native_unit_of_measurement = (
+            UnitOfTemperature.CELSIUS if attribute in ("local_temp",) else None
+        )
+        # Device & state classes
+        if dev_class:
+            try:
+                self._attr_device_class = getattr(SensorDeviceClass, dev_class.upper())
+            except Exception:
+                self._attr_device_class = None
+        if state_class:
+            try:
+                self._attr_state_class = getattr(SensorStateClass, state_class.upper())
+            except Exception:
+                self._attr_state_class = None
+        # Default visibility
+        self._attr_entity_registry_enabled_default = enabled_by_default
 
-    def _device_info(self) -> DeviceInfo:
-        info: DeviceInfo = {
-            "identifiers": {(DOMAIN, self._ctx.device_id)},
-            "name": self._ctx.name,
+    @property
+    def device_info(self):
+        dev = self._device
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
             "manufacturer": "Daikin / Airzone",
+            "model": dev.get("brand") or "Airzone DKN",
+            "sw_version": dev.get("firmware") or "",
+            "name": dev.get("name") or "Airzone Device",
         }
-        if self._ctx.mac:
-            # Home Assistant prefers a set of (connection_type, identifier) tuples
-            info["connections"] = {("mac", self._ctx.mac)}
-        return info
 
     @property
     def _device(self) -> dict[str, Any]:
-        return self.coordinator.data.get(self._ctx.device_id, {})
-
-    def _raw(self, key: str) -> Any:
-        return self._device.get(key)
-
-
-# --- Concrete sensors ------------------------------------------------------------
-
-
-class LocalTemperatureSensor(_BaseSensor):
-    """Ambient temperature as integer °C (HA UI shows whole degrees)."""
-
-    _attr_name = "Local Temperature"
-    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_device_class = SensorDeviceClass.TEMPERATURE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_unique_id: str
-
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
-        super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{self._ctx.device_id}_local_temp"
+        return self.coordinator.data.get(self._device_id, {})
 
     @property
-    def native_value(self) -> int | None:
-        raw = self._raw("local_temp")
-        try:
-            return int(round(float(raw)))
-        except (TypeError, ValueError):
-            return None
-
-
-class SleepTimerSensor(_BaseSensor):
-    """Minutes remaining for sleep timer."""
-
-    _attr_name = "Sleep Timer (min)"
-    _attr_device_class = SensorDeviceClass.DURATION
-    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_entity_registry_enabled_default = True  # user-requested visible by default
-    _attr_unique_id: str
-
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
-        super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{self._ctx.device_id}_sleep_time"
+    def available(self) -> bool:
+        return bool(self._device)
 
     @property
-    def native_value(self) -> int | None:
-        raw = self._raw("sleep_time")
-        try:
-            return int(round(float(raw)))
-        except (TypeError, ValueError):
-            return None
-
-
-class ScenarySensor(_BaseSensor):
-    """Current scenary string (occupied, sleep, etc.)."""
-
-    _attr_name = "Scenary"
-    _attr_unique_id: str
-
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
-        super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{self._ctx.device_id}_scenary"
-
-    @property
-    def native_value(self) -> str | None:
-        val = self._raw("scenary")
-        return str(val) if val is not None else None
-
-
-class ConnectionDateSensor(_BaseSensor):
-    """Timestamp of last connection reported by device (often updated frequently)."""
-
-    _attr_name = "Connection Date"
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_entity_registry_enabled_default = False  # noisy; keep disabled by default
-    _attr_unique_id: str
-
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
-        super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{self._ctx.device_id}_connection_date"
-
-    @property
-    def native_value(self) -> datetime | None:
-        raw = self._raw("connection_date")
-        if not raw:
-            return None
-        try:
-            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        except Exception:  # noqa: BLE001
-            return None
-
-
-class UpdateDateSensor(_BaseSensor):
-    """Device-reported update timestamp (can be stale on some firmwares)."""
-
-    _attr_name = "Device Update Date"
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_entity_registry_enabled_default = False  # often very old values
-    _attr_unique_id: str
-
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
-        super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{self._ctx.device_id}_update_date"
-
-    @property
-    def native_value(self) -> datetime | None:
-        raw = self._raw("update_date")
-        if not raw:
-            return None
-        try:
-            return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        except Exception:  # noqa: BLE001
-            return None
-
-
-class MacAddressSensor(_BaseSensor):
-    """Device MAC address (diagnostic)."""
-
-    _attr_name = "MAC Address"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
-    _attr_unique_id: str
-
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
-        super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{self._ctx.device_id}_mac"
-
-    @property
-    def native_value(self) -> str | None:
-        val = self._raw("mac")
-        return str(val) if val is not None else None
-
-
-class PinSensor(_BaseSensor):
-    """Device PIN (diagnostic; disabled by default – may be sensitive)."""
-
-    _attr_name = "PIN"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_entity_registry_enabled_default = False
-    _attr_unique_id: str
-
-    def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
-        super().__init__(coordinator, device_id)
-        self._attr_unique_id = f"{self._ctx.device_id}_pin"
-
-    @property
-    def native_value(self) -> str | None:
-        val = self._raw("pin")
-        return str(val) if val is not None else None
+    def native_value(self) -> Any:
+        val = self._device.get(self._attribute)
+        # Show integer degrees where applicable
+        if self._attribute in ("local_temp", "cold_consign", "heat_consign"):
+            try:
+                return int(val) if val is not None else None
+            except Exception:
+                return None
+        return val
