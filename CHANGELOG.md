@@ -1,6 +1,6 @@
 # Changelog
 
-### 0.3.5-alpha.2 notes
+### [0.3.5-alpha.2] - 2025-09-16
 - **Sensors**:  
   - `Sleep Timer (min)` is **enabled by default**.  
   - `Connection Date` and `Device Update Date` are timestamps, **disabled by default**.  
