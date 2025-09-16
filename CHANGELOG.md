@@ -13,6 +13,7 @@
   - Restored **fan control**; hidden in **Dry** and **Off**.
   - Respect device **modes** bitmask when provided.
   - Target temperature uses 1 °C steps in UI; API payload remains decimal.
+  - **Device Registry**: climate entity now also reports **model** (brand) and **sw_version** (firmware), aligned with the power switch.
 #### Fixed
 - Climate init crash when accessing device snapshot before context was built.
 - Write commands use the correct **/events** payload (P1/P2/P3/P4/P7/P8).
