@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased] – Sensors & Climate polish
+### Changed
+- Normalize types/units:
+  - Temperatures shown as integers (1 °C).
+  - Sleep Timer exposed as a DURATION sensor (minutes, integer).
+  - API dates exposed as TIMESTAMPs (timezone-aware).
+- `Sleep Timer (min)` is now enabled by default; `Scenary` and `Local Temperature` remain visible.
+- Renamed `Last Update` to `Device Update Date` and disabled by default (server-provided and often stale).
+- Additional diagnostics available: Available Fan Speeds, Supported Modes (bitmask), Min/Max Temperature (Unoccupied), Machine Errors, Firmware, Brand/Model, Time Zone.
+### Fixed
+- Restored fan control in the climate entity:
+  - Fan control visible in Cool/Heat/Fan-only and hidden in Dry.
+  - Fan speeds derived from `availables_speeds`.
+- Enforced 1 °C target temperature step.
+### Security
+- Do not expose PIN or MAC as sensors. MAC is only used in `device_info.connections`.
+
 ## [0.3.5-alpha.1] - 2025-09-15
 ### Fixed
 - API: Catch builtin `TimeoutError` (Python 3.11 alias of `asyncio.TimeoutError`) to align with Ruff/pyupgrade and avoid formatter rewrites.
