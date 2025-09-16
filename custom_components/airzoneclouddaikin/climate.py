@@ -235,7 +235,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         await self._send_event(payload)
         # Optimistic ttl
-        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -281,7 +283,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             self._optimistic["cold_speed"] = fan_mode
 
         await self._send_event(payload)
-        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -302,7 +306,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
                 await self._send_event({"event": {"P2": mode_code}})
                 self._optimistic.update({"mode": mode_code})
 
-        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -340,6 +346,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     def _schedule_refresh(self) -> None:
         """Schedule a short delayed refresh after write operations."""
+
         async def _refresh_cb(_now):
             try:
                 await self.coordinator.async_request_refresh()
@@ -357,6 +364,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     async def async_update(self) -> None:
         # Entity pulls from coordinator; no direct I/O.
         # Clean optimistic state once TTL expires.
-        if self._optimistic_expires and self.coordinator.hass.loop.time() > self._optimistic_expires:
+        if (
+            self._optimistic_expires
+            and self.coordinator.hass.loop.time() > self._optimistic_expires
+        ):
             self._optimistic.clear()
             self._optimistic_expires = None

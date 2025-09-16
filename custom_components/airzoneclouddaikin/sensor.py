@@ -27,7 +27,14 @@ _LOGGER = logging.getLogger(__name__)
 
 # (attribute, friendly name, icon, enabled_by_default, device_class, state_class)
 CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
-    ("local_temp", "Local Temperature", "mdi:thermometer", True, "temperature", "measurement"),
+    (
+        "local_temp",
+        "Local Temperature",
+        "mdi:thermometer",
+        True,
+        "temperature",
+        "measurement",
+    ),
     ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, None, None),
     ("scenary", "Scenary", "mdi:account-clock", True, None, None),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
@@ -46,13 +53,56 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check", False, None, None),
     ("power", "Power State (Raw)", "mdi:power", False, None, None),
     ("units", "Units", "mdi:ruler", False, None, None),
-    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low", False, None, None),
-    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high", False, None, None),
-    ("min_limit_cold", "Min Limit Cool", "mdi:thermometer-chevron-down", False, None, None),
-    ("max_limit_cold", "Max Limit Cool", "mdi:thermometer-chevron-up", False, None, None),
-    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-chevron-down", False, None, None),
-    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-chevron-up", False, None, None),
+    (
+        "min_temp_unoccupied",
+        "Min Temp Unoccupied",
+        "mdi:thermometer-low",
+        False,
+        None,
+        None,
+    ),
+    (
+        "max_temp_unoccupied",
+        "Max Temp Unoccupied",
+        "mdi:thermometer-high",
+        False,
+        None,
+        None,
+    ),
+    (
+        "min_limit_cold",
+        "Min Limit Cool",
+        "mdi:thermometer-chevron-down",
+        False,
+        None,
+        None,
+    ),
+    (
+        "max_limit_cold",
+        "Max Limit Cool",
+        "mdi:thermometer-chevron-up",
+        False,
+        None,
+        None,
+    ),
+    (
+        "min_limit_heat",
+        "Min Limit Heat",
+        "mdi:thermometer-chevron-down",
+        False,
+        None,
+        None,
+    ),
+    (
+        "max_limit_heat",
+        "Max Limit Heat",
+        "mdi:thermometer-chevron-up",
+        False,
+        None,
+        None,
+    ),
 ]
+
 
 async def async_setup_entry(hass, entry, async_add_entities):
     data = hass.data[DOMAIN].get(entry.entry_id)
