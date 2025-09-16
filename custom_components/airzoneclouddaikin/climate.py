@@ -4,10 +4,16 @@ This entity follows HA async patterns and uses the DataUpdateCoordinator.
 It restores fan control in the UI (Cool/Heat/Fan-only), hides it in Dry mode,
 and uses integer steps for target temperature.
 
+Why this revision?
+- Fixed a regression: write commands now send proper /events payloads (P1/P2/P3/P4/P7/P8),
+  instead of incorrectly calling `api.send_event()` with positional args.
+- Entities are now sourced directly from `coordinator.data` (a dict keyed by device_id),
+  not from a non-existent `data["devices"]` list.
+
 Notes:
-- We optimistically update the local coordinator snapshot after write calls
+- We optimistically update the coordinator snapshot after write calls
   so the UI reflects the change until the next refresh.
-- Temperatures are integers (1ºC steps).
+- Temperatures are integers (1 ºC steps) in the UI; we still send "25.0" to the API.
 - We only expose COOL, HEAT, FAN_ONLY and DRY. No AUTO/HEAT_COOL until verified.
 """
 
@@ -39,18 +45,18 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Airzone mode codes observed in API:
-# 1: COOL, 2: HEAT, 3: FAN_ONLY, 4: DRY
+# 1: COOL, 2: HEAT, 3: FAN_ONLY, 5: DRY
 MODE_TO_HVAC: dict[str, HVACMode] = {
     "1": HVACMode.COOL,
     "2": HVACMode.HEAT,
     "3": HVACMode.FAN_ONLY,
-    "4": HVACMode.DRY,
+    "5": HVACMode.DRY,
 }
 HVAC_TO_MODE: dict[HVACMode, str] = {
     HVACMode.COOL: "1",
     HVACMode.HEAT: "2",
     HVACMode.FAN_ONLY: "3",
-    HVACMode.DRY: "4",
+    HVACMode.DRY: "5",
 }
 
 
@@ -63,10 +69,10 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
 
     coordinator: DataUpdateCoordinator = data["coordinator"]
     api = data["api"]
-    devices: list[dict[str, Any]] = data["devices"]
 
+    # Create one entity per device present in the coordinator snapshot
     entities: list[ClimateEntity] = [
-        AirzoneClimate(coordinator, api, dev) for dev in devices
+        AirzoneClimate(coordinator, api, device_id) for device_id in coordinator.data.keys()
     ]
     async_add_entities(entities)
 
@@ -87,37 +93,45 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     _attr_target_temperature_step = 1.0  # expose whole-degree steps
 
     def __init__(
-        self, coordinator: DataUpdateCoordinator, api, device: dict[str, Any]
+        self, coordinator: DataUpdateCoordinator, api, device_id: str
     ) -> None:
         super().__init__(coordinator)
         self._api = api
-        self._device = device
+        dev = self._device  # snapshot
         self._ctx = _Ctx(
-            device_id=str(device.get("id", "")),
-            mac=(device.get("mac") or None),
-            name=str(device.get("name") or "Airzone Device"),
+            device_id=str(device_id),
+            mac=(dev.get("mac") or None),
+            name=str(dev.get("name") or "Airzone Device"),
         )
         self._attr_name = self._ctx.name
         self._attr_unique_id = self._ctx.device_id
 
     # ---- Helpers -----------------------------------------------------------------
 
-    def _find(self) -> dict[str, Any] | None:
-        """Find the live device dict in the coordinator snapshot."""
-        devices: list[dict[str, Any]] = self.coordinator.data.get("devices", [])
-        for d in devices:
-            if str(d.get("id")) == self._ctx.device_id:
-                return d
-        return None
+    @property
+    def _device(self) -> dict[str, Any]:
+        """Return the current device snapshot from the coordinator."""
+        return self.coordinator.data.get(self._ctx.device_id, {})
 
     def _update_local(self, **changes: Any) -> None:
         """Apply optimistic changes into the coordinator snapshot."""
-        dev = self._find()
-        if dev is None:
-            return
+        dev = dict(self._device)
         dev.update(changes)
-        # Notify listeners that something changed
-        self.coordinator.async_set_updated_data(self.coordinator.data)
+        new_data = dict(self.coordinator.data)
+        new_data[self._ctx.device_id] = dev
+        self.coordinator.async_set_updated_data(new_data)
+
+    async def _send_event(self, option: str, value: Any) -> None:
+        """Send a command to the device using the events endpoint."""
+        payload = {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": self._ctx.device_id,
+                "option": option,
+                "value": value,
+            }
+        }
+        await self._api.send_event(payload)
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -134,33 +148,32 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def available(self) -> bool:
-        return self._find() is not None
+        return bool(self._device)
 
     def _raw(self, key: str) -> Any:
-        dev = self._find()
-        return None if dev is None else dev.get(key)
+        return self._device.get(key)
 
     @property
     def hvac_modes(self) -> list[HVACMode]:
-        # Supported modes from bitmask if present; otherwise default to all
+        # Prefer device-supported mask if present; else expose all four
         bitmask = str(self._raw("modes") or "")
+        # Known order in many firmwares aligns with: [COOL, HEAT, FAN, AUTO, DRY, ?, ?, ?]
+        # We ignore AUTO entirely.
         modes: list[HVACMode] = []
-        # Conservative set; only add when flags indicate support
-        # Known sequence in many firmwares: [AUTO, COOL, HEAT, FAN, DRY, ?, ?, ?]
-        # We ignore AUTO and unknown flags.
-        if len(bitmask) >= 2 and bitmask[1] == "1":
-            modes.append(HVACMode.COOL)
-        if len(bitmask) >= 3 and bitmask[2] == "1":
-            modes.append(HVACMode.HEAT)
-        if len(bitmask) >= 4 and bitmask[3] == "1":
-            modes.append(HVACMode.FAN_ONLY)
-        if len(bitmask) >= 5 and bitmask[4] == "1":
-            modes.append(HVACMode.DRY)
-
-        # Fallback if bitmask unusable
+        try:
+            if len(bitmask) >= 1 and bitmask[0] == "1":
+                modes.append(HVACMode.COOL)
+            if len(bitmask) >= 2 and bitmask[1] == "1":
+                modes.append(HVACMode.HEAT)
+            if len(bitmask) >= 3 and bitmask[2] == "1":
+                modes.append(HVACMode.FAN_ONLY)
+            # some firmwares place DRY at index 4
+            if len(bitmask) >= 5 and bitmask[4] == "1":
+                modes.append(HVACMode.DRY)
+        except Exception:  # noqa: BLE001
+            modes = []
         if not modes:
             modes = [HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY]
-        # We always include OFF
         return [HVACMode.OFF, *modes]
 
     @property
@@ -245,7 +258,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         if hvac_mode == HVACMode.OFF:
-            await self._api.send_event(self._ctx.device_id, "power", "0")
+            await self._send_event("P1", 0)
             self._update_local(power="0")
             return
 
@@ -254,8 +267,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             _LOGGER.debug("Ignored unsupported hvac_mode: %s", hvac_mode)
             return
 
-        await self._api.send_event(self._ctx.device_id, "mode", mode_code)
-        await self._api.send_event(self._ctx.device_id, "power", "1")
+        # Select new mode, then ensure power ON
+        await self._send_event("P2", mode_code)
+        await self._send_event("P1", 1)
         self._update_local(mode=mode_code, power="1")
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
@@ -263,13 +277,10 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         if current in (HVACMode.OFF, HVACMode.DRY):
             _LOGGER.debug("Fan control disabled in mode %s", current)
             return
-
-        key = (
-            "cold_speed"
-            if current in (HVACMode.COOL, HVACMode.FAN_ONLY)
-            else "heat_speed"
-        )
-        await self._api.send_event(self._ctx.device_id, key, str(fan_mode))
+        # Use P3 in COOL/FAN_ONLY; P4 in HEAT
+        option = "P3" if current in (HVACMode.COOL, HVACMode.FAN_ONLY) else "P4"
+        await self._send_event(option, str(fan_mode))
+        key = "cold_speed" if option == "P3" else "heat_speed"
         self._update_local(**{key: str(fan_mode)})
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
@@ -277,18 +288,19 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         if temp is None:
             return
         try:
-            value = str(int(round(float(temp))))
+            # UI enforces integers; send "25.0" to API for compatibility
+            value_str = f"{int(round(float(temp))):.1f}"
         except (TypeError, ValueError):
             return
 
         current = self.hvac_mode
         if current == HVACMode.COOL:
-            key = "cold_consign"
+            option, key = "P7", "cold_consign"
         elif current == HVACMode.HEAT:
-            key = "heat_consign"
+            option, key = "P8", "heat_consign"
         else:
             _LOGGER.debug("Temperature set ignored for mode %s", current)
             return
 
-        await self._api.send_event(self._ctx.device_id, key, value)
-        self._update_local(**{key: value})
+        await self._send_event(option, value_str)
+        self._update_local(**{key: value_str})
