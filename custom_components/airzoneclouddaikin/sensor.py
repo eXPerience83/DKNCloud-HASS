@@ -188,10 +188,12 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         val = self._device.get(self._attribute)
-        # Show integer degrees where applicable
+        # NOTE: Fix - parse temperature/setpoints as float to avoid ValueError on "23.5"
+        # and return a numeric value instead of None/unknown.
         if self._attribute in ("local_temp", "cold_consign", "heat_consign"):
             try:
-                return int(val) if val is not None else None
+                # Accept both "23,5" and "23.5"
+                return float(str(val).replace(",", ".")) if val is not None else None
             except Exception:
                 return None
         return val
