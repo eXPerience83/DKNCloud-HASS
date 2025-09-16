@@ -16,9 +16,9 @@ Key design choices:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
-import logging
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -165,7 +165,9 @@ class AirzoneBaseSensor(CoordinatorEntity, SensorEntity):
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC  # overridden for user-facing
 
-    def __init__(self, coordinator: DataUpdateCoordinator, device: dict[str, Any]) -> None:
+    def __init__(
+        self, coordinator: DataUpdateCoordinator, device: dict[str, Any]
+    ) -> None:
         super().__init__(coordinator)
         self._device = device
         self._ctx = _DeviceContext(
@@ -226,7 +228,9 @@ class LocalTemperatureSensor(AirzoneBaseSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = None  # user-facing
 
-    def __init__(self, coordinator: DataUpdateCoordinator, device: dict[str, Any]) -> None:
+    def __init__(
+        self, coordinator: DataUpdateCoordinator, device: dict[str, Any]
+    ) -> None:
         super().__init__(coordinator, device)
         self._attr_unique_id = f"{self._ctx.device_id}_local_temperature"
 
@@ -239,7 +243,9 @@ class LocalTemperatureSensor(AirzoneBaseSensor):
             # API may send "27.0" as string -> cast to int (1°C steps device)
             return int(float(raw))
         except (ValueError, TypeError):
-            _LOGGER.debug("Invalid local_temp value %r for device %s", raw, self._ctx.device_id)
+            _LOGGER.debug(
+                "Invalid local_temp value %r for device %s", raw, self._ctx.device_id
+            )
             return None
 
 
@@ -255,7 +261,9 @@ class SleepTimerSensor(AirzoneBaseSensor):
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_entity_category = None  # user-facing
 
-    def __init__(self, coordinator: DataUpdateCoordinator, device: dict[str, Any]) -> None:
+    def __init__(
+        self, coordinator: DataUpdateCoordinator, device: dict[str, Any]
+    ) -> None:
         super().__init__(coordinator, device)
         self._attr_unique_id = f"{self._ctx.device_id}_sleep_timer"
 
@@ -276,7 +284,9 @@ class ScenarySensor(AirzoneBaseSensor):
     _attr_has_entity_name = True
     _attr_name = "Scenary"
 
-    def __init__(self, coordinator: DataUpdateCoordinator, device: dict[str, Any]) -> None:
+    def __init__(
+        self, coordinator: DataUpdateCoordinator, device: dict[str, Any]
+    ) -> None:
         super().__init__(coordinator, device)
         self._attr_unique_id = f"{self._ctx.device_id}_scenary"
 

@@ -13,8 +13,8 @@ Notes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -24,8 +24,8 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import (
     ATTR_TEMPERATURE,
-    UnitOfTemperature,
     PRECISION_WHOLE,
+    UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
@@ -65,7 +65,9 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
     api = data["api"]
     devices: list[dict[str, Any]] = data["devices"]
 
-    entities: list[ClimateEntity] = [AirzoneClimate(coordinator, api, dev) for dev in devices]
+    entities: list[ClimateEntity] = [
+        AirzoneClimate(coordinator, api, dev) for dev in devices
+    ]
     async_add_entities(entities)
 
 
@@ -84,7 +86,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     _attr_precision = PRECISION_WHOLE
     _attr_target_temperature_step = 1.0  # expose whole-degree steps
 
-    def __init__(self, coordinator: DataUpdateCoordinator, api, device: dict[str, Any]) -> None:
+    def __init__(
+        self, coordinator: DataUpdateCoordinator, api, device: dict[str, Any]
+    ) -> None:
         super().__init__(coordinator)
         self._api = api
         self._device = device
@@ -185,7 +189,11 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         if not self.fan_modes:
             return None
         current = self.hvac_mode
-        key = "cold_speed" if current in (HVACMode.COOL, HVACMode.FAN_ONLY) else "heat_speed"
+        key = (
+            "cold_speed"
+            if current in (HVACMode.COOL, HVACMode.FAN_ONLY)
+            else "heat_speed"
+        )
         val = self._raw(key)
         return str(val) if val is not None else None
 
@@ -256,7 +264,11 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             _LOGGER.debug("Fan control disabled in mode %s", current)
             return
 
-        key = "cold_speed" if current in (HVACMode.COOL, HVACMode.FAN_ONLY) else "heat_speed"
+        key = (
+            "cold_speed"
+            if current in (HVACMode.COOL, HVACMode.FAN_ONLY)
+            else "heat_speed"
+        )
         await self._api.send_event(self._ctx.device_id, key, str(fan_mode))
         self._update_local(**{key: str(fan_mode)})
 
