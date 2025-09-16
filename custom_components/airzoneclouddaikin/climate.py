@@ -1,10 +1,15 @@
 """Climate platform for DKN Cloud for HASS (Airzone Cloud).
 
 This entity follows HA async patterns and uses DataUpdateCoordinator.
-Fixes a regression where `supported_features` returned a plain int, causing:
-TypeError: argument of type 'int' is not iterable
 
-Key behaviors:
+Fixes in 0.3.5-alpha.3 (post-review):
+- Restore correct /events payload for climate commands using 'modmaquina' + device_id.
+- Parse 'modes' as a bitstring (positions P2=1..8) instead of assuming an integer bitmask.
+
+It also keeps the previous regression fix where `supported_features` always returns
+a ClimateEntityFeature (IntFlag), never a plain int.
+
+Behaviors:
 - Expose COOL/HEAT/FAN_ONLY/DRY (no AUTO/HEAT_COOL until proven stable).
 - Dynamic features:
     * COOL/HEAT: TARGET_TEMPERATURE + FAN_MODE
@@ -129,7 +134,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         code = self._backend_mode_code()
         return MODE_TO_HVAC.get(code or "", HVACMode.OFF)
 
-    # ---- Entity metadata -------------------------------------------------
+    # ---- Device info -----------------------------------------------------
 
     @property
     def device_info(self):
@@ -152,24 +157,31 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_modes(self) -> list[HVACMode]:
-        """Expose supported modes based on optional 'modes' bitmask, else defaults."""
+        """Expose supported modes based on optional 'modes' bitstring.
+
+        The 'modes' field is typically a binary string where positions map to:
+        index 0 -> P2=1 (COOL)
+        index 1 -> P2=2 (HEAT)
+        index 2 -> P2=3 (FAN_ONLY)
+        index 3 -> P2=4 (AUTO/HEAT_COOL)   [not exposed]
+        index 4 -> P2=5 (DRY)
+        """
         modes = [HVACMode.OFF]
-        bitmask = self._device.get("modes")
-        # NOTE: When 'modes' is provided, prefer it; otherwise, expose all real modes.
-        try:
-            bm = int(bitmask) if bitmask is not None else None
-        except Exception:
-            bm = None
+        raw = self._device.get("modes")
+        bitstr = str(raw) if raw is not None else ""
+        if bitstr and all(ch in "01" for ch in bitstr):
+            if len(bitstr) >= 1 and bitstr[0] == "1":
+                modes.append(HVACMode.COOL)
+            if len(bitstr) >= 2 and bitstr[1] == "1":
+                modes.append(HVACMode.HEAT)
+            if len(bitstr) >= 3 and bitstr[2] == "1":
+                modes.append(HVACMode.FAN_ONLY)
+            if len(bitstr) >= 5 and bitstr[4] == "1":
+                modes.append(HVACMode.DRY)
+            return modes
 
-        def add(mode: HVACMode, bit: int | None):
-            if bm is None or (bit is not None and bm & bit):
-                modes.append(mode)
-
-        # Assuming bit assignment 1<<0 COOL, 1<<1 HEAT, 1<<2 FAN_ONLY, 1<<3 DRY if provided
-        add(HVACMode.COOL, 1 << 0)
-        add(HVACMode.HEAT, 1 << 1)
-        add(HVACMode.FAN_ONLY, 1 << 2)
-        add(HVACMode.DRY, 1 << 3)
+        # Fallback: expose real modes when bitstring is missing/invalid
+        modes.extend([HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY])
         return modes
 
     # ---- Temperature control --------------------------------------------
@@ -225,15 +237,13 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         # Clamp to device limits
         temp = max(int(self.min_temp), min(int(self.max_temp), temp))
-        payload: dict[str, Any]
         if mode == HVACMode.COOL:
-            payload = {"event": {"P7": f"{temp}.0"}}
+            await self._send_p_event("P7", f"{temp}.0")
             self._optimistic["cold_consign"] = temp
         else:
-            payload = {"event": {"P8": f"{temp}.0"}}
+            await self._send_p_event("P8", f"{temp}.0")
             self._optimistic["heat_consign"] = temp
 
-        await self._send_event(payload)
         # Optimistic ttl
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
@@ -273,16 +283,14 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
             return
 
-        payload: dict[str, Any]
         if mode == HVACMode.HEAT:
-            payload = {"event": {"P4": fan_mode}}
+            await self._send_p_event("P4", fan_mode)
             self._optimistic["heat_speed"] = fan_mode
         else:
             # COOL or FAN_ONLY
-            payload = {"event": {"P3": fan_mode}}
+            await self._send_p_event("P3", fan_mode)
             self._optimistic["cold_speed"] = fan_mode
 
-        await self._send_event(payload)
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
         )
@@ -294,16 +302,16 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode (power off/on + P2 as needed)."""
         if hvac_mode == HVACMode.OFF:
-            await self._send_event({"event": {"P1": "0"}})
+            await self._send_p_event("P1", 0)
             self._optimistic.update({"power": "0"})
         else:
             # Ensure power on then set P2
             if not self._device_power_on():
-                await self._send_event({"event": {"P1": "1"}})
+                await self._send_p_event("P1", 1)
                 self._optimistic.update({"power": "1"})
             mode_code = HVAC_TO_MODE.get(hvac_mode)
             if mode_code:
-                await self._send_event({"event": {"P2": mode_code}})
+                await self._send_p_event("P2", mode_code)
                 self._optimistic.update({"mode": mode_code})
 
         self._optimistic_expires = (
@@ -312,7 +320,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self.async_write_ha_state()
         self._schedule_refresh()
 
-    # ---- Features (critical fix) ----------------------------------------
+    # ---- Features (keeps previous regression fix) -----------------------
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
@@ -333,16 +341,28 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     # ---- Write helpers ---------------------------------------------------
 
-    async def _send_event(self, payload: dict[str, Any]) -> None:
-        """POST /events with standard headers for event commands (P1..P8)."""
+    async def _send_p_event(self, option: str, value: Any) -> None:
+        """Send a P# command using the canonical 'modmaquina' payload.
+
+        This mirrors switch.py behavior to ensure API compatibility:
+        {"event":{"cgi":"modmaquina","device_id":<id>,"option":"P#","value":...}}
+        """
         api = getattr(self.coordinator, "api", None)
         if api is None:
             _LOGGER.error("API handle missing in coordinator; cannot send_event")
             return
+        payload = {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": self._device_id,
+                "option": option,
+                "value": value,
+            }
+        }
         try:
             await api.send_event(payload)
         except Exception as err:
-            _LOGGER.warning("Failed to send_event %s: %s", payload, err)
+            _LOGGER.warning("Failed to send_event %s=%s: %s", option, value, err)
 
     def _schedule_refresh(self) -> None:
         """Schedule a short delayed refresh after write operations."""
