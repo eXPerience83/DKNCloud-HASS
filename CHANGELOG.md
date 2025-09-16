@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.5-alpha.3] - 2025-09-16
+### Fixed
+- Prevent crash on entity setup caused by `climate.supported_features` returning a plain `int`. Now it always returns a proper `ClimateEntityFeature` bitmask, avoiding `TypeError: argument of type 'int' is not iterable` on recent HA versions.
+### Changed
+- Rebalanced default sensors: core ones enabled by default again (e.g., `local_temp`, scenary, speeds, consigns); extra diagnostics remain opt-in to reduce noise and protect privacy.
+
 ### [0.3.5-alpha.2] - 2025-09-16
 #### Added
 - Diagnostic sensors for **MAC Address** and **PIN** (disabled by default).
