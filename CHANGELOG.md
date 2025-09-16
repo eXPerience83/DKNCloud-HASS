@@ -5,6 +5,7 @@
 - Prevent crash on entity setup caused by `climate.supported_features` returning a plain `int`. Now it always returns a proper `ClimateEntityFeature` bitmask, avoiding `TypeError: argument of type 'int' is not iterable` on recent HA versions.
 - Sensors: `local_temp` (and also `cold_consign` / `heat_consign`) could show as `unknown` when the backend returned decimal values (e.g. "23.5"). Parsing now uses `float(...)` instead of `int(...)`, restoring proper readings without altering entity names or structure.
 - Climate: restore correct `/events` payload using `{"cgi":"modmaquina","device_id":..., "option":"P#", "value":...}`. Commands (power/mode/temp/fan) now operate reliably, mirroring the switch entity's format.
+- Climate: parse `target_temperature`, `min_temp`, and `max_temp` as floats (accepting `"24.0"` or `"23,5"`). This prevents `unknown` setpoint values and avoids falling back to default limits when the backend returns decimal strings. Clamping for P7/P8 remains integer-based, and payload still sends `"NN.0"`.
 ### Changed
 - Rebalanced default sensors: core ones enabled by default again (e.g., `local_temp`, scenary, speeds, consigns); extra diagnostics remain opt-in to reduce noise and protect privacy.
 - Climate: interpret `device["modes"]` as a *bitstring* (positions P2=1..8) instead of an integer bitmask; fallback to exposing COOL/HEAT/FAN_ONLY/DRY when missing.
