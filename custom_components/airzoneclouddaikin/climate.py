@@ -9,6 +9,7 @@ Why this revision?
   instead of incorrectly calling `api.send_event()` with positional args.
 - Entities are now sourced directly from `coordinator.data` (a dict keyed by device_id),
   not from a non-existent `data["devices"]` list.
+- Fixed __init__ to avoid accessing `self._device` before `_ctx` is initialized.
 
 Notes:
 - We optimistically update the coordinator snapshot after write calls
@@ -97,7 +98,10 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     ) -> None:
         super().__init__(coordinator)
         self._api = api
-        dev = self._device  # snapshot
+
+        # Do not access self._device before _ctx exists; read snapshot directly first.
+        dev = coordinator.data.get(str(device_id), {}) or {}
+
         self._ctx = _Ctx(
             device_id=str(device_id),
             mac=(dev.get("mac") or None),
@@ -258,7 +262,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         if hvac_mode == HVACMode.OFF:
-            await self._send_event("P1", 0)
+            await self._send_event("P1", 0)  # power off
             self._update_local(power="0")
             return
 
