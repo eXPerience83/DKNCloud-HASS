@@ -1,18 +1,21 @@
 # Changelog
 
 ### [0.3.5-alpha.2] - 2025-09-16
-- **Sensors**:  
-  - `Sleep Timer (min)` is **enabled by default**.  
-  - `Connection Date` and `Device Update Date` are timestamps, **disabled by default**.  
-  - `MAC Address` and `PIN` are **diagnostic** sensors, **disabled by default** (PIN is sensitive: enable at your own risk).
-- **Fan control**:  
-  - Available speeds come from the device (`availables_speeds`).  
-  - Fan control is shown in COOL/HEAT/FAN_ONLY and hidden in DRY.
-- **Temperature control**:  
-  - UI uses **1 °C step**.  
-  - API receives `"NN.0"` (string) for compatibility.
-- **Known caveats**:  
-  - Some firmwares report `update_date` with very old values; that’s why it remains disabled by default.
+#### Added
+- Diagnostic sensors for **MAC Address** and **PIN** (disabled by default).
+- Timestamp sensors for **Connection Date** and **Device Update Date** (disabled by default).
+- **Sleep Timer (min)** is now enabled by default.
+#### Changed
+- Normalize value types:
+  - Temperatures and sleep minutes shown as **integers** in the UI.
+  - Proper duration unit for sleep timer (minutes) with `device_class: duration`.
+- Climate:
+  - Restored **fan control**; hidden in **Dry** and **Off**.
+  - Respect device **modes** bitmask when provided.
+  - Target temperature uses 1 °C steps in UI; API payload remains decimal.
+#### Fixed
+- Climate init crash when accessing device snapshot before context was built.
+- Write commands use the correct **/events** payload (P1/P2/P3/P4/P7/P8).
 
 ## [0.3.5-alpha.1] - 2025-09-15
 ### Fixed
