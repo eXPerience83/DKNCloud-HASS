@@ -6,6 +6,10 @@ Fixes in 0.3.5-alpha.3 (post-review):
 - Restore correct /events payload for climate commands using 'modmaquina' + device_id.
 - Parse 'modes' as a bitstring (positions P2=1..8) instead of assuming an integer bitmask.
 
+Additional hardening (alpha.3 finalization):
+- Parse target_temperature/min/max as float-safe (accepts "24.0" or "23,5") to avoid
+  'unknown' setpoint and wrong default limits when backend returns decimals.
+
 It also keeps the previous regression fix where `supported_features` always returns
 a ClimateEntityFeature (IntFlag), never a plain int.
 
@@ -190,9 +194,22 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     def temperature_unit(self) -> UnitOfTemperature:
         return UnitOfTemperature.CELSIUS
 
+    @staticmethod
+    def _parse_float(val: Any) -> float | None:
+        """Parse a backend numeric value that may come as '24.0' or '23,5'."""
+        if val is None:
+            return None
+        try:
+            return float(str(val).replace(",", "."))
+        except Exception:
+            return None
+
     @property
     def target_temperature(self) -> float | None:
-        """Return target temperature according to current mode."""
+        """Return target temperature according to current mode.
+
+        NOTE: Use float-safe parse to avoid 'unknown' when backend returns "24.0".
+        """
         mode = self.hvac_mode
         if mode == HVACMode.COOL:
             val = self._optimistic.get("cold_consign", self._device.get("cold_consign"))
@@ -200,43 +217,44 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             val = self._optimistic.get("heat_consign", self._device.get("heat_consign"))
         else:
             return None
-        try:
-            return int(val)  # show whole degrees in UI
-        except Exception:
-            return None
+        return self._parse_float(val)
 
     @property
     def min_temp(self) -> float:
         """Return min allowable temp for current mode (fallback 16)."""
         mode = self.hvac_mode
         key = "min_limit_cold" if mode == HVACMode.COOL else "min_limit_heat"
-        try:
-            return int(self._device.get(key) or 16)
-        except Exception:
-            return 16
+        val = self._parse_float(self._device.get(key))
+        return val if val is not None else 16.0
 
     @property
     def max_temp(self) -> float:
         """Return max allowable temp for current mode (fallback 30)."""
         mode = self.hvac_mode
         key = "max_limit_cold" if mode == HVACMode.COOL else "max_limit_heat"
-        try:
-            return int(self._device.get(key) or 30)
-        except Exception:
-            return 30
+        val = self._parse_float(self._device.get(key))
+        return val if val is not None else 30.0
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature using P7 (cool) or P8 (heat) depending on mode."""
         if ATTR_TEMPERATURE not in kwargs:
             return
-        temp = int(kwargs[ATTR_TEMPERATURE])
+        # UI typically passes int/float; clamp to integer degrees for payload "NN.0"
+        try:
+            requested = float(kwargs[ATTR_TEMPERATURE])
+        except (TypeError, ValueError):
+            return
+
         mode = self.hvac_mode
         if mode not in (HVACMode.COOL, HVACMode.HEAT):
             _LOGGER.debug("Ignoring set_temperature in mode %s", mode)
             return
 
-        # Clamp to device limits
-        temp = max(int(self.min_temp), min(int(self.max_temp), temp))
+        # Clamp to device limits (use integer degrees as device expects)
+        min_allowed = int(self.min_temp)
+        max_allowed = int(self.max_temp)
+        temp = max(min_allowed, min(max_allowed, int(round(requested))))
+
         if mode == HVACMode.COOL:
             await self._send_p_event("P7", f"{temp}.0")
             self._optimistic["cold_consign"] = temp
