@@ -7,6 +7,7 @@ Changes in this revision:
 - Add diagnostic sensors for MAC Address and PIN (disabled by default). Exposing PIN can be sensitive;
   it is off by default and flagged as a diagnostic sensor; enable only if you understand the risk.
 - Keep timestamp sensors for "Connection Date" and "Device Update Date" but disabled by default.
+- Set proper device_class/unit for duration (minutes) to comply with HA expectations.
 
 All sensors use `device_class`/`state_class`/units that match HA expectations.
 """
@@ -22,9 +23,9 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -34,13 +35,14 @@ from .const import DOMAIN
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
+    """Create sensors per device from the coordinator snapshot."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         return
     coordinator: DataUpdateCoordinator = data["coordinator"]
 
     entities: list[SensorEntity] = []
-    for device_id, dev in coordinator.data.items():
+    for device_id in coordinator.data.keys():
         entities.extend(
             [
                 LocalTemperatureSensor(coordinator, device_id),
@@ -85,6 +87,7 @@ class _BaseSensor(CoordinatorEntity, SensorEntity):
             "manufacturer": "Daikin / Airzone",
         }
         if self._ctx.mac:
+            # Home Assistant prefers a set of (connection_type, identifier) tuples
             info["connections"] = {("mac", self._ctx.mac)}
         return info
 
@@ -98,8 +101,9 @@ class _BaseSensor(CoordinatorEntity, SensorEntity):
 
 # --- Concrete sensors ------------------------------------------------------------
 
+
 class LocalTemperatureSensor(_BaseSensor):
-    """Ambient temperature as integer °C."""
+    """Ambient temperature as integer °C (HA UI shows whole degrees)."""
 
     _attr_name = "Local Temperature"
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
@@ -125,6 +129,7 @@ class SleepTimerSensor(_BaseSensor):
 
     _attr_name = "Sleep Timer (min)"
     _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_registry_enabled_default = True  # user-requested visible by default
     _attr_unique_id: str
@@ -159,7 +164,7 @@ class ScenarySensor(_BaseSensor):
 
 
 class ConnectionDateSensor(_BaseSensor):
-    """Timestamp of last connection reported by device."""
+    """Timestamp of last connection reported by device (often updated frequently)."""
 
     _attr_name = "Connection Date"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -186,7 +191,7 @@ class UpdateDateSensor(_BaseSensor):
 
     _attr_name = "Device Update Date"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_entity_registry_enabled_default = False  # default off; often very old values
+    _attr_entity_registry_enabled_default = False  # often very old values
     _attr_unique_id: str
 
     def __init__(self, coordinator: DataUpdateCoordinator, device_id: str) -> None:
@@ -208,7 +213,7 @@ class MacAddressSensor(_BaseSensor):
     """Device MAC address (diagnostic)."""
 
     _attr_name = "MAC Address"
-    _attr_entity_category = "diagnostic"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
     _attr_unique_id: str
 
@@ -226,7 +231,7 @@ class PinSensor(_BaseSensor):
     """Device PIN (diagnostic; disabled by default – may be sensitive)."""
 
     _attr_name = "PIN"
-    _attr_entity_category = "diagnostic"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_entity_registry_enabled_default = False
     _attr_unique_id: str
 
