@@ -34,10 +34,12 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
   Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
 - **Automatic device/sensor creation:**  
   Creates climate, temperature, diagnostic, and power entities for each device.
-- **Diagnostic sensors:**  
-  Monitor device states, available modes, slats, scene/presets, and more.
+- **Sleep timer ready:**  
+  **Sleep Timer (min)** is enabled by default and shows remaining minutes as an integer.
+- **Diagnostic sensors (opt-in):**  
+  **MAC Address** and **PIN** are available as diagnostic sensors **disabled by default**. Enable only if you understand the privacy implications.
 - **Cleaner diagnostics:**
-  Sensors now follow the Coordinator pattern (no per-entity I/O), and sensitive data such as PIN is never exposed.
+  Sensors follow the Coordinator pattern (no per-entity I/O). Advanced/verbose fields remain disabled by default to avoid UI noise.
 - **Zero YAML required:**  
   All configuration via Home Assistant UI.
 - **Compatible with HACS:**  
@@ -98,7 +100,8 @@ Enter your Airzone Cloud **username** and **password**.
   - Dynamic fan speed control
 - **Sensor entities:**  
   - Current temperature (`local_temp`)
-  - Diagnostics: modes, scenes, program status, slats, etc.
+  - Sleep timer in minutes
+  - Diagnostics: modes, scenes, program status, and more (opt-in)
 - **Switch entity:**  
   - Power ON/OFF per device
 
