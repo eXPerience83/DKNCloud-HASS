@@ -10,6 +10,7 @@ Why this revision?
 - Entities are now sourced directly from `coordinator.data` (a dict keyed by device_id),
   not from a non-existent `data["devices"]` list.
 - Fixed __init__ to avoid accessing `self._device` before `_ctx` is initialized.
+- Align Device Registry info (model/firmware) with the switch platform.
 
 Notes:
 - We optimistically update the coordinator snapshot after write calls
@@ -138,10 +139,14 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
+        """Provide rich device info for the registry (aligned with switch platform)."""
+        dev = self._device
         info: DeviceInfo = {
             "identifiers": {(DOMAIN, self._ctx.device_id)},
             "name": self._ctx.name,
-            "manufacturer": "Daikin / Airzone",
+            "manufacturer": "Daikin",
+            "model": dev.get("brand") or "Unknown",
+            "sw_version": dev.get("firmware") or "Unknown",
         }
         if self._ctx.mac:
             info["connections"] = {("mac", self._ctx.mac)}
