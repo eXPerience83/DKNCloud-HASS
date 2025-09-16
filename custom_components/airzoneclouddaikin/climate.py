@@ -73,7 +73,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
 
     # Create one entity per device present in the coordinator snapshot
     entities: list[ClimateEntity] = [
-        AirzoneClimate(coordinator, api, device_id) for device_id in coordinator.data.keys()
+        AirzoneClimate(coordinator, api, device_id)
+        for device_id in coordinator.data.keys()
     ]
     async_add_entities(entities)
 
@@ -93,9 +94,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     _attr_precision = PRECISION_WHOLE
     _attr_target_temperature_step = 1.0  # expose whole-degree steps
 
-    def __init__(
-        self, coordinator: DataUpdateCoordinator, api, device_id: str
-    ) -> None:
+    def __init__(self, coordinator: DataUpdateCoordinator, api, device_id: str) -> None:
         super().__init__(coordinator)
         self._api = api
 
