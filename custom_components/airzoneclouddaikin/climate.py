@@ -1,46 +1,34 @@
 """Climate platform for DKN Cloud for HASS (Airzone Cloud).
 
-This entity follows HA async patterns and uses the DataUpdateCoordinator.
-It restores fan control in the UI (Cool/Heat/Fan-only), hides it in Dry mode,
-and uses integer steps for target temperature.
+This entity follows HA async patterns and uses DataUpdateCoordinator.
+Fixes a regression where `supported_features` returned a plain int, causing:
+TypeError: argument of type 'int' is not iterable
 
-Why this revision?
-- Fixed a regression: write commands now send proper /events payloads (P1/P2/P3/P4/P7/P8),
-  instead of incorrectly calling `api.send_event()` with positional args.
-- Entities are now sourced directly from `coordinator.data` (a dict keyed by device_id),
-  not from a non-existent `data["devices"]` list.
-- Fixed __init__ to avoid accessing `self._device` before `_ctx` is initialized.
-- Align Device Registry info (model/firmware) with the switch platform.
+Key behaviors:
+- Expose COOL/HEAT/FAN_ONLY/DRY (no AUTO/HEAT_COOL until proven stable).
+- Dynamic features:
+    * COOL/HEAT: TARGET_TEMPERATURE + FAN_MODE
+    * FAN_ONLY:  FAN_MODE
+    * DRY/OFF:   none
+- Fan speeds derived from `availables_speeds` (numeric strings: "1".."N").
+- Optimistic UI updates with short delayed refresh after commands.
+- No I/O in properties; all I/O via coordinator.api and coordinator refresh.
 
-Notes:
-- We optimistically update the coordinator snapshot after write calls
-  so the UI reflects the change until the next refresh.
-- Temperatures are integers (1 ºC steps) in the UI; we still send "25.0" to the API.
-- We only expose COOL, HEAT, FAN_ONLY and DRY. No AUTO/HEAT_COOL until verified.
+Privacy:
+- Do not expose secrets (email/token/MAC/PIN) in logs or device_info.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.climate import (
-    ClimateEntity,
-    ClimateEntityFeature,
-    HVACMode,
-)
-from homeassistant.const import (
-    ATTR_TEMPERATURE,
-    PRECISION_WHOLE,
-    UnitOfTemperature,
-)
+from homeassistant.components.climate import ClimateEntity
+from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
+from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 
@@ -61,254 +49,314 @@ HVAC_TO_MODE: dict[HVACMode, str] = {
     HVACMode.DRY: "5",
 }
 
+_OPTIMISTIC_TTL_SEC: float = 2.5
+_POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
+
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
-    """Set up the climate platform from a config entry."""
+    """Set up the climate platform from a config entry using the coordinator snapshot."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
-        _LOGGER.error("No integration data for entry %s", entry.entry_id)
+        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator: DataUpdateCoordinator = data["coordinator"]
-    api = data["api"]
+    coordinator = data.get("coordinator")
+    if coordinator is None:
+        _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
+        return
 
-    # Create one entity per device present in the coordinator snapshot
-    entities: list[ClimateEntity] = [
-        AirzoneClimate(coordinator, api, device_id)
-        for device_id in coordinator.data.keys()
-    ]
+    entities: list[AirzoneClimate] = []
+    for device_id in list(coordinator.data.keys()):
+        entities.append(AirzoneClimate(coordinator, device_id))
+
+    # Entities read from coordinator snapshot; no need to update before add
     async_add_entities(entities)
-
-
-@dataclass
-class _Ctx:
-    device_id: str
-    mac: str | None
-    name: str
 
 
 class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     """Representation of an Airzone Cloud Daikin climate device."""
 
     _attr_has_entity_name = True
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_precision = PRECISION_WHOLE
-    _attr_target_temperature_step = 1.0  # expose whole-degree steps
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
-    def __init__(self, coordinator: DataUpdateCoordinator, api, device_id: str) -> None:
+    def __init__(self, coordinator, device_id: str) -> None:
+        """Initialize the climate entity."""
         super().__init__(coordinator)
-        self._api = api
+        self._device_id = device_id
+        self._optimistic_expires: float | None = None
+        self._optimistic: dict[str, Any] = {}  # temporary values until refresh
 
-        # Do not access self._device before _ctx exists; read snapshot directly first.
-        dev = coordinator.data.get(str(device_id), {}) or {}
+        device = self._device
+        name = device.get("name") or "Airzone Device"
+        self._attr_name = name
+        self._attr_unique_id = f"{self._device_id}_climate"
 
-        self._ctx = _Ctx(
-            device_id=str(device_id),
-            mac=(dev.get("mac") or None),
-            name=str(dev.get("name") or "Airzone Device"),
-        )
-        self._attr_name = self._ctx.name
-        self._attr_unique_id = self._ctx.device_id
-
-    # ---- Helpers -----------------------------------------------------------------
+    # ---- Helpers ---------------------------------------------------------
 
     @property
     def _device(self) -> dict[str, Any]:
-        """Return the current device snapshot from the coordinator."""
-        return self.coordinator.data.get(self._ctx.device_id, {})
+        """Return latest device snapshot from the coordinator."""
+        return self.coordinator.data.get(self._device_id, {})  # type: ignore[no-any-return]
 
-    def _update_local(self, **changes: Any) -> None:
-        """Apply optimistic changes into the coordinator snapshot."""
-        dev = dict(self._device)
-        dev.update(changes)
-        new_data = dict(self.coordinator.data)
-        new_data[self._ctx.device_id] = dev
-        self.coordinator.async_set_updated_data(new_data)
+    def _fan_speed_max(self) -> int:
+        """Max available fan speed based on 'availables_speeds'."""
+        try:
+            n = int(self._device.get("availables_speeds") or 0)
+            return max(0, n)
+        except Exception:
+            return 0
 
-    async def _send_event(self, option: str, value: Any) -> None:
-        """Send a command to the device using the events endpoint."""
-        payload = {
-            "event": {
-                "cgi": "modmaquina",
-                "device_id": self._ctx.device_id,
-                "option": option,
-                "value": value,
-            }
-        }
-        await self._api.send_event(payload)
+    def _device_power_on(self) -> bool:
+        """Return True if backend reports power on (best-effort)."""
+        p = self._optimistic.get("power")
+        if p is not None:
+            return bool(p)
+        return str(self._device.get("power") or "").lower() in ("1", "on", "true")
+
+    def _backend_mode_code(self) -> str | None:
+        """Return backend mode code as str ('1','2','3','5') if present."""
+        m = self._optimistic.get("mode")
+        if m is not None:
+            return str(m)
+        raw = self._device.get("mode")
+        return str(raw) if raw is not None else None
+
+    def _hvac_from_device(self) -> HVACMode:
+        """Derive HVAC mode based on power + mode code."""
+        if not self._device_power_on():
+            return HVACMode.OFF
+        code = self._backend_mode_code()
+        return MODE_TO_HVAC.get(code or "", HVACMode.OFF)
+
+    # ---- Entity metadata -------------------------------------------------
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Provide rich device info for the registry (aligned with switch platform)."""
+    def device_info(self):
+        """Attach model/firmware; avoid exposing sensitive IDs."""
         dev = self._device
-        info: DeviceInfo = {
-            "identifiers": {(DOMAIN, self._ctx.device_id)},
-            "name": self._ctx.name,
-            "manufacturer": "Daikin",
-            "model": dev.get("brand") or "Unknown",
-            "sw_version": dev.get("firmware") or "Unknown",
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "manufacturer": "Daikin / Airzone",
+            "model": dev.get("brand") or "Airzone DKN",
+            "sw_version": dev.get("firmware") or "",
+            "name": dev.get("name") or "Airzone Device",
         }
-        if self._ctx.mac:
-            info["connections"] = {("mac", self._ctx.mac)}
-        return info
 
-    # ---- Current state -----------------------------------------------------------
+    # ---- Core state ------------------------------------------------------
+
+    @property
+    def hvac_mode(self) -> HVACMode:
+        """Current HVAC mode derived from snapshot (OFF if power is off)."""
+        return self._hvac_from_device()
+
+    @property
+    def hvac_modes(self) -> list[HVACMode]:
+        """Expose supported modes based on optional 'modes' bitmask, else defaults."""
+        modes = [HVACMode.OFF]
+        bitmask = self._device.get("modes")
+        # NOTE: When 'modes' is provided, prefer it; otherwise, expose all real modes.
+        try:
+            bm = int(bitmask) if bitmask is not None else None
+        except Exception:
+            bm = None
+
+        def add(mode: HVACMode, bit: int | None):
+            if bm is None or (bit is not None and bm & bit):
+                modes.append(mode)
+
+        # Assuming bit assignment 1<<0 COOL, 1<<1 HEAT, 1<<2 FAN_ONLY, 1<<3 DRY if provided
+        add(HVACMode.COOL, 1 << 0)
+        add(HVACMode.HEAT, 1 << 1)
+        add(HVACMode.FAN_ONLY, 1 << 2)
+        add(HVACMode.DRY, 1 << 3)
+        return modes
+
+    # ---- Temperature control --------------------------------------------
+
+    @property
+    def temperature_unit(self) -> UnitOfTemperature:
+        return UnitOfTemperature.CELSIUS
+
+    @property
+    def target_temperature(self) -> float | None:
+        """Return target temperature according to current mode."""
+        mode = self.hvac_mode
+        if mode == HVACMode.COOL:
+            val = self._optimistic.get("cold_consign", self._device.get("cold_consign"))
+        elif mode == HVACMode.HEAT:
+            val = self._optimistic.get("heat_consign", self._device.get("heat_consign"))
+        else:
+            return None
+        try:
+            return int(val)  # show whole degrees in UI
+        except Exception:
+            return None
+
+    @property
+    def min_temp(self) -> float:
+        """Return min allowable temp for current mode (fallback 16)."""
+        mode = self.hvac_mode
+        key = "min_limit_cold" if mode == HVACMode.COOL else "min_limit_heat"
+        try:
+            return int(self._device.get(key) or 16)
+        except Exception:
+            return 16
+
+    @property
+    def max_temp(self) -> float:
+        """Return max allowable temp for current mode (fallback 30)."""
+        mode = self.hvac_mode
+        key = "max_limit_cold" if mode == HVACMode.COOL else "max_limit_heat"
+        try:
+            return int(self._device.get(key) or 30)
+        except Exception:
+            return 30
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        """Set target temperature using P7 (cool) or P8 (heat) depending on mode."""
+        if ATTR_TEMPERATURE not in kwargs:
+            return
+        temp = int(kwargs[ATTR_TEMPERATURE])
+        mode = self.hvac_mode
+        if mode not in (HVACMode.COOL, HVACMode.HEAT):
+            _LOGGER.debug("Ignoring set_temperature in mode %s", mode)
+            return
+
+        # Clamp to device limits
+        temp = max(int(self.min_temp), min(int(self.max_temp), temp))
+        payload: dict[str, Any]
+        if mode == HVACMode.COOL:
+            payload = {"event": {"P7": f"{temp}.0"}}
+            self._optimistic["cold_consign"] = temp
+        else:
+            payload = {"event": {"P8": f"{temp}.0"}}
+            self._optimistic["heat_consign"] = temp
+
+        await self._send_event(payload)
+        # Optimistic ttl
+        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self.async_write_ha_state()
+        self._schedule_refresh()
+
+    # ---- Fan control -----------------------------------------------------
+
+    @property
+    def fan_modes(self) -> list[str] | None:
+        """Return list of fan speeds as numeric strings."""
+        mode = self.hvac_mode
+        if mode in (HVACMode.OFF, HVACMode.DRY):
+            return []
+        n = self._fan_speed_max()
+        return [str(i) for i in range(1, n + 1)] if n > 0 else []
+
+    @property
+    def fan_mode(self) -> str | None:
+        """Return current speed (numeric string), if applicable."""
+        mode = self.hvac_mode
+        if mode in (HVACMode.OFF, HVACMode.DRY):
+            return None
+        key = "heat_speed" if mode == HVACMode.HEAT else "cold_speed"
+        val = self._optimistic.get(key, self._device.get(key))
+        return str(val) if val else None
+
+    async def async_set_fan_mode(self, fan_mode: str) -> None:
+        """Set fan speed via P3 (cool/fan) or P4 (heat)."""
+        mode = self.hvac_mode
+        if mode in (HVACMode.OFF, HVACMode.DRY):
+            _LOGGER.debug("Ignoring set_fan_mode in mode %s", mode)
+            return
+        # Validate value
+        if fan_mode not in (self.fan_modes or []):
+            _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
+            return
+
+        payload: dict[str, Any]
+        if mode == HVACMode.HEAT:
+            payload = {"event": {"P4": fan_mode}}
+            self._optimistic["heat_speed"] = fan_mode
+        else:
+            # COOL or FAN_ONLY
+            payload = {"event": {"P3": fan_mode}}
+            self._optimistic["cold_speed"] = fan_mode
+
+        await self._send_event(payload)
+        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self.async_write_ha_state()
+        self._schedule_refresh()
+
+    # ---- Power / mode ----------------------------------------------------
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Set HVAC mode (power off/on + P2 as needed)."""
+        if hvac_mode == HVACMode.OFF:
+            await self._send_event({"event": {"P1": "0"}})
+            self._optimistic.update({"power": "0"})
+        else:
+            # Ensure power on then set P2
+            if not self._device_power_on():
+                await self._send_event({"event": {"P1": "1"}})
+                self._optimistic.update({"power": "1"})
+            mode_code = HVAC_TO_MODE.get(hvac_mode)
+            if mode_code:
+                await self._send_event({"event": {"P2": mode_code}})
+                self._optimistic.update({"mode": mode_code})
+
+        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self.async_write_ha_state()
+        self._schedule_refresh()
+
+    # ---- Features (critical fix) ----------------------------------------
+
+    @property
+    def supported_features(self) -> ClimateEntityFeature:
+        """Return IntFlag capabilities; NEVER return a plain int.
+
+        This avoids TypeError: 'int' is not iterable in HA when it checks:
+        `if ClimateEntityFeature.X in supported_features: ...`
+        """
+        feats: ClimateEntityFeature = ClimateEntityFeature(0)  # IntFlag accumulator
+        mode = self.hvac_mode
+        if mode in (HVACMode.COOL, HVACMode.HEAT):
+            feats |= ClimateEntityFeature.TARGET_TEMPERATURE
+            feats |= ClimateEntityFeature.FAN_MODE
+        elif mode == HVACMode.FAN_ONLY:
+            feats |= ClimateEntityFeature.FAN_MODE
+        # DRY/OFF: no fan/temperature features
+        return feats
+
+    # ---- Write helpers ---------------------------------------------------
+
+    async def _send_event(self, payload: dict[str, Any]) -> None:
+        """POST /events with standard headers for event commands (P1..P8)."""
+        api = getattr(self.coordinator, "api", None)
+        if api is None:
+            _LOGGER.error("API handle missing in coordinator; cannot send_event")
+            return
+        try:
+            await api.send_event(payload)
+        except Exception as err:
+            _LOGGER.warning("Failed to send_event %s: %s", payload, err)
+
+    def _schedule_refresh(self) -> None:
+        """Schedule a short delayed refresh after write operations."""
+        async def _refresh_cb(_now):
+            try:
+                await self.coordinator.async_request_refresh()
+            except Exception as err:
+                _LOGGER.debug("Refresh after write failed: %s", err)
+
+        async_call_later(self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb)
+
+    # ---- Availability / update ------------------------------------------
 
     @property
     def available(self) -> bool:
         return bool(self._device)
 
-    def _raw(self, key: str) -> Any:
-        return self._device.get(key)
-
-    @property
-    def hvac_modes(self) -> list[HVACMode]:
-        # Prefer device-supported mask if present; else expose all four
-        bitmask = str(self._raw("modes") or "")
-        # Known order in many firmwares aligns with: [COOL, HEAT, FAN, AUTO, DRY, ?, ?, ?]
-        # We ignore AUTO entirely.
-        modes: list[HVACMode] = []
-        try:
-            if len(bitmask) >= 1 and bitmask[0] == "1":
-                modes.append(HVACMode.COOL)
-            if len(bitmask) >= 2 and bitmask[1] == "1":
-                modes.append(HVACMode.HEAT)
-            if len(bitmask) >= 3 and bitmask[2] == "1":
-                modes.append(HVACMode.FAN_ONLY)
-            # some firmwares place DRY at index 4
-            if len(bitmask) >= 5 and bitmask[4] == "1":
-                modes.append(HVACMode.DRY)
-        except Exception:  # noqa: BLE001
-            modes = []
-        if not modes:
-            modes = [HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY]
-        return [HVACMode.OFF, *modes]
-
-    @property
-    def hvac_mode(self) -> HVACMode:
-        power = str(self._raw("power") or "0")
-        if power == "0":
-            return HVACMode.OFF
-        mode_code = str(self._raw("mode") or "")
-        return MODE_TO_HVAC.get(mode_code, HVACMode.OFF)
-
-    @property
-    def fan_modes(self) -> list[str]:
-        # Hide fan control in DRY and when OFF
-        current = self.hvac_mode
-        if current in (HVACMode.OFF, HVACMode.DRY):
-            return []
-        try:
-            n = int(float(self._raw("availables_speeds") or 0))
-        except (TypeError, ValueError):
-            n = 0
-        n = max(0, n)
-        return [str(i) for i in range(1, n + 1)]
-
-    @property
-    def fan_mode(self) -> str | None:
-        if not self.fan_modes:
-            return None
-        current = self.hvac_mode
-        key = (
-            "cold_speed"
-            if current in (HVACMode.COOL, HVACMode.FAN_ONLY)
-            else "heat_speed"
-        )
-        val = self._raw(key)
-        return str(val) if val is not None else None
-
-    @property
-    def target_temperature(self) -> int | None:
-        current = self.hvac_mode
-        if current == HVACMode.COOL:
-            raw = self._raw("cold_consign")
-        elif current == HVACMode.HEAT:
-            raw = self._raw("heat_consign")
-        else:
-            return None
-        try:
-            return int(float(raw))
-        except (TypeError, ValueError):
-            return None
-
-    @property
-    def min_temp(self) -> float:
-        current = self.hvac_mode
-        key = "min_limit_cold" if current == HVACMode.COOL else "min_limit_heat"
-        raw = self._raw(key) if current in (HVACMode.COOL, HVACMode.HEAT) else 16
-        try:
-            return float(int(float(raw)))
-        except (TypeError, ValueError):
-            return 16.0
-
-    @property
-    def max_temp(self) -> float:
-        current = self.hvac_mode
-        key = "max_limit_cold" if current == HVACMode.COOL else "max_limit_heat"
-        raw = self._raw(key) if current in (HVACMode.COOL, HVACMode.HEAT) else 32
-        try:
-            return float(int(float(raw)))
-        except (TypeError, ValueError):
-            return 32.0
-
-    @property
-    def supported_features(self) -> int:
-        features = 0
-        mode = self.hvac_mode
-        if mode in (HVACMode.COOL, HVACMode.HEAT):
-            features |= ClimateEntityFeature.TARGET_TEMPERATURE
-        if mode in (HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY):
-            features |= ClimateEntityFeature.FAN_MODE
-        return features
-
-    # ---- Commands ----------------------------------------------------------------
-
-    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        if hvac_mode == HVACMode.OFF:
-            await self._send_event("P1", 0)  # power off
-            self._update_local(power="0")
-            return
-
-        mode_code = HVAC_TO_MODE.get(hvac_mode)
-        if not mode_code:
-            _LOGGER.debug("Ignored unsupported hvac_mode: %s", hvac_mode)
-            return
-
-        # Select new mode, then ensure power ON
-        await self._send_event("P2", mode_code)
-        await self._send_event("P1", 1)
-        self._update_local(mode=mode_code, power="1")
-
-    async def async_set_fan_mode(self, fan_mode: str) -> None:
-        current = self.hvac_mode
-        if current in (HVACMode.OFF, HVACMode.DRY):
-            _LOGGER.debug("Fan control disabled in mode %s", current)
-            return
-        # Use P3 in COOL/FAN_ONLY; P4 in HEAT
-        option = "P3" if current in (HVACMode.COOL, HVACMode.FAN_ONLY) else "P4"
-        await self._send_event(option, str(fan_mode))
-        key = "cold_speed" if option == "P3" else "heat_speed"
-        self._update_local(**{key: str(fan_mode)})
-
-    async def async_set_temperature(self, **kwargs: Any) -> None:
-        temp = kwargs.get(ATTR_TEMPERATURE)
-        if temp is None:
-            return
-        try:
-            # UI enforces integers; send "25.0" to API for compatibility
-            value_str = f"{int(round(float(temp))):.1f}"
-        except (TypeError, ValueError):
-            return
-
-        current = self.hvac_mode
-        if current == HVACMode.COOL:
-            option, key = "P7", "cold_consign"
-        elif current == HVACMode.HEAT:
-            option, key = "P8", "heat_consign"
-        else:
-            _LOGGER.debug("Temperature set ignored for mode %s", current)
-            return
-
-        await self._send_event(option, value_str)
-        self._update_local(**{key: value_str})
+    async def async_update(self) -> None:
+        # Entity pulls from coordinator; no direct I/O.
+        # Clean optimistic state once TTL expires.
+        if self._optimistic_expires and self.coordinator.hass.loop.time() > self._optimistic_expires:
+            self._optimistic.clear()
+            self._optimistic_expires = None
