@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- Climate: enforce integer UI step for target temperature by adding `target_temperature_step = 1.0` while keeping `precision = PRECISION_WHOLE`. This guarantees 1°C increments in UI to match device capabilities.
+
 ## [0.3.5-alpha.3] - 2025-09-16
 ### Fixed
 - Sensors: `machine_errors` now reports **"No errors"** when the backend returns a null/empty value, instead of showing `unknown`. If a list of errors is returned, it is rendered as a comma-separated string; other values are shown as-is. No other sensor behavior changed.
