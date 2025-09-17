@@ -10,6 +10,9 @@ Additional hardening (alpha.3 finalization):
 - Parse target_temperature/min/max as float-safe (accepts "24.0" or "23,5") to avoid
   'unknown' setpoint and wrong default limits when backend returns decimals.
 
+UI precision/step:
+- Keep PRECISION_WHOLE and set target_temperature_step=1.0 to ensure 1°C steps in UI.
+
 It also keeps the previous regression fix where `supported_features` always returns
 a ClimateEntityFeature (IntFlag), never a plain int.
 
@@ -86,7 +89,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     """Representation of an Airzone Cloud Daikin climate device."""
 
     _attr_has_entity_name = True
-    _attr_precision = PRECISION_WHOLE
+    _attr_precision = PRECISION_WHOLE  # UI precision: show whole degrees only
+    _attr_target_temperature_step = 1.0  # UI step: force 1°C increments
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
     def __init__(self, coordinator, device_id: str) -> None:
