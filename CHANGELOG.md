@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.5-alpha.4] - 2025-09-17
 ### Changed
 - Climate: enforce integer UI step for target temperature by adding `target_temperature_step = 1.0` while keeping `precision = PRECISION_WHOLE`. This guarantees 1°C increments in UI to match device capabilities.
 
