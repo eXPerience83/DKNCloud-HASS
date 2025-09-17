@@ -204,7 +204,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         if self._attribute == "machine_errors":
             if val in (None, "", [], 0, "0"):
                 return "No errors"
-            if isinstance(val, (list, tuple)):
+            if isinstance(val, list | tuple):  # Ruff UP038: use PEP 604 unions
                 # Join list/tuple into a readable string
                 return ", ".join(str(x) for x in val) if val else "No errors"
             # Fallback: show textual representation
