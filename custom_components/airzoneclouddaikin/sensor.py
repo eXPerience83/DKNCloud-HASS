@@ -188,7 +188,8 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         val = self._device.get(self._attribute)
-        # NOTE: Fix - parse temperature/setpoints as float to avoid ValueError on "23.5"
+
+        # NOTE: Temperature/setpoints parsing as float to avoid ValueError on "23.5"
         # and return a numeric value instead of None/unknown.
         if self._attribute in ("local_temp", "cold_consign", "heat_consign"):
             try:
@@ -196,4 +197,17 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
                 return float(str(val).replace(",", ".")) if val is not None else None
             except Exception:
                 return None
+
+        # NOTE: Friendly handling for machine_errors.
+        # When backend returns null/empty (no errors), report "No errors" instead
+        # of leaving the sensor as unknown in HA.
+        if self._attribute == "machine_errors":
+            if val in (None, "", [], 0, "0"):
+                return "No errors"
+            if isinstance(val, (list, tuple)):
+                # Join list/tuple into a readable string
+                return ", ".join(str(x) for x in val) if val else "No errors"
+            # Fallback: show textual representation
+            return str(val)
+
         return val
