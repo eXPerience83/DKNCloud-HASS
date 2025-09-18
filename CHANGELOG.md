@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- Climate: implement `async_turn_on`/`async_turn_off` mapped to `P1` with optimistic state and short post-write refresh.
+### Fixed
+- Climate: normalize optimistic/remote power values in `_device_power_on()` so `"0"` is correctly treated as `False`, enabling reliable auto-power-on when changing HVAC mode.
+
 ## [0.3.5-alpha.4] - 2025-09-17
 ### Changed
 - Climate: enforce integer UI step for target temperature by adding `target_temperature_step = 1.0` while keeping `precision = PRECISION_WHOLE`. This guarantees 1°C increments in UI to match device capabilities.
