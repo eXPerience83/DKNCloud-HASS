@@ -1,37 +1,11 @@
-"""Climate platform for DKN Cloud for HASS (Airzone Cloud).
+"""Home Assistant climate entity for DKN Cloud (Airzone Cloud).
 
-This entity follows HA async patterns and uses DataUpdateCoordinator.
-
-Fixes in 0.3.5-alpha.3 (post-review):
-- Restore correct /events payload for climate commands using 'modmaquina' + device_id.
-- Parse 'modes' as a bitstring (positions P2=1..8) instead of assuming an integer bitmask.
-
-Additional hardening (alpha.3 finalization):
-- Parse target_temperature/min/max as float-safe (accepts "24.0" or "23,5") to avoid
-  'unknown' setpoint and wrong default limits when backend returns decimals.
-
-UI precision/step:
-- Keep PRECISION_WHOLE and set target_temperature_step=1.0 to ensure 1°C steps in UI.
-
-It also keeps the previous regression fix where `supported_features` always returns
-a ClimateEntityFeature (IntFlag), never a plain int.
-
-Behaviors:
-- Expose COOL/HEAT/FAN_ONLY/DRY (no AUTO/HEAT_COOL until proven stable).
-- Dynamic features:
-    * COOL/HEAT: TARGET_TEMPERATURE + FAN_MODE
-    * FAN_ONLY:  FAN_MODE
-    * DRY/OFF:   none
-- Fan speeds derived from `availables_speeds` (numeric strings: "1".."N").
-- Optimistic UI updates with short delayed refresh after commands.
-- No I/O in properties; all I/O via coordinator.api and coordinator refresh.
-
-Privacy:
-- Do not expose secrets (email/token/MAC/PIN) in logs or device_info.
-
-New in 0.3.5-alpha.4:
-- Add async_turn_on/async_turn_off mapped to P1 (power) with optimistic state & refresh.
-- Fix _device_power_on() normalization so "0" is treated as False (bugfix for auto-on on mode change).
+Key behaviors (concise):
+- Coordinator-based: no I/O inside properties; writes go via /events and a short refresh.
+- Integer-only setpoints: precision = whole degrees, target_temperature_step = 1.0 °C.
+- Supported HVAC modes: COOL / HEAT / FAN_ONLY / DRY (no AUTO/HEAT_COOL for now).
+- API mapping: P1=power, P2=mode, P7/P8=setpoint (cool/heat), P3/P4=fan (cool/heat).
+- Privacy: never log or expose secrets (email/token/MAC/PIN).
 """
 
 from __future__ import annotations
@@ -127,10 +101,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     def _device_power_on(self) -> bool:
         """Return True if backend or optimistic state reports power ON.
 
-        This method NORMALIZES values from both backend and optimistic cache
-        so "0"/0/"off"/False are treated as False and "1"/1/"on"/True as True.
+        This method NORMALIZES values so "0"/0/"off"/False are False and "1"/1/"on"/True are True.
         """
-        # Prefer optimistic value when present
         p = self._optimistic.get("power")
         if p is None:
             p = self._device.get("power")
@@ -141,11 +113,10 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         if s in ("0", "off", "false", "no", "", "none"):
             return False
 
-        # Fallback for non-string booleans/ints
         if isinstance(p, bool):
             return p
         try:
-            return bool(int(p))  # handles 0/1 numerics
+            return bool(int(p))
         except Exception:
             return False
 
@@ -189,12 +160,12 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     def hvac_modes(self) -> list[HVACMode]:
         """Expose supported modes based on optional 'modes' bitstring.
 
-        The 'modes' field is typically a binary string where positions map to:
-        index 0 -> P2=1 (COOL)
-        index 1 -> P2=2 (HEAT)
-        index 2 -> P2=3 (FAN_ONLY)
-        index 3 -> P2=4 (AUTO/HEAT_COOL)   [not exposed]
-        index 4 -> P2=5 (DRY)
+        Bit positions:
+          idx0 -> P2=1 (COOL)
+          idx1 -> P2=2 (HEAT)
+          idx2 -> P2=3 (FAN_ONLY)
+          idx3 -> P2=4 (AUTO/HEAT_COOL)   [not exposed]
+          idx4 -> P2=5 (DRY)
         """
         modes = [HVACMode.OFF]
         raw = self._device.get("modes")
@@ -210,7 +181,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
                 modes.append(HVACMode.DRY)
             return modes
 
-        # Fallback: expose real modes when bitstring is missing/invalid
+        # Fallback when bitstring missing/invalid: expose common real modes.
         modes.extend([HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY])
         return modes
 
@@ -232,10 +203,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def target_temperature(self) -> float | None:
-        """Return target temperature according to current mode.
-
-        NOTE: Use float-safe parse to avoid 'unknown' when backend returns "24.0".
-        """
+        """Return target temperature according to current mode."""
         mode = self.hvac_mode
         if mode == HVACMode.COOL:
             val = self._optimistic.get("cold_consign", self._device.get("cold_consign"))
@@ -265,7 +233,6 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         """Set target temperature using P7 (cool) or P8 (heat) depending on mode."""
         if ATTR_TEMPERATURE not in kwargs:
             return
-        # UI typically passes int/float; clamp to integer degrees for payload "NN.0"
         try:
             requested = float(kwargs[ATTR_TEMPERATURE])
         except (TypeError, ValueError):
@@ -288,7 +255,6 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             await self._send_p_event("P8", f"{temp}.0")
             self._optimistic["heat_consign"] = temp
 
-        # Optimistic ttl
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
         )
@@ -322,7 +288,6 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         if mode in (HVACMode.OFF, HVACMode.DRY):
             _LOGGER.debug("Ignoring set_fan_mode in mode %s", mode)
             return
-        # Validate value
         if fan_mode not in (self.fan_modes or []):
             _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
             return
@@ -388,27 +353,22 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
-        """Return IntFlag capabilities; NEVER return a plain int.
-
-        This avoids TypeError: 'int' is not iterable in HA when it checks:
-        `if ClimateEntityFeature.X in supported_features: ...`
-        """
-        feats: ClimateEntityFeature = ClimateEntityFeature(0)  # IntFlag accumulator
+        """Return IntFlag capabilities; NEVER return a plain int."""
+        feats: ClimateEntityFeature = ClimateEntityFeature(0)
         mode = self.hvac_mode
         if mode in (HVACMode.COOL, HVACMode.HEAT):
             feats |= ClimateEntityFeature.TARGET_TEMPERATURE
             feats |= ClimateEntityFeature.FAN_MODE
         elif mode == HVACMode.FAN_ONLY:
             feats |= ClimateEntityFeature.FAN_MODE
-        # DRY/OFF: no fan/temperature features
-        return feats
+        return feats  # DRY/OFF: no fan/temperature features
 
     # ---- Write helpers ---------------------------------------------------
 
     async def _send_p_event(self, option: str, value: Any) -> None:
         """Send a P# command using the canonical 'modmaquina' payload.
 
-        This mirrors switch.py behavior to ensure API compatibility:
+        Mirrors switch.py behavior:
         {"event":{"cgi":"modmaquina","device_id":<id>,"option":"P#","value":...}}
         """
         api = getattr(self.coordinator, "api", None)
@@ -446,8 +406,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         return bool(self._device)
 
     async def async_update(self) -> None:
-        # Entity pulls from coordinator; no direct I/O.
-        # Clean optimistic state once TTL expires.
+        """Clear optimistic cache after TTL; data comes from coordinator."""
         if (
             self._optimistic_expires
             and self.coordinator.hass.loop.time() > self._optimistic_expires
