@@ -347,7 +347,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         """Power ON via P1=1 (explicit user action from Climate card)."""
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
-        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -355,7 +357,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         """Power OFF via P1=0 (explicit user action from Climate card)."""
         await self._send_p_event("P1", 0)
         self._optimistic.update({"power": "0"})
-        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
         self._schedule_refresh()
 
