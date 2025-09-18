@@ -28,6 +28,10 @@ Behaviors:
 
 Privacy:
 - Do not expose secrets (email/token/MAC/PIN) in logs or device_info.
+
+New in 0.3.5-alpha.4:
+- Add async_turn_on/async_turn_off mapped to P1 (power) with optimistic state & refresh.
+- Fix _device_power_on() normalization so "0" is treated as False (bugfix for auto-on on mode change).
 """
 
 from __future__ import annotations
@@ -121,11 +125,29 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             return 0
 
     def _device_power_on(self) -> bool:
-        """Return True if backend reports power on (best-effort)."""
+        """Return True if backend or optimistic state reports power ON.
+
+        This method NORMALIZES values from both backend and optimistic cache
+        so "0"/0/"off"/False are treated as False and "1"/1/"on"/True as True.
+        """
+        # Prefer optimistic value when present
         p = self._optimistic.get("power")
-        if p is not None:
-            return bool(p)
-        return str(self._device.get("power") or "").lower() in ("1", "on", "true")
+        if p is None:
+            p = self._device.get("power")
+
+        s = str(p).strip().lower()
+        if s in ("1", "on", "true", "yes"):
+            return True
+        if s in ("0", "off", "false", "no", "", "none"):
+            return False
+
+        # Fallback for non-string booleans/ints
+        if isinstance(p, bool):
+            return p
+        try:
+            return bool(int(p))  # handles 0/1 numerics
+        except Exception:
+            return False
 
     def _backend_mode_code(self) -> str | None:
         """Return backend mode code as str ('1','2','3','5') if present."""
@@ -321,13 +343,29 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     # ---- Power / mode ----------------------------------------------------
 
+    async def async_turn_on(self) -> None:
+        """Power ON via P1=1 (explicit user action from Climate card)."""
+        await self._send_p_event("P1", 1)
+        self._optimistic.update({"power": "1"})
+        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self.async_write_ha_state()
+        self._schedule_refresh()
+
+    async def async_turn_off(self) -> None:
+        """Power OFF via P1=0 (explicit user action from Climate card)."""
+        await self._send_p_event("P1", 0)
+        self._optimistic.update({"power": "0"})
+        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self.async_write_ha_state()
+        self._schedule_refresh()
+
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode (power off/on + P2 as needed)."""
         if hvac_mode == HVACMode.OFF:
             await self._send_p_event("P1", 0)
             self._optimistic.update({"power": "0"})
         else:
-            # Ensure power on then set P2
+            # Ensure power ON then set P2 (auto-on only when changing mode)
             if not self._device_power_on():
                 await self._send_p_event("P1", 1)
                 self._optimistic.update({"power": "1"})
