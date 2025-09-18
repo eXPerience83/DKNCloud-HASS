@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.5-alpha.5] - 2025-09-18
 ### Added
 - Climate: implement `async_turn_on`/`async_turn_off` mapped to `P1` with optimistic state and short post-write refresh.
 ### Fixed
