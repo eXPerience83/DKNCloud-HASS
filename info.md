@@ -1,261 +1,376 @@
--------------------------------------------------------
-Detailed Information on "Px" Modes and Example Curl Commands
--------------------------------------------------------
+# DKN Cloud for HASS — Technical Reference
 
-### 1. API Login and Token Retrieval
+> **Scope:** Single source of truth for the DKN (Airzone Cloud) behavior we rely on in the Home Assistant integration.  
+> **Goal:** Be precise, device-agnostic where needed, and conservative when behavior varies by model/firmware.
 
-To authenticate with the Airzone Cloud API, use the following command:
+---
 
+## 1) Base URL, Auth, and General Request Pattern
+
+- **Base URL:** `https://dkn.airzonecloud.com/`
+- **Auth model:** `POST /users/sign_in` returns an **authentication token**. Subsequent requests include:
+  - `?user_email=<EMAIL>&user_token=<TOKEN>` as **query parameters** (and usually `format=json` for JSON responses).
+- **Privacy:** Never log or expose `user_email`, `user_token`, `mac`, `pin`, GPS coordinates, or related PII. Always sanitize logs.
+
+**Canonical request shape**
+```
+
+GET/POST/PUT/DELETE <PATH>?user\_email=<EMAIL>\&user\_token=<TOKEN>\[\&format=json]
+Content-Type: application/json
+User-Agent: (browser-like UA)
+X-Requested-With: XMLHttpRequest
+Accept: application/json, text/plain, */*
+
+````
+
+---
+
+## 2) Core Resources and Endpoints
+
+- **Login**
+  - `POST /users/sign_in` → returns `authentication_token`.
+
+- **Installations / Relations**
+  - `GET  /installation_relations/`
+  - `GET  /installations/`
+  - `GET  /installations/<id>`
+  - `POST /installation_relations`
+  - `PUT  /installation_relations/<id>`
+  - `DELETE /installation_relations/<id>`
+
+- **Devices**
+  - `GET  /devices/?installation_id=<id>` → list devices
+  - `GET  /devices/<id>` → device detail
+  - `POST /devices` → add device (needs `mac` + `pin`)
+  - `PUT  /devices/<id>` → update **device fields** (not real-time events), notably:
+    - `device.scenary`: `"occupied" | "vacant" | "sleep"`
+    - `sleep_time`: integer minutes (see §6)
+
+- **Real-time Control**
+  - `POST /events/` with body:
+    ```json
+    {
+      "event": {
+        "cgi": "modmaquina",
+        "option": "P<NN>",
+        "value": "<value>",
+        "device_id": "<id>"
+      }
+    }
+    ```
+
+- **Users**
+  - `DELETE /users/sign_out`
+
+- **Schedules**
+  - `GET/POST/PUT/DELETE /schedules/` (CRUD exists; **kept for future implementation**).
+
+> **Error handling:** 401 means credentials invalid/expired; the integration should refresh/revalidate. Rate limits (429) should trigger retry with backoff; see §10.
+
+---
+
+## 3) Event Model (Px options) — Consolidated Table
+
+> **Value formats:** Numbers are commonly sent as **strings**. For setpoints, devices accept **numeric strings with one decimal** (e.g., `"25.0"`), though resolution is effectively **integer °C**.
+
+| P-code | Name / Purpose                 | Value (examples)     | Notes (routing/rules)                                       | Implemented in HA |
+|:-----:|---------------------------------|----------------------|--------------------------------------------------------------|:-----------------:|
+| P1    | Power                           | `"0"` / `"1"`        | Off/On                                                       | ✅ |
+| P2    | HVAC mode                       | `"1"`..`"8"`         | See §4 mapping and exposure policy                           | ✅ (with policy) |
+| P3    | Fan speed (COLD-type modes)     | `"1"`..`"5"`         | Use when current mode is **COLD-type** (see §4)              | ✅ |
+| P4    | Fan speed (HEAT-type modes)     | `"1"`..`"5"`         | Use when current mode is **HEAT-type** (see §4)              | ✅ |
+| P7    | COOL setpoint                   | `"16.0"`..`"32.0"`   | Integer °C semantics; send with `.0`                         | ✅ |
+| P8    | HEAT setpoint                   | `"16.0"`..`"32.0"`   | Integer °C semantics; send with `.0`                         | ✅ |
+| P9    | Vertical slats (cold)           | model-dependent      | Advanced; not used today                                     | ❌ |
+| P10   | Vertical slats (heat)           | model-dependent      | Advanced; not used today                                     | ❌ |
+| P19   | Horizontal slats (cold)         | model-dependent      | Advanced; not used today                                     | ❌ |
+| P20   | Horizontal slats (heat)         | model-dependent      | Advanced; not used today                                     | ❌ |
+
+> We intentionally do **not** list other `Pxx` that we do not actively use and whose semantics are not confirmed. The integration ignores them.
+
+---
+
+## 4) HVAC Modes (P2) — Mapping and Exposure Policy
+
+**Ordered list for P2 (value `"1"`..`"8"`):**
+````
+
+\["cool", "heat", "ventilate", "heat-cold-auto", "dehumidify", "cool-air", "heat-air", "ventilate"]
+
+```
+
+**Mode classification (drives fan routing)**
+```
+
+cold\_modes = {1,3,4,5,6}
+heat\_modes = {2,7,8}
+
+````
+
+### Exposure in Home Assistant (default + opt-in)
+
+| P2 | Label            | Expose in HA | Temp control (if any) | Fan control | Notes |
+|:--:|------------------|:------------:|------------------------|-------------|-------|
+| 1  | cool             | **Yes**      | COOL → **P7**          | **P3**      | Default COOL. |
+| 2  | heat             | **Yes**      | HEAT → **P8**          | **P4**      | Default HEAT. |
+| 3  | ventilate        | **Yes**      | **N/A**                | **P3**      | `fan_only` (preferred; if unsupported, fallback to 8). |
+| 4  | heat-cold-auto   | **Opt-in**   | Typically COOL → **P7*** | **P3***   | Device-dependent/untested on some units. |
+| 5  | dehumidify       | **Yes**      | **N/A**                | **N/A**     | `dry`. No target temperature, **no fan control**. |
+| 6  | cool-air         | **No**       | COOL → **P7**          | **P3**      | **Not** exposed. Device-dependent/untested. |
+| 7  | heat-air         | **No**       | HEAT → **P8**          | **P4**      | **Not** exposed. Device-dependent/untested. |
+| 8  | ventilate        | **Yes** (fallback) | **N/A**          | **P4**      | `fan_only` fallback when 3 unsupported **and** 8 supported. |
+
+\* For `P2=4 (heat-cold-auto)`, until we have broader validation: treat it as **cold-type** for fan (**P3**) and setpoint (**P7**) by default. It remains **opt-in** and device-dependent.
+
+**Setpoint availability**
+- **No target temperature** in `fan_only` (P2=3 or 8) and `dry` (P2=5).
+- Otherwise: COOL-type → **P7**, HEAT-type → **P8** (see table).
+
+**Fan “auto” note**
+- We do not have clear evidence of a genuine **fan auto** mode exposed as such. `availables_speeds` dictates what the device allows.  
+- In the future we might offer a **virtual “auto”** (heuristic selection), but it will **not** be a real device control unless confirmed.
+
+---
+
+## 5) Supported Modes Bitmask (`modes`)
+
+Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
+
+| Index (0-based) | P2 value | Label            |
+|:---------------:|:--------:|------------------|
+| 0               | 1        | cool             |
+| 1               | 2        | heat             |
+| 2               | 3        | ventilate        |
+| 3               | 4        | heat-cold-auto   |
+| 4               | 5        | dehumidify       |
+| 5               | 6        | cool-air         |
+| 6               | 7        | heat-air         |
+| 7               | 8        | ventilate        |
+
+**Integration:** compute supported HA modes from this bitmask + exposure policy in §4. If both P2=3 and P2=8 are supported, prefer **3** for `fan_only`.
+
+---
+
+## 6) Scenes (`scenary`) and Sleep
+
+- **Scene (`scenary`)**: `"occupied" | "vacant" | "sleep"`  
+  - Update via: `PUT /devices/<id>` with body `{"device":{"scenary":"occupied"}}`
+- **Sleep (`sleep_time`)**: minutes in **[30..120]**, **step 10**.  
+  - Update via: `PUT /devices/<id>` with body `{"sleep_time":60}`
+
+**Occupied switching note:** When sending control events (power/mode/speed/setpoint), the backend may **automatically change** a `vacant` device to `occupied`. The integration will **verify** after commands; if needed, it can **fallback** to `PUT scenary="occupied"` (with a short cooldown to avoid spamming).
+
+---
+
+## 7) Temperatures, Units and Precision
+
+- Practical resolution is **integer °C**, but send values as **numeric strings with `.0`**, e.g., `"25.0"`, `"21.0"`.
+- COOL setpoints use **P7**; HEAT setpoints use **P8**.
+- Do **not** expose/allow target temperature in `fan_only` and `dry`.
+
+---
+
+## 8) Fan Speeds
+
+- Use **P3** for COLD-type modes; **P4** for HEAT-type modes.
+- Respect `availables_speeds` and the current mode’s type when setting fan.
+- **Dehumidify (P2=5)** does **not** support fan speeds.
+
+---
+
+## 9) Example cURL (sanitized)
+
+> Replace: `YOUR_EMAIL`, `YOUR_PASSWORD`, `YOUR_TOKEN`, `YOUR_INSTALLATION_ID`, `YOUR_DEVICE_ID`
+
+### 9.1 Login (get token)
 ```sh
-curl -v -X POST "https://dkn.airzonecloud.com/users/sign_in" \
+curl -X POST "https://dkn.airzonecloud.com/users/sign_in" \
   -H "Content-Type: application/json" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"email\": \"YOUR_EMAIL@example.com\", \"password\": \"YOUR_PASSWORD\"}"
-```
-
-*Expected Response:* A JSON object containing the `"authentication_token"`.
-
----
-
-### 2. Fetching Installations
-
-To retrieve your installations, use:
-
-```sh
-curl -v "https://dkn.airzonecloud.com/installation_relations/?format=json&user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-```
-
-*Note:* The response includes a list under `"installation_relations"`.
-
----
-
-### 3. Fetching Devices
-
-To get device details for a specific installation, use:
-
-```sh
-curl -v "https://dkn.airzonecloud.com/devices/?format=json&installation_id=YOUR_INSTALLATION_ID&user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-```
-
-*The response contains device data (see anonymized example below).*
-
----
-
-### 4. Mode Mapping (Px Options)
-
-The Airzone Cloud API defines several modes via "Px" options. In our integration, the following modes are supported and stable for all tested devices:
-
-| P2 Value | Home Assistant HVAC Mode | Description                     |
-| -------- | ------------------------ | ------------------------------- |
-| `"1"`    | COOL                     | Cooling mode                    |
-| `"2"`    | HEAT                     | Heating mode                    |
-| `"3"`    | FAN\_ONLY                | Ventilation only (no heat/cool) |
-| `"5"`    | DRY                      | Dry/Dehumidify mode             |
-
-**Note on P2=4 (HEAT\_COOL/Auto Mode):**
-Several attempts were made to implement dual setpoint/auto mode (P2=4, also called HEAT\_COOL or "auto" in some APIs), but our real-world tests (2025) showed that this mode either returned `"mode": "6"` or was not properly activated. The device did not operate in dual setpoint mode, nor did it expose a usable dual-temperature state; instead, it stayed in the previously active mode or remained ambiguous.
-Because the feature could not be made stable, and for clarity/reliability, **HEAT\_COOL/auto mode is not implemented in this integration**. More research may be needed for future support.
-
-Other Px modes (6, 7, 8) are not used in this integration and their functions are unknown or not documented for these devices.
-The `"modes"` field in the device JSON (e.g., `"modes": "11101000"`) is a bitmask that tells you which P2 modes are *supported* by the device, in the following order:
-P2=1 (COOL), P2=2 (HEAT), P2=3 (FAN\_ONLY), P2=4 (HEAT\_COOL), P2=5 (DRY), P2=6/7/8 (unknown/not supported).
-
-#### Reference from max13fr ([AirzoneCloudDaikin/contants.py](https://github.com/max13fr/AirzoneCloudDaikin/blob/master/AirzoneCloudDaikin/contants.py)):
-
-```python
-MODES_CONVERTER = {
-    "0": {"name": "none", "type": "none", "description": "None"},
-    "1": {"name": "cool", "type": "cold", "description": "Cooling mode"},
-    "2": {"name": "heat", "type": "heat", "description": "Heating mode"},
-    "3": {"name": "ventilate", "type": "cold", "description": "Ventilation in cold mode"},
-    "4": {"name": "heat-cold-auto", "type": "cold", "description": "Auto mode"},
-    "5": {"name": "dehumidify", "type": "cold", "description": "Dry mode"},
-    "6": {"name": "cool-air", "type": "cold", "description": "Automatic cooling"},
-    "7": {"name": "heat-air", "type": "heat", "description": "Automatic heating"},
-    "8": {"name": "ventilate", "type": "heat", "description": "Ventilation in heating mode"},
-}
-```
-
-* In practice, **only P2=1, 2, 3, 5 are guaranteed to work reliably** on Daikin/Airzone (DKN) devices.
-
----
-
-#### Control Commands
-
-* **P1:** Power On/Off.
-* **P2:** Select HVAC mode (see table above).
-* **P3:** Adjust fan speed in COOL and FAN\_ONLY modes.
-* **P4:** Adjust fan speed in HEAT mode.
-* **P7:** Set temperature for COOL mode (e.g., `"25.0"`).
-* **P8:** Set temperature for HEAT mode (e.g., `"23.0"`).
-* **Slats and positions:** See device data below for vertical/horizontal slat state/positions.
-
----
-
-### 5. Example Curl Commands for Device Control
-
-Replace `YOUR_EMAIL@example.com`, `YOUR_TOKEN`, `YOUR_DEVICE_ID`, and `YOUR_INSTALLATION_ID` with your actual values or generic placeholders.
-
-#### Power On (P1=1)
-
-```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
+  -H "Accept: application/json, text/plain, */*" \
   -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"email":"YOUR_EMAIL","password":"YOUR_PASSWORD"}'
+````
+
+### 9.2 List installation relations
+
+```sh
+curl "https://dkn.airzonecloud.com/installation_relations/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN&format=json" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
+### 9.3 List devices of an installation
+
+```sh
+curl "https://dkn.airzonecloud.com/devices/?installation_id=YOUR_INSTALLATION_ID&user_email=YOUR_EMAIL&user_token=YOUR_TOKEN&format=json" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
+### 9.4 Get a device
+
+```sh
+curl "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN&format=json" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest"
+```
+
+### 9.5 Power ON / OFF (P1)
+
+```sh
+# ON
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
   -H "Content-Type: application/json;charset=UTF-8" \
   -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P1\", \"value\": 1}}"
-```
-
-#### Power Off (P1=0)
-
-```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
   -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P1","value":"1"}}'
+
+# OFF
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
   -H "Content-Type: application/json;charset=UTF-8" \
   -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P1\", \"value\": 0}}"
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P1","value":"0"}}'
 ```
 
-#### Set Mode to COOL (P2=1)
+### 9.6 Set HVAC Mode (P2)
 
 ```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
-  -H "X-Requested-With: XMLHttpRequest" \
+# COOL (prefer 1)
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
   -H "Content-Type: application/json;charset=UTF-8" \
   -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"1\"}}"
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P2","value":"1"}}'
+
+# HEAT
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P2","value":"2"}}'
+
+# FAN_ONLY (prefer 3; fallback 8 if 3 unsupported)
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P2","value":"3"}}'
+
+# DRY
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P2","value":"5"}}'
+
+# HEAT_COOL / AUTO (opt-in; device-dependent)
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P2","value":"4"}}'
 ```
 
-#### Set Mode to HEAT (P2=2)
+### 9.7 Setpoint (P7/P8)
 
 ```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
-  -H "X-Requested-With: XMLHttpRequest" \
+# COOL setpoint to 25.0°C (P7)
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
   -H "Content-Type: application/json;charset=UTF-8" \
   -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"2\"}}"
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P7","value":"25.0"}}'
+
+# HEAT setpoint to 21.0°C (P8)
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P8","value":"21.0"}}'
 ```
 
-#### Set Mode to FAN\_ONLY (P2=3)
+### 9.8 Fan speed (P3/P4)
 
 ```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
-  -H "X-Requested-With: XMLHttpRequest" \
+# Set fan speed "2" while in a COLD-type mode (uses P3)
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
   -H "Content-Type: application/json;charset=UTF-8" \
   -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"3\"}}"
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P3","value":"2"}}'
+
+# Set fan speed "2" while in a HEAT-type mode (uses P4)
+curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
+  -H "Content-Type: application/json;charset=UTF-8" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P4","value":"2"}}'
 ```
 
-#### Set Mode to DRY (P2=5)
+### 9.9 Scene and Sleep (PUT /devices/<id>)
 
 ```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
-  -H "X-Requested-With: XMLHttpRequest" \
-  -H "Content-Type: application/json;charset=UTF-8" \
+# Set scenary to 'occupied'
+curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN&format=json" \
+  -H "Content-Type: application/json" \
   -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P2\", \"value\": \"5\"}}"
-```
-
-#### Set Temperature to 23°C in HEAT mode (P8)
-
-```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -H "Content-Type: application/json;charset=UTF-8" \
+  -d '{"device":{"scenary":"occupied"}}'
+
+# Set sleep_time to 60 (valid: 30..120, step 10)
+curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN&format=json" \
+  -H "Content-Type: application/json" \
   -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P8\", \"value\": \"23.0\"}}"
-```
-
-#### Set Temperature to 25°C in COOL mode (P7)
-
-```sh
-curl -v "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL@example.com&user_token=YOUR_TOKEN" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -H "Content-Type: application/json;charset=UTF-8" \
-  -H "Accept: application/json, text/plain, */*" \
-  -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)" \
-  -d "{\"event\": {\"cgi\": \"modmaquina\", \"device_id\": \"YOUR_DEVICE_ID\", \"option\": \"P7\", \"value\": \"25.0\"}}"
+  -d '{"sleep_time":60}'
 ```
 
 ---
 
-### 6. Device Raw Data Example
+## 10) Client Robustness (Integration)
 
-Below is a fully anonymized sample device response with all slats and diagnostic fields included:
-
-```json
-{
-    "id": "...",
-    "mac": "AA:BB:CC:DD:EE:FF",
-    "pin": "1234",
-    "name": "MyDKNDevice",
-    "status": "activated",
-    "mode": "1",
-    "state": null,
-    "power": "0",
-    "units": "0",
-    "availables_speeds": "2",
-    "local_temp": "26.0",
-    "ver_state_slats": "0",
-    "ver_position_slats": "0",
-    "hor_state_slats": "0",
-    "hor_position_slats": "0",
-    "max_limit_cold": "32.0",
-    "min_limit_cold": "16.0",
-    "max_limit_heat": "32.0",
-    "min_limit_heat": "16.0",
-    "update_date": null,
-    "progs_enabled": false,
-    "scenary": "sleep",
-    "sleep_time": 60,
-    "min_temp_unoccupied": "16",
-    "max_temp_unoccupied": "32",
-    "connection_date": "2020-05-23T05:37:22.000+00:00",
-    "last_event_id": "...",
-    "firmware": "1.1.1",
-    "brand": "Daikin",
-    "cold_consign": "26.0",
-    "heat_consign": "24.0",
-    "cold_speed": "2",
-    "heat_speed": "2",
-    "machine_errors": null,
-    "ver_cold_slats": "0001",
-    "ver_heat_slats": "0000",
-    "hor_cold_slats": "0000",
-    "hor_heat_slats": "0000",
-    "modes": "11101000",
-    "installation_id": "...",
-    "time_zone": "Europe/Madrid",
-    "spot_name": "LocationX",
-    "complete_name": "LocationX,Region,Country",
-    "location": {"latitude": 0.0, "longitude": 0.0}
-}
-```
+* **Timeouts:** `ClientTimeout(total=15s)` for all HTTP calls.
+* **429 / 5xx / timeouts:** Exponential backoff **with jitter**, plus a short **global cooldown** after 429 to avoid hammering.
+* **No I/O in entity properties**; only in the `DataUpdateCoordinator`.
+* **Startup errors:** raise `ConfigEntryNotReady` when the API is unreachable.
+* **Privacy:** sanitize logs and diagnostics; never include full URLs with credentials.
 
 ---
 
-**Notes:**
+## 11) Device State — Fields of Interest (Non-PII)
 
-* The device’s `mac`, `pin`, `firmware`, and `brand` are key attributes for the Home Assistant device registry.
-* Fields such as `ver_state_slats`, `ver_position_slats`, `hor_state_slats`, `hor_position_slats`, `ver_cold_slats`, `ver_heat_slats`, `hor_cold_slats`, and `hor_heat_slats` relate to slat positions/states for vertical and horizontal airflow control, if supported by your model.
-* The `modes` field is a binary string indicating supported modes (positions 1–8; only the first five are relevant).
-* Additional fields like `progs_enabled`, `scenary`, and `sleep_time` may be useful for diagnostics and future features.
-* Always keep your real authentication token, device IDs, and installation IDs secret.
+* `power`, `mode` (P2 index as string), `local_temp`, `cold_consign`, `heat_consign`
+* `cold_speed`, `heat_speed`, `availables_speeds`
+* `scenary`, `sleep_time`
+* Limits: `min_limit_cold`, `max_limit_cold`, `min_limit_heat`, `max_limit_heat`
+* Slats: `ver_cold_slats`, `ver_heat_slats`, `hor_cold_slats`, `hor_heat_slats`
+* `modes` bitmask string (see §5)
+
+> **Never** expose: `user_email`, `authentication_token`, `mac`, `pin`, GPS `location`.
 
 ---
 
-#### Historical Note on "HEAT\_COOL" Mode
+## 12) Implementation Matrix (current plan)
 
-Several attempts were made to use dual setpoint/auto mode (P2=4, also called HEAT\_COOL or "auto") as seen in the original [AirzoneCloudDaikin](https://github.com/max13fr/AirzoneCloudDaikin), but real-world testing showed the device either returned `"mode": "6"` or never actually enabled a true dual setpoint state.
-The device continued running in its previous mode or reported an undocumented state, with no reliable way to use "dual setpoint" mode in practice.
-For maximum reliability, **HEAT\_COOL/auto mode is not exposed or implemented in this integration.**
-More investigation may be needed in the future as firmware/APIs evolve.
+| Feature                                | Implemented | Notes                                                 |
+| -------------------------------------- | :---------: | ----------------------------------------------------- |
+| Power (P1)                             |      ✅      | switch + climate                                      |
+| HVAC mode (P2)                         |      ✅      | Default: COOL/HEAT/FAN\_ONLY/DRY; optional HEAT\_COOL |
+| Fan speed (P3/P4)                      |      ✅      | Routed by mode type (cold vs heat)                    |
+| Setpoint COOL/HEAT (P7/P8)             |      ✅      | Send as `"NN.0"` strings                              |
+| Scene sensor (`scenary`)               |      ✅      | Diagnostic (and optional select)                      |
+| Sleep sensor (`sleep_time`)            |      ✅      | Diagnostic (and optional number)                      |
+| Select: scenary                        |      ⏳      | New `select.py` via `PUT /devices/<id>`               |
+| Number: sleep\_time (30..120, step 10) |      ⏳      | New `number.py` via `PUT /devices/<id>`               |
+| Schedules CRUD                         |      ❌      | Roadmap                                               |
+| Slats (P9/P10/P19/P20)                 |      ❌      | Unplanned                                             |
+| Heat\_cool exposed by default          |      ❌      | Optional, user opt-in only                            |
+
+---
+
+## 13) Open Questions / Next Validation
+
+* Clarify behavior of **P2=4 (auto)** and **“air” variants (6/7)** and **ventilate (8)** across models.
+* Finalize scheduling payload + UI mapping if we implement schedules.
+* Slats event values/semantics per device family.
