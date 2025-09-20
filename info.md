@@ -121,6 +121,7 @@ heat\_modes = {2,7,8}
 | 8  | ventilate        | **Yes** (fallback) | **N/A**          | **P4**      | `fan_only` fallback when 3 unsupported **and** 8 supported. |
 
 \* For `P2=4 (heat-cold-auto)`, until we have broader validation: treat it as **cold-type** for fan (**P3**) and setpoint (**P7**) by default. It remains **opt-in** and device-dependent.
+\* For P2=8 (ventilate), we route fan via P4 based on the current cold/heat classification. If device telemetry indicates otherwise on a given model, we will switch routing accordingly.
 
 **Setpoint availability**
 - **No target temperature** in `fan_only` (P2=3 or 8) and `dry` (P2=5).
@@ -344,7 +345,6 @@ curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR
 * `cold_speed`, `heat_speed`, `availables_speeds`
 * `scenary`, `sleep_time`
 * Limits: `min_limit_cold`, `max_limit_cold`, `min_limit_heat`, `max_limit_heat`
-* Slats: `ver_cold_slats`, `ver_heat_slats`, `hor_cold_slats`, `hor_heat_slats`
 * `modes` bitmask string (see §5)
 
 > **Never** expose: `user_email`, `authentication_token`, `mac`, `pin`, GPS `location`.
@@ -373,4 +373,3 @@ curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR
 
 * Clarify behavior of **P2=4 (auto)** and **“air” variants (6/7)** and **ventilate (8)** across models.
 * Finalize scheduling payload + UI mapping if we implement schedules.
-* Slats event values/semantics per device family.
