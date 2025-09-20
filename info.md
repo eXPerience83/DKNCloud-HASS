@@ -81,12 +81,12 @@ Accept: application/json, text/plain, */*
 | P4    | Fan speed (HEAT-type modes)     | `"1"`..`"5"`         | Use when current mode is **HEAT-type** (see §4)              | ✅ |
 | P7    | COOL setpoint                   | `"16.0"`..`"32.0"`   | Integer °C semantics; send with `.0`                         | ✅ |
 | P8    | HEAT setpoint                   | `"16.0"`..`"32.0"`   | Integer °C semantics; send with `.0`                         | ✅ |
-| P9    | Vertical slats (cold)           | model-dependent      | Advanced; not used today                                     | ❌ |
-| P10   | Vertical slats (heat)           | model-dependent      | Advanced; not used today                                     | ❌ |
-| P19   | Horizontal slats (cold)         | model-dependent      | Advanced; not used today                                     | ❌ |
-| P20   | Horizontal slats (heat)         | model-dependent      | Advanced; not used today                                     | ❌ |
+| P9    | Vertical slats (cold)           | model-dependent      | Advanced; **not planned**                                    | ❌ (unplanned) |
+| P10   | Vertical slats (heat)           | model-dependent      | Advanced; **not planned**                                    | ❌ (unplanned) |
+| P19   | Horizontal slats (cold)         | model-dependent      | Advanced; **not planned**                                    | ❌ (unplanned) |
+| P20   | Horizontal slats (heat)         | model-dependent      | Advanced; **not planned**                                    | ❌ (unplanned) |
 
-> We intentionally do **not** list other `Pxx` that we do not actively use and whose semantics are not confirmed. The integration ignores them.
+> Additional P-codes may exist in the platform but are **undocumented for our purposes**. When we confirm their semantics, we'll add them here. For now they are **not planned**.
 
 ---
 
@@ -113,23 +113,28 @@ heat\_modes = {2,7,8}
 |:--:|------------------|:------------:|------------------------|-------------|-------|
 | 1  | cool             | **Yes**      | COOL → **P7**          | **P3**      | Default COOL. |
 | 2  | heat             | **Yes**      | HEAT → **P8**          | **P4**      | Default HEAT. |
-| 3  | ventilate        | **Yes**      | **N/A**                | **P3**      | `fan_only` (preferred; if unsupported, fallback to 8). |
-| 4  | heat-cold-auto   | **Opt-in**   | Typically COOL → **P7*** | **P3***   | Device-dependent/untested on some units. |
-| 5  | dehumidify       | **Yes**      | **N/A**                | **N/A**     | `dry`. No target temperature, **no fan control**. |
-| 6  | cool-air         | **No**       | COOL → **P7**          | **P3**      | **Not** exposed. Device-dependent/untested. |
-| 7  | heat-air         | **No**       | HEAT → **P8**          | **P4**      | **Not** exposed. Device-dependent/untested. |
-| 8  | ventilate        | **Yes** (fallback) | **N/A**          | **P4**      | `fan_only` fallback when 3 unsupported **and** 8 supported. |
+| 3  | ventilate        | **Yes**      | **N/A**                | **P3**      | `fan_only` default if supported. |
+| 4  | heat-cold-auto   | **Opt-in**   | Typically COOL → **P7*** | **P3***   | Device-dependent/untested; not enabled by default. |
+| 5  | dehumidify       | **Yes**      | **N/A**                | **N/A**     | `dry`. No target temp and **no fan control**. |
+| 6  | cool-air         | **No**       | Unknown/tentative      | Unknown     | **Not exposed**; semantics unclear for our models. |
+| 7  | heat-air         | **No**       | Unknown/tentative      | Unknown     | **Not exposed**; semantics unclear for our models. |
+| 8  | ventilate        | **Yes** (fallback) | **N/A**          | **P4**      | Use only if 3 unsupported and 8 supported (see below). |
 
-\* For `P2=4 (heat-cold-auto)`, until we have broader validation: treat it as **cold-type** for fan (**P3**) and setpoint (**P7**) by default. It remains **opt-in** and device-dependent.
-\* For P2=8 (ventilate), we route fan via P4 based on the current cold/heat classification. If device telemetry indicates otherwise on a given model, we will switch routing accordingly.
+\* For `P2=4 (heat-cold-auto)`, until broader validation: treat as **cold-type** for fan (**P3**) and setpoint (**P7**) by default. It remains **opt-in** and device-dependent.
+
+**Ventilate selection policy (P2=3 vs P2=8)**
+- If **3** and **8** are both supported: expose **`fan_only`** using **P2=3** (default).
+- If **3** is **not** supported but **8** **is**: expose **`fan_only`** using **P2=8**.
+- If neither **3** nor **8** is supported: do **not** expose `fan_only`.
+- While in **P2=8**, fan routing follows **HEAT-type** classification (**P4**), unless device telemetry proves otherwise for a specific model.
 
 **Setpoint availability**
 - **No target temperature** in `fan_only` (P2=3 or 8) and `dry` (P2=5).
 - Otherwise: COOL-type → **P7**, HEAT-type → **P8** (see table).
 
 **Fan “auto” note**
-- We do not have clear evidence of a genuine **fan auto** mode exposed as such. `availables_speeds` dictates what the device allows.  
-- In the future we might offer a **virtual “auto”** (heuristic selection), but it will **not** be a real device control unless confirmed.
+- No confirmed user-facing **fan auto**. `availables_speeds` governs allowed speeds.  
+- A future **virtual “auto”** may be added (heuristic), but it would not represent a real device control.
 
 ---
 
@@ -148,7 +153,7 @@ Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
 | 6               | 7        | heat-air         |
 | 7               | 8        | ventilate        |
 
-**Integration:** compute supported HA modes from this bitmask + exposure policy in §4. If both P2=3 and P2=8 are supported, prefer **3** for `fan_only`.
+**Integration:** compute supported HA modes from this bitmask + exposure policy in §4. Apply the `ventilate` selection policy above.
 
 ---
 
@@ -159,7 +164,7 @@ Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
 - **Sleep (`sleep_time`)**: minutes in **[30..120]**, **step 10**.  
   - Update via: `PUT /devices/<id>` with body `{"sleep_time":60}`
 
-**Occupied switching note:** When sending control events (power/mode/speed/setpoint), the backend may **automatically change** a `vacant` device to `occupied`. The integration will **verify** after commands; if needed, it can **fallback** to `PUT scenary="occupied"` (with a short cooldown to avoid spamming).
+**Occupied switching note:** When sending control events (power/mode/speed/setpoint), the backend **automatically switches** a `vacant` device to `occupied` in many cases. The integration **does not force** `occupied` proactively. After commands we **refresh** state; only if a specific installation proves otherwise, an **optional fallback** may `PUT scenary="occupied"` (with a short cooldown).
 
 ---
 
@@ -364,7 +369,6 @@ curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR
 | Select: scenary                        |      ⏳      | New `select.py` via `PUT /devices/<id>`               |
 | Number: sleep\_time (30..120, step 10) |      ⏳      | New `number.py` via `PUT /devices/<id>`               |
 | Schedules CRUD                         |      ❌      | Roadmap                                               |
-| Slats (P9/P10/P19/P20)                 |      ❌      | Unplanned                                             |
 | Heat\_cool exposed by default          |      ❌      | Optional, user opt-in only                            |
 
 ---
