@@ -9,138 +9,168 @@ Implements a NumberEntity for device 'sleep_time' via AirzoneAPI.put_device_slee
 from __future__ import annotations
 
 import asyncio
-import logging
-import time
+from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.number import NumberEntity
-from homeassistant.components.number.const import NumberDeviceClass
+from homeassistant.components.number import (
+    NumberEntity,
+    NumberMode,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 
 from .const import DOMAIN
+from .airzone_api import AirzoneAPI
 
-_LOGGER = logging.getLogger(__name__)
-
-CONF_ENABLE_PRESETS = "enable_presets"
-
-_OPTIMISTIC_TTL = 8.0
+_MIN = 30
+_MAX = 120
+_STEP = 10
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up sleep_time number entities from a config entry."""
-    data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if not data:
-        _LOGGER.error("No integration data for entry_id=%s", entry.entry_id)
-        return
-
+    """Set up number entities for DKN Cloud from a config entry."""
+    data = hass.data[DOMAIN][entry.entry_id]
     coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = data["coordinator"]
-    api = data["api"]
-
-    enable_presets = bool(
-        entry.options.get(CONF_ENABLE_PRESETS, entry.data.get(CONF_ENABLE_PRESETS, False))
-    )
+    api: AirzoneAPI = data["api"]
 
     entities: list[NumberEntity] = []
+    # coordinator.data is expected to be a dict mapping device_id -> state dict
     for device_id, device in (coordinator.data or {}).items():
+        # Only create the entity if the device exposes sleep_time
         if "sleep_time" in device:
             entities.append(
-                AirzoneSleepTimeNumber(
+                DKNSleepTimeNumber(
                     coordinator=coordinator,
                     api=api,
-                    device_data=device,
-                    enabled_by_default=enable_presets,
+                    device_id=str(device_id),
                 )
             )
 
     if entities:
-        async_add_entities(entities, True)
+        async_add_entities(entities)
 
 
-class AirzoneSleepTimeNumber(NumberEntity):
-    """Number entity for sleep_time minutes (30..120, step 10)."""
+@dataclass(slots=True, kw_only=True)
+class _OptimisticState:
+    """Helper to keep short-lived optimistic state."""
+
+    value: int | None = None
+    valid_until_monotonic: float = 0.0
+
+
+class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
+    """Number entity to control sleep_time in minutes."""
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:timer-sand"
-    _attr_native_min_value = 30
-    _attr_native_max_value = 120
-    _attr_native_step = 10
-    _attr_device_class = NumberDeviceClass.DURATION
+    _attr_name = "Sleep time"
+    _attr_icon = "mdi:power-sleep"
+    _attr_native_unit_of_measurement = "min"
+    _attr_native_min_value = _MIN
+    _attr_native_max_value = _MAX
+    _attr_native_step = _STEP
+    _attr_mode = NumberMode.SLIDER
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
-        api: Any,
-        device_data: dict[str, Any],
-        enabled_by_default: bool,
+        *,
+        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        api: AirzoneAPI,
+        device_id: str,
     ) -> None:
         """Initialize entity."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._api = api
-        self._device_id: str = device_data.get("id")
-        self._name: str = device_data.get("name", "Airzone Device")
-        self._attr_name = "Sleep Time (min)"
-        self._attr_unique_id = f"{self._device_id}_sleep_time"
-        self._attr_entity_registry_enabled_default = enabled_by_default
+        self._device_id = device_id
+        self._optimistic = _OptimisticState()
 
-        self._optimistic_value: float | None = None
-        self._optimistic_until: float = 0.0
+        self._attr_unique_id = f"{device_id}_sleep_time"
 
-        manufacturer = device_data.get("manufacturer", "Airzone")
-        model = device_data.get("model") or "DKN Cloud"
-        self._attr_device_info = DeviceInfo(
+    # ---------- Home Assistant required metadata ----------
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device registry information.
+
+        We only use safe identifiers and non-PII attributes.
+        """
+        device = (self.coordinator.data or {}).get(self._device_id, {})
+        manufacturer = device.get("manufacturer") or "Daikin"
+        model = device.get("model") or "DKN"
+        sw_version = device.get("fw_version") or device.get("firmware")
+
+        return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
-            name=self._name,
             manufacturer=manufacturer,
             model=model,
+            sw_version=str(sw_version) if sw_version is not None else None,
+            name=device.get("name") or f"Device {self._device_id}",
         )
+
+    # ---------- State ----------
 
     @property
     def available(self) -> bool:
+        """Entity availability based on coordinator data."""
         device = (self.coordinator.data or {}).get(self._device_id)
-        return bool(device and "sleep_time" in device)
+        if not device:
+            return False
+        # Optional 'available' flag in data; default to True
+        return bool(device.get("available", True))
 
     @property
-    def native_value(self) -> float | None:
-        """Return sleep_time; prefer optimistic cache if valid."""
-        now = time.monotonic()
-        if self._optimistic_value is not None and now < self._optimistic_until:
-            return float(self._optimistic_value)
+    def native_value(self) -> int | None:
+        """Return current sleep_time in minutes.
+
+        Respects a short-lived optimistic state to make UI feel instant.
+        """
+        import time  # Local import to avoid global import if not needed
+
+        if (
+            self._optimistic.value is not None
+            and time.monotonic() < self._optimistic.valid_until_monotonic
+        ):
+            return self._optimistic.value
+
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        value = device.get("sleep_time")
+        raw = device.get("sleep_time")
         try:
-            return float(int(value))
+            return int(raw) if raw is not None else None
         except (TypeError, ValueError):
             return None
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set sleep_time (clamped and snapped to step 10)."""
-        try:
-            ivalue = int(round(value))
-        except (TypeError, ValueError) as err:
-            raise ValueError("sleep_time must be a number") from err
+        """Set new sleep_time (rounded to nearest step) using the API."""
+        # Clamp and quantize to step of 10 minutes
+        ivalue = int(round(value / _STEP) * _STEP)
+        ivalue = max(_MIN, min(_MAX, ivalue))
 
-        ivalue = max(30, min(120, ivalue))
-        ivalue = int(round(ivalue / 10.0) * 10)
+        # Optimistic update for ~6 seconds (two typical polling intervals)
+        import time
 
-        # Optimistic first:
-        self._optimistic_value = float(ivalue)
-        self._optimistic_until = time.monotonic() + _OPTIMISTIC_TTL
+        self._optimistic.value = ivalue
+        self._optimistic.valid_until_monotonic = time.monotonic() + 6.0
         self.async_write_ha_state()
 
         try:
             await self._api.put_device_sleep_time(self._device_id, ivalue)
         except asyncio.CancelledError:
             raise
-        except Exception as err:
-            # Revert optimistic on failure
-            self._optimistic_value = None
-            self._optimistic_until = 0.0
+        except Exception:
+            # Revert optimistic state on failure
+            self._optimistic.value = None
+            self._optimistic.valid_until_monotonic = 0.0
             self.async_write_ha_state()
-            raise err
+            raise
         finally:
+            # Request a refresh to consolidate the state
             await self.coordinator.async_request_refresh()
