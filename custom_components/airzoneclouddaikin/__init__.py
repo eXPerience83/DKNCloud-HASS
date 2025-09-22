@@ -25,6 +25,8 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10  # Keep aligned with config_flow minimum
+OPT_ENABLE_PRESETS = "enable_presets"
+OPT_SCAN_INTERVAL = "scan_interval"
 
 
 def _derive_stable_device_id(device: dict[str, Any]) -> str:
@@ -77,6 +79,16 @@ async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
         raise UpdateFailed(f"Failed to update Airzone data: {err}") from err
 
 
+def _opt(entry: ConfigEntry, key: str, default: Any) -> Any:
+    """Read an option with fallback to config entry data."""
+    return entry.options.get(key, entry.data.get(key, default))
+
+
+async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Called when options are updated: reload the config entry."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DKN Cloud for HASS from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -94,7 +106,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning("Airzone login failed during setup; deferring entry readiness.")
         raise ConfigEntryNotReady("Airzone Cloud login failed")
 
-    scan_interval = config.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
+    # Apply scan_interval from options with fallback to data
+    scan_interval = int(_opt(entry, OPT_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL_SEC))
+
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
@@ -110,23 +124,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = {"api": api, "coordinator": coordinator}
 
+    # Determine whether to enable presets (select/number) from options+data
+    enable_presets = bool(_opt(entry, OPT_ENABLE_PRESETS, False))
+
+    platforms = ["climate", "sensor", "switch"]
+    if enable_presets:
+        platforms += ["select", "number"]
+
     # Forward platform setups
-    await hass.config_entries.async_forward_entry_setups(
-        entry, ["climate", "sensor", "switch"]
+    await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    _LOGGER.info(
+        "DKN Cloud for HASS configured successfully (scan_interval=%ss, presets=%s).",
+        scan_interval,
+        enable_presets,
     )
-    _LOGGER.info("DKN Cloud for HASS configured successfully.")
+
+    # Listen for options updates; on change, reload the entry
+    entry.async_on_unload(entry.add_update_listener(_update_listener))
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry cleanly."""
-    unload_ok = await hass.config_entries.async_forward_entry_unload(entry, "climate")
-    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(
-        entry, "sensor"
-    )
-    unload_ok = unload_ok and await hass.config_entries.async_forward_entry_unload(
-        entry, "switch"
-    )
+    enable_presets = bool(_opt(entry, OPT_ENABLE_PRESETS, False))
+    platforms = ["climate", "sensor", "switch"]
+    if enable_presets:
+        platforms += ["select", "number"]
+
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, platforms)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok
