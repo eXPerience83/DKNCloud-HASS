@@ -1,9 +1,8 @@
 """Airzone Cloud API client (adapted for dkn.airzonecloud.com).
 
 Key points:
-- Global cooldown after HTTP 429 to avoid hammering between requests (persists beyond a single call).
+- Global cooldown after HTTP 429 to avoid hammering between requests (persists across calls).
 - Exponential backoff with jitter per request for 429/5xx/network timeouts.
-- Catch builtin TimeoutError (Py3.11: asyncio.TimeoutError is an alias), so linters/formatters won't rewrite it.
 - PII-safe logging (never logs email/token). Debug logs sanitize query params.
 
 Do NOT perform any blocking I/O here; all methods are async.
@@ -52,16 +51,13 @@ class AirzoneAPI:
 
         # Persistent cooldown state after rate-limit responses (429).
         self._rl_next_allowed_ts: float = 0.0
-        self._rl_backoff: float = (
-            0.0  # grows on consecutive 429s, decays implicitly with time
-        )
+        self._rl_backoff: float = 0.0  # grows on consecutive 429s, decays over time
 
     # ----------------------------
     # Internal helpers
     # ----------------------------
     def _auth_params(self) -> dict[str, str]:
         """Build standard auth params for most endpoints."""
-        # Never log these values; keep them internal.
         return {
             "format": "json",
             "user_email": self._username,
@@ -89,7 +85,6 @@ class AirzoneAPI:
 
     def _bump_rate_limit_cooldown(self) -> None:
         """Increase the persistent cooldown window due to a 429."""
-        # Start at RL_MIN_COOLDOWN, then exponential up to RL_MAX_COOLDOWN.
         self._rl_backoff = (
             RL_MIN_COOLDOWN
             if self._rl_backoff == 0.0
@@ -147,7 +142,6 @@ class AirzoneAPI:
                     # If we hit a transient error/ratelimit, schedule a retry
                     if resp.status in RETRYABLE_STATUSES and attempt <= max_retries:
                         if resp.status == 429:
-                            # Bump persistent cooldown so subsequent calls wait up-front
                             self._bump_rate_limit_cooldown()
                         delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
                         _LOGGER.warning(
@@ -177,19 +171,16 @@ class AirzoneAPI:
                     # Success
                     if resp.content_type == "application/json":
                         return await resp.json()
-                    # Some endpoints might return no body; still return textual content if present
                     text = await resp.text()
                     return text
 
             except aiohttp.ClientResponseError:
-                # Non-retryable client response errors bubble up (coord handles them)
                 raise
             except (
-                TimeoutError,  # Py3.11: asyncio.TimeoutError is an alias, this is fine
+                TimeoutError,  # asyncio.TimeoutError alias in Py3.11
                 aiohttp.ClientConnectionError,
                 aiohttp.ServerTimeoutError,
             ) as e:
-                # Treat timeouts/connection errors as retryable
                 if attempt <= max_retries:
                     delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
                     _LOGGER.warning(
@@ -205,7 +196,6 @@ class AirzoneAPI:
                     continue
                 raise
             except Exception:
-                # Unknown exceptions bubble up
                 raise
 
     # ----------------------------
@@ -250,20 +240,11 @@ class AirzoneAPI:
         """GET /devices for a given installation_id."""
         params = self._auth_params()
         params["installation_id"] = installation_id
-        data = await self._request(
-            "GET",
-            API_DEVICES,
-            params=params,
-        )
+        data = await self._request("GET", API_DEVICES, params=params)
         return (data or {}).get("devices", [])
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
-        """POST /events with standard headers for event commands (P1..P8 etc.).
-
-        Note:
-        - This will respect any global cooldown previously set by 429 responses.
-        - Per-request retries/backoff still apply.
-        """
+        """POST /events with standard headers for event commands (P1..P8 etc.)."""
         params = self._auth_params()
         extra_headers = {"X-Requested-With": "XMLHttpRequest"}
         return await self._request(
@@ -274,10 +255,22 @@ class AirzoneAPI:
             extra_headers=extra_headers,
         )
 
+    # ---------- New: generic PUT for /devices/<id> fields ----------
+    async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
+        """PUT /devices/{id} with provided payload.
+        Example payloads:
+          - {"device": {"scenary": "occupied"}}
+          - {"sleep_time": 60}
+        """
+        params = self._auth_params()
+        path = f"{API_DEVICES}/{device_id}"
+        extra_headers = {"X-Requested-With": "XMLHttpRequest"}
+        return await self._request("PUT", path, params=params, json=payload, extra_headers=extra_headers)
+
     async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
         """PUT /devices/{id} to change scenary: 'sleep' | 'occupied' | 'vacant'."""
-        params = self._auth_params()
-        # Endpoint style: /devices/<id>?format=json&user_email=...&user_token=...
-        path = f"{API_DEVICES}/{device_id}"
-        payload = {"device": {"scenary": scenary}}
-        return await self._request("PUT", path, params=params, json=payload)
+        return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})
+
+    async def put_device_sleep_time(self, device_id: str, minutes: int) -> Any:
+        """PUT /devices/{id} to change sleep_time (30..120, step 10)."""
+        return await self.put_device_fields(device_id, {"sleep_time": int(minutes)})
