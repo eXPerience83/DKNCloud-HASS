@@ -1,140 +1,176 @@
 """Select platform for DKN Cloud for HASS: scenary control.
 
 Implements a SelectEntity for device 'scenary' via AirzoneAPI.put_device_scenary().
-- Options: "occupied", "vacant", "sleep"
-- Optimistic UI: reflect the new choice immediately; revert on error.
+Options: "occupied", "vacant", "sleep".
+- Optimistic UI: reflect the new option immediately; revert on error.
 - No I/O in property access; reads come from DataUpdateCoordinator.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
-import time
+from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 
 from .const import DOMAIN
+from .airzone_api import AirzoneAPI
 
-_LOGGER = logging.getLogger(__name__)
-
-SCENARY_OPTIONS: list[str] = ["occupied", "vacant", "sleep"]
-CONF_ENABLE_PRESETS = "enable_presets"
-
-# Optimistic cache TTL (seconds) to keep UI updated until coordinator refreshes
-_OPTIMISTIC_TTL = 8.0
+_OPTIONS = ["occupied", "vacant", "sleep"]
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up scenary select entities from a config entry."""
-    data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if not data:
-        _LOGGER.error("No integration data for entry_id=%s", entry.entry_id)
-        return
-
+    """Set up select entities for DKN Cloud from a config entry."""
+    data = hass.data[DOMAIN][entry.entry_id]
     coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = data["coordinator"]
-    api = data["api"]
-
-    enable_presets = bool(
-        entry.options.get(CONF_ENABLE_PRESETS, entry.data.get(CONF_ENABLE_PRESETS, False))
-    )
+    api: AirzoneAPI = data["api"]
 
     entities: list[SelectEntity] = []
+    # coordinator.data is expected to be a dict mapping device_id -> state dict
     for device_id, device in (coordinator.data or {}).items():
+        # Only create the entity if the device exposes scenary
         if "scenary" in device:
             entities.append(
-                AirzoneScenarySelect(
+                DKNScenarySelect(
                     coordinator=coordinator,
                     api=api,
-                    device_data=device,
-                    enabled_by_default=enable_presets,
+                    device_id=str(device_id),
                 )
             )
 
     if entities:
-        async_add_entities(entities, True)
+        async_add_entities(entities)
 
 
-class AirzoneScenarySelect(SelectEntity):
-    """Scenary selector (occupied/vacant/sleep)."""
+@dataclass(slots=True, kw_only=True)
+class _OptimisticState:
+    """Helper to keep short-lived optimistic state."""
+
+    option: str | None = None
+    valid_until_monotonic: float = 0.0
+
+
+class DKNScenarySelect(CoordinatorEntity, SelectEntity):
+    """Select entity to control scenary (occupied/vacant/sleep)."""
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:home-account"
+    _attr_name = "Scenary"
+    _attr_options = _OPTIONS
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
-        coordinator: DataUpdateCoordinator,
-        api: Any,
-        device_data: dict[str, Any],
-        enabled_by_default: bool,
+        *,
+        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        api: AirzoneAPI,
+        device_id: str,
     ) -> None:
         """Initialize entity."""
-        self.coordinator = coordinator
+        super().__init__(coordinator)
         self._api = api
-        self._device_id: str = device_data.get("id")
-        self._name: str = device_data.get("name", "Airzone Device")
-        self._attr_name = "Scenary"
-        self._attr_unique_id = f"{self._device_id}_scenary"
-        self._attr_options = SCENARY_OPTIONS
-        self._attr_entity_registry_enabled_default = enabled_by_default
+        self._device_id = device_id
+        self._optimistic = _OptimisticState()
 
-        # Optimistic cache
-        self._optimistic_option: str | None = None
-        self._optimistic_until: float = 0.0
+        self._attr_unique_id = f"{device_id}_scenary"
 
-        # DeviceInfo w/o PII
-        manufacturer = device_data.get("manufacturer", "Airzone")
-        model = device_data.get("model") or "DKN Cloud"
-        self._attr_device_info = DeviceInfo(
+    # ---------- Home Assistant required metadata ----------
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device registry information.
+
+        We only use safe identifiers and non-PII attributes.
+        """
+        device = (self.coordinator.data or {}).get(self._device_id, {})
+        manufacturer = device.get("manufacturer") or "Daikin"
+        model = device.get("model") or "DKN"
+        sw_version = device.get("fw_version") or device.get("firmware")
+
+        return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
-            name=self._name,
             manufacturer=manufacturer,
             model=model,
+            sw_version=str(sw_version) if sw_version is not None else None,
+            name=device.get("name") or f"Device {self._device_id}",
         )
+
+    # ---------- State ----------
 
     @property
     def available(self) -> bool:
-        """Entity available if device exists in coordinator and has scenary."""
+        """Entity availability based on coordinator data."""
         device = (self.coordinator.data or {}).get(self._device_id)
-        return bool(device and "scenary" in device)
+        if not device:
+            return False
+        # Optional 'available' flag in data; default to True
+        return bool(device.get("available", True))
 
     @property
     def current_option(self) -> str | None:
-        """Current scenary; prefer optimistic cache if still valid."""
-        now = time.monotonic()
-        if self._optimistic_option and now < self._optimistic_until:
-            return self._optimistic_option
+        """Return the selected scenary option.
+
+        Respects a short-lived optimistic state to make UI feel instant.
+        """
+        import time  # Local import to avoid global import if not needed
+
+        if (
+            self._optimistic.option is not None
+            and time.monotonic() < self._optimistic.valid_until_monotonic
+        ):
+            return self._optimistic.option
+
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        scenary = device.get("scenary")
-        return scenary if scenary in SCENARY_OPTIONS else None
+        opt = device.get("scenary")
+        return str(opt) if opt in _OPTIONS else None
 
     async def async_select_option(self, option: str) -> None:
-        """Handle user selection: optimistic update + API call."""
-        if option not in SCENARY_OPTIONS:
+        """Set scenary via API."""
+        if option not in _OPTIONS:
+            # Defensive: ignore invalid values from automations
             raise ValueError(f"Unsupported scenary option: {option}")
 
-        # Optimistic: reflect immediately
-        self._optimistic_option = option
-        self._optimistic_until = time.monotonic() + _OPTIMISTIC_TTL
+        # Optimistic update for ~6 seconds (two typical polling intervals)
+        import time
+
+        self._optimistic.option = option
+        self._optimistic.valid_until_monotonic = time.monotonic() + 6.0
         self.async_write_ha_state()
 
         try:
             await self._api.put_device_scenary(self._device_id, option)
         except asyncio.CancelledError:
             raise
-        except Exception as err:
-            # Revert optimistic on failure
-            self._optimistic_option = None
-            self._optimistic_until = 0.0
+        except Exception:
+            # Revert optimistic state on failure
+            self._optimistic.option = None
+            self._optimistic.valid_until_monotonic = 0.0
             self.async_write_ha_state()
-            raise err
+            raise
         finally:
             # Request a refresh to consolidate the state
             await self.coordinator.async_request_refresh()
+
+    @property
+    def icon(self) -> str:
+        """Return a dynamic icon based on scenary."""
+        opt = self.current_option
+        if opt == "occupied":
+            return "mdi:home-account"
+        if opt == "sleep":
+            return "mdi:power-sleep"
+        if opt == "vacant":
+            return "mdi:door-closed"
+        return "mdi:home"
