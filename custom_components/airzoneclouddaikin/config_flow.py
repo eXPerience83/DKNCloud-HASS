@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
-from homeassistant.helpers import config_validation as cv
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import config_validation as cv
 
 from .const import DOMAIN
 
@@ -41,6 +40,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Validate credentials by attempting a login
             from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
             from .airzone_api import AirzoneAPI
 
             session = async_get_clientsession(self.hass)
@@ -88,8 +88,12 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         # Current values: prefer options over data
         data = self._entry.data
         opts = self._entry.options
-        current_scan = int(opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10)))
-        current_presets = bool(opts.get(CONF_ENABLE_PRESETS, data.get(CONF_ENABLE_PRESETS, False)))
+        current_scan = int(
+            opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10))
+        )
+        current_presets = bool(
+            opts.get(CONF_ENABLE_PRESETS, data.get(CONF_ENABLE_PRESETS, False))
+        )
 
         schema = vol.Schema(
             {
@@ -103,5 +107,7 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
 
     # Hook for ConfigEntry to use this OptionsFlow
     @staticmethod
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "AirzoneOptionsFlow":
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> AirzoneOptionsFlow:
         return AirzoneOptionsFlow(config_entry)

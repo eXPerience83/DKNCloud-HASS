@@ -25,8 +25,8 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import DOMAIN
 from .airzone_api import AirzoneAPI
+from .const import DOMAIN
 
 _MIN = 30
 _MAX = 120

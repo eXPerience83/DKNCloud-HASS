@@ -22,8 +22,8 @@ from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
 )
 
-from .const import DOMAIN
 from .airzone_api import AirzoneAPI
+from .const import DOMAIN
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
 

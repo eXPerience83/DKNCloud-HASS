@@ -265,7 +265,9 @@ class AirzoneAPI:
         params = self._auth_params()
         path = f"{API_DEVICES}/{device_id}"
         extra_headers = {"X-Requested-With": "XMLHttpRequest"}
-        return await self._request("PUT", path, params=params, json=payload, extra_headers=extra_headers)
+        return await self._request(
+            "PUT", path, params=params, json=payload, extra_headers=extra_headers
+        )
 
     async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
         """PUT /devices/{id} to change scenary: 'sleep' | 'occupied' | 'vacant'."""
