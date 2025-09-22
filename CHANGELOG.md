@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.7-alpha.3] - 2025-09-22
+### Fixed
+- Options Flow now shows correctly: `async_get_options_flow` moved to module level in `config_flow.py`.
+- Robust installation parsing in `__init__.py` (handles both `installation.id` and `installation_id`).
+- `airzone_api.login()` now accepts tokens at either `resp.user.authentication_token` or `resp.authentication_token`.
+### Added
+- Options editable post-setup: `scan_interval` and `enable_presets`.
+- Conditional loading of `select` (scenary) and `number` (sleep_time) platforms when `enable_presets` is enabled.
+- Optimistic UI for scenary and sleep_time entities.
+### Changed
+- Defensive checks to avoid loading optional platforms when files are missing.
+
 ## [0.3.7-alpha.2] - 2025-09-22
 ### Fixed
 - Options Flow registration: moved `async_get_options_flow()` to the `ConfigFlow` class so the **Options** button appears and the flow is callable by Home Assistant.
