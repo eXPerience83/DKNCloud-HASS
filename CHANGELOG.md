@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.7-alpha.1] - 2025-09-22
+### Added
+- Options flow: `enable_presets` flag and editable `scan_interval` (min 10s).
+- `airzone_api.put_device_fields()`: generic PUT `/devices/<id>` helper with retries/backoff and PII-safe logging.
+- `airzone_api.put_device_scenary()` and `put_device_sleep_time()` built on the generic PUT.
+- `select.py`: Scenary control (`occupied` / `vacant` / `sleep`) using the API helper, with optimistic UI.
+- `number.py`: Sleep timer control (`sleep_time` 30..120, step 10) using the API helper, with optimistic UI.
+### Changed
+- Presets (select/number) are optional: entities are enabled-by-default only if `enable_presets` is set; otherwise they are created disabled so users can enable them manually if desired.
+### Fixed
+- Ensured no PII in logs for all new PUT flows, consistent with existing API client behavior.
+
 ## [0.3.5-alpha.5] - 2025-09-18
 ### Added
 - Climate: implement `async_turn_on`/`async_turn_off` mapped to `P1` with optimistic state and short post-write refresh.
