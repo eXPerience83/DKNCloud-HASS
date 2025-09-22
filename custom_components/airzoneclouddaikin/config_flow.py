@@ -7,6 +7,7 @@ import logging
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 
@@ -72,6 +73,14 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Support YAML import if ever needed (not standard for this integration)."""
         return await self.async_step_user(user_input)
 
+    # ---- Proper Options Flow registration (so the "Options" button appears) ----
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> "AirzoneOptionsFlow":
+        return AirzoneOptionsFlow(config_entry)
+
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
     """Options flow to edit scan_interval and feature flags like enable_presets."""
@@ -104,10 +113,3 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
-
-    # Hook for ConfigEntry to use this OptionsFlow
-    @staticmethod
-    def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
-    ) -> AirzoneOptionsFlow:
-        return AirzoneOptionsFlow(config_entry)
