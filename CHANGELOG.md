@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.7-alpha.2] - 2025-09-22
+### Fixed
+- Options Flow registration: moved `async_get_options_flow()` to the `ConfigFlow` class so the **Options** button appears and the flow is callable by Home Assistant.
+- Runtime settings now read from `entry.options` (with fallback to `entry.data`), so `scan_interval` and `enable_presets` actually take effect after editing options.
+### Changed
+- Added an options update listener to **reload the entry** when options change.
+- Conditional platform loading: `select` and `number` are now loaded only when `enable_presets` is enabled.
+
 ## [0.3.7-alpha.1] - 2025-09-22
 ### Added
 - Options flow: `enable_presets` flag and editable `scan_interval` (min 10s).
