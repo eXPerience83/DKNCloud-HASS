@@ -1,97 +1,40 @@
-"""Airzone Cloud API client (adapted for dkn.airzonecloud.com).
+# coding: utf-8
+"""Airzone Cloud API client (dkn.airzonecloud.com).
 
-Key points:
-- Global cooldown after HTTP 429 to avoid hammering between requests (persists across calls).
-- Exponential backoff with jitter per request for 429/5xx/network timeouts.
-- PII-safe logging (never logs email/token). Debug logs sanitize query params.
-
-Do NOT perform any blocking I/O here; all methods are async.
+Notes:
+- Uses HA shared aiohttp ClientSession (no I/O in entity properties).
+- 15s global timeout, retries/backoff are handled at higher levels (coordinator).
+- Never log secrets (email/token/MAC/PIN).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import random
-import time
 from typing import Any
 
-import aiohttp
+from aiohttp import ClientResponseError, ClientSession, ClientTimeout
 
-from .const import (
-    API_DEVICES,
-    API_EVENTS,
-    API_INSTALLATION_RELATIONS,
-    API_LOGIN,
-    BASE_URL,
-    USER_AGENT,
-)
+from .const import BASE_URL, API_INSTALLATION_RELATIONS, API_DEVICES
 
 _LOGGER = logging.getLogger(__name__)
 
-# Retry/backoff configuration (per request)
-TOTAL_TIMEOUT_SEC = 15
-MAX_RETRIES = 3
-RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
-
-# Global rate-limit backoff (persists across calls after a 429)
-RL_MIN_COOLDOWN = 5.0  # seconds (initial cooldown after first 429)
-RL_MAX_COOLDOWN = 60.0  # seconds (cap)
-
 
 class AirzoneAPI:
-    """Client to interact with the Airzone Cloud API."""
+    """Minimal API client for DKN Cloud."""
 
-    def __init__(self, username: str, password: str, session: aiohttp.ClientSession):
-        """Initialize credentials and the aiohttp session provided by HA."""
+    def __init__(self, username: str, password: str, session: ClientSession) -> None:
         self._username = username
         self._password = password
         self._session = session
-        self.token: str = ""
+        self._token: str | None = None
 
-        # Persistent cooldown state after rate-limit responses (429).
-        self._rl_next_allowed_ts: float = 0.0
-        self._rl_backoff: float = 0.0  # grows on consecutive 429s, decays over time
-
-    # ----------------------------
-    # Internal helpers
-    # ----------------------------
+    # --------------------------
+    # Helpers
+    # --------------------------
     def _auth_params(self) -> dict[str, str]:
-        """Build standard auth params for most endpoints."""
-        return {
-            "format": "json",
-            "user_email": self._username,
-            "user_token": self.token,
-        }
-
-    @staticmethod
-    def _redact(value: str | None) -> str:
-        """Redact sensitive values for logging."""
-        if not value:
-            return ""
-        return "***"
-
-    async def _await_rate_limit_cooldown(self, path: str) -> None:
-        """If a cooldown is active (after recent 429), wait before issuing the next request."""
-        now = time.monotonic()
-        if now < self._rl_next_allowed_ts:
-            delay = self._rl_next_allowed_ts - now
-            _LOGGER.warning(
-                "Respecting API cooldown before calling %s (%.2fs remaining)...",
-                path,
-                delay,
-            )
-            await asyncio.sleep(delay)
-
-    def _bump_rate_limit_cooldown(self) -> None:
-        """Increase the persistent cooldown window due to a 429."""
-        self._rl_backoff = (
-            RL_MIN_COOLDOWN
-            if self._rl_backoff == 0.0
-            else min(self._rl_backoff * 2.0, RL_MAX_COOLDOWN)
-        )
-        jitter = random.uniform(0.0, 0.5)
-        self._rl_next_allowed_ts = time.monotonic() + self._rl_backoff + jitter
+        """Query params with auth info."""
+        return {"user_email": self._username, "user_token": self._token or ""}
 
     async def _request(
         self,
@@ -101,178 +44,106 @@ class AirzoneAPI:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
-        max_retries: int = MAX_RETRIES,
     ) -> Any:
-        """Perform an HTTP request with timeout, retries, and safe logging."""
-        url = f"{BASE_URL}{path}"
+        """HTTP request helper."""
+        url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
         headers = {
-            "User-Agent": USER_AGENT,
             "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json;charset=UTF-8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "X-Requested-With": "XMLHttpRequest",
         }
-        if json is not None:
-            headers["Content-Type"] = "application/json;charset=UTF-8"
         if extra_headers:
             headers.update(extra_headers)
 
-        # Avoid leaking PII in logs (sanitize params only)
-        safe_params = dict(params or {})
-        if "user_email" in safe_params:
-            safe_params["user_email"] = self._redact(str(safe_params["user_email"]))
-        if "user_token" in safe_params:
-            safe_params["user_token"] = self._redact(str(safe_params["user_token"]))
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("HTTP %s %s params=%s", method, path, safe_params or None)
+        timeout = ClientTimeout(total=15)
 
-        # Respect any persistent cooldown (after previous 429s)
-        await self._await_rate_limit_cooldown(path)
-
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                timeout = aiohttp.ClientTimeout(total=TOTAL_TIMEOUT_SEC)
-                async with self._session.request(
-                    method,
-                    url,
-                    params=params,
-                    json=json,
-                    headers=headers,
-                    timeout=timeout,
-                ) as resp:
-                    # If we hit a transient error/ratelimit, schedule a retry
-                    if resp.status in RETRYABLE_STATUSES and attempt <= max_retries:
-                        if resp.status == 429:
-                            self._bump_rate_limit_cooldown()
-                        delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
-                        _LOGGER.warning(
-                            "Transient API error %s on %s %s (attempt %s/%s). Retrying in %.2fs...",
-                            resp.status,
-                            method,
-                            path,
-                            attempt,
-                            max_retries,
-                            delay,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-
-                    # For non-OK responses, raise to the caller
-                    if resp.status >= 400:
-                        if resp.status in (401, 403):
-                            _LOGGER.error(
-                                "Authentication/authorization error on %s %s (email=%s, token=%s).",
-                                method,
-                                path,
-                                self._redact(self._username),
-                                self._redact(self.token),
-                            )
-                        resp.raise_for_status()
-
-                    # Success
-                    if resp.content_type == "application/json":
-                        return await resp.json()
-                    text = await resp.text()
-                    return text
-
-            except aiohttp.ClientResponseError:
-                raise
-            except (
-                TimeoutError,  # asyncio.TimeoutError alias in Py3.11
-                aiohttp.ClientConnectionError,
-                aiohttp.ServerTimeoutError,
-            ) as e:
-                if attempt <= max_retries:
-                    delay = min(2 ** (attempt - 1), 10) + random.uniform(0, 0.5)
-                    _LOGGER.warning(
-                        "Network error on %s %s (attempt %s/%s): %s. Retrying in %.2fs...",
-                        method,
-                        path,
-                        attempt,
-                        max_retries,
-                        e,
-                        delay,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                raise
-            except Exception:
-                raise
-
-    # ----------------------------
-    # Public API methods
-    # ----------------------------
-    async def login(self) -> bool:
-        """Authenticate and obtain a token via /users/sign_in (201 Created on success)."""
         try:
-            data = await self._request(
-                "POST",
-                API_LOGIN,
-                json={"email": self._username, "password": self._password},
-            )
-        except Exception as err:
-            _LOGGER.error("Login exception: %s", err)
+            async with self._session.request(
+                method, url, params=params, json=json, headers=headers, timeout=timeout
+            ) as resp:
+                resp.raise_for_status()
+                if resp.content_type == "application/json":
+                    return await resp.json()
+                return await resp.text()
+        except ClientResponseError as cre:
+            # Mask sensitive info
+            _LOGGER.debug("HTTP %s %s failed: %s", method, path, cre)
+            raise
+        except asyncio.TimeoutError:
+            _LOGGER.debug("HTTP %s %s timed out", method, path)
+            raise
+
+    # --------------------------
+    # Public API
+    # --------------------------
+    async def login(self) -> bool:
+        """Login and store authentication token."""
+        data = {"email": self._username, "password": self._password}
+        try:
+            resp = await self._request("POST", "users/sign_in", json=data)
+        except Exception:
             return False
 
-        # Some backends return: {"user":{"authentication_token":"..."}} on 201
-        self.token = (data or {}).get("user", {}).get("authentication_token", "")
-        if not self.token:
-            _LOGGER.error(
-                "Login failed: no token received (email=%s).",
-                self._redact(self._username),
-            )
+        # Accept both shapes:
+        #   {"user": {"authentication_token": "..."}}
+        #   {"authentication_token": "..."}
+        token = (
+            (resp or {}).get("user", {}).get("authentication_token")
+            or (resp or {}).get("authentication_token")
+        )
+        if not token:
+            _LOGGER.debug("Login response did not include expected token field.")
             return False
-        _LOGGER.debug("Login OK (token=%s).", self._redact(self.token))
+
+        self._token = str(token)
         return True
 
-    async def fetch_installations(self) -> list[dict[str, Any]]:
-        """GET /installation_relations with auth query params."""
-        if not self.token:
-            _LOGGER.error("Cannot fetch installations without a valid token.")
-            return []
-        data = await self._request(
-            "GET",
-            API_INSTALLATION_RELATIONS,
-            params=self._auth_params(),
-        )
-        return (data or {}).get("installation_relations", [])
+    async def sign_out(self) -> None:
+        """Optional sign out endpoint."""
+        try:
+            await self._request("DELETE", "users/sign_out", params=self._auth_params())
+        except Exception:
+            # non-fatal
+            return
 
-    async def fetch_devices(self, installation_id: str) -> list[dict[str, Any]]:
-        """GET /devices for a given installation_id."""
-        params = self._auth_params()
-        params["installation_id"] = installation_id
-        data = await self._request("GET", API_DEVICES, params=params)
-        return (data or {}).get("devices", [])
+    async def fetch_installations(self) -> list[dict[str, Any]] | None:
+        """GET installation relations."""
+        params = self._auth_params() | {"format": "json"}
+        resp = await self._request("GET", API_INSTALLATION_RELATIONS, params=params)
+        # Normalize: return the list directly if wrapped
+        if isinstance(resp, dict) and "installation_relations" in resp:
+            return resp.get("installation_relations")  # type: ignore[return-value]
+        if isinstance(resp, list):
+            return resp
+        return None
+
+    async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
+        """GET devices for an installation."""
+        params = self._auth_params() | {"format": "json", "installation_id": str(installation_id)}
+        resp = await self._request("GET", API_DEVICES, params=params)
+        if isinstance(resp, dict) and "devices" in resp:
+            return resp.get("devices")  # type: ignore[return-value]
+        if isinstance(resp, list):
+            return resp
+        return None
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
-        """POST /events with standard headers for event commands (P1..P8 etc.)."""
+        """POST to /events (realtime control)."""
         params = self._auth_params()
-        extra_headers = {"X-Requested-With": "XMLHttpRequest"}
-        return await self._request(
-            "POST",
-            API_EVENTS,
-            params=params,
-            json=payload,
-            extra_headers=extra_headers,
-        )
+        return await self._request("POST", "events/", params=params, json=payload)
 
-    # ---------- New: generic PUT for /devices/<id> fields ----------
+    # ---------- Generic PUT helpers for /devices/<id> ----------
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
-        """PUT /devices/{id} with provided payload.
-        Example payloads:
-          - {"device": {"scenary": "occupied"}}
-          - {"sleep_time": 60}
-        """
-        params = self._auth_params()
+        """PUT /devices/{id} with provided payload."""
+        params = self._auth_params() | {"format": "json"}
         path = f"{API_DEVICES}/{device_id}"
-        extra_headers = {"X-Requested-With": "XMLHttpRequest"}
-        return await self._request(
-            "PUT", path, params=params, json=payload, extra_headers=extra_headers
-        )
+        return await self._request("PUT", path, params=params, json=payload)
 
     async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
-        """PUT /devices/{id} to change scenary: 'sleep' | 'occupied' | 'vacant'."""
+        """Change scenary: 'occupied' | 'vacant' | 'sleep'."""
         return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})
 
     async def put_device_sleep_time(self, device_id: str, minutes: int) -> Any:
-        """PUT /devices/{id} to change sleep_time (30..120, step 10)."""
+        """Change sleep_time (30..120, step 10)."""
         return await self.put_device_fields(device_id, {"sleep_time": int(minutes)})
