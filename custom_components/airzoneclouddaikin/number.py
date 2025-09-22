@@ -1,4 +1,3 @@
-# coding: utf-8
 """Number platform for DKN Cloud for HASS: sleep_time control.
 
 Implements a NumberEntity for device 'sleep_time' via AirzoneAPI.put_device_sleep_time().

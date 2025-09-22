@@ -1,4 +1,3 @@
-# coding: utf-8
 """DKN Cloud for HASS integration setup.
 
 Highlights:
@@ -75,7 +74,9 @@ async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
 
     except Exception as err:  # noqa: BLE001
         # Keep message generic; never include secrets or full URLs.
-        raise UpdateFailed(f"Failed to update Airzone data: {type(err).__name__}") from err
+        raise UpdateFailed(
+            f"Failed to update Airzone data: {type(err).__name__}"
+        ) from err
 
 
 @callback
@@ -101,7 +102,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady("Airzone Cloud login failed")
 
     scan_interval = int(
-        entry.options.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
+        entry.options.get(
+            "scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
+        )
     )
     coordinator = DataUpdateCoordinator(
         hass,
@@ -139,8 +142,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Reload entry on options updates
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
-    _LOGGER.info("DKN Cloud for HASS configured (scan_interval=%ss, presets=%s).",
-                 scan_interval, bool(entry.options.get("enable_presets", False)))
+    _LOGGER.info(
+        "DKN Cloud for HASS configured (scan_interval=%ss, presets=%s).",
+        scan_interval,
+        bool(entry.options.get("enable_presets", False)),
+    )
     return True
 
 

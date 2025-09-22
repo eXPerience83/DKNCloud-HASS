@@ -1,4 +1,3 @@
-# coding: utf-8
 """Config flow and options flow for DKN Cloud for HASS.
 
 Key points:
@@ -16,7 +15,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import callback, HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .airzone_api import AirzoneAPI
@@ -35,9 +34,12 @@ def _schema_user(defaults: dict[str, Any] | None = None) -> vol.Schema:
             vol.Required("username", default=d.get("username", "")): str,
             vol.Required("password", default=d.get("password", "")): str,
             vol.Optional(
-                "scan_interval", default=int(d.get("scan_interval", DEFAULT_SCAN_INTERVAL))
+                "scan_interval",
+                default=int(d.get("scan_interval", DEFAULT_SCAN_INTERVAL)),
             ): vol.All(vol.Coerce(int), vol.Range(min=10, max=3600)),
-            vol.Optional("enable_presets", default=bool(d.get("enable_presets", False))): bool,
+            vol.Optional(
+                "enable_presets", default=bool(d.get("enable_presets", False))
+            ): bool,
         }
     )
 
@@ -51,9 +53,9 @@ def _schema_options(entry: config_entries.ConfigEntry) -> vol.Schema:
     presets_default = bool(entry.options.get("enable_presets", False))
     return vol.Schema(
         {
-            vol.Optional(
-                "scan_interval", default=int(scan_default)
-            ): vol.All(vol.Coerce(int), vol.Range(min=10, max=3600)),
+            vol.Optional("scan_interval", default=int(scan_default)): vol.All(
+                vol.Coerce(int), vol.Range(min=10, max=3600)
+            ),
             vol.Optional("enable_presets", default=presets_default): bool,
         }
     )
@@ -76,7 +78,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ok = await api.login()
         return bool(ok)
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Handle the initial configuration step."""
         errors: dict[str, str] = {}
 
@@ -84,7 +88,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # Basic sanitization
             username = (user_input.get("username") or "").strip()
             password = user_input.get("password") or ""
-            scan_interval = int(user_input.get("scan_interval") or DEFAULT_SCAN_INTERVAL)
+            scan_interval = int(
+                user_input.get("scan_interval") or DEFAULT_SCAN_INTERVAL
+            )
             enable_presets = bool(user_input.get("enable_presets", False))
 
             if not username or not password:
@@ -94,7 +100,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if not await self._validate_login(self.hass, user_input):
                         errors["base"] = "auth"
                 except Exception as exc:  # noqa: BLE001
-                    _LOGGER.debug("Login validation error (masked): %s", type(exc).__name__)
+                    _LOGGER.debug(
+                        "Login validation error (masked): %s", type(exc).__name__
+                    )
                     errors["base"] = "cannot_connect"
 
             if not errors:
@@ -108,10 +116,17 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "scan_interval": scan_interval,
                 }
                 # Store presets flag initially in options so it can be changed later
-                options = {"enable_presets": enable_presets, "scan_interval": scan_interval}
-                return self.async_create_entry(title=username, data=data, options=options)
+                options = {
+                    "enable_presets": enable_presets,
+                    "scan_interval": scan_interval,
+                }
+                return self.async_create_entry(
+                    title=username, data=data, options=options
+                )
 
-        return self.async_show_form(step_id="user", data_schema=_schema_user(user_input), errors=errors)
+        return self.async_show_form(
+            step_id="user", data_schema=_schema_user(user_input), errors=errors
+        )
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
@@ -120,7 +135,9 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.config_entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Manage the options."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -147,6 +164,8 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
 
 
 @callback
-def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> AirzoneOptionsFlow:
+def async_get_options_flow(
+    config_entry: config_entries.ConfigEntry,
+) -> AirzoneOptionsFlow:
     """Provide the options flow handler (module-level hook required by HA)."""
     return AirzoneOptionsFlow(config_entry)

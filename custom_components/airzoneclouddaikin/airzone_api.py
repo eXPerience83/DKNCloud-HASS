@@ -1,4 +1,3 @@
-# coding: utf-8
 """Airzone Cloud API client (dkn.airzonecloud.com).
 
 Notes:
@@ -9,13 +8,12 @@ Notes:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
 from aiohttp import ClientResponseError, ClientSession, ClientTimeout
 
-from .const import BASE_URL, API_INSTALLATION_RELATIONS, API_DEVICES
+from .const import API_DEVICES, API_INSTALLATION_RELATIONS, BASE_URL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,7 +68,7 @@ class AirzoneAPI:
             # Mask sensitive info
             _LOGGER.debug("HTTP %s %s failed: %s", method, path, cre)
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.debug("HTTP %s %s timed out", method, path)
             raise
 
@@ -88,10 +86,9 @@ class AirzoneAPI:
         # Accept both shapes:
         #   {"user": {"authentication_token": "..."}}
         #   {"authentication_token": "..."}
-        token = (
-            (resp or {}).get("user", {}).get("authentication_token")
-            or (resp or {}).get("authentication_token")
-        )
+        token = (resp or {}).get("user", {}).get("authentication_token") or (
+            resp or {}
+        ).get("authentication_token")
         if not token:
             _LOGGER.debug("Login response did not include expected token field.")
             return False
@@ -120,7 +117,10 @@ class AirzoneAPI:
 
     async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
         """GET devices for an installation."""
-        params = self._auth_params() | {"format": "json", "installation_id": str(installation_id)}
+        params = self._auth_params() | {
+            "format": "json",
+            "installation_id": str(installation_id),
+        }
         resp = await self._request("GET", API_DEVICES, params=params)
         if isinstance(resp, dict) and "devices" in resp:
             return resp.get("devices")  # type: ignore[return-value]

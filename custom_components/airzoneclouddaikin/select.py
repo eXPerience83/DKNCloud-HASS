@@ -1,4 +1,3 @@
-# coding: utf-8
 """Select platform for DKN Cloud for HASS: scenary control.
 
 Implements a SelectEntity for device 'scenary' via AirzoneAPI.put_device_scenary().
