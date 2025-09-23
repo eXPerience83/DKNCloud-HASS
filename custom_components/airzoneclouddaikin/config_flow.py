@@ -49,24 +49,32 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     @staticmethod
-    def async_get_options_flow(entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+    def async_get_options_flow(
+        entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
         """Return the options flow handler for an existing entry."""
         return AirzoneOptionsFlow(entry)
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Handle the initial step where we collect credentials and base options."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             # Validate credentials by attempting a login against the API.
             try:
-                from .airzone_api import AirzoneAPI  # local import to avoid import cycles
+                from .airzone_api import (
+                    AirzoneAPI,  # local import to avoid import cycles
+                )
             except Exception as exc:  # defensive
                 _LOGGER.exception("Failed to import AirzoneAPI: %s", exc)
                 errors["base"] = "unknown"
             else:
                 session = async_get_clientsession(self.hass)
-                api = AirzoneAPI(user_input[CONF_USERNAME], user_input[CONF_PASSWORD], session)
+                api = AirzoneAPI(
+                    user_input[CONF_USERNAME], user_input[CONF_PASSWORD], session
+                )
 
                 ok = False
                 try:
@@ -83,7 +91,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             CONF_USERNAME: user_input[CONF_USERNAME],
                             CONF_PASSWORD: user_input[CONF_PASSWORD],
                             CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL, 10),
-                            CONF_ENABLE_PRESETS: user_input.get(CONF_ENABLE_PRESETS, False),
+                            CONF_ENABLE_PRESETS: user_input.get(
+                                CONF_ENABLE_PRESETS, False
+                            ),
                         },
                     )
 
@@ -97,7 +107,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_import(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_import(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Support YAML import (not typically used for this integration)."""
         return await self.async_step_user(user_input)
 
@@ -108,7 +120,9 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Display/process options form.
 
         We prefer options over data as the source of truth:
@@ -122,8 +136,12 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         data = self._entry.data
         opts = self._entry.options
 
-        current_scan = int(opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10)))
-        current_presets = bool(opts.get(CONF_ENABLE_PRESETS, data.get(CONF_ENABLE_PRESETS, False)))
+        current_scan = int(
+            opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10))
+        )
+        current_presets = bool(
+            opts.get(CONF_ENABLE_PRESETS, data.get(CONF_ENABLE_PRESETS, False))
+        )
 
         schema = vol.Schema(
             {
