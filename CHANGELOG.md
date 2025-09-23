@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- Options Flow hook is now provided **both** as a module-level `async_get_options_flow()` and as a static method in `AirzoneConfigFlow`, ensuring the **Options** button reliably appears across environments.
+### Note
+- No functional changes to entities; this only ensures the options UI is consistently available.
+
 ## [0.3.7-alpha.3] - 2025-09-22
 ### Fixed
 - Options Flow now shows correctly: `async_get_options_flow` moved to module level in `config_flow.py`.
