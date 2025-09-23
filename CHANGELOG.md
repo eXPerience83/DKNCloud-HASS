@@ -1,10 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.7-alpha.4] - 2025-09-23
+### Added
+- Options Flow for editing **scan_interval** and **enable_presets** from the UI.
 ### Fixed
-- Options Flow hook is now provided **both** as a module-level `async_get_options_flow()` and as a static method in `AirzoneConfigFlow`, ensuring the **Options** button reliably appears across environments.
-### Note
-- No functional changes to entities; this only ensures the options UI is consistently available.
+- Missing “Options” menu in the integration due to `async_get_options_flow` not being defined on the `ConfigFlow` class.
+- Ensured `config_flow.py` is complete and Black/Ruff compliant (no truncated lines).
 
 ## [0.3.7-alpha.3] - 2025-09-22
 ### Fixed
