@@ -128,6 +128,15 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=_schema_user(user_input), errors=errors
         )
 
+    # --- Added: static hook to ensure Options button appears in all environments ---
+    @staticmethod
+    @callback
+    def async_get_options_flow(  # noqa: D401 - HA standard hook
+        config_entry: config_entries.ConfigEntry,
+    ) -> "AirzoneOptionsFlow":
+        """Return the options flow handler."""
+        return AirzoneOptionsFlow(config_entry)
+
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
     """Handle options for an existing entry."""
@@ -164,7 +173,7 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
 
 
 @callback
-def async_get_options_flow(
+def async_get_options_flow(  # noqa: D401 - HA canonical module-level hook
     config_entry: config_entries.ConfigEntry,
 ) -> AirzoneOptionsFlow:
     """Provide the options flow handler (module-level hook required by HA)."""
