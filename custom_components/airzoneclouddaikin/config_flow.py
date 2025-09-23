@@ -133,7 +133,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(  # noqa: D401 - HA standard hook
         config_entry: config_entries.ConfigEntry,
-    ) -> "AirzoneOptionsFlow":
+    ) -> AirzoneOptionsFlow:
         """Return the options flow handler."""
         return AirzoneOptionsFlow(config_entry)
 
