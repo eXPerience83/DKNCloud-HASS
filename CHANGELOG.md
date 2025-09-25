@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.7-alpha.6] - 2025-09-25
+### Added
+- Privacy: automatic cleanup of PII sensors when `expose_pii_identifiers` is disabled (entities are removed from the Entity Registry on entry reload).
+
 ## [0.3.7-alpha.5] - 2025-09-25
 ### Added
 - Sensors: new `status`, `mode` (raw), and derived `mode_text` (maps 1→cool, 2→heat, 3→fan_only, 4→auto/heat_cool, 5→dry; unknown otherwise), all enabled by default.
