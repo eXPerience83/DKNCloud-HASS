@@ -138,6 +138,8 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         None,
     ),
+    # Ventilate variant (diagnostic, enabled): derive 3/8/none from modes bitmask
+    ("ventilate_variant", "Ventilate Variant (3/8/none)", "mdi:shuffle-variant", True, None, None),
     # Timestamps (disabled by default)
     (
         "update_date",
@@ -185,9 +187,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Read opt-in from options first, then data (setup step)
     opts = entry.options or {}
     expose_pii = bool(
-        opts.get(
-            "expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False)
-        )
+        opts.get("expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False))
     )
 
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
@@ -226,9 +226,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{device_id}_{attribute}"
         # Only "local_temp" and PII sensors are NOT diagnostic
         self._attr_entity_category = (
-            None
-            if attribute in {"local_temp", *PII_ATTRS}
-            else EntityCategory.DIAGNOSTIC
+            None if attribute in {"local_temp", *PII_ATTRS} else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
         self._attr_native_unit_of_measurement = (
@@ -321,17 +319,35 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             except Exception:
                 return None
 
-        # Mode text derived from `mode` code
+        # Mode text derived from `mode` code.
+        # Expanded to recognize P2=6/7/8 as per technical reference:
+        #   6 -> "cool_air", 7 -> "heat_air", 8 -> "ventilate (alt)".
         if self._attribute == "mode_text":
             code = str(self._device.get("mode", "")).strip()
             mapping = {
                 "1": "cool",
                 "2": "heat",
-                "3": "fan_only",
+                "3": "ventilate",          # shown as FAN_ONLY in HA climate
                 "4": "auto (heat_cool)",
                 "5": "dry",
+                "6": "cool_air",
+                "7": "heat_air",
+                "8": "ventilate (alt)",    # alternate ventilate code
             }
             return mapping.get(code, "unknown")
+
+        # Ventilate variant diagnostic: derive from 'modes' bitstring.
+        # Preference: 3 if supported; else 8 if supported; else 'none'.
+        if self._attribute == "ventilate_variant":
+            bitstr = str(self._device.get("modes") or "")
+            if bitstr and all(ch in "01" for ch in bitstr):
+                sup3 = len(bitstr) >= 3 and bitstr[2] == "1"
+                sup8 = len(bitstr) >= 8 and bitstr[7] == "1"
+                if sup3:
+                    return "3"
+                if sup8:
+                    return "8"
+                return "none"
 
         # PII nested fields (latitude/longitude live under "location")
         if self._attribute in {"latitude", "longitude"}:
