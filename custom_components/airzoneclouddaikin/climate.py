@@ -400,8 +400,6 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             if hvac_mode == HVACMode.FAN_ONLY:
                 # Ventilate policy: prefer P2=3; else P2=8; else do nothing
                 code = self._preferred_ventilate_code() or "3"  # default if unknown
-                # If neither supported and we defaulted but really unsupported, backend will reject;
-                # state will reconcile on next refresh.
                 await self._send_p_event("P2", code)
                 self._optimistic.update({"mode": code})
             else:
