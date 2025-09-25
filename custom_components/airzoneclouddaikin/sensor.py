@@ -337,7 +337,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             val = self._device.get(self._attribute)
             if val in (None, "", [], 0, "0"):
                 return "No errors"
-            if isinstance(val, (list, tuple)):
+            if isinstance(val, list | tuple):
                 return ", ".join(str(x) for x in val) if val else "No errors"
             return str(val)
 
