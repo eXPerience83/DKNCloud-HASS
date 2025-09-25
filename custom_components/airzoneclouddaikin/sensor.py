@@ -10,6 +10,7 @@ Privacy: do not expose PIN as a sensor; redact secrets in logs.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -25,86 +26,89 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# (attribute, friendly name, icon, enabled_by_default, device_class, state_class)
+# ---------------------------
+# Parsing/format groups
+# ---------------------------
+_TEMP_FLOAT_ATTRS = {
+    "local_temp",
+    "cold_consign",
+    "heat_consign",
+    "min_limit_cold",
+    "max_limit_cold",
+    "min_limit_heat",
+    "max_limit_heat",
+    "min_temp_unoccupied",
+    "max_temp_unoccupied",
+}
+_TIMESTAMP_ATTRS = {"update_date", "connection_date"}
+
+# PII attributes (must never be diagnostic and never logged)
+PII_ATTRS = {
+    "mac",
+    "pin",
+    "installation_id",
+    "spot_name",
+    "complete_name",
+    "latitude",
+    "longitude",
+    "time_zone",
+}
+
+# ---------------------------
+# Sensor specs (attribute, friendly, icon, enabled_by_default, device_class, state_class)
+# ---------------------------
 CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
-    (
-        "local_temp",
-        "Local Temperature",
-        "mdi:thermometer",
-        True,
-        "temperature",
-        "measurement",
-    ),
+    ("local_temp", "Local Temperature", "mdi:thermometer", True, "temperature", "measurement"),
     ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, None, None),
     ("scenary", "Scenary", "mdi:account-clock", True, None, None),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
+    ("status", "Status", "mdi:information-outline", True, None, None),
+    ("mode", "Mode Code (Raw)", "mdi:numeric", True, None, None),
+    ("mode_text", "Mode (Text)", "mdi:format-list-bulleted", True, None, None),
     ("machine_errors", "Machine Errors", "mdi:alert-octagon", True, None, None),
     ("firmware", "Firmware Version", "mdi:chip", True, None, None),
     ("brand", "Brand/Model", "mdi:factory", True, None, None),
     ("availables_speeds", "Available Fan Speeds", "mdi:fan", True, None, None),
-    ("cold_consign", "Cool Setpoint", "mdi:snowflake", True, None, None),
-    ("heat_consign", "Heat Setpoint", "mdi:fire", True, None, None),
+    # Setpoints and fan speeds (kept enabled)
+    ("cold_consign", "Cool Setpoint", "mdi:snowflake", True, "temperature", None),
+    ("heat_consign", "Heat Setpoint", "mdi:fire", True, "temperature", None),
     ("cold_speed", "Cool Fan Speed", "mdi:fan", True, None, None),
     ("heat_speed", "Heat Fan Speed", "mdi:fan", True, None, None),
 ]
 
-# Additional diagnostics (disabled by default to reduce UI noise)
+# Diagnostics (some enabled by default per our decisions)
 DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
-    ("progs_enabled", "Programs Enabled", "mdi:calendar-check", False, None, None),
+    ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True, None, None),
     ("power", "Power State (Raw)", "mdi:power", False, None, None),
     ("units", "Units", "mdi:ruler", False, None, None),
-    (
-        "min_temp_unoccupied",
-        "Min Temp Unoccupied",
-        "mdi:thermometer-low",
-        False,
-        None,
-        None,
-    ),
-    (
-        "max_temp_unoccupied",
-        "Max Temp Unoccupied",
-        "mdi:thermometer-high",
-        False,
-        None,
-        None,
-    ),
-    (
-        "min_limit_cold",
-        "Min Limit Cool",
-        "mdi:thermometer-chevron-down",
-        False,
-        None,
-        None,
-    ),
-    (
-        "max_limit_cold",
-        "Max Limit Cool",
-        "mdi:thermometer-chevron-up",
-        False,
-        None,
-        None,
-    ),
-    (
-        "min_limit_heat",
-        "Min Limit Heat",
-        "mdi:thermometer-chevron-down",
-        False,
-        None,
-        None,
-    ),
-    (
-        "max_limit_heat",
-        "Max Limit Heat",
-        "mdi:thermometer-chevron-up",
-        False,
-        None,
-        None,
-    ),
+    # Unoccupied ranges (enabled)
+    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low", True, "temperature", None),
+    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high", True, "temperature", None),
+    # Device limits (enabled)
+    ("min_limit_cold", "Min Limit Cool", "mdi:thermometer-chevron-down", True, "temperature", None),
+    ("max_limit_cold", "Max Limit Cool", "mdi:thermometer-chevron-up", True, "temperature", None),
+    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-chevron-down", True, "temperature", None),
+    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-chevron-up", True, "temperature", None),
+    # Timestamps (disabled by default)
+    ("update_date", "Last Update (Device)", "mdi:clock-check-outline", False, "timestamp", None),
+    ("connection_date", "Last Connection", "mdi:clock-outline", False, "timestamp", None),
+]
+
+# PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
+PII_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
+    ("mac", "MAC Address", "mdi:lan", True, None, None),
+    ("pin", "PIN", "mdi:key-variant", True, None, None),
+    ("installation_id", "Installation ID", "mdi:identifier", True, None, None),
+    ("spot_name", "Spot Name", "mdi:map-marker", True, None, None),
+    ("complete_name", "Location (Full Name)", "mdi:home-map-marker", True, None, None),
+    ("latitude", "Latitude", "mdi:map-marker-radius", True, None, None),
+    ("longitude", "Longitude", "mdi:map-marker-radius-outline", True, None, None),
+    ("time_zone", "Time Zone", "mdi:earth", True, None, None),
 ]
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
+    """Create sensors according to coordinator snapshot and privacy options."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
@@ -115,9 +119,17 @@ async def async_setup_entry(hass, entry, async_add_entities):
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
 
+    # Read opt-in from options first, then data (setup step)
+    opts = entry.options or {}
+    expose_pii = bool(opts.get("expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False)))
+
+    specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
+    if expose_pii:
+        specs += PII_SENSORS  # add PII when opted-in
+
     entities: list[AirzoneSensor] = []
     for device_id in list(coordinator.data.keys()):
-        for spec in CORE_SENSORS + DIAG_SENSORS:
+        for spec in specs:
             entities.append(AirzoneSensor(coordinator, device_id, *spec))
 
     async_add_entities(entities)
@@ -145,12 +157,13 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = friendly
         self._attr_icon = icon
         self._attr_unique_id = f"{device_id}_{attribute}"
+        # Only "local_temp" and PII sensors are NOT diagnostic
         self._attr_entity_category = (
-            EntityCategory.DIAGNOSTIC if (attribute not in ("local_temp",)) else None
+            None if attribute in {"local_temp", *PII_ATTRS} else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
         self._attr_native_unit_of_measurement = (
-            UnitOfTemperature.CELSIUS if attribute in ("local_temp",) else None
+            UnitOfTemperature.CELSIUS if attribute in _TEMP_FLOAT_ATTRS else None
         )
         # Device & state classes
         if dev_class:
@@ -185,29 +198,77 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         return bool(self._device)
 
+    @staticmethod
+    def _parse_float1(val: Any) -> float | None:
+        """Parse numeric string '23.0'/'23,0' and round to one decimal."""
+        if val is None:
+            return None
+        try:
+            f = float(str(val).replace(",", "."))
+            return round(f, 1)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_float6(val: Any) -> float | None:
+        """Parse numeric to float with 6 decimals (for coordinates)."""
+        if val is None:
+            return None
+        try:
+            f = float(str(val).replace(",", "."))
+            return round(f, 6)
+        except Exception:
+            return None
+
     @property
     def native_value(self) -> Any:
-        val = self._device.get(self._attribute)
+        # Temperatures / setpoints / limits / unoccupied -> float with 1 decimal
+        if self._attribute in _TEMP_FLOAT_ATTRS:
+            val = self._device.get(self._attribute)
+            return self._parse_float1(val)
 
-        # NOTE: Temperature/setpoints parsing as float to avoid ValueError on "23.5"
-        # and return a numeric value instead of None/unknown.
-        if self._attribute in ("local_temp", "cold_consign", "heat_consign"):
+        # Timestamps -> datetime (HA will display in local timezone)
+        if self._attribute in _TIMESTAMP_ATTRS:
+            val = self._device.get(self._attribute)
             try:
-                # Accept both "23,5" and "23.5"
-                return float(str(val).replace(",", ".")) if val is not None else None
+                return datetime.fromisoformat(str(val)) if val else None
             except Exception:
                 return None
 
-        # NOTE: Friendly handling for machine_errors.
-        # When backend returns null/empty (no errors), report "No errors" instead
-        # of leaving the sensor as unknown in HA.
+        # Friendly handling for machine_errors: collapse empty to "No errors"
         if self._attribute == "machine_errors":
+            val = self._device.get(self._attribute)
             if val in (None, "", [], 0, "0"):
                 return "No errors"
             if isinstance(val, list | tuple):  # Ruff UP038: use PEP 604 unions
-                # Join list/tuple into a readable string
                 return ", ".join(str(x) for x in val) if val else "No errors"
-            # Fallback: show textual representation
             return str(val)
 
-        return val
+        # Mode code exposed as integer
+        if self._attribute == "mode":
+            val = self._device.get(self._attribute)
+            try:
+                return int(str(val))
+            except Exception:
+                return None
+
+        # Mode text derived from `mode` code
+        if self._attribute == "mode_text":
+            code = str(self._device.get("mode", "")).strip()
+            mapping = {
+                "1": "cool",
+                "2": "heat",
+                "3": "fan_only",
+                "4": "auto (heat_cool)",
+                "5": "dry",
+            }
+            return mapping.get(code, "unknown")
+
+        # PII nested fields (latitude/longitude live under "location")
+        if self._attribute in {"latitude", "longitude"}:
+            loc = self._device.get("location") or {}
+            raw = loc.get(self._attribute)
+            return self._parse_float6(raw)
+
+        # Plain values (status, brand, firmware, etc.)
+        return self._device.get(self._attribute)
