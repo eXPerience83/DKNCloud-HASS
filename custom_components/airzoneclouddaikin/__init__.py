@@ -101,11 +101,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning("Airzone login failed during setup; entry not ready yet.")
         raise ConfigEntryNotReady("Airzone Cloud login failed")
 
+    # Respect options first, fallback to data (minimal-change policy)
     scan_interval = int(
         entry.options.get(
             "scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
         )
     )
+    enable_presets = bool(
+        entry.options.get("enable_presets", cfg.get("enable_presets", False))
+    )
+
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
@@ -121,15 +126,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
-        "enable_presets": bool(entry.options.get("enable_presets", False)),
+        "enable_presets": enable_presets,
     }
 
     # Always load base platforms
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
 
-    # Conditionally load presets (select/number)
-    if entry.options.get("enable_presets", False):
-        # Defensive: only forward if the module files exist
+    # Conditionally load presets (select/number) with module presence check
+    if enable_presets:
         if _module_exists("custom_components.airzoneclouddaikin.select"):
             await hass.config_entries.async_forward_entry_setups(entry, ["select"])
         else:
@@ -145,7 +149,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.info(
         "DKN Cloud for HASS configured (scan_interval=%ss, presets=%s).",
         scan_interval,
-        bool(entry.options.get("enable_presets", False)),
+        enable_presets,
     )
     return True
 
