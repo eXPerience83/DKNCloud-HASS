@@ -19,7 +19,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfTemperature
-from homeassistant.helpers import entity_registry as er  # <-- added for cleanup
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -87,7 +87,9 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
 # Diagnostics (some enabled by default per our decisions)
 DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True, None, None),
-    ("power", "Power State (Raw)", "mdi:power", False, None, None),
+    # IMPORTANT: 'power' requested enabled-by-default
+    ("power", "Power State (Raw)", "mdi:power", True, None, None),
+    # 'units' should be disabled-by-default
     ("units", "Units", "mdi:ruler", False, None, None),
     # Unoccupied ranges (enabled)
     (
@@ -148,7 +150,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
         None,
     ),
-    # Timestamps (disabled by default)
+    # Timestamps (disabled by default as requested)
     (
         "update_date",
         "Last Update (Device)",
@@ -200,16 +202,21 @@ async def async_setup_entry(hass, entry, async_add_entities):
         )
     )
 
-    # --- minimal addition: cleanup of PII entities when opted-out ---
-    if not expose_pii:
-        reg = er.async_get(hass)
-        for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
-            if ent.domain != "sensor" or ent.platform != DOMAIN:
-                continue
-            uid = ent.unique_id or ""
-            # Remove any entity whose unique_id ends with a PII attribute name
-            if any(uid.endswith(f"_{attr}") for attr in PII_ATTRS):
-                reg.async_remove(ent.entity_id)
+    # --- Cleanup of PII entities when opted-out (safe and narrow) ----------
+    # We only remove previously-created PII sensors of THIS integration.
+    # This does not touch non-PII sensors.
+    try:
+        if not expose_pii:
+            reg = er.async_get(hass)
+            for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
+                if ent.domain != "sensor" or ent.platform != DOMAIN:
+                    continue
+                uid = (ent.unique_id or "").strip()
+                # Remove ONLY if unique_id ends with one of the exact PII attribute names
+                if any(uid.endswith(f"_{attr}") for attr in PII_ATTRS):
+                    reg.async_remove(ent.entity_id)
+    except Exception as exc:  # Defensive: never fail setup because of registry ops
+        _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
 
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
     if expose_pii:
@@ -330,7 +337,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             val = self._device.get(self._attribute)
             if val in (None, "", [], 0, "0"):
                 return "No errors"
-            if isinstance(val, list | tuple):  # Ruff UP038: use PEP 604 unions
+            if isinstance(val, (list, tuple)):
                 return ", ".join(str(x) for x in val) if val else "No errors"
             return str(val)
 
