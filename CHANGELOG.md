@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.7-alpha.5] - 2025-09-25
+### Added
+- Sensors: new `status`, `mode` (raw), and derived `mode_text` (maps 1→cool, 2→heat, 3→fan_only, 4→auto/heat_cool, 5→dry; unknown otherwise), all enabled by default.
+- Sensors: `min_limit_cold/max_limit_cold/min_limit_heat/max_limit_heat` and `min/max_temp_unoccupied` are now enabled by default; all temperature-like sensors display **1 decimal** for consistency.
+- Sensors: `update_date` and `connection_date` added as `timestamp` (disabled by default).
+### Changed
+- Sensors: `progs_enabled` is enabled by default.
+- Formatting: all temperature/setpoint/limit/unoccupied values are parsed safely and rounded to **one decimal**.
+### Security/Privacy
+- Config/Options: added `expose_pii_identifiers` opt-in flag (stored only; PII is never logged or included in diagnostics).
+
 ## [0.3.7-alpha.4] - 2025-09-23
 ### Added
 - Options Flow for editing **scan_interval** and **enable_presets** from the UI.
