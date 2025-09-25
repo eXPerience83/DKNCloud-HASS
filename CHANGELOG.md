@@ -5,11 +5,14 @@
 - Sensors: new `status`, `mode` (raw), and derived `mode_text` (maps 1→cool, 2→heat, 3→fan_only, 4→auto/heat_cool, 5→dry; unknown otherwise), all enabled by default.
 - Sensors: `min_limit_cold/max_limit_cold/min_limit_heat/max_limit_heat` and `min/max_temp_unoccupied` are now enabled by default; all temperature-like sensors display **1 decimal** for consistency.
 - Sensors: `update_date` and `connection_date` added as `timestamp` (disabled by default).
+- - Privacy/PII: sensors for `mac`, `pin`, `installation_id`, `spot_name`, `complete_name`, `latitude`, `longitude`, and `time_zone` are created **only when** the new `expose_pii_identifiers` option is enabled; when enabled they are **on by default** and are **not** marked as diagnostic.
 ### Changed
 - Sensors: `progs_enabled` is enabled by default.
 - Formatting: all temperature/setpoint/limit/unoccupied values are parsed safely and rounded to **one decimal**.
 ### Security/Privacy
 - Config/Options: added `expose_pii_identifiers` opt-in flag (stored only; PII is never logged or included in diagnostics).
+### Notes
+- Disabling `expose_pii_identifiers` stops providing PII sensors on next reload; any previously created PII entities remain in Home Assistant's entity registry (standard behavior) and can be removed manually from the UI if desired.
 
 ## [0.3.7-alpha.4] - 2025-09-23
 ### Added
