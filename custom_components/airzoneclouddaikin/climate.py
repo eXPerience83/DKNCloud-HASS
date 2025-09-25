@@ -255,11 +255,11 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def max_temp(self) -> float:
-        """Return max allowable temp for current mode (fallback 30)."""
+        """Return max allowable temp for current mode (fallback 32)."""
         mode = self.hvac_mode
         key = "max_limit_cold" if mode == HVACMode.COOL else "max_limit_heat"
         val = self._parse_float(self._device.get(key))
-        return val if val is not None else 30.0
+        return val if val is not None else 32.0
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature using P7 (cool) or P8 (heat) depending on mode."""
