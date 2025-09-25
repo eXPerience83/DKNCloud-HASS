@@ -139,7 +139,14 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
     ),
     # Ventilate variant (diagnostic, enabled): derive 3/8/none from modes bitmask
-    ("ventilate_variant", "Ventilate Variant (3/8/none)", "mdi:shuffle-variant", True, None, None),
+    (
+        "ventilate_variant",
+        "Ventilate Variant (3/8/none)",
+        "mdi:shuffle-variant",
+        True,
+        None,
+        None,
+    ),
     # Timestamps (disabled by default)
     (
         "update_date",
@@ -187,7 +194,9 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Read opt-in from options first, then data (setup step)
     opts = entry.options or {}
     expose_pii = bool(
-        opts.get("expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False))
+        opts.get(
+            "expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False)
+        )
     )
 
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
@@ -226,7 +235,9 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{device_id}_{attribute}"
         # Only "local_temp" and PII sensors are NOT diagnostic
         self._attr_entity_category = (
-            None if attribute in {"local_temp", *PII_ATTRS} else EntityCategory.DIAGNOSTIC
+            None
+            if attribute in {"local_temp", *PII_ATTRS}
+            else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
         self._attr_native_unit_of_measurement = (
@@ -327,12 +338,12 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             mapping = {
                 "1": "cool",
                 "2": "heat",
-                "3": "ventilate",          # shown as FAN_ONLY in HA climate
+                "3": "ventilate",  # shown as FAN_ONLY in HA climate
                 "4": "auto (heat_cool)",
                 "5": "dry",
                 "6": "cool_air",
                 "7": "heat_air",
-                "8": "ventilate (alt)",    # alternate ventilate code
+                "8": "ventilate (alt)",  # alternate ventilate code
             }
             return mapping.get(code, "unknown")
 
