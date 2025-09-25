@@ -2,12 +2,9 @@
 
 This file keeps changes minimal and focused:
 - Adds a proper OptionsFlow so Home Assistant shows the "Options" button.
-- Keeps existing login validation logic.
 - Stores scan_interval and enable_presets; OptionsFlow can override them later.
-
-Notes:
-- Comments are in English as our codebase convention states.
-- We prefer not to log secrets or PII; any logging must be carefully redacted.
+- Adds a privacy-friendly opt-in flag for exposing PII-related identifiers in sensors
+  (not used yet to create entities; never logged nor included in diagnostics).
 """
 
 from __future__ import annotations
@@ -29,6 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 # Option keys (kept as plain strings to avoid public API rename churn)
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_ENABLE_PRESETS = "enable_presets"
+CONF_EXPOSE_PII = "expose_pii_identifiers"  # single opt-in switch for PII fields
 
 # --- User step schema (minimal change from previous versions) -----------------
 DATA_SCHEMA = vol.Schema(
@@ -39,6 +37,8 @@ DATA_SCHEMA = vol.Schema(
             vol.Coerce(int), vol.Range(min=10)
         ),
         vol.Optional(CONF_ENABLE_PRESETS, default=False): cv.boolean,
+        # PII opt-in is off by default; we never log PII regardless of this flag.
+        vol.Optional(CONF_EXPOSE_PII, default=False): cv.boolean,
     }
 )
 
@@ -94,6 +94,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             CONF_ENABLE_PRESETS: user_input.get(
                                 CONF_ENABLE_PRESETS, False
                             ),
+                            CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False),
                         },
                     )
 
@@ -115,7 +116,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
-    """Options flow to edit scan_interval and feature flags like enable_presets."""
+    """Options flow to edit scan_interval and feature flags."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
@@ -142,6 +143,7 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         current_presets = bool(
             opts.get(CONF_ENABLE_PRESETS, data.get(CONF_ENABLE_PRESETS, False))
         )
+        current_pii = bool(opts.get(CONF_EXPOSE_PII, data.get(CONF_EXPOSE_PII, False)))
 
         schema = vol.Schema(
             {
@@ -149,6 +151,7 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
                     vol.Coerce(int), vol.Range(min=10)
                 ),
                 vol.Optional(CONF_ENABLE_PRESETS, default=current_presets): cv.boolean,
+                vol.Optional(CONF_EXPOSE_PII, default=current_pii): cv.boolean,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
