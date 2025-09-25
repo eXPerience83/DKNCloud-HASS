@@ -8,6 +8,7 @@ Notes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -68,7 +69,7 @@ class AirzoneAPI:
             # Mask sensitive info
             _LOGGER.debug("HTTP %s %s failed: %s", method, path, cre)
             raise
-        except TimeoutError:
+        except asyncio.TimeoutError:
             _LOGGER.debug("HTTP %s %s timed out", method, path)
             raise
 
