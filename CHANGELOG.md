@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.7-alpha.7] - 2025-09-25
+### Fixed
+- Options: restored `enable_presets` (select/number) by reading from `options` **and** falling back to `data` during setup.
+- Sensors: `power` is now enabled by default; `units`, `update_date` and `connection_date` remain disabled by default (documented).
+- Privacy: hardened PII cleanup when `expose_pii_identifiers` is disabled, ensuring non-PII sensors are unaffected.
+### Notes
+- Home Assistant does not retroactively disable already-created entities when defaults change. If `units/update_date/connection_date` appear enabled from previous versions, disable them from the UI or remove the entities so they are re-created with the new defaults.
+
 ## [0.3.7-alpha.6] - 2025-09-25
 ### Added
 - Privacy: automatic cleanup of PII sensors when `expose_pii_identifiers` is disabled (entities are removed from the Entity Registry on entry reload).
