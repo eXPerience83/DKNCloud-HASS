@@ -318,7 +318,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             val = self._device.get(self._attribute)
             if val in (None, "", [], 0, "0"):
                 return "No errors"
-            if isinstance(val, list | tuple):  # Ruff UP038: use PEP 604 unions
+            if isinstance(val, (list, tuple)):
                 return ", ".join(str(x) for x in val) if val else "No errors"
             return str(val)
 
@@ -338,12 +338,12 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             mapping = {
                 "1": "cool",
                 "2": "heat",
-                "3": "ventilate",  # shown as FAN_ONLY in HA climate
+                "3": "ventilate",
                 "4": "auto (heat_cool)",
                 "5": "dry",
                 "6": "cool_air",
                 "7": "heat_air",
-                "8": "ventilate (alt)",  # alternate ventilate code
+                "8": "ventilate (alt)",
             }
             return mapping.get(code, "unknown")
 
