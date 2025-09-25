@@ -19,6 +19,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfTemperature
+from homeassistant.helpers import entity_registry as er  # <-- added for cleanup
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -199,6 +200,17 @@ async def async_setup_entry(hass, entry, async_add_entities):
         )
     )
 
+    # --- minimal addition: cleanup of PII entities when opted-out ---
+    if not expose_pii:
+        reg = er.async_get(hass)
+        for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
+            if ent.domain != "sensor" or ent.platform != DOMAIN:
+                continue
+            uid = ent.unique_id or ""
+            # Remove any entity whose unique_id ends with a PII attribute name
+            if any(uid.endswith(f"_{attr}") for attr in PII_ATTRS):
+                reg.async_remove(ent.entity_id)
+
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
     if expose_pii:
         specs += PII_SENSORS  # add PII when opted-in
@@ -331,8 +343,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
                 return None
 
         # Mode text derived from `mode` code.
-        # Expanded to recognize P2=6/7/8 as per technical reference:
-        #   6 -> "cool_air", 7 -> "heat_air", 8 -> "ventilate (alt)".
+        # Expanded to recognize P2=6/7/8 as per technical reference.
         if self._attribute == "mode_text":
             code = str(self._device.get("mode", "")).strip()
             mapping = {
@@ -347,8 +358,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             }
             return mapping.get(code, "unknown")
 
-        # Ventilate variant diagnostic: derive from 'modes' bitstring.
-        # Preference: 3 if supported; else 8 if supported; else 'none'.
+        # Ventilate variant diagnostic: derive from 'modes' bitstring only.
         if self._attribute == "ventilate_variant":
             bitstr = str(self._device.get("modes") or "")
             if bitstr and all(ch in "01" for ch in bitstr):
@@ -358,7 +368,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
                     return "3"
                 if sup8:
                     return "8"
-                return "none"
+            return "none"
 
         # PII nested fields (latitude/longitude live under "location")
         if self._attribute in {"latitude", "longitude"}:
