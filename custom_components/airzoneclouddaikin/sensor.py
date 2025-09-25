@@ -58,7 +58,14 @@ PII_ATTRS = {
 # Sensor specs (attribute, friendly, icon, enabled_by_default, device_class, state_class)
 # ---------------------------
 CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
-    ("local_temp", "Local Temperature", "mdi:thermometer", True, "temperature", "measurement"),
+    (
+        "local_temp",
+        "Local Temperature",
+        "mdi:thermometer",
+        True,
+        "temperature",
+        "measurement",
+    ),
     ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, None, None),
     ("scenary", "Scenary", "mdi:account-clock", True, None, None),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
@@ -82,16 +89,72 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("power", "Power State (Raw)", "mdi:power", False, None, None),
     ("units", "Units", "mdi:ruler", False, None, None),
     # Unoccupied ranges (enabled)
-    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low", True, "temperature", None),
-    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high", True, "temperature", None),
+    (
+        "min_temp_unoccupied",
+        "Min Temp Unoccupied",
+        "mdi:thermometer-low",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "max_temp_unoccupied",
+        "Max Temp Unoccupied",
+        "mdi:thermometer-high",
+        True,
+        "temperature",
+        None,
+    ),
     # Device limits (enabled)
-    ("min_limit_cold", "Min Limit Cool", "mdi:thermometer-chevron-down", True, "temperature", None),
-    ("max_limit_cold", "Max Limit Cool", "mdi:thermometer-chevron-up", True, "temperature", None),
-    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-chevron-down", True, "temperature", None),
-    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-chevron-up", True, "temperature", None),
+    (
+        "min_limit_cold",
+        "Min Limit Cool",
+        "mdi:thermometer-chevron-down",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "max_limit_cold",
+        "Max Limit Cool",
+        "mdi:thermometer-chevron-up",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "min_limit_heat",
+        "Min Limit Heat",
+        "mdi:thermometer-chevron-down",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "max_limit_heat",
+        "Max Limit Heat",
+        "mdi:thermometer-chevron-up",
+        True,
+        "temperature",
+        None,
+    ),
     # Timestamps (disabled by default)
-    ("update_date", "Last Update (Device)", "mdi:clock-check-outline", False, "timestamp", None),
-    ("connection_date", "Last Connection", "mdi:clock-outline", False, "timestamp", None),
+    (
+        "update_date",
+        "Last Update (Device)",
+        "mdi:clock-check-outline",
+        False,
+        "timestamp",
+        None,
+    ),
+    (
+        "connection_date",
+        "Last Connection",
+        "mdi:clock-outline",
+        False,
+        "timestamp",
+        None,
+    ),
 ]
 
 # PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
@@ -121,7 +184,11 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
     # Read opt-in from options first, then data (setup step)
     opts = entry.options or {}
-    expose_pii = bool(opts.get("expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False)))
+    expose_pii = bool(
+        opts.get(
+            "expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False)
+        )
+    )
 
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
     if expose_pii:
@@ -159,7 +226,9 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{device_id}_{attribute}"
         # Only "local_temp" and PII sensors are NOT diagnostic
         self._attr_entity_category = (
-            None if attribute in {"local_temp", *PII_ATTRS} else EntityCategory.DIAGNOSTIC
+            None
+            if attribute in {"local_temp", *PII_ATTRS}
+            else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
         self._attr_native_unit_of_measurement = (
