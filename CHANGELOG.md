@@ -6,9 +6,11 @@
 - Sensors: `min_limit_cold/max_limit_cold/min_limit_heat/max_limit_heat` and `min/max_temp_unoccupied` are now enabled by default; all temperature-like sensors display **1 decimal** for consistency.
 - Sensors: `update_date` and `connection_date` added as `timestamp` (disabled by default).
 - - Privacy/PII: sensors for `mac`, `pin`, `installation_id`, `spot_name`, `complete_name`, `latitude`, `longitude`, and `time_zone` are created **only when** the new `expose_pii_identifiers` option is enabled; when enabled they are **on by default** and are **not** marked as diagnostic.
+- Sensor: `ventilate_variant` (diagnostic, enabled by default) derived from the `modes` bitmask; values: `"3"` (preferred), `"8"` (fallback), or `"none"`.
 ### Changed
 - Sensors: `progs_enabled` is enabled by default.
 - Formatting: all temperature/setpoint/limit/unoccupied values are parsed safely and rounded to **one decimal**.
+- Sensor: `mode_text` mapping extended to include P2=6 (`cool_air`), P2=7 (`heat_air`), and P2=8 (`ventilate (alt)`), keeping existing mappings for 1/2/3/4/5.
 ### Security/Privacy
 - Config/Options: added `expose_pii_identifiers` opt-in flag (stored only; PII is never logged or included in diagnostics).
 ### Notes
