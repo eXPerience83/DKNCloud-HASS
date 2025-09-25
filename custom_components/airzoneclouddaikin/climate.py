@@ -5,6 +5,7 @@ Key behaviors (concise):
 - Integer-only setpoints: precision = whole degrees, target_temperature_step = 1.0 °C.
 - Supported HVAC modes: COOL / HEAT / FAN_ONLY / DRY (no AUTO/HEAT_COOL for now).
 - API mapping: P1=power, P2=mode, P7/P8=setpoint (cool/heat), P3/P4=fan (cool/heat).
+- Ventilate policy: prefer P2=3 if supported; else P2=8; else do not expose FAN_ONLY.
 - Privacy: never log or expose secrets (email/token/MAC/PIN).
 """
 
@@ -25,17 +26,19 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Airzone mode codes observed in API:
-# 1: COOL, 2: HEAT, 3: FAN_ONLY, 5: DRY
+# 1: COOL, 2: HEAT, 3: FAN_ONLY (ventilate cold-type), 5: DRY, 8: FAN_ONLY (ventilate heat-type)
 MODE_TO_HVAC: dict[str, HVACMode] = {
     "1": HVACMode.COOL,
     "2": HVACMode.HEAT,
     "3": HVACMode.FAN_ONLY,
     "5": HVACMode.DRY,
+    "8": HVACMode.FAN_ONLY,  # treat P2=8 as fan-only (ventilate variant)
 }
+# NOTE: We do not use HVAC_TO_MODE blindly for FAN_ONLY; we choose 3/8 by supported bitmask.
 HVAC_TO_MODE: dict[HVACMode, str] = {
     HVACMode.COOL: "1",
     HVACMode.HEAT: "2",
-    HVACMode.FAN_ONLY: "3",
+    HVACMode.FAN_ONLY: "3",  # default; actual send uses _preferred_ventilate_code()
     HVACMode.DRY: "5",
 }
 
@@ -59,7 +62,6 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
     for device_id in list(coordinator.data.keys()):
         entities.append(AirzoneClimate(coordinator, device_id))
 
-    # Entities read from coordinator snapshot; no need to update before add
     async_add_entities(entities)
 
 
@@ -121,12 +123,35 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             return False
 
     def _backend_mode_code(self) -> str | None:
-        """Return backend mode code as str ('1','2','3','5') if present."""
+        """Return backend mode code as str (e.g. '1','2','3','5','8') if present."""
         m = self._optimistic.get("mode")
         if m is not None:
             return str(m)
         raw = self._device.get("mode")
         return str(raw) if raw is not None else None
+
+    def _modes_bitstring(self) -> str:
+        """Return the device 'modes' capability bitstring or empty string."""
+        raw = self._device.get("modes")
+        bitstr = str(raw) if raw is not None else ""
+        if bitstr and all(ch in "01" for ch in bitstr):
+            return bitstr
+        return ""
+
+    def _supports_p2_value(self, code: int) -> bool:
+        """True if 'modes' bitstring indicates support for given P2 code."""
+        bitstr = self._modes_bitstring()
+        idx = code - 1
+        return bool(bitstr and idx >= 0 and len(bitstr) > idx and bitstr[idx] == "1")
+
+    def _preferred_ventilate_code(self) -> str | None:
+        """Choose P2 value for FAN_ONLY: prefer 3, else 8, else None."""
+        if self._supports_p2_value(3):
+            return "3"
+        if self._supports_p2_value(8):
+            return "8"
+        # No ventilate supported
+        return None
 
     def _hvac_from_device(self) -> HVACMode:
         """Derive HVAC mode based on power + mode code."""
@@ -160,22 +185,28 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     def hvac_modes(self) -> list[HVACMode]:
         """Expose supported modes based on optional 'modes' bitstring.
 
-        Bit positions:
-          idx0 -> P2=1 (COOL)
-          idx1 -> P2=2 (HEAT)
-          idx2 -> P2=3 (FAN_ONLY)
-          idx3 -> P2=4 (AUTO/HEAT_COOL)   [not exposed]
-          idx4 -> P2=5 (DRY)
+        Bit positions (0-based):
+          0 -> P2=1 (COOL)
+          1 -> P2=2 (HEAT)
+          2 -> P2=3 (FAN_ONLY variant)
+          3 -> P2=4 (AUTO/HEAT_COOL)   [not exposed]
+          4 -> P2=5 (DRY)
+          5 -> P2=6 (unused here)
+          6 -> P2=7 (unused here)
+          7 -> P2=8 (FAN_ONLY variant)
         """
         modes = [HVACMode.OFF]
-        raw = self._device.get("modes")
-        bitstr = str(raw) if raw is not None else ""
-        if bitstr and all(ch in "01" for ch in bitstr):
+        bitstr = self._modes_bitstring()
+        if bitstr:
             if len(bitstr) >= 1 and bitstr[0] == "1":
                 modes.append(HVACMode.COOL)
             if len(bitstr) >= 2 and bitstr[1] == "1":
                 modes.append(HVACMode.HEAT)
-            if len(bitstr) >= 3 and bitstr[2] == "1":
+            # FAN_ONLY if P2=3 or P2=8 supported
+            fan_ok = (len(bitstr) >= 3 and bitstr[2] == "1") or (
+                len(bitstr) >= 8 and bitstr[7] == "1"
+            )
+            if fan_ok:
                 modes.append(HVACMode.FAN_ONLY)
             if len(bitstr) >= 5 and bitstr[4] == "1":
                 modes.append(HVACMode.DRY)
@@ -210,6 +241,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         elif mode == HVACMode.HEAT:
             val = self._optimistic.get("heat_consign", self._device.get("heat_consign"))
         else:
+            # DRY or FAN_ONLY: no target temperature
             return None
         return self._parse_float(val)
 
@@ -274,16 +306,29 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def fan_mode(self) -> str | None:
-        """Return current speed (numeric string), if applicable."""
+        """Return current speed (numeric string), if applicable.
+
+        FAN_ONLY routing:
+        - If backend P2 is 3: use cold_speed
+        - If backend P2 is 8: use heat_speed
+        """
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             return None
-        key = "heat_speed" if mode == HVACMode.HEAT else "cold_speed"
+
+        if mode == HVACMode.HEAT:
+            key = "heat_speed"
+        elif mode == HVACMode.COOL:
+            key = "cold_speed"
+        else:  # FAN_ONLY
+            code = self._backend_mode_code()
+            key = "heat_speed" if code == "8" else "cold_speed"
+
         val = self._optimistic.get(key, self._device.get(key))
         return str(val) if val else None
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
-        """Set fan speed via P3 (cool/fan) or P4 (heat)."""
+        """Set fan speed via P3 (cold/fan-only: code 3) or P4 (heat/fan-only: code 8)."""
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             _LOGGER.debug("Ignoring set_fan_mode in mode %s", mode)
@@ -292,13 +337,26 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
             return
 
+        option: str
+        key: str
         if mode == HVACMode.HEAT:
-            await self._send_p_event("P4", fan_mode)
-            self._optimistic["heat_speed"] = fan_mode
+            option = "P4"
+            key = "heat_speed"
+        elif mode == HVACMode.COOL:
+            option = "P3"
+            key = "cold_speed"
         else:
-            # COOL or FAN_ONLY
-            await self._send_p_event("P3", fan_mode)
-            self._optimistic["cold_speed"] = fan_mode
+            # FAN_ONLY: route based on backend P2 code (3 -> P3/cold, 8 -> P4/heat)
+            code = self._backend_mode_code()
+            if code == "8":
+                option = "P4"
+                key = "heat_speed"
+            else:
+                option = "P3"
+                key = "cold_speed"
+
+        await self._send_p_event(option, fan_mode)
+        self._optimistic[key] = fan_mode
 
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
@@ -338,10 +396,19 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             if not self._device_power_on():
                 await self._send_p_event("P1", 1)
                 self._optimistic.update({"power": "1"})
-            mode_code = HVAC_TO_MODE.get(hvac_mode)
-            if mode_code:
-                await self._send_p_event("P2", mode_code)
-                self._optimistic.update({"mode": mode_code})
+
+            if hvac_mode == HVACMode.FAN_ONLY:
+                # Ventilate policy: prefer P2=3; else P2=8; else do nothing
+                code = self._preferred_ventilate_code() or "3"  # default if unknown
+                # If neither supported and we defaulted but really unsupported, backend will reject;
+                # state will reconcile on next refresh.
+                await self._send_p_event("P2", code)
+                self._optimistic.update({"mode": code})
+            else:
+                mode_code = HVAC_TO_MODE.get(hvac_mode)
+                if mode_code:
+                    await self._send_p_event("P2", mode_code)
+                    self._optimistic.update({"mode": mode_code})
 
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
@@ -349,7 +416,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self.async_write_ha_state()
         self._schedule_refresh()
 
-    # ---- Features (keeps previous regression fix) -----------------------
+    # ---- Features --------------------------------------------------------
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
@@ -361,7 +428,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             feats |= ClimateEntityFeature.FAN_MODE
         elif mode == HVACMode.FAN_ONLY:
             feats |= ClimateEntityFeature.FAN_MODE
-        return feats  # DRY/OFF: no fan/temperature features
+        # DRY/OFF: no fan/temperature features
+        return feats
 
     # ---- Write helpers ---------------------------------------------------
 
