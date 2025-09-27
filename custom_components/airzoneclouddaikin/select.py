@@ -15,7 +15,7 @@ from typing import Any
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -67,7 +67,8 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
     _attr_has_entity_name = True
     _attr_name = "Scenary"
     _attr_options = _OPTIONS
-    _attr_entity_category = EntityCategory.CONFIG
+    # Place this under Controls: explicit None (not Diagnostic, not Configuration).
+    _attr_entity_category = None  # <-- key change
 
     def __init__(
         self,
