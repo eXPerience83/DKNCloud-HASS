@@ -3,13 +3,13 @@
 Highlights:
 - Centralized polling via DataUpdateCoordinator.
 - Robust parsing of installation relations (handles 'installation.id' or 'installation_id').
-- Options-aware: scan_interval and enable_presets (select/number) are configurable post-setup.
+- Options-aware: scan_interval is configurable post-setup.
+- Presets (select/number) are now ALWAYS loaded (opt-in removed).
 - Never logs or exposes PII (email, token, MAC, PIN, GPS).
 """
 
 from __future__ import annotations
 
-import importlib.util
 import logging
 from datetime import timedelta
 from typing import Any
@@ -79,12 +79,6 @@ async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
         ) from err
 
 
-@callback
-def _module_exists(modname: str) -> bool:
-    """Return True if a module import is resolvable (defensive check)."""
-    return importlib.util.find_spec(modname) is not None
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DKN Cloud for HASS from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -107,9 +101,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
         )
     )
-    enable_presets = bool(
-        entry.options.get("enable_presets", cfg.get("enable_presets", False))
-    )
 
     coordinator = DataUpdateCoordinator(
         hass,
@@ -126,30 +117,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         "api": api,
         "coordinator": coordinator,
-        "enable_presets": enable_presets,
     }
 
-    # Always load base platforms
+    # Load base platforms
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
-
-    # Conditionally load presets (select/number) with module presence check
-    if enable_presets:
-        if _module_exists("custom_components.airzoneclouddaikin.select"):
-            await hass.config_entries.async_forward_entry_setups(entry, ["select"])
-        else:
-            _LOGGER.debug("select.py not present; skipping select platform.")
-        if _module_exists("custom_components.airzoneclouddaikin.number"):
-            await hass.config_entries.async_forward_entry_setups(entry, ["number"])
-        else:
-            _LOGGER.debug("number.py not present; skipping number platform.")
+    # Presets ALWAYS loaded (opt-in removed)
+    await hass.config_entries.async_forward_entry_setups(entry, ["select", "number"])
 
     # Reload entry on options updates
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
     _LOGGER.info(
-        "DKN Cloud for HASS configured (scan_interval=%ss, presets=%s).",
+        "DKN Cloud for HASS configured (scan_interval=%ss; presets loaded).",
         scan_interval,
-        enable_presets,
     )
     return True
 
