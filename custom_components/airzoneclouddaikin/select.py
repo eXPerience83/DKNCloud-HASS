@@ -9,6 +9,7 @@ Options: "occupied", "vacant", "sleep".
 from __future__ import annotations
 
 import asyncio
+import time  # Moved to module level to avoid imports inside properties/methods.
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,7 +26,7 @@ from .airzone_api import AirzoneAPI
 from .const import DOMAIN
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
-_OPTIMISTIC_TTL_SEC = 6.0  # short TTL to keep UI snappy until next refresh
+_OPTIMISTIC_TTL_SEC = 6.0  # Short TTL to keep UI snappy until next refresh
 
 
 async def async_setup_entry(
@@ -68,7 +69,7 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
     _attr_name = "Scenary"
     _attr_options = _OPTIONS
     # Place this under Controls: explicit None (not Diagnostic, not Configuration).
-    _attr_entity_category = None  # <-- key change
+    _attr_entity_category = None
 
     def __init__(
         self,
@@ -109,8 +110,6 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
     @property
     def current_option(self) -> str | None:
         """Return current scenary (optimistic if active)."""
-        import time
-
         if (
             self._optimistic.option is not None
             and time.monotonic() < self._optimistic.valid_until_monotonic
@@ -126,15 +125,14 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
             raise ValueError(f"Invalid scenary option: {option}")
 
         # Optimistic state
-        import time
-
         self._optimistic.option = option
         self._optimistic.valid_until_monotonic = time.monotonic() + _OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
 
         try:
             await self._api.put_device_scenary(self._device_id, option)
-        except asyncio.CancelledError:  # let HA cancel cleanly
+        except asyncio.CancelledError:
+            # Let HA cancel cleanly
             raise
         except Exception:
             # Revert on error
