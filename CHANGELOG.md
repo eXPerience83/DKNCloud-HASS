@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- Presets are now **always loaded** from `__init__.py` (`select.py` and `number.py` are forwarded unconditionally). The previous `enable_presets` toggle is ignored by setup.
+### Notes
+- The Options flow may still show `enable_presets` until we remove it in a later change; it has **no effect** now.
+- No other behavior changed. Entry reload on options update remains intact.
+
 ## [0.3.7-alpha.7] - 2025-09-25
 ### Fixed
 - Options: restored `enable_presets` (select/number) by reading from `options` **and** falling back to `data` during setup.
