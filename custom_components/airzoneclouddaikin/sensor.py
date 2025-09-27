@@ -55,6 +55,16 @@ PII_ATTRS = {
     "time_zone",
 }
 
+# Non-diagnostic whitelist (daily-use sensors)
+_NON_DIAG_WHITELIST = {
+    "local_temp",
+    "mode_text",
+    "cold_consign",
+    "heat_consign",
+    "cold_speed",
+    "heat_speed",
+}
+
 # ---------------------------
 # Sensor specs (attribute, friendly, icon, enabled_by_default, device_class, state_class)
 # ---------------------------
@@ -167,6 +177,15 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "timestamp",
         None,
     ),
+    # --- Slats (diagnostic, disabled by default) ---
+    ("ver_state_slats", "Vertical Slats State", "mdi:unfold-more-vertical", False, None, None),
+    ("ver_position_slats", "Vertical Slats Position", "mdi:unfold-more-vertical", False, None, None),
+    ("hor_state_slats", "Horizontal Slats State", "mdi:unfold-more-horizontal", False, None, None),
+    ("hor_position_slats", "Horizontal Slats Position", "mdi:unfold-more-horizontal", False, None, None),
+    ("ver_cold_slats", "Vertical Slats (Cool Pattern)", "mdi:snowflake", False, None, None),
+    ("ver_heat_slats", "Vertical Slats (Heat Pattern)", "mdi:fire", False, None, None),
+    ("hor_cold_slats", "Horizontal Slats (Cool Pattern)", "mdi:snowflake", False, None, None),
+    ("hor_heat_slats", "Horizontal Slats (Heat Pattern)", "mdi:fire", False, None, None),
 ]
 
 # PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
@@ -252,10 +271,10 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = friendly
         self._attr_icon = icon
         self._attr_unique_id = f"{device_id}_{attribute}"
-        # Only "local_temp" and PII sensors are NOT diagnostic
+        # Entity category: daily-use whitelist and PII are NOT diagnostic; rest are diagnostic
         self._attr_entity_category = (
             None
-            if attribute in {"local_temp", *PII_ATTRS}
+            if attribute in _NON_DIAG_WHITELIST or attribute in PII_ATTRS
             else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
