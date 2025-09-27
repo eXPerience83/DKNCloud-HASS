@@ -11,6 +11,7 @@ Key behaviors (concise):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -59,7 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
         return
 
     entities: list[AirzoneClimate] = []
-    for device_id in list(coordinator.data.keys()):
+    for device_id in list((coordinator.data or {}).keys()):
         entities.append(AirzoneClimate(coordinator, device_id))
 
     async_add_entities(entities)
@@ -90,7 +91,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     @property
     def _device(self) -> dict[str, Any]:
         """Return latest device snapshot from the coordinator."""
-        return self.coordinator.data.get(self._device_id, {})  # type: ignore[no-any-return]
+        return (self.coordinator.data or {}).get(self._device_id, {})  # type: ignore[no-any-return]
 
     def _fan_speed_max(self) -> int:
         """Max available fan speed based on 'availables_speeds'."""
@@ -391,22 +392,27 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         if hvac_mode == HVACMode.OFF:
             await self._send_p_event("P1", 0)
             self._optimistic.update({"power": "0"})
-        else:
-            # Ensure power ON then set P2 (auto-on only when changing mode)
-            if not self._device_power_on():
-                await self._send_p_event("P1", 1)
-                self._optimistic.update({"power": "1"})
+            self._optimistic_expires = (
+                self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            )
+            self.async_write_ha_state()
+            self._schedule_refresh()
+            return
 
-            if hvac_mode == HVACMode.FAN_ONLY:
-                # Ventilate policy: prefer P2=3; else P2=8; else do nothing
-                code = self._preferred_ventilate_code() or "3"  # default if unknown
-                await self._send_p_event("P2", code)
-                self._optimistic.update({"mode": code})
-            else:
-                mode_code = HVAC_TO_MODE.get(hvac_mode)
-                if mode_code:
-                    await self._send_p_event("P2", mode_code)
-                    self._optimistic.update({"mode": mode_code})
+        # Ensure power ON then set P2 (auto-on only when changing mode)
+        if not self._device_power_on():
+            await self._send_p_event("P1", 1)
+
+        if hvac_mode == HVACMode.FAN_ONLY:
+            # Ventilate policy: prefer P2=3; else P2=8; else default "3" if unknown
+            code = self._preferred_ventilate_code() or "3"
+            await self._send_p_event("P2", code)
+            self._optimistic.update({"power": "1", "mode": code})
+        else:
+            mode_code = HVAC_TO_MODE.get(hvac_mode)
+            if mode_code:
+                await self._send_p_event("P2", mode_code)
+                self._optimistic.update({"power": "1", "mode": mode_code})
 
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
@@ -434,13 +440,13 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     async def _send_p_event(self, option: str, value: Any) -> None:
         """Send a P# command using the canonical 'modmaquina' payload.
 
-        Mirrors switch.py behavior:
         {"event":{"cgi":"modmaquina","device_id":<id>,"option":"P#","value":...}}
         """
         api = getattr(self.coordinator, "api", None)
         if api is None:
             _LOGGER.error("API handle missing in coordinator; cannot send_event")
             return
+
         payload = {
             "event": {
                 "cgi": "modmaquina",
@@ -451,8 +457,13 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         }
         try:
             await api.send_event(payload)
+        except asyncio.CancelledError:
+            # Propagate cancellations cleanly.
+            raise
         except Exception as err:
+            # Do not swallow errors: let callers decide (UI should reflect failure).
             _LOGGER.warning("Failed to send_event %s=%s: %s", option, value, err)
+            raise
 
     def _schedule_refresh(self) -> None:
         """Schedule a short delayed refresh after write operations."""
