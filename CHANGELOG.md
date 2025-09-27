@@ -5,6 +5,12 @@
 - Presets are now **always loaded** from `__init__.py` (`select.py` and `number.py` are forwarded unconditionally). The previous `enable_presets` toggle is ignored by setup.
 - Options: removed **`enable_presets`** from the config & options flow. Presets (select/number) are now always loaded (per previous step), so the flag is no longer needed.
 - Options UI now only exposes **`scan_interval`** (min 10s) and **`expose_pii_identifiers`**.
+- Sensors: extended the **non-diagnostic whitelist** to `{local_temp, mode_text, cold_consign, heat_consign, cold_speed, heat_speed}` so these show under regular *Sensors* instead of *Diagnostics*.
+### Added
+- Sensors: added **slats** telemetry as **diagnostic disabled-by-default** (`ver_state_slats`, `ver_position_slats`, `hor_state_slats`, `hor_position_slats`, `ver_cold_slats`, `ver_heat_slats`, `hor_cold_slats`, `hor_heat_slats`).
+### Unchanged (confirmed)
+- Defaults preserved: `power (raw)` remains diagnostic **enabled**; `units`, `update_date`, `connection_date` remain diagnostic **disabled**.
+- PII cleanup remains **narrow** (removes only sensors whose unique_id ends with a PII attribute) to avoid deleting non-PII entities.
 
 ## [0.3.7-alpha.7] - 2025-09-25
 ### Fixed
