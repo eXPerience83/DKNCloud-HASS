@@ -41,7 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
         return
 
     entities: list[AirzonePowerSwitch] = []
-    for device_id in list(coordinator.data.keys()):
+    for device_id in list((coordinator.data or {}).keys()):
         entities.append(AirzonePowerSwitch(coordinator, device_id))
 
     # Entities read from coordinator snapshot; no update_before_add needed.
@@ -71,7 +71,7 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def _device(self) -> dict[str, Any]:
         """Return the current device snapshot from the coordinator."""
-        return self.coordinator.data.get(self._device_id, {})  # type: ignore[no-any-return]
+        return (self.coordinator.data or {}).get(self._device_id, {})  # type: ignore[no-any-return]
 
     def _now(self) -> float:
         return time.monotonic()
@@ -151,7 +151,8 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         """Return device info for the device registry (without exposing the PIN)."""
         dev = self._device
         info: dict[str, Any] = {
-            "identifiers": {(DOMAIN, dev.get("id"))},
+            # A3: ensure stable identifier even if 'dev' is still an empty snapshot.
+            "identifiers": {(DOMAIN, dev.get("id") or self._device_id)},
             "name": dev.get("name"),
             "manufacturer": "Daikin",
             # Privacy: do not include PIN in model string.
