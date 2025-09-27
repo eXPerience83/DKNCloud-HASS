@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.7-alpha.11] - 2025-09-27
+### Changed
+- Presets UI: `scenary` now appears under **Controls** (entity_category=None) and `sleep_time` now appears under **Configuration** (entity_category=CONFIG) for clearer organization.
+- No other logic changes: unique IDs, optimistic updates, and coordinator refresh behavior remain the same.
+
 ## [0.3.7-alpha.9] - 2025-09-27
 ### Added
 - Binary Sensor: new `device_on` (device_class: power), enabled by default and non-diagnostic. Mirrors the backend `power` field with robust normalization for dashboards/automations. No I/O in properties; reads from the coordinator snapshot.
