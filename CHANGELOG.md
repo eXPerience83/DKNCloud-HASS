@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.7-alpha.9] - 2025-09-27
+### Added
+- Binary Sensor: new `device_on` (device_class: power), enabled by default and non-diagnostic. Mirrors the backend `power` field with robust normalization for dashboards/automations. No I/O in properties; reads from the coordinator snapshot.
+### Changed
+- Core: `__init__.py` now always loads the `binary_sensor` platform (minimal change—no other behavior altered).
+### Notes
+- Presets (`select`/`number`) remain always loaded as of 0.3.7-alpha.8.
+- No translation updates in this build.
+
 ## [0.3.7-alpha.8] - 2025-09-27
 ### Changed
 - Presets are now **always loaded** from `__init__.py` (`select.py` and `number.py` are forwarded unconditionally). The previous `enable_presets` toggle is ignored by setup.
