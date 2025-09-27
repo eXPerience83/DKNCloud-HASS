@@ -1,11 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.7-alpha.8] - 2025-09-27
 ### Changed
 - Presets are now **always loaded** from `__init__.py` (`select.py` and `number.py` are forwarded unconditionally). The previous `enable_presets` toggle is ignored by setup.
-### Notes
-- The Options flow may still show `enable_presets` until we remove it in a later change; it has **no effect** now.
-- No other behavior changed. Entry reload on options update remains intact.
+- Options: removed **`enable_presets`** from the config & options flow. Presets (select/number) are now always loaded (per previous step), so the flag is no longer needed.
+- Options UI now only exposes **`scan_interval`** (min 10s) and **`expose_pii_identifiers`**.
 
 ## [0.3.7-alpha.7] - 2025-09-25
 ### Fixed
