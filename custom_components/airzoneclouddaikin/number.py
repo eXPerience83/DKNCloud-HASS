@@ -15,8 +15,10 @@ from typing import Any
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.entity import EntityCategory  # Added: to place in Configuration
+from homeassistant.helpers.entity import (
+    DeviceInfo,
+    EntityCategory,  # Added: to place in Configuration
+)
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
