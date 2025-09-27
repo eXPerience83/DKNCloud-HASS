@@ -25,7 +25,7 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10  # keep aligned with config_flow minimum
-_BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch"]
+_BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
 
 
 async def _async_update_data(api: AirzoneAPI) -> dict[str, dict[str, Any]]:
