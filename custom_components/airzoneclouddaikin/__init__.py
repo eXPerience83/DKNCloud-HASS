@@ -15,7 +15,7 @@ from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -28,7 +28,7 @@ DEFAULT_SCAN_INTERVAL_SEC = 10  # keep aligned with config_flow minimum
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch"]
 
 
-async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
+async def _async_update_data(api: AirzoneAPI) -> dict[str, dict[str, Any]]:
     """Fetch and aggregate device data from the API.
 
     Implementation details:
@@ -40,7 +40,7 @@ async def _async_update_data(api: AirzoneAPI) -> dict[str, Any]:
     - Let exceptions bubble as UpdateFailed so HA can surface coordinator errors.
     """
     try:
-        data: dict[str, Any] = {}
+        data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
 
         for rel in relations or []:
@@ -102,7 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
 
-    coordinator = DataUpdateCoordinator(
+    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name="airzone_data",
