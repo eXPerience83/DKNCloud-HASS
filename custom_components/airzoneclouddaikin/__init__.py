@@ -102,12 +102,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
 
-    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name="airzone_data",
-        update_method=lambda: _async_update_data(api),
-        update_interval=timedelta(seconds=max(10, scan_interval)),
+    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = (
+        DataUpdateCoordinator(
+            hass,
+            _LOGGER,
+            name="airzone_data",
+            update_method=lambda: _async_update_data(api),
+            update_interval=timedelta(seconds=max(10, scan_interval)),
+        )
     )
     # Attach API for platforms (no I/O in properties)
     coordinator.api = api  # type: ignore[attr-defined]
