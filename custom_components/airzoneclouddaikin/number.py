@@ -9,6 +9,7 @@ Implements a NumberEntity for device 'sleep_time' via AirzoneAPI.put_device_slee
 from __future__ import annotations
 
 import asyncio
+import time  # Moved to module level to avoid imports inside properties/methods.
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,7 +18,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import (
     DeviceInfo,
-    EntityCategory,  # Added: to place in Configuration
+    EntityCategory,  # To place this control under Configuration
 )
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -92,7 +93,7 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         self._optimistic = _OptimisticState()
         self._attr_unique_id = f"{device_id}_sleep_time"
         # Place this control under "Configuration" section in HA UI.
-        self._attr_entity_category = EntityCategory.CONFIG  # <-- key change
+        self._attr_entity_category = EntityCategory.CONFIG
 
     # ---------- Device registry ----------
     @property
@@ -119,8 +120,6 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
     @property
     def native_value(self) -> int | None:
         """Return current sleep_time (optimistic if active)."""
-        import time
-
         if (
             self._optimistic.value is not None
             and time.monotonic() < self._optimistic.valid_until_monotonic
@@ -131,6 +130,7 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         try:
             return int(val) if val is not None else None
         except Exception:
+            # Defensive: ignore invalid values
             return None
 
     async def async_set_native_value(self, value: float) -> None:
@@ -140,8 +140,6 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         ivalue = max(_MIN, min(_MAX, ivalue))
 
         # Optimistic update for a few seconds
-        import time
-
         self._optimistic.value = ivalue
         self._optimistic.valid_until_monotonic = time.monotonic() + _OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
