@@ -2,7 +2,7 @@
 
 This file keeps changes minimal and focused:
 - Adds a proper OptionsFlow so Home Assistant shows the "Options" button.
-- Stores scan_interval and enable_presets; OptionsFlow can override them later.
+- Stores scan_interval; OptionsFlow can override it later.
 - Adds a privacy-friendly opt-in flag for exposing PII-related identifiers in sensors
   (not used yet to create entities; never logged nor included in diagnostics).
 """
@@ -25,7 +25,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # Option keys (kept as plain strings to avoid public API rename churn)
 CONF_SCAN_INTERVAL = "scan_interval"
-CONF_ENABLE_PRESETS = "enable_presets"
 CONF_EXPOSE_PII = "expose_pii_identifiers"  # single opt-in switch for PII fields
 
 # --- User step schema (minimal change from previous versions) -----------------
@@ -36,7 +35,6 @@ DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_SCAN_INTERVAL, default=10): vol.All(
             vol.Coerce(int), vol.Range(min=10)
         ),
-        vol.Optional(CONF_ENABLE_PRESETS, default=False): cv.boolean,
         # PII opt-in is off by default; we never log PII regardless of this flag.
         vol.Optional(CONF_EXPOSE_PII, default=False): cv.boolean,
     }
@@ -84,16 +82,13 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
 
                 if ok:
-                    # Minimal change policy: keep all inputs in data; options may override later.
+                    # Minimal change policy: keep inputs in data; options may override later.
                     return self.async_create_entry(
                         title="DKN Cloud for HASS",
                         data={
                             CONF_USERNAME: user_input[CONF_USERNAME],
                             CONF_PASSWORD: user_input[CONF_PASSWORD],
                             CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL, 10),
-                            CONF_ENABLE_PRESETS: user_input.get(
-                                CONF_ENABLE_PRESETS, False
-                            ),
                             CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False),
                         },
                     )
@@ -116,7 +111,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
-    """Options flow to edit scan_interval and feature flags."""
+    """Options flow to edit scan_interval and privacy flags."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
@@ -140,9 +135,6 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         current_scan = int(
             opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10))
         )
-        current_presets = bool(
-            opts.get(CONF_ENABLE_PRESETS, data.get(CONF_ENABLE_PRESETS, False))
-        )
         current_pii = bool(opts.get(CONF_EXPOSE_PII, data.get(CONF_EXPOSE_PII, False)))
 
         schema = vol.Schema(
@@ -150,7 +142,6 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(CONF_SCAN_INTERVAL, default=current_scan): vol.All(
                     vol.Coerce(int), vol.Range(min=10)
                 ),
-                vol.Optional(CONF_ENABLE_PRESETS, default=current_presets): cv.boolean,
                 vol.Optional(CONF_EXPOSE_PII, default=current_pii): cv.boolean,
             }
         )
