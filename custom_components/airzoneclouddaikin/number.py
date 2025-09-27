@@ -16,6 +16,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import EntityCategory  # Added: to place in Configuration
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -88,6 +89,8 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         self._device_id = device_id
         self._optimistic = _OptimisticState()
         self._attr_unique_id = f"{device_id}_sleep_time"
+        # Place this control under "Configuration" section in HA UI.
+        self._attr_entity_category = EntityCategory.CONFIG  # <-- key change
 
     # ---------- Device registry ----------
     @property
