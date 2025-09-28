@@ -22,4 +22,4 @@ jobs:
           # Remove these ignores once:
           #  - you añadas topics en GitHub (Settings → Topics) y
           #  - si quieres entrar en el default store, envíes PR a home-assistant/brands
-          ignore: "topics brands"
+          ignore: "brands"
