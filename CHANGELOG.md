@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.7] - 2025-09-28
+### Fixed
+- switch: ensure stable device identifier even when coordinator snapshot is empty at startup (fallback to `self._device_id`).
+- climate: do not swallow API errors; `_send_p_event()` now re-raises (except `CancelledError`). Callers only apply optimistic state and schedule refresh after a successful send, preventing “phantom success” in the UI.
+- - Moved `import time` to module level in `select.py` and `number.py` to avoid per-read imports in entity properties and improve async hygiene.
+### Notes
+- `P2=4 (AUTO)` remains unsupported for now; docs toggle will be added when implemented.
+
 ## [0.3.7-alpha.11] - 2025-09-27
 ### Changed
 - Presets UI: `scenary` now appears under **Controls** (entity_category=None) and `sleep_time` now appears under **Configuration** (entity_category=CONFIG) for clearer organization.
