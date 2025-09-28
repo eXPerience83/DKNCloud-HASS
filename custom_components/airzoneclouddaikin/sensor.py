@@ -1,215 +1,455 @@
-"""Sensor platform for DKN Cloud for HASS."""
-import hashlib
+"""Sensor platform for DKN Cloud for HASS (Airzone Cloud).
+
+Consistent creation off coordinator.data (dict by device_id).
+Core sensors enabled-by-default so they are visible out-of-the-box.
+No I/O in properties; updates come from the coordinator.
+
+Privacy: do not expose PIN as a sensor; redact secrets in logs.
+"""
+
+from __future__ import annotations
+
 import logging
-from homeassistant.components.sensor import SensorEntity
+from datetime import datetime
+from typing import Any
+
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.const import UnitOfTemperature
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# List of diagnostic attributes to expose as sensors
-DIAGNOSTIC_ATTRIBUTES = [
-    # (attribute, friendly name, icon, enabled by default)
-    ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True),
-    ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True),
-    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True),
-    ("scenary", "Scenary", "mdi:bed", True),
-    ("min_temp_unoccupied", "Min Temperature Unoccupied", "mdi:thermometer-low", True),
-    ("max_temp_unoccupied", "Max Temperature Unoccupied", "mdi:thermometer-high", True),
-    ("machine_errors", "Machine Errors", "mdi:alert-octagon", True),
-    ("firmware", "Firmware Version", "mdi:chip", True),
-    ("brand", "Brand/Model", "mdi:factory", True),
-    ("pin", "Device PIN", "mdi:numeric", True),
-    ("power", "Power State (Raw)", "mdi:power", True),
-    ("units", "Units", "mdi:ruler", False),
-    ("availables_speeds", "Available Fan Speeds", "mdi:fan", True),
-    ("cold_consign", "Cool Setpoint", "mdi:snowflake", True),
-    ("heat_consign", "Heat Setpoint", "mdi:fire", True),
-    ("cold_speed", "Cool Fan Speed", "mdi:fan", True),
-    ("heat_speed", "Heat Fan Speed", "mdi:fan", True),
-    ("update_date", "Last Update", "mdi:update", False),
-    ("mode", "Current Mode (Raw)", "mdi:tag", True),
-    # Slats fields, disabled by default
-    ("ver_state_slats", "Vertical Slat State", "mdi:swap-vertical", False),
-    ("ver_position_slats", "Vertical Slat Position", "mdi:swap-vertical", False),
-    ("hor_state_slats", "Horizontal Slat State", "mdi:swap-horizontal", False),
-    ("hor_position_slats", "Horizontal Slat Position", "mdi:swap-horizontal", False),
-    ("ver_cold_slats", "Vertical Cold Slats", "mdi:swap-vertical", False),
-    ("ver_heat_slats", "Vertical Heat Slats", "mdi:swap-vertical", False),
-    ("hor_cold_slats", "Horizontal Cold Slats", "mdi:swap-horizontal", False),
-    ("hor_heat_slats", "Horizontal Heat Slats", "mdi:swap-horizontal", False),
-    # Temperature limits (diagnostics, advanced)
-    ("max_limit_cold", "Max Limit Cool", "mdi:thermometer-high", True),
-    ("min_limit_cold", "Min Limit Cool", "mdi:thermometer-low", True),
-    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-high", True),
-    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-low", True),
-    # Advanced diagnostics, mostly for debug
-    ("state", "State (Raw)", "mdi:eye", False),
-    ("status", "Status", "mdi:check-circle", False),
-    ("connection_date", "Connection Date", "mdi:clock", False),
-    ("last_event_id", "Last Event ID", "mdi:identifier", False),
+# ---------------------------
+# Parsing/format groups
+# ---------------------------
+_TEMP_FLOAT_ATTRS = {
+    "local_temp",
+    "cold_consign",
+    "heat_consign",
+    "min_limit_cold",
+    "max_limit_cold",
+    "min_limit_heat",
+    "max_limit_heat",
+    "min_temp_unoccupied",
+    "max_temp_unoccupied",
+}
+_TIMESTAMP_ATTRS = {"update_date", "connection_date"}
+
+# PII attributes (must never be diagnostic and never logged)
+PII_ATTRS = {
+    "mac",
+    "pin",
+    "installation_id",
+    "spot_name",
+    "complete_name",
+    "latitude",
+    "longitude",
+    "time_zone",
+}
+
+# Non-diagnostic whitelist (daily-use sensors)
+_NON_DIAG_WHITELIST = {
+    "local_temp",
+    "mode_text",
+    "cold_consign",
+    "heat_consign",
+    "cold_speed",
+    "heat_speed",
+}
+
+# ---------------------------
+# Sensor specs (attribute, friendly, icon, enabled_by_default, device_class, state_class)
+# ---------------------------
+CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
+    (
+        "local_temp",
+        "Local Temperature",
+        "mdi:thermometer",
+        True,
+        "temperature",
+        "measurement",
+    ),
+    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, None, None),
+    ("scenary", "Scenary", "mdi:account-clock", True, None, None),
+    ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
+    ("status", "Status", "mdi:information-outline", True, None, None),
+    ("mode", "Mode Code (Raw)", "mdi:numeric", True, None, None),
+    ("mode_text", "Mode (Text)", "mdi:format-list-bulleted", True, None, None),
+    ("machine_errors", "Machine Errors", "mdi:alert-octagon", True, None, None),
+    ("firmware", "Firmware Version", "mdi:chip", True, None, None),
+    ("brand", "Brand/Model", "mdi:factory", True, None, None),
+    ("availables_speeds", "Available Fan Speeds", "mdi:fan", True, None, None),
+    # Setpoints and fan speeds (kept enabled)
+    ("cold_consign", "Cool Setpoint", "mdi:snowflake", True, "temperature", None),
+    ("heat_consign", "Heat Setpoint", "mdi:fire", True, "temperature", None),
+    ("cold_speed", "Cool Fan Speed", "mdi:fan", True, None, None),
+    ("heat_speed", "Heat Fan Speed", "mdi:fan", True, None, None),
 ]
 
+# Diagnostics (some enabled by default per our decisions)
+DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
+    ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True, None, None),
+    # IMPORTANT: 'power' requested enabled-by-default
+    ("power", "Power State (Raw)", "mdi:power", True, None, None),
+    # 'units' should be disabled-by-default
+    ("units", "Units", "mdi:ruler", False, None, None),
+    # Unoccupied ranges (enabled)
+    (
+        "min_temp_unoccupied",
+        "Min Temp Unoccupied",
+        "mdi:thermometer-low",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "max_temp_unoccupied",
+        "Max Temp Unoccupied",
+        "mdi:thermometer-high",
+        True,
+        "temperature",
+        None,
+    ),
+    # Device limits (enabled)
+    (
+        "min_limit_cold",
+        "Min Limit Cool",
+        "mdi:thermometer-chevron-down",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "max_limit_cold",
+        "Max Limit Cool",
+        "mdi:thermometer-chevron-up",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "min_limit_heat",
+        "Min Limit Heat",
+        "mdi:thermometer-chevron-down",
+        True,
+        "temperature",
+        None,
+    ),
+    (
+        "max_limit_heat",
+        "Max Limit Heat",
+        "mdi:thermometer-chevron-up",
+        True,
+        "temperature",
+        None,
+    ),
+    # Ventilate variant (diagnostic, enabled): derive 3/8/none from modes bitmask
+    (
+        "ventilate_variant",
+        "Ventilate Variant (3/8/none)",
+        "mdi:shuffle-variant",
+        True,
+        None,
+        None,
+    ),
+    # Timestamps (disabled by default as requested)
+    (
+        "update_date",
+        "Last Update (Device)",
+        "mdi:clock-check-outline",
+        False,
+        "timestamp",
+        None,
+    ),
+    (
+        "connection_date",
+        "Last Connection",
+        "mdi:clock-outline",
+        False,
+        "timestamp",
+        None,
+    ),
+    # --- Slats (diagnostic, disabled by default) ---
+    (
+        "ver_state_slats",
+        "Vertical Slats State",
+        "mdi:unfold-more-vertical",
+        False,
+        None,
+        None,
+    ),
+    (
+        "ver_position_slats",
+        "Vertical Slats Position",
+        "mdi:unfold-more-vertical",
+        False,
+        None,
+        None,
+    ),
+    (
+        "hor_state_slats",
+        "Horizontal Slats State",
+        "mdi:unfold-more-horizontal",
+        False,
+        None,
+        None,
+    ),
+    (
+        "hor_position_slats",
+        "Horizontal Slats Position",
+        "mdi:unfold-more-horizontal",
+        False,
+        None,
+        None,
+    ),
+    (
+        "ver_cold_slats",
+        "Vertical Slats (Cool Pattern)",
+        "mdi:snowflake",
+        False,
+        None,
+        None,
+    ),
+    ("ver_heat_slats", "Vertical Slats (Heat Pattern)", "mdi:fire", False, None, None),
+    (
+        "hor_cold_slats",
+        "Horizontal Slats (Cool Pattern)",
+        "mdi:snowflake",
+        False,
+        None,
+        None,
+    ),
+    (
+        "hor_heat_slats",
+        "Horizontal Slats (Heat Pattern)",
+        "mdi:fire",
+        False,
+        None,
+        None,
+    ),
+]
+
+# PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
+PII_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
+    ("mac", "MAC Address", "mdi:lan", True, None, None),
+    ("pin", "PIN", "mdi:key-variant", True, None, None),
+    ("installation_id", "Installation ID", "mdi:identifier", True, None, None),
+    ("spot_name", "Spot Name", "mdi:map-marker", True, None, None),
+    ("complete_name", "Location (Full Name)", "mdi:home-map-marker", True, None, None),
+    ("latitude", "Latitude", "mdi:map-marker-radius", True, None, None),
+    ("longitude", "Longitude", "mdi:map-marker-radius-outline", True, None, None),
+    ("time_zone", "Time Zone", "mdi:earth", True, None, None),
+]
+
+
 async def async_setup_entry(hass, entry, async_add_entities):
-    """
-    Set up the sensor platform from a config entry using the DataUpdateCoordinator.
-    For each device, creates a main temperature sensor (local_temp) and a set of diagnostic sensors.
-    """
+    """Create sensors according to coordinator snapshot and privacy options."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if not data:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
+
     coordinator = data.get("coordinator")
-    sensors = []
-    for device_id, device in coordinator.data.items():
-        # Main temperature sensor (local_temp)
-        sensors.append(AirzoneTemperatureSensor(coordinator, device))
-        for attr, name, icon, enabled_default in DIAGNOSTIC_ATTRIBUTES:
-            if attr == "local_temp":
-                continue
-            sensors.append(
-                AirzoneDiagnosticSensor(coordinator, device, attr, name, icon, enabled_default)
-            )
-    async_add_entities(sensors, True)
+    if coordinator is None:
+        _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
+        return
 
-class AirzoneTemperatureSensor(SensorEntity):
-    """Main temperature sensor for Airzone device (local_temp)."""
-    def __init__(self, coordinator, device_data: dict):
-        self.coordinator = coordinator
-        self._device_data = device_data
-        name = f"{device_data.get('name', 'Airzone Device')} Temperature"
-        self._attr_name = name
-        device_id = device_data.get("id")
-        if device_id and device_id.strip():
-            self._attr_unique_id = f"{device_id}_temperature"
-        else:
-            self._attr_unique_id = hashlib.sha256(name.encode("utf-8")).hexdigest()
-        self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        self._attr_unit_of_measurement = UnitOfTemperature.CELSIUS
-        self._attr_device_class = "temperature"
-        self._attr_state_class = "measurement"
-        self._attr_icon = "mdi:thermometer"
-        self.update_state()
-
-    @property
-    def native_value(self):
-        """Return the current temperature reading."""
-        return self._attr_native_value
-
-    @property
-    def accuracy_decimals(self):
-        """Return 0 to display the state as an integer (e.g., 22°C)."""
-        return 0
-
-    @property
-    def device_info(self):
-        """Return device info for linking this sensor to a device in Home Assistant."""
-        return {
-            "identifiers": {(DOMAIN, self._device_data.get("id"))},
-            "name": self._device_data.get("name"),
-            "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
-            "connections": {("mac", self._device_data.get("mac"))} if self._device_data.get("mac") else None,
-        }
-
-    async def async_update(self):
-        """
-        Update the sensor state from the coordinator data.
-        This method requests a refresh of the coordinator data and then updates
-        the sensor state using the latest device data.
-        """
-        await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self._device_data.get("id"))
-        if device:
-            self._device_data = device
-        self.update_state()
-
-    def update_state(self):
-        """Update the native value from device data."""
-        try:
-            self._attr_native_value = float(self._device_data.get("local_temp"))
-        except (ValueError, TypeError):
-            self._attr_native_value = None
-
-class AirzoneDiagnosticSensor(SensorEntity):
-    """
-    Diagnostic sensor for Airzone device.
-    These sensors are entity_category=DIAGNOSTIC and can be disabled by default if not essential.
-    """
-    def __init__(self, coordinator, device_data: dict, attribute: str, name: str, icon: str, enabled_default: bool):
-        self.coordinator = coordinator
-        self._device_data = device_data
-        self._attribute = attribute
-        self._attr_name = f"{device_data.get('name', 'Airzone Device')} {name}"
-        self._attr_icon = icon
-        self._attr_unique_id = f"{device_data.get('id')}_{attribute}"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        self._attr_entity_registry_enabled_default = enabled_default
-
-        # Set temperature properties for all temperature-related sensors
-        temp_sensors = (
-            "cold_consign", "heat_consign",
-            "min_temp_unoccupied", "max_temp_unoccupied",
-            "min_limit_cold", "max_limit_cold",
-            "min_limit_heat", "max_limit_heat"
+    # Read opt-in from options first, then data (setup step)
+    opts = entry.options or {}
+    expose_pii = bool(
+        opts.get(
+            "expose_pii_identifiers", entry.data.get("expose_pii_identifiers", False)
         )
-        if self._attribute in temp_sensors:
-            self._attr_device_class = "temperature"
-            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_state_class = "measurement"
-        if self._attribute in ("cold_speed", "heat_speed", "availables_speeds"):
-            self._attr_state_class = "measurement"
+    )
 
-    @property
-    def native_value(self):
-        """Return the value of the diagnostic attribute, formatted for display."""
-        value = self._device_data.get(self._attribute)
-        # Custom conversions for better UI
-        if self._attribute == "progs_enabled":
-            return bool(value)
-        if self._attribute == "machine_errors":
-            if value in (None, "", [], {}):
-                return "No errors"
-            return str(value)
-        if self._attribute in (
-            "sleep_time", "min_temp_unoccupied", "max_temp_unoccupied",
-            "max_limit_cold", "min_limit_cold", "max_limit_heat", "min_limit_heat",
-            "cold_consign", "heat_consign"
-        ):
+    # --- Cleanup of PII entities when opted-out (safe and narrow) ----------
+    # We only remove previously-created PII sensors of THIS integration.
+    # This does not touch non-PII sensors.
+    try:
+        if not expose_pii:
+            reg = er.async_get(hass)
+            for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
+                if ent.domain != "sensor" or ent.platform != DOMAIN:
+                    continue
+                uid = (ent.unique_id or "").strip()
+                # Remove ONLY if unique_id ends with one of the exact PII attribute names
+                if any(uid.endswith(f"_{attr}") for attr in PII_ATTRS):
+                    reg.async_remove(ent.entity_id)
+    except Exception as exc:  # Defensive: never fail setup because of registry ops
+        _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
+
+    specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
+    if expose_pii:
+        specs += PII_SENSORS  # add PII when opted-in
+
+    entities: list[AirzoneSensor] = []
+    for device_id in list(coordinator.data.keys()):
+        for spec in specs:
+            entities.append(AirzoneSensor(coordinator, device_id, *spec))
+
+    async_add_entities(entities)
+
+
+class AirzoneSensor(CoordinatorEntity, SensorEntity):
+    """Generic read-only sensor surfacing fields from device snapshot."""
+
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator,
+        device_id: str,
+        attribute: str,
+        friendly: str,
+        icon: str,
+        enabled_by_default: bool,
+        dev_class: str | None,
+        state_class: str | None,
+    ) -> None:
+        super().__init__(coordinator)
+        self._device_id = device_id
+        self._attribute = attribute
+        self._attr_name = friendly
+        self._attr_icon = icon
+        self._attr_unique_id = f"{device_id}_{attribute}"
+        # Entity category: daily-use whitelist and PII are NOT diagnostic; rest are diagnostic
+        self._attr_entity_category = (
+            None
+            if attribute in _NON_DIAG_WHITELIST or attribute in PII_ATTRS
+            else EntityCategory.DIAGNOSTIC
+        )
+        self._attr_should_poll = False
+        self._attr_native_unit_of_measurement = (
+            UnitOfTemperature.CELSIUS if attribute in _TEMP_FLOAT_ATTRS else None
+        )
+        # Device & state classes
+        if dev_class:
             try:
-                return float(value)
-            except (TypeError, ValueError):
-                return None
-        if self._attribute in (
-            "cold_speed", "heat_speed", "availables_speeds",
-            "ver_state_slats", "ver_position_slats",
-            "hor_state_slats", "hor_position_slats",
-        ):
+                self._attr_device_class = getattr(SensorDeviceClass, dev_class.upper())
+            except Exception:
+                self._attr_device_class = None
+        if state_class:
             try:
-                return int(value)
-            except (TypeError, ValueError):
-                return value
-        return value
+                self._attr_state_class = getattr(SensorStateClass, state_class.upper())
+            except Exception:
+                self._attr_state_class = None
+        # Default visibility
+        self._attr_entity_registry_enabled_default = enabled_by_default
 
     @property
     def device_info(self):
-        """Return device info for linking this sensor to a device in Home Assistant."""
+        dev = self._device
         return {
-            "identifiers": {(DOMAIN, self._device_data.get("id"))},
-            "name": self._device_data.get("name"),
-            "manufacturer": "Daikin",
-            "model": f"{self._device_data.get('brand', 'Unknown')} (PIN: {self._device_data.get('pin')})",
-            "sw_version": self._device_data.get("firmware", "Unknown"),
-            "connections": {("mac", self._device_data.get("mac"))} if self._device_data.get("mac") else None,
+            "identifiers": {(DOMAIN, self._device_id)},
+            "manufacturer": "Daikin / Airzone",
+            "model": dev.get("brand") or "Airzone DKN",
+            "sw_version": dev.get("firmware") or "",
+            "name": dev.get("name") or "Airzone Device",
         }
 
-    async def async_update(self):
-        """Update the diagnostic sensor state from the coordinator data."""
-        await self.coordinator.async_request_refresh()
-        device = self.coordinator.data.get(self._device_data.get("id"))
-        if device:
-            self._device_data = device
+    @property
+    def _device(self) -> dict[str, Any]:
+        return self.coordinator.data.get(self._device_id, {})
+
+    @property
+    def available(self) -> bool:
+        return bool(self._device)
+
+    @staticmethod
+    def _parse_float1(val: Any) -> float | None:
+        """Parse numeric string '23.0'/'23,0' and round to one decimal."""
+        if val is None:
+            return None
+        try:
+            f = float(str(val).replace(",", "."))
+            return round(f, 1)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _parse_float6(val: Any) -> float | None:
+        """Parse numeric to float with 6 decimals (for coordinates)."""
+        if val is None:
+            return None
+        try:
+            f = float(str(val).replace(",", "."))
+            return round(f, 6)
+        except Exception:
+            return None
+
+    @property
+    def native_value(self) -> Any:
+        # Temperatures / setpoints / limits / unoccupied -> float with 1 decimal
+        if self._attribute in _TEMP_FLOAT_ATTRS:
+            val = self._device.get(self._attribute)
+            return self._parse_float1(val)
+
+        # Timestamps -> datetime (HA will display in local timezone)
+        if self._attribute in _TIMESTAMP_ATTRS:
+            val = self._device.get(self._attribute)
+            try:
+                return datetime.fromisoformat(str(val)) if val else None
+            except Exception:
+                return None
+
+        # Friendly handling for machine_errors: collapse empty to "No errors"
+        if self._attribute == "machine_errors":
+            val = self._device.get(self._attribute)
+            if val in (None, "", [], 0, "0"):
+                return "No errors"
+            if isinstance(val, list | tuple):
+                return ", ".join(str(x) for x in val) if val else "No errors"
+            return str(val)
+
+        # Mode code exposed as integer
+        if self._attribute == "mode":
+            val = self._device.get(self._attribute)
+            try:
+                return int(str(val))
+            except Exception:
+                return None
+
+        # Mode text derived from `mode` code.
+        # Expanded to recognize P2=6/7/8 as per technical reference.
+        if self._attribute == "mode_text":
+            code = str(self._device.get("mode", "")).strip()
+            mapping = {
+                "1": "cool",
+                "2": "heat",
+                "3": "ventilate",  # shown as FAN_ONLY in HA climate
+                "4": "auto (heat_cool)",
+                "5": "dry",
+                "6": "cool_air",
+                "7": "heat_air",
+                "8": "ventilate (alt)",  # alternate ventilate code
+            }
+            return mapping.get(code, "unknown")
+
+        # Ventilate variant diagnostic: derive from 'modes' bitstring only.
+        if self._attribute == "ventilate_variant":
+            bitstr = str(self._device.get("modes") or "")
+            if bitstr and all(ch in "01" for ch in bitstr):
+                sup3 = len(bitstr) >= 3 and bitstr[2] == "1"
+                sup8 = len(bitstr) >= 8 and bitstr[7] == "1"
+                if sup3:
+                    return "3"
+                if sup8:
+                    return "8"
+            return "none"
+
+        # PII nested fields (latitude/longitude live under "location")
+        if self._attribute in {"latitude", "longitude"}:
+            loc = self._device.get("location") or {}
+            raw = loc.get(self._attribute)
+            return self._parse_float6(raw)
+
+        # Plain values (status, brand, firmware, etc.)
+        return self._device.get(self._attribute)

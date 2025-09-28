@@ -1,122 +1,149 @@
-"""Module to interact with the Airzone Cloud API (adapted for dkn.airzonecloud.com).
+"""Airzone Cloud API client (dkn.airzonecloud.com).
 
-This module implements:
-- Authentication via the /users/sign_in endpoint.
-- Fetching installations via the /installation_relations endpoint.
-- Fetching devices for a given installation via the /devices endpoint.
-- Sending events via the /events endpoint.
-Endpoints and constants are imported from const.py.
+Notes:
+- Uses HA shared aiohttp ClientSession (no I/O in entity properties).
+- 15s global timeout, retries/backoff are handled at higher levels (coordinator).
+- Never log secrets (email/token/MAC/PIN).
 """
 
+from __future__ import annotations
+
 import logging
-import aiohttp
-from typing import List, Dict
-from .const import API_LOGIN, API_INSTALLATION_RELATIONS, API_DEVICES, API_EVENTS, BASE_URL, USER_AGENT
+from typing import Any
+
+from aiohttp import ClientResponseError, ClientSession, ClientTimeout
+
+from .const import API_DEVICES, API_INSTALLATION_RELATIONS, BASE_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-class AirzoneAPI:
-    """Client to interact with the Airzone Cloud API."""
 
-    def __init__(self, username: str, password: str, session: aiohttp.ClientSession):
-        """Initialize with user credentials and an aiohttp session."""
+class AirzoneAPI:
+    """Minimal API client for DKN Cloud."""
+
+    def __init__(self, username: str, password: str, session: ClientSession) -> None:
         self._username = username
         self._password = password
         self._session = session
-        self.token: str = ""
-        self.installations: List[Dict] = []
+        self._token: str | None = None
 
-    async def login(self) -> bool:
-        """Authenticate with the API and obtain a token.
+    # --------------------------
+    # Helpers
+    # --------------------------
+    def _auth_params(self) -> dict[str, str]:
+        """Query params with auth info."""
+        return {"user_email": self._username, "user_token": self._token or ""}
 
-        Sends a POST request to the /users/sign_in endpoint.
-        Returns True if successful, False otherwise.
-        """
-        url = f"{BASE_URL}{API_LOGIN}"
-        payload = {"email": self._username, "password": self._password}
-        headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> Any:
+        """HTTP request helper."""
+        url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json;charset=UTF-8",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        if extra_headers:
+            headers.update(extra_headers)
+
+        timeout = ClientTimeout(total=15)
+
         try:
-            async with self._session.post(url, json=payload, headers=headers) as response:
-                if response.status == 201:
-                    data = await response.json()
-                    self.token = data.get("user", {}).get("authentication_token", "")
-                    if self.token:
-                        _LOGGER.debug("Login successful, token: %s", self.token)
-                        return True
-                    else:
-                        _LOGGER.error("Login failed: No token received.")
-                        return False
-                else:
-                    _LOGGER.error("Login failed, status code: %s", response.status)
-                    return False
-        except Exception as err:
-            _LOGGER.error("Exception during login: %s", err)
+            async with self._session.request(
+                method, url, params=params, json=json, headers=headers, timeout=timeout
+            ) as resp:
+                resp.raise_for_status()
+                if resp.content_type == "application/json":
+                    return await resp.json()
+                return await resp.text()
+        except ClientResponseError as cre:
+            # Mask sensitive info
+            _LOGGER.debug("HTTP %s %s failed: %s", method, path, cre)
+            raise
+        except TimeoutError:
+            _LOGGER.debug("HTTP %s %s timed out", method, path)
+            raise
+
+    # --------------------------
+    # Public API
+    # --------------------------
+    async def login(self) -> bool:
+        """Login and store authentication token."""
+        data = {"email": self._username, "password": self._password}
+        try:
+            resp = await self._request("POST", "users/sign_in", json=data)
+        except Exception:
             return False
 
-    async def fetch_installations(self) -> List[Dict]:
-        """Fetch installations using the obtained token.
+        # Accept both shapes:
+        #   {"user": {"authentication_token": "..."}}
+        #   {"authentication_token": "..."}
+        token = (resp or {}).get("user", {}).get("authentication_token") or (
+            resp or {}
+        ).get("authentication_token")
+        if not token:
+            _LOGGER.debug("Login response did not include expected token field.")
+            return False
 
-        Sends a GET request to the /installation_relations endpoint.
-        Returns a list of installations if successful.
-        """
-        if not self.token:
-            _LOGGER.error("Cannot fetch installations without a valid token.")
-            return []
-        url = f"{BASE_URL}{API_INSTALLATION_RELATIONS}"
-        params = {"format": "json", "user_email": self._username, "user_token": self.token}
-        headers = {"User-Agent": USER_AGENT}
+        self._token = str(token)
+        return True
+
+    async def sign_out(self) -> None:
+        """Optional sign out endpoint."""
         try:
-            async with self._session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    installations = data.get("installation_relations", [])
-                    _LOGGER.debug("Fetched installations: %s", installations)
-                    return installations
-                else:
-                    _LOGGER.error("Failed to fetch installations, status code: %s", response.status)
-                    return []
-        except Exception as err:
-            _LOGGER.error("Exception fetching installations: %s", err)
-            return []
+            await self._request("DELETE", "users/sign_out", params=self._auth_params())
+        except Exception:
+            # non-fatal
+            return
 
-    async def fetch_devices(self, installation_id: str) -> List[Dict]:
-        """Fetch devices for a given installation using the obtained token.
+    async def fetch_installations(self) -> list[dict[str, Any]] | None:
+        """GET installation relations."""
+        params = self._auth_params() | {"format": "json"}
+        resp = await self._request("GET", API_INSTALLATION_RELATIONS, params=params)
+        # Normalize: return the list directly if wrapped
+        if isinstance(resp, dict) and "installation_relations" in resp:
+            return resp.get("installation_relations")  # type: ignore[return-value]
+        if isinstance(resp, list):
+            return resp
+        return None
 
-        Sends a GET request to the /devices endpoint with the installation_id parameter.
-        Returns a list of devices if successful.
-        """
-        url = f"{BASE_URL}{API_DEVICES}"
-        params = {
+    async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
+        """GET devices for an installation."""
+        params = self._auth_params() | {
             "format": "json",
-            "installation_id": installation_id,
-            "user_email": self._username,
-            "user_token": self.token
+            "installation_id": str(installation_id),
         }
-        headers = {"User-Agent": USER_AGENT}
-        try:
-            async with self._session.get(url, params=params, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    devices = data.get("devices", [])
-                    _LOGGER.debug("Fetched devices for installation %s: %s", installation_id, devices)
-                    return devices
-                else:
-                    _LOGGER.error("Failed to fetch devices for installation %s, status code: %s", installation_id, response.status)
-                    return []
-        except Exception as err:
-            _LOGGER.error("Exception fetching devices: %s", err)
-            return []
+        resp = await self._request("GET", API_DEVICES, params=params)
+        if isinstance(resp, dict) and "devices" in resp:
+            return resp.get("devices")  # type: ignore[return-value]
+        if isinstance(resp, list):
+            return resp
+        return None
 
-    async def send_event(self, payload: dict) -> dict:
-        """Send an event to the API via the /events endpoint."""
-        url = f"{BASE_URL}{API_EVENTS}"
-        params = {"format": "json", "user_email": self._username, "user_token": self.token}
-        headers = {
-            "User-Agent": USER_AGENT,
-            "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/json;charset=UTF-8",
-            "Accept": "application/json, text/plain, */*"
-        }
-        async with self._session.post(url, json=payload, params=params, headers=headers) as response:
-            response.raise_for_status()
-            return await response.json()
+    async def send_event(self, payload: dict[str, Any]) -> Any:
+        """POST to /events (realtime control)."""
+        params = self._auth_params()
+        return await self._request("POST", "events/", params=params, json=payload)
+
+    # ---------- Generic PUT helpers for /devices/<id> ----------
+    async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
+        """PUT /devices/{id} with provided payload."""
+        params = self._auth_params() | {"format": "json"}
+        path = f"{API_DEVICES}/{device_id}"
+        return await self._request("PUT", path, params=params, json=payload)
+
+    async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
+        """Change scenary: 'occupied' | 'vacant' | 'sleep'."""
+        return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})
+
+    async def put_device_sleep_time(self, device_id: str, minutes: int) -> Any:
+        """Change sleep_time (30..120, step 10)."""
+        return await self.put_device_fields(device_id, {"sleep_time": int(minutes)})

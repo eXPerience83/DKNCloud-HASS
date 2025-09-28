@@ -17,7 +17,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 [hacs-url]: https://hacs.xyz
 [prs-shield]: https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat
 [prs-url]: https://github.com/eXPerience83/DKNCloud-HASS/pulls
-[python-shield]: https://img.shields.io/badge/python-3.9%2B-blue
+[python-shield]: https://img.shields.io/badge/python-3.11%2B-blue
 [python-url]: https://www.python.org/
 [love-shield]: https://img.shields.io/badge/made%20with-%E2%9D%A4-red
 [love-url]: https://github.com/eXPerience83
@@ -34,12 +34,20 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
   Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
 - **Automatic device/sensor creation:**  
   Creates climate, temperature, diagnostic, and power entities for each device.
-- **Diagnostic sensors:**  
-  Monitor device states, available modes, slats, scene/presets, and more.
+- **Sleep timer ready:**  
+  **Sleep Timer (min)** is enabled by default and shows remaining minutes as an integer.
+- **Diagnostic sensors (opt-in):**  
+  **MAC Address** and **PIN** are available as diagnostic sensors **disabled by default**. Enable only if you understand the privacy implications.
+- **Cleaner diagnostics:**
+  Sensors follow the Coordinator pattern (no per-entity I/O). Advanced/verbose fields remain disabled by default to avoid UI noise.
 - **Zero YAML required:**  
   All configuration via Home Assistant UI.
 - **Compatible with HACS:**  
   Easy install & updates.
+- **Smooth UX:**
+  Optimistic updates for mode/temperature/fan changes with a short delayed refresh, so the UI feels instant while the backend confirms.
+- **Snappy power control:**
+  The power switch uses optimistic updates with a short delayed refresh, so toggles feel instant while the backend confirms.
 
 ---
 
@@ -92,7 +100,8 @@ Enter your Airzone Cloud **username** and **password**.
   - Dynamic fan speed control
 - **Sensor entities:**  
   - Current temperature (`local_temp`)
-  - Diagnostics: modes, scenes, program status, slats, etc.
+  - Sleep timer in minutes
+  - Diagnostics: modes, scenes, program status, and more (opt-in)
 - **Switch entity:**  
   - Power ON/OFF per device
 
@@ -110,7 +119,7 @@ Enter your Airzone Cloud **username** and **password**.
 
 | Home Assistant | Python | Daikin Model/Adapter         |
 |----------------|--------|-----------------------------|
-| 2025.4+        | 3.9+   | DAIKIN ES.DKNWSERVER (Cloud)|
+| 2025.4+        | 3.11+   | DAIKIN ES.DKNWSERVER (Cloud)|
 
 *Other Airzone or Daikin adapters may not be supported.*
 
@@ -161,6 +170,14 @@ If you find this integration useful, you can support development via:
 
 - [Ko-fi](https://ko-fi.com/experience83)
 - [PayPal](https://paypal.me/eXPerience83)
+
+---
+
+### Networking & Reliability
+
+This integration uses a per-request timeout of **15s** and **exponential backoff with jitter** for `429/5xx` responses.  
+If the backend is temporarily unavailable, Home Assistant will retry the config entry startup (**ConfigEntryNotReady**).  
+For privacy, logs **never** print your email or token.
 
 ---
 

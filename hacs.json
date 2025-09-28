@@ -1,4 +1,4 @@
 {
-    "name": "DKN Cloud for HASS",
-    "domains": ["climate", "sensor", "switch"]
+  "name": "DKN Cloud for HASS",
+  "render_readme": true
 }

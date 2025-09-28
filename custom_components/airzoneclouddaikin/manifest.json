@@ -1,12 +1,12 @@
 {
   "domain": "airzoneclouddaikin",
   "name": "DKN Cloud for HASS",
-  "documentation": "https://github.com/eXPerience83/DKNCloud-HASS",
-  "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
-  "dependencies": [],
   "after_dependencies": ["http"],
   "codeowners": ["@max13fr", "@eXPerience83"],
-  "version": "0.3.4",
   "config_flow": true,
-  "iot_class": "cloud_polling"
+  "dependencies": [],
+  "documentation": "https://github.com/eXPerience83/DKNCloud-HASS",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
+  "version": "0.3.7-alpha.11"
 }
