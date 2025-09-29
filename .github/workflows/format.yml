@@ -1,52 +1,95 @@
-# Auto format workflow (manual trigger).
-# Changes (minimal):
-# - Keep job logic intact; just enforce minimal permissions and concurrency.
-# - Use Python 3.12 (no need for a matrix here).
-name: Auto Format
+# Auto Format (Black + Ruff) for DKN Cloud for HASS
+# Why 3.11 here?
+# - Black/Ruff output is stable across 3.11/3.12, and your pyproject.toml already targets py311.
+# - Keeping 3.11 avoids touching pyproject in this PR.
+name: Auto Format (Black + Ruff)
 
 on:
+  # Manual run. Use GitHub's native "Run workflow → Branch" dropdown to pick a REAL branch.
   workflow_dispatch:
-
-permissions:
-  contents: write  # Required to commit formatting changes
+    inputs:
+      target_branch:
+        description: "Branch to format (leave empty to use current ref)"
+        required: false
+        default: ""
 
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: true
 
+# We need write permission to push formatting changes back
+permissions:
+  contents: write
+
 jobs:
   format:
+    # Prevent pushing from forks where GITHUB_TOKEN does not have write permissions
+    if: github.repository_owner == 'eXPerience83'
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
 
-      - name: Setup Python
+    steps:
+      - name: Determine branch to format
+        id: resolve_branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ inputs.target_branch }}"
+          if [ -z "$BRANCH" ]; then
+            BRANCH="${GITHUB_REF_NAME}"
+          fi
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target branch
+        uses: actions/checkout@v5
+        with:
+          # Checkout the branch we intend to format and push back to.
+          ref: ${{ steps.resolve_branch.outputs.branch }}
+          # Fetch full history to avoid push issues (fast-forward, etc.)
+          fetch-depth: 0
+
+      - name: Ensure branch exists remotely
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="${{ steps.resolve_branch.outputs.branch }}"
+          if [ -z "$(git ls-remote --heads origin "$BRANCH")" ]; then
+            echo "::error::Target branch '$BRANCH' does not exist on origin."
+            exit 1
+          fi
+          echo "Formatting branch: $BRANCH"
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.11"
+          cache: pip
 
-      - name: Install tools
+      - name: Install formatters
         run: |
           python -m pip install --upgrade pip
+          # Pin by minor to allow patch updates while avoiding major breaking changes
           python -m pip install "ruff==0.6.*" "black==24.*"
 
-      - name: Ruff (apply fixes)
-        run: ruff check . --fix
+      - name: Ruff (safe fixes)
+        run: |
+          ruff --version
+          ruff check . --fix
 
-      - name: Black (apply formatting)
-        run: black .
+      - name: Black (format)
+        run: |
+          black --version
+          black .
 
       - name: Commit & push if changes
         shell: bash
         run: |
           set -euo pipefail
           if git diff --quiet; then
-            echo "No formatting changes."
+            echo "No formatting changes to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "style: apply Ruff fixes and Black formatting"
-          git push
+          git push origin HEAD:${{ steps.resolve_branch.outputs.branch }}
