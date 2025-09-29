@@ -1,19 +1,15 @@
-name: Auto Format (Black + Ruff)
+# Auto format workflow (manual trigger).
+# Changes (minimal):
+# - Keep job logic intact; just enforce minimal permissions and concurrency.
+# - Use Python 3.12 (no need for a matrix here).
+name: Auto Format
 
 on:
-  # Manual run. Use GitHub's "Run workflow" and select the target branch.
   workflow_dispatch:
-    inputs:
-      target_branch:
-        description: "Branch to format (leave empty to use current ref)"
-        required: false
-        default: ""
 
-# We need write permission to push formatting changes back
 permissions:
-  contents: write
+  contents: write  # Required to commit formatting changes
 
-# Cancel previous runs of the same workflow/ref
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: true
@@ -22,21 +18,10 @@ jobs:
   format:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Determine branch to format
-        id: resolve_branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          BRANCH="${{ inputs.target_branch }}"
-          if [ -z "$BRANCH" ]; then
-            BRANCH="${GITHUB_REF_NAME}"
-          fi
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Python 3.12
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -46,10 +31,10 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "ruff==0.6.*" "black==24.*"
 
-      - name: Ruff (fix)
+      - name: Ruff (apply fixes)
         run: ruff check . --fix
 
-      - name: Black (write)
+      - name: Black (apply formatting)
         run: black .
 
       - name: Commit & push if changes
@@ -57,11 +42,11 @@ jobs:
         run: |
           set -euo pipefail
           if git diff --quiet; then
-            echo "No formatting changes to commit."
+            echo "No formatting changes."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "style: apply Ruff fixes and Black formatting"
-          git push origin HEAD:${{ steps.resolve_branch.outputs.branch }}
+          git push
