@@ -1,7 +1,7 @@
 name: Auto Format (Black + Ruff)
 
 on:
-  # Manual run. Use GitHub's native "Run workflow → Branch" dropdown to pick a REAL branch.
+  # Manual run. Use GitHub's "Run workflow" and select the target branch.
   workflow_dispatch:
     inputs:
       target_branch:
@@ -9,21 +9,22 @@ on:
         required: false
         default: ""
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 # We need write permission to push formatting changes back
 permissions:
   contents: write
 
+# Cancel previous runs of the same workflow/ref
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
 jobs:
   format:
-    # Prevent pushing from forks where GITHUB_TOKEN does not have write permissions
-    if: github.repository_owner == 'eXPerience83'
     runs-on: ubuntu-latest
-
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
       - name: Determine branch to format
         id: resolve_branch
         shell: bash
@@ -35,48 +36,21 @@ jobs:
           fi
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout target branch
-        uses: actions/checkout@v5
-        with:
-          # Checkout the branch we intend to format and push back to.
-          ref: ${{ steps.resolve_branch.outputs.branch }}
-          # Fetch full history to avoid push issues (fast-forward, etc.)
-          fetch-depth: 0
-
-      - name: Ensure branch exists remotely
-        shell: bash
-        run: |
-          # Some older recipes rely only on exit codes; we explicitly check empty output.
-          set -euo pipefail
-          BRANCH="${{ steps.resolve_branch.outputs.branch }}"
-          if [ -z "$(git ls-remote --heads origin "$BRANCH")" ]; then
-            echo "::error::Target branch '$BRANCH' does not exist on origin."
-            exit 1
-          fi
-          echo "Formatting branch: $BRANCH"
-
-      - name: Set up Python
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: pip
+          python-version: "3.12"
 
-      - name: Install formatters
+      - name: Install tools
         run: |
           python -m pip install --upgrade pip
-          # Pin by minor to allow patch updates while avoiding major breaking changes
           python -m pip install "ruff==0.6.*" "black==24.*"
 
-      - name: Ruff (safe fixes)
-        run: |
-          # Ruff reads config from pyproject.toml
-          ruff --version
-          ruff check . --fix
+      - name: Ruff (fix)
+        run: ruff check . --fix
 
-      - name: Black (format)
-        run: |
-          black --version
-          black .
+      - name: Black (write)
+        run: black .
 
       - name: Commit & push if changes
         shell: bash
