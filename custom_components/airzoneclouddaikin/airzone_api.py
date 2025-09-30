@@ -13,7 +13,14 @@ from typing import Any
 
 from aiohttp import ClientResponseError, ClientSession, ClientTimeout
 
-from .const import API_DEVICES, API_INSTALLATION_RELATIONS, BASE_URL
+from .const import (
+    API_DEVICES,
+    API_INSTALLATION_RELATIONS,
+    BASE_URL,
+    USER_AGENT,
+    HEADERS_DEVICES,
+    HEADERS_EVENTS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,14 +50,15 @@ class AirzoneAPI:
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> Any:
-        """HTTP request helper."""
+        """HTTP request helper.
+
+        English:
+        - Default headers are minimal (only User-Agent).
+        - Endpoint-specific headers can be provided via 'extra_headers'
+          to match the project's cURL behaviour (e.g., /events JSON/XHR).
+        """
         url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
-        headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "X-Requested-With": "XMLHttpRequest",
-        }
+        headers = {"User-Agent": USER_AGENT}
         if extra_headers:
             headers.update(extra_headers)
 
@@ -79,6 +87,7 @@ class AirzoneAPI:
         """Login and store authentication token."""
         data = {"email": self._username, "password": self._password}
         try:
+            # Minimal headers (UA only) are enough here.
             resp = await self._request("POST", "users/sign_in", json=data)
         except Exception:
             return False
@@ -116,12 +125,14 @@ class AirzoneAPI:
         return None
 
     async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
-        """GET devices for an installation."""
+        """GET devices for an installation (browser-like UA only)."""
         params = self._auth_params() | {
             "format": "json",
             "installation_id": str(installation_id),
         }
-        resp = await self._request("GET", API_DEVICES, params=params)
+        resp = await self._request(
+            "GET", API_DEVICES, params=params, extra_headers=HEADERS_DEVICES
+        )
         if isinstance(resp, dict) and "devices" in resp:
             return resp.get("devices")  # type: ignore[return-value]
         if isinstance(resp, list):
@@ -129,13 +140,15 @@ class AirzoneAPI:
         return None
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
-        """POST to /events (realtime control)."""
+        """POST to /events (realtime control) with JSON/XHR headers."""
         params = self._auth_params()
-        return await self._request("POST", "events/", params=params, json=payload)
+        return await self._request(
+            "POST", "events/", params=params, json=payload, extra_headers=HEADERS_EVENTS
+        )
 
     # ---------- Generic PUT helpers for /devices/<id> ----------
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
-        """PUT /devices/{id} with provided payload."""
+        """PUT /devices/{id} with provided payload (UA-only headers are sufficient)."""
         params = self._auth_params() | {"format": "json"}
         path = f"{API_DEVICES}/{device_id}"
         return await self._request("PUT", path, params=params, json=payload)
