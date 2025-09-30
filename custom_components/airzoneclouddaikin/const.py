@@ -17,4 +17,24 @@ API_EVENTS = "/events"
 BASE_URL = "https://dkn.airzonecloud.com"
 
 # Standard User-Agent to be used in all API requests
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+# (Kept as provided by the project; do not disclose Home Assistant in UA)
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/134.0.0.0 Safari/537.36"
+)
+
+# --- Endpoint-specific minimal headers (browser-like) ---------------------
+# English: Keep headers minimal and consistent with the cURL examples.
+# - GET /devices: only a browser-like User-Agent.
+HEADERS_DEVICES = {
+    "User-Agent": USER_AGENT,
+}
+
+# - POST /events: JSON payload plus XHR-style headers as per the cURL example.
+HEADERS_EVENTS = {
+    "User-Agent": USER_AGENT,
+    "X-Requested-With": "XMLHttpRequest",
+    "Content-Type": "application/json;charset=UTF-8",
+    "Accept": "application/json, text/plain, */*",
+}
