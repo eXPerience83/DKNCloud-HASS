@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.8-alpha.1] - Unreleased
+### Changed
+- HTTP: Centralized browser-like User-Agent and endpoint-specific minimal headers.
+  - GET `/devices`: only `User-Agent` (matches cURL usage).
+  - POST `/events`: `User-Agent`, `X-Requested-With`, `Content-Type`, `Accept`.
+- Internals: Default request headers are now minimal; endpoint-specific headers are injected where required.
+
 ## [0.3.7] - 2025-09-28
 ### Fixed
 - switch: ensure stable device identifier even when coordinator snapshot is empty at startup (fallback to `self._device_id`).
