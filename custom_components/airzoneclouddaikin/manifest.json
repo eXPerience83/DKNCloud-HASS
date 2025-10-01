@@ -8,5 +8,5 @@
   "documentation": "https://github.com/eXPerience83/DKNCloud-HASS",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
-  "version": "0.3.8-alpha1"
+  "version": "0.3.8-alpha.02"
 }
