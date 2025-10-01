@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.8-alpha.02] - 2025-10-01
+### Changed
+- HTTP timeout raised to **30s** (from 15s) to better align with HA defaults and slow links.
+- Coordinator is now a small **typed subclass**, exposing `api: AirzoneAPI` without ad-hoc attributes.
+### Fixed
+- Climate: **idempotent** `async_set_hvac_mode` — if the requested mode is already active and power is ON, skip sending redundant `P2`.
+### Docs
+- README/info: updated networking section to reflect the 30s timeout.
+- Pre-release version formatted as `0.3.8-alpha.02` to ensure proper ordering in HACS.
+
 ## [0.3.8-alpha.1] - Unreleased
 ### Changed
 - HTTP: Centralized browser-like User-Agent and endpoint-specific minimal headers.
