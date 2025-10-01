@@ -17,10 +17,10 @@ from .const import (
     API_DEVICES,
     API_INSTALLATION_RELATIONS,
     BASE_URL,
-    USER_AGENT,
     HEADERS_DEVICES,
     HEADERS_EVENTS,
     REQUEST_TIMEOUT,
+    USER_AGENT,
 )
 
 _LOGGER = logging.getLogger(__name__)

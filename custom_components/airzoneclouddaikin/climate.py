@@ -402,7 +402,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         # Idempotency: if already ON and current HVAC equals requested, skip sending P2.
         # English: Avoid unnecessary radio wake-ups and event spam.
         if self._device_power_on() and self._hvac_from_device() == hvac_mode:
-            _LOGGER.debug("HVAC mode %s already active; skipping redundant P2", hvac_mode)
+            _LOGGER.debug(
+                "HVAC mode %s already active; skipping redundant P2", hvac_mode
+            )
             return
 
         # Ensure power ON then set P2 (auto-on only when changing mode)

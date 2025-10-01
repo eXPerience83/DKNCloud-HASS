@@ -36,6 +36,7 @@ class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
       but we avoid ad-hoc attributes on the base DataUpdateCoordinator type.
     - This prevents issues with strict typing/mypy or future HA strict modes.
     """
+
     api: AirzoneAPI
 
 
