@@ -2,7 +2,7 @@
 
 Notes:
 - Uses HA shared aiohttp ClientSession (no I/O in entity properties).
-- 15s global timeout, retries/backoff are handled at higher levels (coordinator).
+- 30s global timeout (configurable via const), retries/backoff are handled at higher levels (coordinator).
 - Never log secrets (email/token/MAC/PIN).
 """
 
@@ -20,6 +20,7 @@ from .const import (
     USER_AGENT,
     HEADERS_DEVICES,
     HEADERS_EVENTS,
+    REQUEST_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ class AirzoneAPI:
         if extra_headers:
             headers.update(extra_headers)
 
-        timeout = ClientTimeout(total=15)
+        timeout = ClientTimeout(total=REQUEST_TIMEOUT)
 
         try:
             async with self._session.request(
