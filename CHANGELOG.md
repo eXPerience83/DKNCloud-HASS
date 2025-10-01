@@ -8,7 +8,7 @@
 - Climate: **idempotent** `async_set_hvac_mode` — if the requested mode is already active and power is ON, skip sending redundant `P2`.
 ### Docs
 - README/info: updated networking section to reflect the 30s timeout.
-- Pre-release version formatted as `0.3.8-alpha.02` to ensure proper ordering in HACS.
+- Pre-release version formatted as `0.3.8a2` to ensure proper ordering in HACS.
 
 ## [0.3.8-alpha.1] - Unreleased
 ### Changed
