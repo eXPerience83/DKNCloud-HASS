@@ -24,6 +24,10 @@ USER_AGENT = (
     "Chrome/134.0.0.0 Safari/537.36"
 )
 
+# Global HTTP timeout (seconds).
+# English: Align with HA expectations and slow links; was 15, now 30 by default.
+REQUEST_TIMEOUT = 30
+
 # --- Endpoint-specific minimal headers (browser-like) ---------------------
 # English: Keep headers minimal and consistent with the cURL examples.
 # - GET /devices: only a browser-like User-Agent.
