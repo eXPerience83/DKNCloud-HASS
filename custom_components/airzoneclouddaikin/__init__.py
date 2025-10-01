@@ -28,6 +28,17 @@ DEFAULT_SCAN_INTERVAL_SEC = 10  # keep aligned with config_flow minimum
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
 
 
+class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
+    """Typed coordinator that also carries the API handle.
+
+    English:
+    - We keep the same runtime behavior (entities can access coordinator.api),
+      but we avoid ad-hoc attributes on the base DataUpdateCoordinator type.
+    - This prevents issues with strict typing/mypy or future HA strict modes.
+    """
+    api: AirzoneAPI
+
+
 async def _async_update_data(api: AirzoneAPI) -> dict[str, dict[str, Any]]:
     """Fetch and aggregate device data from the API.
 
@@ -102,17 +113,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
     )
 
-    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = (
-        DataUpdateCoordinator(
-            hass,
-            _LOGGER,
-            name="airzone_data",
-            update_method=lambda: _async_update_data(api),
-            update_interval=timedelta(seconds=max(10, scan_interval)),
-        )
+    coordinator: AirzoneCoordinator = AirzoneCoordinator(
+        hass,
+        _LOGGER,
+        name="airzone_data",
+        update_method=lambda: _async_update_data(api),
+        update_interval=timedelta(seconds=max(10, scan_interval)),
     )
     # Attach API for platforms (no I/O in properties)
-    coordinator.api = api  # type: ignore[attr-defined]
+    coordinator.api = api
 
     await coordinator.async_config_entry_first_refresh()
 
