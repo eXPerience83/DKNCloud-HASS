@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Callable  # Added: for the cancel callback type
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
@@ -80,6 +80,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self._device_id = device_id
         self._optimistic_expires: float | None = None
         self._optimistic: dict[str, Any] = {}  # temporary values until refresh
+        # Added: keep a cancel handle for delayed refreshes
+        self._cancel_scheduled_refresh: Callable[[], None] | None = None
 
         device = self._device
         name = device.get("name") or "Airzone Device"
@@ -402,9 +404,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         # Idempotency: if already ON and current HVAC equals requested, skip sending P2.
         # English: Avoid unnecessary radio wake-ups and event spam.
         if self._device_power_on() and self._hvac_from_device() == hvac_mode:
-            _LOGGER.debug(
-                "HVAC mode %s already active; skipping redundant P2", hvac_mode
-            )
+            _LOGGER.debug("HVAC mode %s already active; skipping redundant P2", hvac_mode)
             return
 
         # Ensure power ON then set P2 (auto-on only when changing mode)
@@ -474,7 +474,17 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             raise
 
     def _schedule_refresh(self) -> None:
-        """Schedule a short delayed refresh after write operations."""
+        """Schedule a short delayed refresh after write operations.
+
+        English:
+        - Keep the cancel handle so we can avoid stacked callbacks and cancel on teardown.
+        """
+        # Cancel any previously scheduled refresh to avoid stacking.
+        if self._cancel_scheduled_refresh is not None:
+            try:
+                self._cancel_scheduled_refresh()
+            finally:
+                self._cancel_scheduled_refresh = None
 
         async def _refresh_cb(_now):
             try:
@@ -482,7 +492,10 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             except Exception as err:
                 _LOGGER.debug("Refresh after write failed: %s", err)
 
-        async_call_later(self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb)
+        # Store the cancel handle returned by async_call_later
+        self._cancel_scheduled_refresh = async_call_later(
+            self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
+        )
 
     # ---- Availability / update ------------------------------------------
 
@@ -498,3 +511,17 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         ):
             self._optimistic.clear()
             self._optimistic_expires = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Called when entity is about to be removed from Home Assistant.
+
+        English:
+        - Cancel any scheduled refresh callback to avoid late execution after removal.
+        """
+        if self._cancel_scheduled_refresh is not None:
+            try:
+                self._cancel_scheduled_refresh()
+            finally:
+                self._cancel_scheduled_refresh = None
+
+        await super().async_will_remove_from_hass()
