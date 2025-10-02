@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.8-alpha.03] - 2025-10-02
+### Fixed
+- Climate: cancel scheduled delayed refresh when the entity is removed, and prevent stacked callbacks by cancelling the previous handle before scheduling a new one. This avoids spurious refreshes after teardown.
+
 ## [0.3.8-alpha.02] - 2025-10-01
 ### Changed
 - HTTP timeout raised to **30s** (from 15s) to better align with HA defaults and slow links.
