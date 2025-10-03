@@ -4,12 +4,15 @@ Implements a NumberEntity for device 'sleep_time' via AirzoneAPI.put_device_slee
 - Valid range: 30..120 minutes, step 10.
 - Optimistic UI with short TTL, then coordinator refresh.
 - No I/O in properties; reads come from DataUpdateCoordinator.
+
+Change (hygiene):
+- Use Home Assistant event loop clock (hass.loop.time()) for optimistic TTL
+  to stay consistent with HA's own schedulers and ease testing.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time  # Moved to module level to avoid imports inside properties/methods.
 from dataclasses import dataclass
 from typing import Any
 
@@ -122,7 +125,7 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         """Return current sleep_time (optimistic if active)."""
         if (
             self._optimistic.value is not None
-            and time.monotonic() < self._optimistic.valid_until_monotonic
+            and self.coordinator.hass.loop.time() < self._optimistic.valid_until_monotonic
         ):
             return int(self._optimistic.value)
 
@@ -139,9 +142,11 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         ivalue = int(round(value / _STEP) * _STEP)
         ivalue = max(_MIN, min(_MAX, ivalue))
 
-        # Optimistic update for a few seconds
+        # Optimistic update for a few seconds (event loop clock)
         self._optimistic.value = ivalue
-        self._optimistic.valid_until_monotonic = time.monotonic() + _OPTIMISTIC_TTL_SEC
+        self._optimistic.valid_until_monotonic = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
 
         try:
