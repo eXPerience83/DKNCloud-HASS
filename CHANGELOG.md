@@ -4,6 +4,9 @@
 ### Changed
 - Switch: use Home Assistant event loop clock (`hass.loop.time()`) for optimistic TTLs instead of `time.monotonic()`, aligning with HA schedulers and easing testing.
 - Switch: cancel the delayed refresh handle to avoid stacked/late callbacks and use conservative idempotency for P1 ON/OFF (skip redundant commands when the requested power state is already active, considering optimistic TTL and backend snapshot).
+- **API (auth/conn):**
+  - `login()` now returns `False` **only** for HTTP 401 (invalid credentials) and **raises** on network errors or 5xx responses. This lets the config flow show the correct message (`invalid_auth` vs `cannot_connect`).
+  - Write endpoints (`/events`, `/devices/{id}`) now use limited **exponential backoff with jitter** for HTTP 429/5xx, include a short **cooldown** after 429 (respecting `Retry-After` when present), and perform a **single re-login** on the first 401 before retrying once.
 
 ## [0.3.8-alpha.03] - 2025-10-03
 ### Fixed
