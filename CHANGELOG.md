@@ -1,8 +1,15 @@
 # Changelog
 
-## [0.3.8-alpha.03] - 2025-10-02
+## [0.3.8-alpha.03] - 2025-10-03
 ### Fixed
 - Climate: cancel scheduled delayed refresh when the entity is removed, and prevent stacked callbacks by cancelling the previous handle before scheduling a new one. This avoids spurious refreshes after teardown.
+### Added
+- **Diagnostics**: new `diagnostics.py` to provide a sanitized snapshot of the config entry and coordinator state. PII and secrets (email, token, MAC, PIN, GPS, etc.) are redacted via `async_redact_data`.
+### Changed
+- **number.py / select.py**: use Home Assistant event loop clock (`hass.loop.time()`) for optimistic TTLs to align with HA schedulers and simplify testing.
+- **sensor.py**: introduce internal `_is_pii` marker and strengthen opt-out cleanup:
+  remove PII sensors by exact `unique_id` (computed as `device_id + '_' + attribute`)
+  and keep a legacy suffix-based fallback for pre-existing entries.
 
 ## [0.3.8-alpha.02] - 2025-10-01
 ### Changed
