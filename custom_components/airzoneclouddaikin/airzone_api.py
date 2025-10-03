@@ -164,7 +164,9 @@ class AirzoneAPI:
                         except Exception:
                             pass
                         # Set a short cooldown to avoid hammering
-                        self._cooldown_until = max(self._cooldown_until, now + min(delay, 10.0))
+                        self._cooldown_until = max(
+                            self._cooldown_until, now + min(delay, 10.0)
+                        )
 
                     _LOGGER.debug(
                         "Retrying %s %s after %s due to HTTP %s (attempt %d/%d)",
