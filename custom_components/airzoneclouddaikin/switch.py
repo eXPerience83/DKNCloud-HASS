@@ -5,12 +5,15 @@ Key improvements:
 - Fully async commands (await API), no run_coroutine_threadsafe / executor jobs.
 - Optimistic UI with short TTL and delayed coordinator refresh after write operations.
 - Privacy hardening: do not expose PIN in device_info.model.
+
+Hygiene change in this revision:
+- Use Home Assistant event loop clock (hass.loop.time()) for optimistic TTL,
+  instead of time.monotonic(), to stay consistent with HA scheduling.
 """
 
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -74,7 +77,8 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         return (self.coordinator.data or {}).get(self._device_id, {})  # type: ignore[no-any-return]
 
     def _now(self) -> float:
-        return time.monotonic()
+        """Return the Home Assistant event loop's monotonic time."""
+        return self.coordinator.hass.loop.time()
 
     def _optimistic_active(self) -> bool:
         return self._now() < self._optimistic_until
