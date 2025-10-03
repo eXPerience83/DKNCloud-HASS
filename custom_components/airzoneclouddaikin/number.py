@@ -125,7 +125,8 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         """Return current sleep_time (optimistic if active)."""
         if (
             self._optimistic.value is not None
-            and self.coordinator.hass.loop.time() < self._optimistic.valid_until_monotonic
+            and self.coordinator.hass.loop.time()
+            < self._optimistic.valid_until_monotonic
         ):
             return int(self._optimistic.value)
 

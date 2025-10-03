@@ -115,7 +115,8 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
         """Return current scenary (optimistic if active)."""
         if (
             self._optimistic.option is not None
-            and self.coordinator.hass.loop.time() < self._optimistic.valid_until_monotonic
+            and self.coordinator.hass.loop.time()
+            < self._optimistic.valid_until_monotonic
         ):
             return self._optimistic.option
 
