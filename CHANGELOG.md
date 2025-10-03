@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- Switch: use Home Assistant event loop clock (`hass.loop.time()`) for optimistic TTLs instead of `time.monotonic()`, aligning with HA schedulers and easing testing.
+### Notes
+- We intentionally did not change CI to Python 3.13 in this step. Given HA Core now targets Python 3.13+, we’ll add 3.13 to the CI matrix and migrate `format.yml` in a separate PR.
+
 ## [0.3.8-alpha.03] - 2025-10-03
 ### Fixed
 - Climate: cancel scheduled delayed refresh when the entity is removed, and prevent stacked callbacks by cancelling the previous handle before scheduling a new one. This avoids spurious refreshes after teardown.
