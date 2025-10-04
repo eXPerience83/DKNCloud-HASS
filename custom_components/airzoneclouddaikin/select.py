@@ -8,6 +8,10 @@ Options: "occupied", "vacant", "sleep".
 Change (hygiene):
 - Use Home Assistant event loop clock (hass.loop.time()) for optimistic TTL
   to stay consistent with HA's own schedulers and ease testing.
+
+This revision:
+- Add conservative idempotency: early-return if requested option equals the
+  current effective option (considering optimistic TTL first).
 """
 
 from __future__ import annotations
@@ -127,6 +131,12 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
         """Set scenary via API with optimistic UI."""
         if option not in _OPTIONS:
             raise ValueError(f"Invalid scenary option: {option}")
+
+        # Idempotency: if requested option equals the effective current one, skip.
+        effective = self.current_option
+        if effective is not None and option.strip().lower() == str(effective).strip().lower():
+            # English: avoid redundant network call when the option is already applied/optimistic.
+            return
 
         # Optimistic state (event loop clock)
         self._optimistic.option = option
