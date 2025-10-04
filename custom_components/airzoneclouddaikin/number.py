@@ -108,6 +108,7 @@ async def async_setup_entry(
 @dataclass(slots=True, kw_only=True)
 class _OptimisticState:
     """Helper to keep short-lived optimistic state."""
+
     value: int | None = None
     valid_until_monotonic: float = 0.0
 
@@ -178,7 +179,9 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
         ):
             return int(self._optimistic.value)
 
-        val = (self.coordinator.data or {}).get(self._device_id, {}).get(self._field_name)
+        val = (
+            (self.coordinator.data or {}).get(self._device_id, {}).get(self._field_name)
+        )
         try:
             return int(val) if val is not None else None
         except Exception:
@@ -223,7 +226,9 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
 
         try:
             # Root-level payload, as confirmed by captured cURL.
-            await self._api.put_device_fields(self._device_id, {self._field_name: ivalue})
+            await self._api.put_device_fields(
+                self._device_id, {self._field_name: ivalue}
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
