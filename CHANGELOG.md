@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.8-alpha.04] - 2025-10-04
 ### Changed
 - Switch: use Home Assistant event loop clock (`hass.loop.time()`) for optimistic TTLs instead of `time.monotonic()`, aligning with HA schedulers and easing testing.
 - Switch: cancel the delayed refresh handle to avoid stacked/late callbacks and use conservative idempotency for P1 ON/OFF (skip redundant commands when the requested power state is already active, considering optimistic TTL and backend snapshot).
