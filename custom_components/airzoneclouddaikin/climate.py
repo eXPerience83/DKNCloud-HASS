@@ -7,6 +7,11 @@ Key behaviors (concise):
 - API mapping: P1=power, P2=mode, P7/P8=setpoint (cool/heat), P3/P4=fan (cool/heat).
 - Ventilate policy: prefer P2=3 if supported; else P2=8; else do not expose FAN_ONLY.
 - Privacy: never log or expose secrets (email/token/MAC/PIN).
+
+This revision:
+- Add conservative idempotency for power (P1) in async_turn_on/off:
+  skip when optimistic TTL indicates the target power is already in effect,
+  or when backend snapshot already matches the requested power state.
 """
 
 from __future__ import annotations
@@ -81,7 +86,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self._device_id = device_id
         self._optimistic_expires: float | None = None
         self._optimistic: dict[str, Any] = {}  # temporary values until refresh
-        # Added: keep a cancel handle for delayed refreshes
+        # Keep a cancel handle for delayed refreshes
         self._cancel_scheduled_refresh: Callable[[], None] | None = None
 
         device = self._device
@@ -372,21 +377,37 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     async def async_turn_on(self) -> None:
         """Power ON via P1=1 (explicit user action from Climate card)."""
+        # Idempotency: if optimistic TTL says ON, or backend already ON, skip.
+        now = self.coordinator.hass.loop.time()
+        optimistic_active = bool(self._optimistic_expires and now < self._optimistic_expires)
+        if optimistic_active and str(self._optimistic.get("power", "")).strip() in ("1", "true", "on"):
+            return
+        if not optimistic_active:
+            backend_on = str(self._device.get("power", "0")).strip() == "1"
+            if backend_on:
+                return
+
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
     async def async_turn_off(self) -> None:
         """Power OFF via P1=0 (explicit user action from Climate card)."""
+        # Idempotency: if optimistic TTL says OFF, or backend already OFF, skip.
+        now = self.coordinator.hass.loop.time()
+        optimistic_active = bool(self._optimistic_expires and now < self._optimistic_expires)
+        if optimistic_active and str(self._optimistic.get("power", "")).strip() in ("0", "false", "off", ""):
+            return
+        if not optimistic_active:
+            backend_off = str(self._device.get("power", "0")).strip() != "1"
+            if backend_off:
+                return
+
         await self._send_p_event("P1", 0)
         self._optimistic.update({"power": "0"})
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
