@@ -8,6 +8,10 @@ Implements a NumberEntity for device 'sleep_time' via AirzoneAPI.put_device_slee
 Change (hygiene):
 - Use Home Assistant event loop clock (hass.loop.time()) for optimistic TTL
   to stay consistent with HA's own schedulers and ease testing.
+
+This revision:
+- Add conservative idempotency: early-return if the requested value equals the
+  current effective value (considering optimistic TTL first).
 """
 
 from __future__ import annotations
@@ -142,6 +146,25 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         # Clamp and quantize to step of 10 minutes
         ivalue = int(round(value / _STEP) * _STEP)
         ivalue = max(_MIN, min(_MAX, ivalue))
+
+        # Idempotency: if requested equals current effective value, skip.
+        effective: int | None
+        if (
+            self._optimistic.value is not None
+            and self.coordinator.hass.loop.time()
+            < self._optimistic.valid_until_monotonic
+        ):
+            effective = int(self._optimistic.value)
+        else:
+            raw = (self.coordinator.data or {}).get(self._device_id, {}).get("sleep_time")
+            try:
+                effective = int(raw) if raw is not None else None
+            except Exception:
+                effective = None
+
+        if effective is not None and effective == ivalue:
+            # English: avoid redundant network call when the value is already in effect/optimistic.
+            return
 
         # Optimistic update for a few seconds (event loop clock)
         self._optimistic.value = ivalue
