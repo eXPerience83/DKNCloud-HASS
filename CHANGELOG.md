@@ -7,6 +7,8 @@
 - **API (auth/conn):**
   - `login()` now returns `False` **only** for HTTP 401 (invalid credentials) and **raises** on network errors or 5xx responses. This lets the config flow show the correct message (`invalid_auth` vs `cannot_connect`).
   - Write endpoints (`/events`, `/devices/{id}`) now use limited **exponential backoff with jitter** for HTTP 429/5xx, include a short **cooldown** after 429 (respecting `Retry-After` when present), and perform a **single re-login** on the first 401 before retrying once.
+- Climate: add conservative idempotency for P1 power commands (skip redundant ON/OFF when optimistic TTL or backend snapshot already match the requested state).
+- Number/Select: early-return idempotency when the requested value/option already matches the effective state (considering optimistic TTL first).
 
 ## [0.3.8-alpha.03] - 2025-10-03
 ### Fixed
