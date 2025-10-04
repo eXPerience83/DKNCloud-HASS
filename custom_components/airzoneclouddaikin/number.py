@@ -156,7 +156,9 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         ):
             effective = int(self._optimistic.value)
         else:
-            raw = (self.coordinator.data or {}).get(self._device_id, {}).get("sleep_time")
+            raw = (
+                (self.coordinator.data or {}).get(self._device_id, {}).get("sleep_time")
+            )
             try:
                 effective = int(raw) if raw is not None else None
             except Exception:

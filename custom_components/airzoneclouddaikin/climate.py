@@ -379,8 +379,14 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         """Power ON via P1=1 (explicit user action from Climate card)."""
         # Idempotency: if optimistic TTL says ON, or backend already ON, skip.
         now = self.coordinator.hass.loop.time()
-        optimistic_active = bool(self._optimistic_expires and now < self._optimistic_expires)
-        if optimistic_active and str(self._optimistic.get("power", "")).strip() in ("1", "true", "on"):
+        optimistic_active = bool(
+            self._optimistic_expires and now < self._optimistic_expires
+        )
+        if optimistic_active and str(self._optimistic.get("power", "")).strip() in (
+            "1",
+            "true",
+            "on",
+        ):
             return
         if not optimistic_active:
             backend_on = str(self._device.get("power", "0")).strip() == "1"
@@ -397,8 +403,15 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         """Power OFF via P1=0 (explicit user action from Climate card)."""
         # Idempotency: if optimistic TTL says OFF, or backend already OFF, skip.
         now = self.coordinator.hass.loop.time()
-        optimistic_active = bool(self._optimistic_expires and now < self._optimistic_expires)
-        if optimistic_active and str(self._optimistic.get("power", "")).strip() in ("0", "false", "off", ""):
+        optimistic_active = bool(
+            self._optimistic_expires and now < self._optimistic_expires
+        )
+        if optimistic_active and str(self._optimistic.get("power", "")).strip() in (
+            "0",
+            "false",
+            "off",
+            "",
+        ):
             return
         if not optimistic_active:
             backend_off = str(self._device.get("power", "0")).strip() != "1"

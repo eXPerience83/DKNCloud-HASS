@@ -134,7 +134,10 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
 
         # Idempotency: if requested option equals the effective current one, skip.
         effective = self.current_option
-        if effective is not None and option.strip().lower() == str(effective).strip().lower():
+        if (
+            effective is not None
+            and option.strip().lower() == str(effective).strip().lower()
+        ):
             # English: avoid redundant network call when the option is already applied/optimistic.
             return
 
