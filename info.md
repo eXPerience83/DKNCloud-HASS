@@ -15,7 +15,7 @@
 **Canonical request shape**
 ```
 
-GET/POST/PUT/DELETE <PATH>?user\_email=<EMAIL>\&user\_token=<TOKEN>\[\&format=json]
+GET/POST/PUT/DELETE <PATH>?user_email=<EMAIL>&user_token=<TOKEN>[&format=json]
 Content-Type: application/json
 User-Agent: (browser-like UA)
 X-Requested-With: XMLHttpRequest
@@ -45,6 +45,7 @@ Accept: application/json, text/plain, */*
   - `PUT  /devices/<id>` → update **device fields** (not real-time events), notably:
     - `device.scenary`: `"occupied" | "vacant" | "sleep"`
     - `sleep_time`: integer minutes (see §6)
+    - **Unoccupied limits** when present: `min_temp_unoccupied`, `max_temp_unoccupied` (see §6)
 
 - **Real-time Control**
   - `POST /events/` with body:
@@ -95,15 +96,15 @@ Accept: application/json, text/plain, */*
 **Ordered list for P2 (value `"1"`..`"8"`):**
 ````
 
-\["cool", "heat", "ventilate", "heat-cold-auto", "dehumidify", "cool-air", "heat-air", "ventilate"]
+["cool", "heat", "ventilate", "heat-cold-auto", "dehumidify", "cool-air", "heat-air", "ventilate"]
 
 ```
 
 **Mode classification (drives fan routing)**
 ```
 
-cold\_modes = {1,3,4,5,6}
-heat\_modes = {2,7,8}
+cold_modes = {1,3,4,5,6}
+heat_modes = {2,7,8}
 
 ````
 
@@ -157,14 +158,20 @@ Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
 
 ---
 
-## 6) Scenes (`scenary`) and Sleep
+## 6) Scenes (`scenary`), Sleep **& Unoccupied Limits**
 
 - **Scene (`scenary`)**: `"occupied" | "vacant" | "sleep"`  
   - Update via: `PUT /devices/<id>` with body `{"device":{"scenary":"occupied"}}`
 - **Sleep (`sleep_time`)**: minutes in **[30..120]**, **step 10**.  
   - Update via: `PUT /devices/<id>` with body `{"sleep_time":60}`
 
-**Occupied switching note:** When sending control events (power/mode/speed/setpoint), the backend **automatically switches** a `vacant` device to `occupied` in many cases. The integration **does not force** `occupied` proactively. After commands we **refresh** state; only if a specific installation proves otherwise, an **optional fallback** may `PUT scenary="occupied"` (with a short cooldown).
+### Unoccupied limits (when provided by the backend)
+Two device fields may appear and can be updated via **root-level** PUT on `/devices/<id>`:
+
+- `min_temp_unoccupied` (**HEAT** minimum): **12..22 °C**, step **1**
+- `max_temp_unoccupied` (**COOL** maximum): **24..34 °C**, step **1**
+
+**Occupied switching note:** When sending control events (power/mode/speed/setpoint), the backend **often switches** a `vacant` device to `occupied`. The integration **does not force** `occupied` proactively. We **refresh** after commands; if a specific installation requires it, a **config option** may force `scenary="occupied"` (with a short cooldown).
 
 ---
 
@@ -314,7 +321,7 @@ curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_to
   -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P4","value":"2"}}'
 ```
 
-### 9.9 Scene and Sleep (PUT /devices/<id>)
+### 9.9 Scene, Sleep & Unoccupied Limits (PUT /devices/<id>)
 
 ```sh
 # Set scenary to 'occupied'
@@ -330,14 +337,29 @@ curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR
   -H "Accept: application/json, text/plain, */*" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"sleep_time":60}'
+
+# Set unoccupied HEAT minimum (12..22)
+curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN&format=json" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"min_temp_unoccupied":18}'
+
+# Set unoccupied COOL maximum (24..34)
+curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN&format=json" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/plain, */*" \
+  -H "X-Requested-With: XMLHttpRequest" \
+  -d '{"max_temp_unoccupied":28}'
 ```
 
 ---
 
 ## 10) Client Robustness (Integration)
 
-* **Timeouts:** `ClientTimeout(total=15s)` for all HTTP calls.
-* **429 / 5xx / timeouts:** Exponential backoff **with jitter**, plus a short **global cooldown** after 429 to avoid hammering.
+* **Timeouts:** `ClientTimeout(total=30s)` for all HTTP calls.
+* **429 / 5xx / timeouts:** Exponential backoff **with jitter**, plus a short **global cooldown** after 429 (respect `Retry-After` when present).
+* **401:** Single **re-login and retry once** on the first 401; then surface the error.
 * **No I/O in entity properties**; only in the `DataUpdateCoordinator`.
 * **Startup errors:** raise `ConfigEntryNotReady` when the API is unreachable.
 * **Privacy:** sanitize logs and diagnostics; never include full URLs with credentials.
@@ -350,6 +372,7 @@ curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR
 * `cold_speed`, `heat_speed`, `availables_speeds`
 * `scenary`, `sleep_time`
 * Limits: `min_limit_cold`, `max_limit_cold`, `min_limit_heat`, `max_limit_heat`
+* `min_temp_unoccupied`, `max_temp_unoccupied`
 * `modes` bitmask string (see §5)
 
 > **Never** expose: `user_email`, `authentication_token`, `mac`, `pin`, GPS `location`.
@@ -358,18 +381,17 @@ curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR
 
 ## 12) Implementation Matrix (current plan)
 
-| Feature                                | Implemented | Notes                                                 |
-| -------------------------------------- | :---------: | ----------------------------------------------------- |
-| Power (P1)                             |      ✅      | switch + climate                                      |
-| HVAC mode (P2)                         |      ✅      | Default: COOL/HEAT/FAN\_ONLY/DRY; optional HEAT\_COOL |
-| Fan speed (P3/P4)                      |      ✅      | Routed by mode type (cold vs heat)                    |
-| Setpoint COOL/HEAT (P7/P8)             |      ✅      | Send as `"NN.0"` strings                              |
-| Scene sensor (`scenary`)               |      ✅      | Diagnostic (and optional select)                      |
-| Sleep sensor (`sleep_time`)            |      ✅      | Diagnostic (and optional number)                      |
-| Select: scenary                        |      ⏳      | New `select.py` via `PUT /devices/<id>`               |
-| Number: sleep\_time (30..120, step 10) |      ⏳      | New `number.py` via `PUT /devices/<id>`               |
-| Schedules CRUD                         |      ❌      | Roadmap                                               |
-| Heat\_cool exposed by default          |      ❌      | Optional, user opt-in only                            |
+| Feature                                   | Implemented | Notes                                               |
+| ----------------------------------------- | :---------: | --------------------------------------------------- |
+| Power (P1)                                |      ✅      | switch + climate                                    |
+| HVAC mode (P2)                            |      ✅      | Default: COOL/HEAT/FAN_ONLY/DRY; optional HEAT_COOL |
+| Fan speed (P3/P4)                         |      ✅      | Routed by mode type (cold vs heat)                  |
+| Setpoint COOL/HEAT (P7/P8)                |      ✅      | Send as `"NN.0"` strings                            |
+| **Select: scenary**                       |      ✅      | `PUT /devices/<id>`                                 |
+| **Number: sleep_time (30..120, step 10)** |      ✅      | `PUT /devices/<id>`                                 |
+| **Number: min/max unoccupied**            |      ✅      | Optional: appears when backend provides the fields  |
+| Schedules CRUD                            |      ❌      | Roadmap                                             |
+| Heat_cool exposed by default              |      ❌      | Optional, user opt-in only                          |
 
 ---
 
