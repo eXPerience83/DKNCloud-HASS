@@ -3,28 +3,18 @@
 **Control your Daikin Airzone Cloud (dkn.airzonecloud.com) HVAC systems natively from Home Assistant.**  
 Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnostics, and temperature at your fingertips.
 
-[![GitHub Release][release-shield]][release-url]
-[![License][license-shield]](LICENSE)
-[![hacs][hacs-shield]][hacs-url]
-[![PRs Welcome][prs-shield]][prs-url]
-[![Python][python-shield]][python-url]
-[![Made with love][love-shield]][love-url]
-
-[release-shield]: https://img.shields.io/github/release/eXPerience83/DKNCloud-HASS.svg?style=flat
-[release-url]: https://github.com/eXPerience83/DKNCloud-HASS/releases
-[license-shield]: https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS.svg?style=flat
-[hacs-shield]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat
-[hacs-url]: https://hacs.xyz
-[prs-shield]: https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat
-[prs-url]: https://github.com/eXPerience83/DKNCloud-HASS/pulls
-[python-shield]: https://img.shields.io/badge/python-3.11%2B-blue
-[python-url]: https://www.python.org/
-[love-shield]: https://img.shields.io/badge/made%20with-%E2%9D%A4-red
-[love-url]: https://github.com/eXPerience83
-
----
-
-![Screenshot](https://github.com/eXPerience83/DKNCloud-HASS/raw/master/screenshot.png)
+<!-- Badges -->
+[![GitHub Release](https://img.shields.io/github/v/release/eXPerience83/DKNCloud-HASS)](https://github.com/eXPerience83/DKNCloud-HASS/releases)
+[![hassfest validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml)
+[![HACS validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml)
+[![Lint](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/lint.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/lint.yml)
+<!-- CodeQL: Default setup doesn't guarantee a repo workflow file, so use a static badge -->
+[![CodeQL](https://img.shields.io/badge/CodeQL-Enabled-success?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/security/code-scanning)
+[![License](https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/blob/main/LICENSE)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat)](https://hacs.xyz)
+[![Python](https://img.shields.io/badge/python-3.13.2%2B-blue)](https://www.python.org/)
+[![Ko-fi](https://img.shields.io/badge/Ko%E2%80%91fi-Support%20this%20project-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/experience83)
+[![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/eXPerience83)
 
 ---
 
@@ -38,45 +28,39 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
   **Sleep Timer (min)** is enabled by default and shows remaining minutes as an integer.
 - **Diagnostic sensors (opt-in):**  
   **MAC Address** and **PIN** are available as diagnostic sensors **disabled by default**. Enable only if you understand the privacy implications.
-- **Cleaner diagnostics:**
+- **Cleaner diagnostics:**  
   Sensors follow the Coordinator pattern (no per-entity I/O). Advanced/verbose fields remain disabled by default to avoid UI noise.
 - **Zero YAML required:**  
   All configuration via Home Assistant UI.
-- **Compatible with HACS:**  
-  Easy install & updates.
-- **Smooth UX:**
-  Optimistic updates for mode/temperature/fan changes with a short delayed refresh, so the UI feels instant while the backend confirms.
-- **Snappy power control:**
-  The power switch uses optimistic updates with a short delayed refresh, so toggles feel instant while the backend confirms.
+- **HACS-compatible (custom repo):**  
+  Easy updates from a custom repository.
+- **Preset knobs from HA:**  
+  You can adjust **Unoccupied Min/Max temperature** and **AutoSleep time** directly from Home Assistant (numbers/selects), even if the preset switch itself is not exposed yet.
 
 ---
 
 ## 🧭 Mode Mapping
 
-| P2 Value | Home Assistant Mode | Description                 |
-|----------|--------------------|-----------------------------|
-| `"1"`    | COOL               | Cooling                     |
-| `"2"`    | HEAT               | Heating                     |
-| `"3"`    | FAN_ONLY           | Ventilation only            |
-| `"5"`    | DRY                | Dehumidify                  |
+| P2 Value | Home Assistant Mode | Description      |
+|----------|----------------------|------------------|
+| `"1"`    | COOL                 | Cooling          |
+| `"2"`    | HEAT                 | Heating          |
+| `"3"`    | FAN_ONLY             | Ventilation only |
+| `"5"`    | DRY                  | Dehumidify       |
 
-> **Note:**  
-> Dual setpoint/auto (HEAT_COOL) mode is not implemented. Real-world testing resulted in the device switching to an undocumented “mode 6” but never activating true dual mode. See [info.md](./info.md) for technical details and command mapping.
+> **About HEAT_COOL (dual setpoint / “auto”)**  
+> This is **planned/experimental**. Support likely depends on device firmware/bitmask and needs **field validation**. We will gate it as **opt-in** when released and seek testers before enabling by default.
 
 ---
 
 ## ⚙️ Installation
 
-### HACS (Recommended)
-1. Go to **HACS → Integrations**
-2. Click **⋮ → Custom repositories**
-3. Add: `https://github.com/eXPerience83/DKNCloud-HASS`
-4. Search & install **DKN Cloud for HASS**
+### HACS (Custom repository — Manual)
+1. Go to **HACS → Integrations**  
+2. Click **⋮ → Custom repositories**  
+3. **Add:** `https://github.com/eXPerience83/DKNCloud-HASS` (Category: **Integration**)  
+4. **Search & install**: **DKN Cloud for HASS**  
 5. **Restart** Home Assistant
-
-### Manual
-1. Copy `airzoneclouddaikin` folder into `custom_components` in your HA config directory
-2. **Restart** Home Assistant
 
 ---
 
@@ -96,14 +80,18 @@ Enter your Airzone Cloud **username** and **password**.
 ## 🏷️ What You Get
 
 - **Climate entity:**  
-  - All core modes (COOL, HEAT, FAN, DRY)
+  - All core modes (COOL, HEAT, FAN, DRY)  
   - Dynamic fan speed control
 - **Sensor entities:**  
-  - Current temperature (`local_temp`)
-  - Sleep timer in minutes
+  - Current temperature (`local_temp`)  
+  - Sleep timer in minutes  
   - Diagnostics: modes, scenes, program status, and more (opt-in)
 - **Switch entity:**  
   - Power ON/OFF per device
+- **Number/Select entities (preset-related):**  
+  - `number.min_temp_unoccupied` (**12–22 °C**)  
+  - `number.max_temp_unoccupied` (**24–34 °C**)  
+  - `number.autosleep_minutes` (AutoSleep time, integer minutes)
 
 > Full API/command mapping and advanced usage in [info.md](./info.md).
 
@@ -117,9 +105,9 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🧪 Compatibility
 
-| Home Assistant | Python | Daikin Model/Adapter         |
-|----------------|--------|-----------------------------|
-| 2025.4+        | 3.11+   | DAIKIN ES.DKNWSERVER (Cloud)|
+| Home Assistant | Python   | Daikin Model/Adapter         |
+|----------------|----------|------------------------------|
+| **2025.5+**    | **3.13.2+** | DAIKIN ES.DKNWSERVER (Cloud) |
 
 *Other Airzone or Daikin adapters may not be supported.*
 
@@ -127,40 +115,42 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🛣️ Roadmap
 
-- [ ] Multi-language support for sensors and diagnostics
-- [ ] More diagnostics and error reporting
+- [ ] **Translations (i18n)** — expose and translate all sensors/diagnostics (EN/ES/CA/DE/FR/IT/PL/RU/UK…)  
+- [ ] **Docs** — examples for advanced scenes/presets and troubleshooting  
+- [ ] **HEAT_COOL (opt-in)** — field validation across devices/firmwares before enabling  
+- [ ] **Auto Fan Speed (opt-in, experimental)** — controller that selects fan speed (e.g., **P3/P4**) based on the **ΔT** between `local_temp` and the setpoint, with **1 °C discrete thresholds** (device reports integers), **hysteresis** to avoid chatter, and **active only in HEAT/COOL** (not in FAN_ONLY/DRY/OFF)
+
+*(Some diagnostics and extra sensors are already implemented; future work focuses on localization and UX details.)*
 
 ---
 
 ## ❓ FAQ / Troubleshooting
 
-**Q: Why can't I set dual temperatures or use "auto" mode?**  
-A: Although the API and some docs suggest support for a dual setpoint (`HEAT_COOL`) or "auto" mode (P2=4), all real-world testing on the DKN/Daikin hardware resulted in the device switching to "mode 6" (undocumented) and never actually activating dual mode as intended.  
-Because the feature could not be made stable or reliable, it is not implemented in this integration. Further investigation may be needed for future versions.
+**Q: What about scenes/presets? Can I change them from HA?**  
+A: The integration **exposes scene/preset state** in diagnostics and already lets you **tune the key knobs** that define a preset — for example, **Unoccupied Min/Max temperature** and **AutoSleep time** — directly from Home Assistant.  
+A one-click **preset switch** is on the roadmap; until then, you can adjust those parameters individually from their entities.
+
+**Q: Will HEAT_COOL (dual setpoint / “auto”) be supported?**  
+A: It is **planned** and will be introduced as **opt-in** once validated on real hardware. Behavior may vary by device/bitmask/firmware. If your unit supports it and you want to help test, please open an issue.
+
+**Q: Will there be an automatic fan speed?**  
+A: Yes, it’s **planned/experimental**. The idea is to adapt fan speed (e.g., **P3/P4**) to the **ΔT** between room temperature and the target setpoint, using **1 °C** thresholds and **hysteresis**. It will operate only in **HEAT/COOL** modes.
 
 **Q: Can I control vertical/horizontal slats?**  
 A: Slat state/position is shown in diagnostic sensors; control is not implemented but fields are exposed for advanced users.
-
-**Q: What about scene/presets?**  
-A: Current scene (occupied, sleep, etc.) is available as a diagnostic sensor. Changing preset from HA is not yet implemented.
 
 **Q: Where can I find advanced API usage, all device fields, and curl examples?**  
 A: See [info.md](./info.md).
 
 ---
 
-## 🔒 Security Notice
-
-**Never share your API token, credentials, or installation IDs in public!**  
-Always use placeholders as in this documentation.  
-For details on privacy and raw API responses, see [info.md](./info.md).
-
----
-
 ## 🤝 How to Contribute
 
-- Pull requests for features, fixes, or translations are welcome!
-- Report bugs or suggest features in [GitHub Issues](https://github.com/eXPerience83/DKNCloud-HASS/issues)
+Pull requests for features, **translations**, and fixes are welcome!
+
+- Open issues and PRs in [GitHub Issues](https://github.com/eXPerience83/DKNCloud-HASS/issues)  
+- For **translations**: contribute keys under `translations/` with ISO language codes, aligning with Home Assistant guidelines  
+- Follow the code style enforced by **Ruff** and **Black** (see CI status above)
 
 ---
 
@@ -168,16 +158,25 @@ For details on privacy and raw API responses, see [info.md](./info.md).
 
 If you find this integration useful, you can support development via:
 
-- [Ko-fi](https://ko-fi.com/experience83)
+- [Ko-fi](https://ko-fi.com/experience83)  
 - [PayPal](https://paypal.me/eXPerience83)
 
 ---
 
 ### Networking & Reliability
 
-This integration uses a per-request timeout of **15s** and **exponential backoff with jitter** for `429/5xx` responses.  
+This integration uses a per-request timeout of **30 s** and **exponential backoff with jitter** for `429/5xx` responses.  
 If the backend is temporarily unavailable, Home Assistant will retry the config entry startup (**ConfigEntryNotReady**).  
 For privacy, logs **never** print your email or token.
+
+---
+
+## 🧰 Development status
+
+- **Python:** 3.13.2+  
+- **CI:** Ruff + Black on Python 3.13 (latest patch) with a guard for `>= 3.13.2`  
+- **Actions:** Using `actions/checkout@v5` (Node 24 runtime)  
+- **Security:** GitHub **CodeQL** code scanning is enabled (default setup)
 
 ---
 
