@@ -5,11 +5,11 @@
 - CI: Run on Python 3.13 (latest patch) with a guard step enforcing `>= 3.13.2`.
 - Tooling: Set Black/Ruff `target-version` to `py313`; add `requires-python = ">=3.13.2"`.
 - Tooling: Remove `tool.black.required-version` from `pyproject.toml` to align with CI (`black==25.*`) and prevent version mismatch failures.
-- Tooling: Keep Black/Ruff `target-version` at `py313`; retain `requires-python = ">=3.13.2"`.
+- Docs: Update README to reflect Python 3.13.2+, HA 2025.5+ compatibility, and 30s request timeout.
 ### Security
 - Confirmed GitHub CodeQL code scanning is enabled (no duplicate workflow).
 ### CI
-- Using `actions/checkout@v5`; Python 3.13 (latest patch) with guard step for `>= 3.13.2`.
+- Use `actions/checkout@v5`; keep owner guard in Auto Format push step to avoid failures on forks.
 
 ## [0.3.8a4] - 2025-10-04
 ### Changed
