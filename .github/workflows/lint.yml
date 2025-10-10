@@ -1,7 +1,9 @@
 # Lint workflow (Ruff + Black) on Python >=3.13.2
-# Rationale:
-# - HA requires Python 3.13 since 2025.2 and raised the floor to >=3.13.2 around 2025.5.
-# - Use "3.13" to always get latest patch, plus an assert step to enforce >=3.13.2.
+# Changes:
+# - Bump actions/checkout to v5 (Node 24; requires runner >= v2.327.1).
+# - Keep setup-python@v5 and assert >=3.13.2 to match HA runtime floor.
+# - actions/cache via setup-python (cache: pip).
+# Why: Align with current GitHub Actions ecosystem and HA Python floor.
 
 name: Lint
 
@@ -50,7 +52,7 @@ jobs:
       - name: Black (check only)
         run: black --check .
 
-    # --- Optional: if you want a version matrix temporarily, uncomment below:
+    # If you want a temporary version matrix, uncomment below:
     # strategy:
     #   fail-fast: false
     #   matrix:
