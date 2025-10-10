@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- CI: Run on Python 3.13 (latest patch) with a guard step enforcing `>= 3.13.2`.
+- Tooling: Set Black/Ruff `target-version` to `py313`; add `requires-python = ">=3.13.2"`.
+### Security
+- Confirmed GitHub CodeQL code scanning is enabled (no duplicate workflow).
+
 ## [0.3.8a4] - 2025-10-04
 ### Changed
 - Switch: use Home Assistant event loop clock (`hass.loop.time()`) for optimistic TTLs instead of `time.monotonic()`, aligning with HA schedulers and easing testing.
