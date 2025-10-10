@@ -1,5 +1,10 @@
-# One-click formatter (Ruff --fix + Black) on Python >=3.13.2
-# Run manually from the Actions tab. Formats target branch in-place.
+# Auto formatter (Ruff --fix + Black) on Python >=3.13.2
+# Changes:
+# - Use actions/checkout@v5 (Node 24).
+# - Keep setup-python@v5; assert >=3.13.2.
+# - Add owner guard in the commit/push step to avoid failures on forks:
+#   if: github.repository_owner == 'eXPerience83'
+# Why: Only the canonical repo should push formatting commits.
 
 name: Auto Format (Black + Ruff)
 
@@ -26,6 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
+          # Fetch full history so Black/Ruff can make decisions with full context (e.g. isort).
           fetch-depth: 0
 
       - name: Resolve target branch
@@ -69,7 +75,9 @@ jobs:
       - name: Black (apply formatting)
         run: black .
 
+      # Only push from the canonical repo owner to avoid failures on forks.
       - name: Commit & push if changes
+        if: github.repository_owner == 'eXPerience83'
         shell: bash
         run: |
           set -euo pipefail
