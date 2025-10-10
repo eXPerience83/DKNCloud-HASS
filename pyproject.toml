@@ -1,14 +1,25 @@
+# Tooling aligned to Home Assistant Python floor (>=3.13.2).
+
+[project]
+# Enforce the runtime floor required by HA 2025.5+.
+requires-python = ">=3.13.2"
+
 [tool.black]
 line-length = 88
-target-version = ["py311"]
+# Black supports py313; keep a single target since the project requires 3.13+.
+target-version = ["py313"]
+# Ensure a Black version that understands py313 (24.8.0+). CI installs 25.*.
+required-version = "24.8.0"
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
-fix = true  # default fix behavior when running 'ruff' without flags
+# Match runtime: Python 3.13
+target-version = "py313"
+# Default fix behavior when running plain `ruff`.
+fix = true
 
 [tool.ruff.lint]
-# Enable core rulesets: pycodestyle/pyflakes/isort/pyupgrade/bugbear
+# Core rule sets: pycodestyle/pyflakes/isort/pyupgrade/bugbear
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
   "E203", # Whitespace before ':' (conflicts with Black on slicing)
