@@ -4,7 +4,14 @@ Consistent creation off coordinator.data (dict by device_id).
 Core sensors enabled-by-default so they are visible out-of-the-box.
 No I/O in properties; updates come from the coordinator.
 
-Privacy: do not expose PIN as a sensor; redact secrets in logs.
+Privacy:
+- Do not expose PIN as a sensor by default; PII sensors are opt-in.
+- Redact secrets in logs and diagnostics (see diagnostics.py).
+
+Changes (privacy robustness):
+- Introduce internal marker 'self._is_pii' for PII sensors.
+- Strengthen opt-out cleanup: remove by exact unique_id (device_id + attribute)
+  for all known devices, and keep suffix-based fallback for legacy entries.
 """
 
 from __future__ import annotations
@@ -270,18 +277,28 @@ async def async_setup_entry(hass, entry, async_add_entities):
         )
     )
 
-    # --- Cleanup of PII entities when opted-out (safe and narrow) ----------
-    # We only remove previously-created PII sensors of THIS integration.
-    # This does not touch non-PII sensors.
+    # --- Cleanup of PII entities when opted-out (safe and robust) ----------
+    # We remove previously-created PII sensors of THIS integration.
+    # Strategy:
+    #   1) Prefer exact unique_id match (device_id + '_' + pii_attribute) for all
+    #      devices currently known in the coordinator snapshot.
+    #   2) Keep a fallback legacy rule: unique_id ending with '_<pii_attribute>'.
     try:
         if not expose_pii:
             reg = er.async_get(hass)
+            known_device_ids = set((coordinator.data or {}).keys())
+            computed_pii_uids = {
+                f"{dev_id}_{attr}" for dev_id in known_device_ids for attr in PII_ATTRS
+            }
+
             for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
                 if ent.domain != "sensor" or ent.platform != DOMAIN:
                     continue
                 uid = (ent.unique_id or "").strip()
-                # Remove ONLY if unique_id ends with one of the exact PII attribute names
-                if any(uid.endswith(f"_{attr}") for attr in PII_ATTRS):
+                # Remove by exact known uid or by legacy suffix fallback
+                if uid in computed_pii_uids or any(
+                    uid.endswith(f"_{attr}") for attr in PII_ATTRS
+                ):
                     reg.async_remove(ent.entity_id)
     except Exception as exc:  # Defensive: never fail setup because of registry ops
         _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
@@ -291,7 +308,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         specs += PII_SENSORS  # add PII when opted-in
 
     entities: list[AirzoneSensor] = []
-    for device_id in list(coordinator.data.keys()):
+    for device_id in list((coordinator.data or {}).keys()):
         for spec in specs:
             entities.append(AirzoneSensor(coordinator, device_id, *spec))
 
@@ -320,10 +337,13 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         self._attr_name = friendly
         self._attr_icon = icon
         self._attr_unique_id = f"{device_id}_{attribute}"
+        # Internal privacy marker
+        self._is_pii: bool = attribute in PII_ATTRS
+
         # Entity category: daily-use whitelist and PII are NOT diagnostic; rest are diagnostic
         self._attr_entity_category = (
             None
-            if attribute in _NON_DIAG_WHITELIST or attribute in PII_ATTRS
+            if attribute in _NON_DIAG_WHITELIST or self._is_pii
             else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
@@ -357,7 +377,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def _device(self) -> dict[str, Any]:
-        return self.coordinator.data.get(self._device_id, {})
+        return (self.coordinator.data or {}).get(self._device_id, {})
 
     @property
     def available(self) -> bool:
@@ -417,8 +437,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             except Exception:
                 return None
 
-        # Mode text derived from `mode` code.
-        # Expanded to recognize P2=6/7/8 as per technical reference.
+        # Mode text derived from `mode` code (includes 6/7/8 for completeness)
         if self._attribute == "mode_text":
             code = str(self._device.get("mode", "")).strip()
             mapping = {

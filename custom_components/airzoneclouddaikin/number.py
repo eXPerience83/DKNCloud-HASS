@@ -1,15 +1,24 @@
-"""Number platform for DKN Cloud for HASS: sleep_time control.
+"""Number platform for DKN Cloud for HASS: sleep_time and unoccupied limits.
 
-Implements a NumberEntity for device 'sleep_time' via AirzoneAPI.put_device_sleep_time().
-- Valid range: 30..120 minutes, step 10.
-- Optimistic UI with short TTL, then coordinator refresh.
+Implements NumberEntity for:
+- device 'sleep_time' via AirzoneAPI.put_device_sleep_time()
+  * Valid range: 30..120 minutes, step 10.
+  * Optimistic UI with short TTL, then coordinator refresh.
+- device 'min_temp_unoccupied' and 'max_temp_unoccupied' via AirzoneAPI.put_device_fields()
+  * Fixed ranges (hardcoded by product UI):
+      - min_temp_unoccupied (HEAT): 12..22 °C (step 1)
+      - max_temp_unoccupied (COOL): 24..34 °C (step 1)
+  * Same optimistic/idempotent behavior and refresh.
+
+Design notes:
 - No I/O in properties; reads come from DataUpdateCoordinator.
+- Entities are created only if the backend exposes the fields in GET /devices,
+  same as sleep_time. If the field exists but is missing a value, HA shows 'unknown'.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time  # Moved to module level to avoid imports inside properties/methods.
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,7 +27,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import (
     DeviceInfo,
-    EntityCategory,  # To place this control under Configuration
+    EntityCategory,  # Place these controls under Configuration
 )
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -28,10 +37,26 @@ from homeassistant.helpers.update_coordinator import (
 from .airzone_api import AirzoneAPI
 from .const import DOMAIN
 
-_MIN = 30
-_MAX = 120
-_STEP = 10
+# ------------------------
+# Sleep time constants
+# ------------------------
+_SLEEP_MIN = 30
+_SLEEP_MAX = 120
+_SLEEP_STEP = 10
+
+# Optimistic TTL (seconds) to hide backend latency
 _OPTIMISTIC_TTL_SEC = 6.0
+
+# ------------------------
+# Unoccupied limits constants (hardcoded as per product UI)
+# ------------------------
+# English: Heat → minimum temperature while unoccupied
+_UNOCC_HEAT_MIN = 12
+_UNOCC_HEAT_MAX = 22
+# English: Cool → maximum temperature while unoccupied
+_UNOCC_COOL_MIN = 24
+_UNOCC_COOL_MAX = 34
+_UNOCC_STEP = 1
 
 
 async def async_setup_entry(
@@ -46,9 +71,30 @@ async def async_setup_entry(
 
     entities: list[NumberEntity] = []
     for device_id, device in (coordinator.data or {}).items():
+        # Sleep time
         if "sleep_time" in device:
             entities.append(
                 DKNSleepTimeNumber(
+                    coordinator=coordinator,
+                    api=api,
+                    device_id=str(device_id),
+                )
+            )
+
+        # Unoccupied Heat Min (12..22)
+        if "min_temp_unoccupied" in device:
+            entities.append(
+                DKNUnoccupiedHeatMinNumber(
+                    coordinator=coordinator,
+                    api=api,
+                    device_id=str(device_id),
+                )
+            )
+
+        # Unoccupied Cool Max (24..34)
+        if "max_temp_unoccupied" in device:
+            entities.append(
+                DKNUnoccupiedCoolMaxNumber(
                     coordinator=coordinator,
                     api=api,
                     device_id=str(device_id),
@@ -67,17 +113,18 @@ class _OptimisticState:
     valid_until_monotonic: float = 0.0
 
 
-class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
-    """Number entity to control sleep_time in minutes."""
+class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
+    """Shared logic for DKN numbers (idempotent + optimistic)."""
 
-    _attr_has_entity_name = True
-    _attr_name = "Sleep time"
-    _attr_icon = "mdi:power-sleep"
-    _attr_native_unit_of_measurement = "min"
-    _attr_native_min_value = _MIN
-    _attr_native_max_value = _MAX
-    _attr_native_step = _STEP
-    _attr_mode = NumberMode.SLIDER
+    # Subclasses must set:
+    # - _field_name
+    # - _native_min/_native_max/_native_step
+    # - _attr_name, _attr_icon, _attr_native_unit_of_measurement
+
+    _field_name: str
+    _native_min: int
+    _native_max: int
+    _native_step: int
 
     def __init__(
         self,
@@ -85,15 +132,20 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
         coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
         api: AirzoneAPI,
         device_id: str,
+        unique_suffix: str,
     ) -> None:
         """Initialize entity."""
         super().__init__(coordinator)
         self._api = api
         self._device_id = device_id
         self._optimistic = _OptimisticState()
-        self._attr_unique_id = f"{device_id}_sleep_time"
-        # Place this control under "Configuration" section in HA UI.
+        self._attr_unique_id = f"{device_id}_{unique_suffix}"
+        self._attr_mode = NumberMode.SLIDER
         self._attr_entity_category = EntityCategory.CONFIG
+        # Clamp bounds and set HA properties
+        self._attr_native_min_value = self._native_min
+        self._attr_native_max_value = self._native_max
+        self._attr_native_step = self._native_step
 
     # ---------- Device registry ----------
     @property
@@ -119,14 +171,17 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
 
     @property
     def native_value(self) -> int | None:
-        """Return current sleep_time (optimistic if active)."""
+        """Return current value (optimistic if still valid)."""
         if (
             self._optimistic.value is not None
-            and time.monotonic() < self._optimistic.valid_until_monotonic
+            and self.coordinator.hass.loop.time()
+            < self._optimistic.valid_until_monotonic
         ):
             return int(self._optimistic.value)
 
-        val = (self.coordinator.data or {}).get(self._device_id, {}).get("sleep_time")
+        val = (
+            (self.coordinator.data or {}).get(self._device_id, {}).get(self._field_name)
+        )
         try:
             return int(val) if val is not None else None
         except Exception:
@@ -134,18 +189,46 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
             return None
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set new sleep_time (rounded to nearest step) using the API."""
-        # Clamp and quantize to step of 10 minutes
-        ivalue = int(round(value / _STEP) * _STEP)
-        ivalue = max(_MIN, min(_MAX, ivalue))
+        """Set new value using the API with idempotency and optimism."""
+        # Clamp and quantize
+        ivalue = int(round(value / self._native_step) * self._native_step)
+        ivalue = max(self._native_min, min(self._native_max, ivalue))
 
-        # Optimistic update for a few seconds
+        # Idempotency: compare against optimistic or coordinator value
+        effective: int | None
+        if (
+            self._optimistic.value is not None
+            and self.coordinator.hass.loop.time()
+            < self._optimistic.valid_until_monotonic
+        ):
+            effective = int(self._optimistic.value)
+        else:
+            raw = (
+                (self.coordinator.data or {})
+                .get(self._device_id, {})
+                .get(self._field_name)
+            )
+            try:
+                effective = int(raw) if raw is not None else None
+            except Exception:
+                effective = None
+
+        if effective is not None and effective == ivalue:
+            # English: Avoid redundant network call.
+            return
+
+        # Optimistic state window
         self._optimistic.value = ivalue
-        self._optimistic.valid_until_monotonic = time.monotonic() + _OPTIMISTIC_TTL_SEC
+        self._optimistic.valid_until_monotonic = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
 
         try:
-            await self._api.put_device_sleep_time(self._device_id, ivalue)
+            # Root-level payload, as confirmed by captured cURL.
+            await self._api.put_device_fields(
+                self._device_id, {self._field_name: ivalue}
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -155,5 +238,97 @@ class DKNSleepTimeNumber(CoordinatorEntity, NumberEntity):
             self.async_write_ha_state()
             raise
         finally:
-            # Request a refresh to consolidate the state
             await self.coordinator.async_request_refresh()
+
+
+# ------------------------
+# Sleep time number
+# ------------------------
+class DKNSleepTimeNumber(_BaseDKNNumber):
+    """Number entity to control sleep_time in minutes."""
+
+    _field_name = "sleep_time"
+    _native_min = _SLEEP_MIN
+    _native_max = _SLEEP_MAX
+    _native_step = _SLEEP_STEP
+
+    _attr_has_entity_name = True
+    _attr_name = "Sleep time"
+    _attr_icon = "mdi:power-sleep"
+    _attr_native_unit_of_measurement = "min"
+
+    def __init__(
+        self,
+        *,
+        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        api: AirzoneAPI,
+        device_id: str,
+    ) -> None:
+        super().__init__(
+            coordinator=coordinator,
+            api=api,
+            device_id=device_id,
+            unique_suffix="sleep_time",
+        )
+
+
+# ------------------------
+# Unoccupied Heat (min)
+# ------------------------
+class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
+    """Number entity to control unoccupied heat min temperature (°C)."""
+
+    _field_name = "min_temp_unoccupied"
+    _native_min = _UNOCC_HEAT_MIN
+    _native_max = _UNOCC_HEAT_MAX
+    _native_step = _UNOCC_STEP
+
+    _attr_has_entity_name = True
+    _attr_name = "Unoccupied Heat Temp"
+    _attr_icon = "mdi:home-thermometer-outline"
+    _attr_native_unit_of_measurement = "°C"
+
+    def __init__(
+        self,
+        *,
+        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        api: AirzoneAPI,
+        device_id: str,
+    ) -> None:
+        super().__init__(
+            coordinator=coordinator,
+            api=api,
+            device_id=device_id,
+            unique_suffix="min_temp_unoccupied",
+        )
+
+
+# ------------------------
+# Unoccupied Cool (max)
+# ------------------------
+class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
+    """Number entity to control unoccupied cool max temperature (°C)."""
+
+    _field_name = "max_temp_unoccupied"
+    _native_min = _UNOCC_COOL_MIN
+    _native_max = _UNOCC_COOL_MAX
+    _native_step = _UNOCC_STEP
+
+    _attr_has_entity_name = True
+    _attr_name = "Unoccupied Cool Temp"
+    _attr_icon = "mdi:snowflake-thermometer"
+    _attr_native_unit_of_measurement = "°C"
+
+    def __init__(
+        self,
+        *,
+        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        api: AirzoneAPI,
+        device_id: str,
+    ) -> None:
+        super().__init__(
+            coordinator=coordinator,
+            api=api,
+            device_id=device_id,
+            unique_suffix="max_temp_unoccupied",
+        )

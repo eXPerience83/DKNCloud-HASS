@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.3.8] - 2025-10-11
+### Changed
+- CI: Run on Python 3.13 (latest patch) with a guard step enforcing `>= 3.13.2`.
+- Tooling: Set Black/Ruff `target-version` to `py313`; add `requires-python = ">=3.13.2"`.
+- Tooling: Remove `tool.black.required-version` from `pyproject.toml` to align with CI (`black==25.*`) and prevent version mismatch failures.
+- Docs: Update README to reflect Python 3.13.2+, HA 2025.5+ compatibility, and 30s request timeout.
+### Security
+- Confirmed GitHub CodeQL code scanning is enabled (no duplicate workflow).
+### CI
+- Use `actions/checkout@v5`; keep owner guard in Auto Format push step to avoid failures on forks.
+
+## [0.3.8a4] - 2025-10-04
+### Changed
+- Switch: use Home Assistant event loop clock (`hass.loop.time()`) for optimistic TTLs instead of `time.monotonic()`, aligning with HA schedulers and easing testing.
+- Switch: cancel the delayed refresh handle to avoid stacked/late callbacks and use conservative idempotency for P1 ON/OFF (skip redundant commands when the requested power state is already active, considering optimistic TTL and backend snapshot).
+- **API (auth/conn):**
+  - `login()` now returns `False` **only** for HTTP 401 (invalid credentials) and **raises** on network errors or 5xx responses. This lets the config flow show the correct message (`invalid_auth` vs `cannot_connect`).
+  - Write endpoints (`/events`, `/devices/{id}`) now use limited **exponential backoff with jitter** for HTTP 429/5xx, include a short **cooldown** after 429 (respecting `Retry-After` when present), and perform a **single re-login** on the first 401 before retrying once.
+- Climate: add conservative idempotency for P1 power commands (skip redundant ON/OFF when optimistic TTL or backend snapshot already match the requested state).
+- Number/Select: early-return idempotency when the requested value/option already matches the effective state (considering optimistic TTL first).
+### Added
+- Optional Number entities for unoccupied limits:
+  - `number.min_temp_unoccupied` (12–22 °C)
+  - `number.max_temp_unoccupied` (24–34 °C)
+- Root-level PUT to `/devices/<id>` with optimistic/idempotent updates.
+
+## [0.3.8a3] - 2025-10-03
+### Fixed
+- Climate: cancel scheduled delayed refresh when the entity is removed, and prevent stacked callbacks by cancelling the previous handle before scheduling a new one. This avoids spurious refreshes after teardown.
+### Added
+- **Diagnostics**: new `diagnostics.py` to provide a sanitized snapshot of the config entry and coordinator state. PII and secrets (email, token, MAC, PIN, GPS, etc.) are redacted via `async_redact_data`.
+### Changed
+- **number.py / select.py**: use Home Assistant event loop clock (`hass.loop.time()`) for optimistic TTLs to align with HA schedulers and simplify testing.
+- **sensor.py**: introduce internal `_is_pii` marker and strengthen opt-out cleanup:
+  remove PII sensors by exact `unique_id` (computed as `device_id + '_' + attribute`)
+  and keep a legacy suffix-based fallback for pre-existing entries.
+
+## [0.3.8a2] - 2025-10-01
+### Changed
+- HTTP timeout raised to **30s** (from 15s) to better align with HA defaults and slow links.
+- Coordinator is now a small **typed subclass**, exposing `api: AirzoneAPI` without ad-hoc attributes.
+### Fixed
+- Climate: **idempotent** `async_set_hvac_mode` — if the requested mode is already active and power is ON, skip sending redundant `P2`.
+### Docs
+- README/info: updated networking section to reflect the 30s timeout.
+- Pre-release version formatted as `0.3.8a2` to ensure proper ordering in HACS.
+
+## [0.3.8a1] - Unreleased
+### Changed
+- HTTP: Centralized browser-like User-Agent and endpoint-specific minimal headers.
+  - GET `/devices`: only `User-Agent` (matches cURL usage).
+  - POST `/events`: `User-Agent`, `X-Requested-With`, `Content-Type`, `Accept`.
+- Internals: Default request headers are now minimal; endpoint-specific headers are injected where required.
+
 ## [0.3.7] - 2025-09-28
 ### Fixed
 - switch: ensure stable device identifier even when coordinator snapshot is empty at startup (fallback to `self._device_id`).
@@ -8,12 +62,12 @@
 ### Notes
 - `P2=4 (AUTO)` remains unsupported for now; docs toggle will be added when implemented.
 
-## [0.3.7-alpha.11] - 2025-09-27
+## [0.3.7a11] - 2025-09-27
 ### Changed
 - Presets UI: `scenary` now appears under **Controls** (entity_category=None) and `sleep_time` now appears under **Configuration** (entity_category=CONFIG) for clearer organization.
 - No other logic changes: unique IDs, optimistic updates, and coordinator refresh behavior remain the same.
 
-## [0.3.7-alpha.9] - 2025-09-27
+## [0.3.7a9] - 2025-09-27
 ### Added
 - Binary Sensor: new `device_on` (device_class: power), enabled by default and non-diagnostic. Mirrors the backend `power` field with robust normalization for dashboards/automations. No I/O in properties; reads from the coordinator snapshot.
 ### Changed
@@ -22,7 +76,7 @@
 - Presets (`select`/`number`) remain always loaded as of 0.3.7-alpha.8.
 - No translation updates in this build.
 
-## [0.3.7-alpha.8] - 2025-09-27
+## [0.3.7a8] - 2025-09-27
 ### Changed
 - Presets are now **always loaded** from `__init__.py` (`select.py` and `number.py` are forwarded unconditionally). The previous `enable_presets` toggle is ignored by setup.
 - Options: removed **`enable_presets`** from the config & options flow. Presets (select/number) are now always loaded (per previous step), so the flag is no longer needed.
@@ -34,7 +88,7 @@
 - Defaults preserved: `power (raw)` remains diagnostic **enabled**; `units`, `update_date`, `connection_date` remain diagnostic **disabled**.
 - PII cleanup remains **narrow** (removes only sensors whose unique_id ends with a PII attribute) to avoid deleting non-PII entities.
 
-## [0.3.7-alpha.7] - 2025-09-25
+## [0.3.7a7] - 2025-09-25
 ### Fixed
 - Options: restored `enable_presets` (select/number) by reading from `options` **and** falling back to `data` during setup.
 - Sensors: `power` is now enabled by default; `units`, `update_date` and `connection_date` remain disabled by default (documented).
@@ -42,11 +96,11 @@
 ### Notes
 - Home Assistant does not retroactively disable already-created entities when defaults change. If `units/update_date/connection_date` appear enabled from previous versions, disable them from the UI or remove the entities so they are re-created with the new defaults.
 
-## [0.3.7-alpha.6] - 2025-09-25
+## [0.3.7a6] - 2025-09-25
 ### Added
 - Privacy: automatic cleanup of PII sensors when `expose_pii_identifiers` is disabled (entities are removed from the Entity Registry on entry reload).
 
-## [0.3.7-alpha.5] - 2025-09-25
+## [0.3.7a5] - 2025-09-25
 ### Added
 - Sensors: new `status`, `mode` (raw), and derived `mode_text` (maps 1→cool, 2→heat, 3→fan_only, 4→auto/heat_cool, 5→dry; unknown otherwise), all enabled by default.
 - Sensors: `min_limit_cold/max_limit_cold/min_limit_heat/max_limit_heat` and `min/max_temp_unoccupied` are now enabled by default; all temperature-like sensors display **1 decimal** for consistency.
@@ -62,14 +116,14 @@
 ### Notes
 - Disabling `expose_pii_identifiers` stops providing PII sensors on next reload; any previously created PII entities remain in Home Assistant's entity registry (standard behavior) and can be removed manually from the UI if desired.
 
-## [0.3.7-alpha.4] - 2025-09-23
+## [0.3.7a4] - 2025-09-23
 ### Added
 - Options Flow for editing **scan_interval** and **enable_presets** from the UI.
 ### Fixed
 - Missing “Options” menu in the integration due to `async_get_options_flow` not being defined on the `ConfigFlow` class.
 - Ensured `config_flow.py` is complete and Black/Ruff compliant (no truncated lines).
 
-## [0.3.7-alpha.3] - 2025-09-22
+## [0.3.7a3] - 2025-09-22
 ### Fixed
 - Options Flow now shows correctly: `async_get_options_flow` moved to module level in `config_flow.py`.
 - Robust installation parsing in `__init__.py` (handles both `installation.id` and `installation_id`).
@@ -81,7 +135,7 @@
 ### Changed
 - Defensive checks to avoid loading optional platforms when files are missing.
 
-## [0.3.7-alpha.2] - 2025-09-22
+## [0.3.7a2] - 2025-09-22
 ### Fixed
 - Options Flow registration: moved `async_get_options_flow()` to the `ConfigFlow` class so the **Options** button appears and the flow is callable by Home Assistant.
 - Runtime settings now read from `entry.options` (with fallback to `entry.data`), so `scan_interval` and `enable_presets` actually take effect after editing options.
@@ -89,7 +143,7 @@
 - Added an options update listener to **reload the entry** when options change.
 - Conditional platform loading: `select` and `number` are now loaded only when `enable_presets` is enabled.
 
-## [0.3.7-alpha.1] - 2025-09-22
+## [0.3.7a1] - 2025-09-22
 ### Added
 - Options flow: `enable_presets` flag and editable `scan_interval` (min 10s).
 - `airzone_api.put_device_fields()`: generic PUT `/devices/<id>` helper with retries/backoff and PII-safe logging.
@@ -101,17 +155,15 @@
 ### Fixed
 - Ensured no PII in logs for all new PUT flows, consistent with existing API client behavior.
 
-## [0.3.5-alpha.5] - 2025-09-18
+## [0.3.5a5] - 2025-09-18
 ### Added
 - Climate: implement `async_turn_on`/`async_turn_off` mapped to `P1` with optimistic state and short post-write refresh.
-### Fixed
-- Climate: normalize optimistic/remote power values in `_device_power_on()` so `"0"` is correctly treated as `False`, enabling reliable auto-power-on when changing HVAC mode.
 
-## [0.3.5-alpha.4] - 2025-09-17
+## [0.3.5a4] - 2025-09-17
 ### Changed
 - Climate: enforce integer UI step for target temperature by adding `target_temperature_step = 1.0` while keeping `precision = PRECISION_WHOLE`. This guarantees 1°C increments in UI to match device capabilities.
 
-## [0.3.5-alpha.3] - 2025-09-16
+## [0.3.5a3] - 2025-09-16
 ### Fixed
 - Sensors: `machine_errors` now reports **"No errors"** when the backend returns a null/empty value, instead of showing `unknown`. If a list of errors is returned, it is rendered as a comma-separated string; other values are shown as-is. No other sensor behavior changed.
 - Prevent crash on entity setup caused by `climate.supported_features` returning a plain `int`. Now it always returns a proper `ClimateEntityFeature` bitmask, avoiding `TypeError: argument of type 'int' is not iterable` on recent HA versions.
@@ -122,7 +174,7 @@
 - Rebalanced default sensors: core ones enabled by default again (e.g., `local_temp`, scenary, speeds, consigns); extra diagnostics remain opt-in to reduce noise and protect privacy.
 - Climate: interpret `device["modes"]` as a *bitstring* (positions P2=1..8) instead of an integer bitmask; fallback to exposing COOL/HEAT/FAN_ONLY/DRY when missing.
 
-### [0.3.5-alpha.2] - 2025-09-16
+### [0.3.5a2] - 2025-09-16
 #### Added
 - Diagnostic sensors for **MAC Address** and **PIN** (disabled by default).
 - Timestamp sensors for **Connection Date** and **Device Update Date** (disabled by default).
@@ -140,7 +192,7 @@
 - Climate init crash when accessing device snapshot before context was built.
 - Write commands use the correct **/events** payload (P1/P2/P3/P4/P7/P8).
 
-## [0.3.5-alpha.1] - 2025-09-15
+## [0.3.5a1] - 2025-09-15
 ### Fixed
 - API: Catch builtin `TimeoutError` (Python 3.11 alias of `asyncio.TimeoutError`) to align with Ruff/pyupgrade and avoid formatter rewrites.
 - API: Correct minor header typo when setting `Content-Type`.
@@ -148,7 +200,7 @@
 - Hassfest: Ensure manifest keys are strictly sorted (domain, name, then alphabetical).
 - HACS: `hacs.json` uses a supported minimal schema (`name`, `render_readme`).
 ### Changed
-- Manifest version bumped to `0.3.5-alpha.1` for the first alpha of this phase.
+- Manifest version bumped to `0.3.5a1` for the first alpha of this phase.
 ### Notes
 - If HACS complains about pre-release formatting, use `0.3.5a1` as an alternative version string in the manifest (PEP 440 compatible).
 
@@ -285,7 +337,7 @@
 - Restart Home Assistant after updating to apply these fixes.  
 
 ## [0.2.5] - 2025-03-20
-### Added
+### **Added**
 - Updated version to 0.2.5.
 - Corrected device information in the device registry:
   - The “firmware” value now correctly uses the firmware field (e.g. "1.0.1") instead of the update_date.
@@ -294,19 +346,19 @@
   - Mapping: P2 "1" → COOL, "2" → HEAT, "3" → FAN ONLY, "4" → AUTO, "5" → DRY; states 6–8 are considered Unavailable.
 - Updated device_info in climate.py to remove unsupported keywords and correctly display device attributes.
 - Minor improvements to logging and error handling.
-### Changed
+### **Changed**
 - Revised handling of device data updates in climate.py.
 - Adjusted fan speed commands: now using P3 for COOL/FAN_ONLY modes and P4 for HEAT/AUTO modes.
 - Removed any references to a forced scan interval; the integration now relies on Home Assistant’s built-in polling mechanism.
 - Cleaned up comments and updated documentation to reflect all changes in English.
 - Fixed issues with the sensor entity unique ID to avoid “No entity id specified” errors.
-### Pending
+### **Pending**
 - Further testing on additional machine models.
 - Investigate potential support for additional commands (e.g., preset modes) and swing mode adjustments.
 - Add the “pin” value to the device info alongside the MAC address.
 
 ## [0.2.4] - 2025-03-19
-### Changed
+### **Changed**
 - Climate Platform (climate.py):
   - Fixed the error “no running event loop” by replacing asyncio.create_task with self.hass.async_create_task in _send_command.
   - Ensured unique_id is set using the device id.
@@ -315,25 +367,25 @@
 - Renamed "heat-cold-auto" to HVACMode.AUTO (module-level constant HVAC_MODE_AUTO) in the code.
 
 ## [0.2.3] - 2025-03-19
-### Added
+### **Added**
 - Updated version to 0.2.3.
 - Fixed unique_id for both climate and sensor entities so they are properly registered and managed in the Home Assistant UI.
 - Added asynchronous method `send_event` to the AirzoneAPI class in airzone_api.py.
 - Updated config_flow.py to include the "force_hvac_mode_auto" option.
 - Updated set_temperature in climate.py to constrain values based on device limits (min_limit_cold/max_limit_cold for cool modes; min_limit_heat/max_limit_heat for heat modes) and format the value as an integer with ".0".
 - Updated info.md with the original MODES_CONVERTER mapping from max13fr and detailed curl command examples (using generic placeholders).
-### Changed
+### **Changed**
 - Replaced deprecated async_forward_entry_setup with async_forward_entry_setups in __init__.py.
 - Updated imports in climate.py and sensor.py to use HVACMode, ClimateEntityFeature, and UnitOfTemperature.
 - Renamed "heat-cold-auto" to HVACMode.AUTO in the code.
 - Updated README.md with full integration details in English.
 - Updated all text and comments to English.
-### Pending
+### **Pending**
 - Further verification of fan speed control in different modes.
 - Additional testing of HVACMode.AUTO behavior on various machine models.
 
 ## [0.2.2] - 2025-03-19
-### Added
+### **Added**
 - Updated version to 0.2.2.
 - In the API calls for installations, now includes "user_email" and "user_token" in query parameters.
 - Added support for controlling fan speed:
@@ -343,12 +395,12 @@
 - In set_temperature, the temperature is now constrained to the limits (min_limit_cold/max_limit_cold or min_limit_heat/max_limit_heat) from the API; the value is sent as an integer with ".0" appended.
 - Added the configuration option "force_hvac_mode_auto" (in config_flow) to enable the forced auto mode.
 - Updated info.md with the original MODES_CONVERTER mapping from max13fr, with a note that only modes 1–5 produced effect in our tests (model ADEQ125B2VEB).
-### Changed
+### **Changed**
 - Minor adjustments in config_flow.py, climate.py, and README.md.
 - Pending: Verify additional fan speed adjustments for FAN_ONLY and HVACMode.AUTO modes.
 
 ## [0.2.1] - 2025-03-19
-### Added
+### **Added**
 - Integration updated to version 0.2.1.
 - Added configuration option "force_heat_cold_auto" in config_flow (allows forcing the "heat-cold-auto" mode).
 - Updated async_setup_entry in climate.py to pass configuration to each climate entity.
@@ -357,13 +409,13 @@
 - Added sensor platform (sensor.py) for recording the temperature probe (local_temp).
 - Updated info.md with detailed documentation on the original MODES_CONVERTER mapping from max13fr and noted that in our tests, only modes 1–5 produce an effect (for model ADEQ125B2VEB).
 - Updated README.md with clarifications on available features, including differences in fan speed settings for cool and heat modes.
-### Changed
+### **Changed**
 - Version updated in manifest.json to 0.2.1.
 - Minor adjustments in config_flow.py, __init__.py, and README.md.
 - Pending: Verify fan speed adjustment in FAN_ONLY and HVACMode.AUTO modes.
 
 ## [0.2.0] - 2025-03-19
-### Added
+### **Added**
 - Integration updated to version 0.2.0.
 - Updated API endpoints and BASE_URL in const.py.
 - Simplified const.py (removed MODES_CONVERTER from code; it is documented in info.md).
@@ -375,15 +427,15 @@
 - Added sensor platform (sensor.py) for a temperature probe sensor to record the "local_temp".
 - Added file info.md with detailed information about the "Px" modes and example curl commands (using placeholders for sensitive data).
 - Documented that the original package defined modes up to "8", but in our tests only modes 1–5 produce an effect.
-### Changed
+### **Changed**
 - Version updated in manifest.json to 0.2.0.
 - Minor adjustments in config_flow.py, __init__.py, and README.md.
-### Pending (for future versions)
+### **Pending (for future versions)**
 - Refinement of control actions in climate.py if needed.
 - Further testing and potential implementation of additional options (P5, P6) if required.
 
 ## [0.1.5] - 2025-03-16
-### Added
+### **Added**
 - **Airzone API Client:** Updated module airzone_api.py now uses the endpoints from the original AirzoneCloudDaikin package:
   - Login: `/users/sign_in`
   - Installation Relations: `/installation_relations`
@@ -392,50 +444,49 @@
 - Added a method `fetch_devices(installation_id)` in airzone_api.py to retrieve devices for a given installation.
 - Updated climate.py to fetch devices per installation using `fetch_devices`.
 - Added detailed logging to all modules for debugging (login, fetching installations, fetching devices).
-### Fixed
+### **Fixed**
 - Updated endpoints based on tests with curl.
 - Adjusted the base URL to "https://dkn.airzonecloud.com" (without adding "/api") as used in the original package.
 - Fixed import errors by ensuring const.py exports the required constants.
 - Set version in manifest.json to 0.1.5.
-### Changed
+### **Changed**
 - Documentation in README.md updated to reflect these changes.
 
 ## [0.1.2] - 2025-03-16
-### Added
+### **Added**
 - **Airzone API Client:** New module airzone_api.py implementing the official Airzone Cloud Web API (adapted for dkn.airzonecloud.com) for authentication and fetching installations.
 - **Async Setup:** Updated climate.py now uses async_setup_entry to initialize the integration with config entries.
 - Added detailed logging in airzone_api.py and climate.py for better debugging of API calls and data retrieval.
 - Added a new const.py with essential constants.
-### Fixed
+### **Fixed**
 - Replaced external dependency on the AirzoneCloudDaikin package by using our own implementation.
 - Updated the version in manifest.json to 0.1.2.
 - Fixed import errors by creating/updating const.py.
-### Changed
+### **Changed**
 - Updated documentation in README.md to reflect changes.
 - Updated repository URLs and HACS configuration.
 
 ## [0.1.1] - 2025-03-15
-### Fixed
+### **Fixed**
 - Replaced setup_platform with async_setup_entry in climate.py to support Home Assistant's config entries.
 - Fixed integration with AirzoneCloudDaikin library in climate.py.
 - Updated entity setup to use async_add_entities instead of add_entities.
 - Optimized HVAC mode handling.
 - Removed unused AirzonecloudDaikinInstallation class.
-### Changed
+### **Changed**
 - Updated manifest.json version to 0.1.1.
 
 ## [0.1.0] - 2025-03-15
-### Added
+### **Added**
 - Config Flow integration for DKN Cloud for HASS, enabling configuration via Home Assistant's UI.
 - Validation for the scan_interval parameter (must be an integer ≥ 1, with a default value of 10 seconds) along with an informational message.
 - Updated manifest.json with the new name "DKN Cloud for HASS", version set to 0.1.0, added "config_flow": true, and updated codeowners to include eXPerience83.
 - Installation instructions added for HACS integration in the README.
 - Updated issue tracker link to point to https://github.com/eXPerience83/DKNCloud-HASS/issues.
-### Changed
+### **Changed**
 - Removed the external dependency on AirzoneCloudDaikin by eliminating the "requirements" field from manifest.json.
 - Updated HACS configuration in hacs.json to reflect the new project name "DKN Cloud for HASS".
 - Updated repository URL references from "DKNCloud-HAS" to "DKNCloud-HASS".
-- Forked from fitamix/DaikinDKNCloud-HomeAssistant (which itself is a fork of max13fr/Airzonecloud-HomeAssistant).
 - Minor documentation updates to reflect the new configuration options and installation process.
-### Fixed
+### **Fixed**
 - Added missing __init__.py to properly load the integration and avoid "No setup or config entry setup function defined" error.

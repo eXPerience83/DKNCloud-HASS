@@ -2,20 +2,41 @@
 
 Notes:
 - Uses HA shared aiohttp ClientSession (no I/O in entity properties).
-- 15s global timeout, retries/backoff are handled at higher levels (coordinator).
+- 30s global timeout (configurable via const), retries/backoff are applied
+  for write endpoints (/events and /devices/{id}).
 - Never log secrets (email/token/MAC/PIN).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from typing import Any
 
-from aiohttp import ClientResponseError, ClientSession, ClientTimeout
+from aiohttp import (
+    ClientConnectorError,
+    ClientResponseError,
+    ClientSession,
+    ClientTimeout,
+)
 
-from .const import API_DEVICES, API_INSTALLATION_RELATIONS, BASE_URL
+from .const import (
+    API_DEVICES,
+    API_INSTALLATION_RELATIONS,
+    BASE_URL,
+    HEADERS_DEVICES,
+    HEADERS_EVENTS,
+    REQUEST_TIMEOUT,
+    USER_AGENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+# Backoff settings for write operations
+_MAX_RETRIES = 3
+_BASE_DELAY = 0.6  # seconds
+_JITTER = 0.25  # added uniformly to each backoff step (0.._JITTER)
 
 
 class AirzoneAPI:
@@ -26,13 +47,25 @@ class AirzoneAPI:
         self._password = password
         self._session = session
         self._token: str | None = None
+        # Cooldown after 429 to avoid hammering the backend
+        self._cooldown_until: float = 0.0
 
     # --------------------------
     # Helpers
     # --------------------------
     def _auth_params(self) -> dict[str, str]:
-        """Query params with auth info."""
+        """Query params with auth info (token may be empty before login)."""
         return {"user_email": self._username, "user_token": self._token or ""}
+
+    @staticmethod
+    def _now() -> float:
+        """Return event-loop monotonic time (no hass context here)."""
+        return asyncio.get_running_loop().time()
+
+    async def _sleep(self, seconds: float) -> None:
+        """Async sleep indirection (test-friendly)."""
+        if seconds > 0:
+            await asyncio.sleep(seconds)
 
     async def _request(
         self,
@@ -43,18 +76,19 @@ class AirzoneAPI:
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> Any:
-        """HTTP request helper."""
+        """HTTP request helper.
+
+        English:
+        - Default headers are minimal (only User-Agent).
+        - Endpoint-specific headers can be provided via 'extra_headers'
+          to match the project's cURL behaviour (e.g., /events JSON/XHR).
+        """
         url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
-        headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json;charset=UTF-8",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "X-Requested-With": "XMLHttpRequest",
-        }
+        headers = {"User-Agent": USER_AGENT}
         if extra_headers:
             headers.update(extra_headers)
 
-        timeout = ClientTimeout(total=15)
+        timeout = ClientTimeout(total=REQUEST_TIMEOUT)
 
         try:
             async with self._session.request(
@@ -65,23 +99,116 @@ class AirzoneAPI:
                     return await resp.json()
                 return await resp.text()
         except ClientResponseError as cre:
-            # Mask sensitive info
+            # Mask sensitive info; re-raise for caller classification/backoff.
             _LOGGER.debug("HTTP %s %s failed: %s", method, path, cre)
+            raise
+        except ClientConnectorError as cce:
+            _LOGGER.debug("HTTP %s %s connection error: %s", method, path, cce)
             raise
         except TimeoutError:
             _LOGGER.debug("HTTP %s %s timed out", method, path)
             raise
 
+    async def _authed_request_with_retries(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
+        allow_retry_login: bool = True,
+    ) -> Any:
+        """Authenticated request with limited retries for 429/5xx and 1x re-login (401).
+
+        This is intentionally used only for write endpoints to minimize risk.
+        """
+        attempt = 0
+        while True:
+            # Respect cooldown after a previous 429
+            now = self._now()
+            if self._cooldown_until > now:
+                await self._sleep(self._cooldown_until - now)
+
+            try:
+                return await self._request(
+                    method,
+                    path,
+                    params=params,
+                    json=json,
+                    extra_headers=extra_headers,
+                )
+            except ClientResponseError as cre:
+                status = cre.status or 0
+
+                # 401 → attempt one silent re-login then retry once
+                if status == 401 and allow_retry_login and attempt == 0:
+                    _LOGGER.debug("401 received; attempting one re-login before retry.")
+                    await self.login()
+                    attempt += 1
+                    continue
+
+                # Backoff for 429 and 5xx
+                if status == 429 or 500 <= status <= 599:
+                    if attempt >= _MAX_RETRIES:
+                        raise
+
+                    delay = _BASE_DELAY * (2**attempt) + random.uniform(0.0, _JITTER)
+
+                    if status == 429:
+                        # Honor Retry-After if present
+                        try:
+                            retry_after = cre.headers.get("Retry-After")  # type: ignore[attr-defined]
+                            if retry_after:
+                                delay = max(delay, float(retry_after))
+                        except Exception:
+                            pass
+                        # Set a short cooldown to avoid hammering
+                        self._cooldown_until = max(
+                            self._cooldown_until, now + min(delay, 10.0)
+                        )
+
+                    _LOGGER.debug(
+                        "Retrying %s %s after %s due to HTTP %s (attempt %d/%d)",
+                        method,
+                        path,
+                        round(delay, 2),
+                        status,
+                        attempt + 1,
+                        _MAX_RETRIES,
+                    )
+                    attempt += 1
+                    await self._sleep(delay)
+                    continue
+
+                # Other HTTP errors → propagate
+                raise
+            except (TimeoutError, ClientConnectorError):
+                # Network issues → propagate (do not loop indefinitely)
+                raise
+
     # --------------------------
     # Public API
     # --------------------------
     async def login(self) -> bool:
-        """Login and store authentication token."""
+        """Login and store authentication token.
+
+        Returns:
+            True if credentials were accepted and a token was received.
+            False only when the server explicitly rejects with 401.
+        Raises:
+            TimeoutError, ClientConnectorError for network issues.
+            ClientResponseError for non-401 HTTP errors (e.g. 5xx).
+        """
         data = {"email": self._username, "password": self._password}
         try:
+            # Minimal headers (UA only) are enough here.
             resp = await self._request("POST", "users/sign_in", json=data)
-        except Exception:
-            return False
+        except ClientResponseError as cre:
+            if cre.status == 401:
+                return False  # invalid credentials
+            raise
+        # Network errors (TimeoutError, ClientConnectorError) bubble up.
 
         # Accept both shapes:
         #   {"user": {"authentication_token": "..."}}
@@ -116,12 +243,14 @@ class AirzoneAPI:
         return None
 
     async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
-        """GET devices for an installation."""
+        """GET devices for an installation (browser-like UA only)."""
         params = self._auth_params() | {
             "format": "json",
             "installation_id": str(installation_id),
         }
-        resp = await self._request("GET", API_DEVICES, params=params)
+        resp = await self._request(
+            "GET", API_DEVICES, params=params, extra_headers=HEADERS_DEVICES
+        )
         if isinstance(resp, dict) and "devices" in resp:
             return resp.get("devices")  # type: ignore[return-value]
         if isinstance(resp, list):
@@ -129,16 +258,25 @@ class AirzoneAPI:
         return None
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
-        """POST to /events (realtime control)."""
+        """POST to /events (realtime control) with JSON/XHR headers + retries."""
         params = self._auth_params()
-        return await self._request("POST", "events/", params=params, json=payload)
+        return await self._authed_request_with_retries(
+            "POST",
+            "events/",
+            params=params,
+            json=payload,
+            extra_headers=HEADERS_EVENTS,
+            allow_retry_login=True,
+        )
 
     # ---------- Generic PUT helpers for /devices/<id> ----------
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
-        """PUT /devices/{id} with provided payload."""
+        """PUT /devices/{id} with provided payload (retries for 429/5xx, 1x re-login)."""
         params = self._auth_params() | {"format": "json"}
         path = f"{API_DEVICES}/{device_id}"
-        return await self._request("PUT", path, params=params, json=payload)
+        return await self._authed_request_with_retries(
+            "PUT", path, params=params, json=payload, allow_retry_login=True
+        )
 
     async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
         """Change scenary: 'occupied' | 'vacant' | 'sleep'."""

@@ -7,12 +7,18 @@ Key behaviors (concise):
 - API mapping: P1=power, P2=mode, P7/P8=setpoint (cool/heat), P3/P4=fan (cool/heat).
 - Ventilate policy: prefer P2=3 if supported; else P2=8; else do not expose FAN_ONLY.
 - Privacy: never log or expose secrets (email/token/MAC/PIN).
+
+This revision:
+- Add conservative idempotency for power (P1) in async_turn_on/off:
+  skip when optimistic TTL indicates the target power is already in effect,
+  or when backend snapshot already matches the requested power state.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable  # Added: for the cancel callback type
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
@@ -80,6 +86,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self._device_id = device_id
         self._optimistic_expires: float | None = None
         self._optimistic: dict[str, Any] = {}  # temporary values until refresh
+        # Keep a cancel handle for delayed refreshes
+        self._cancel_scheduled_refresh: Callable[[], None] | None = None
 
         device = self._device
         name = device.get("name") or "Airzone Device"
@@ -369,21 +377,50 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
     async def async_turn_on(self) -> None:
         """Power ON via P1=1 (explicit user action from Climate card)."""
+        # Idempotency: if optimistic TTL says ON, or backend already ON, skip.
+        now = self.coordinator.hass.loop.time()
+        optimistic_active = bool(
+            self._optimistic_expires and now < self._optimistic_expires
+        )
+        if optimistic_active and str(self._optimistic.get("power", "")).strip() in (
+            "1",
+            "true",
+            "on",
+        ):
+            return
+        if not optimistic_active:
+            backend_on = str(self._device.get("power", "0")).strip() == "1"
+            if backend_on:
+                return
+
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
     async def async_turn_off(self) -> None:
         """Power OFF via P1=0 (explicit user action from Climate card)."""
+        # Idempotency: if optimistic TTL says OFF, or backend already OFF, skip.
+        now = self.coordinator.hass.loop.time()
+        optimistic_active = bool(
+            self._optimistic_expires and now < self._optimistic_expires
+        )
+        if optimistic_active and str(self._optimistic.get("power", "")).strip() in (
+            "0",
+            "false",
+            "off",
+            "",
+        ):
+            return
+        if not optimistic_active:
+            backend_off = str(self._device.get("power", "0")).strip() != "1"
+            if backend_off:
+                return
+
         await self._send_p_event("P1", 0)
         self._optimistic.update({"power": "0"})
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -397,6 +434,14 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             )
             self.async_write_ha_state()
             self._schedule_refresh()
+            return
+
+        # Idempotency: if already ON and current HVAC equals requested, skip sending P2.
+        # English: Avoid unnecessary radio wake-ups and event spam.
+        if self._device_power_on() and self._hvac_from_device() == hvac_mode:
+            _LOGGER.debug(
+                "HVAC mode %s already active; skipping redundant P2", hvac_mode
+            )
             return
 
         # Ensure power ON then set P2 (auto-on only when changing mode)
@@ -466,7 +511,17 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             raise
 
     def _schedule_refresh(self) -> None:
-        """Schedule a short delayed refresh after write operations."""
+        """Schedule a short delayed refresh after write operations.
+
+        English:
+        - Keep the cancel handle so we can avoid stacked callbacks and cancel on teardown.
+        """
+        # Cancel any previously scheduled refresh to avoid stacking.
+        if self._cancel_scheduled_refresh is not None:
+            try:
+                self._cancel_scheduled_refresh()
+            finally:
+                self._cancel_scheduled_refresh = None
 
         async def _refresh_cb(_now):
             try:
@@ -474,7 +529,10 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             except Exception as err:
                 _LOGGER.debug("Refresh after write failed: %s", err)
 
-        async_call_later(self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb)
+        # Store the cancel handle returned by async_call_later
+        self._cancel_scheduled_refresh = async_call_later(
+            self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
+        )
 
     # ---- Availability / update ------------------------------------------
 
@@ -490,3 +548,17 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         ):
             self._optimistic.clear()
             self._optimistic_expires = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Called when entity is about to be removed from Home Assistant.
+
+        English:
+        - Cancel any scheduled refresh callback to avoid late execution after removal.
+        """
+        if self._cancel_scheduled_refresh is not None:
+            try:
+                self._cancel_scheduled_refresh()
+            finally:
+                self._cancel_scheduled_refresh = None
+
+        await super().async_will_remove_from_hass()

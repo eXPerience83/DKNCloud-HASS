@@ -4,12 +4,19 @@ Implements a SelectEntity for device 'scenary' via AirzoneAPI.put_device_scenary
 Options: "occupied", "vacant", "sleep".
 - Optimistic UI: reflect the new option immediately; revert on error.
 - No I/O in property access; reads come from DataUpdateCoordinator.
+
+Change (hygiene):
+- Use Home Assistant event loop clock (hass.loop.time()) for optimistic TTL
+  to stay consistent with HA's own schedulers and ease testing.
+
+This revision:
+- Add conservative idempotency: early-return if requested option equals the
+  current effective option (considering optimistic TTL first).
 """
 
 from __future__ import annotations
 
 import asyncio
-import time  # Moved to module level to avoid imports inside properties/methods.
 from dataclasses import dataclass
 from typing import Any
 
@@ -112,7 +119,8 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
         """Return current scenary (optimistic if active)."""
         if (
             self._optimistic.option is not None
-            and time.monotonic() < self._optimistic.valid_until_monotonic
+            and self.coordinator.hass.loop.time()
+            < self._optimistic.valid_until_monotonic
         ):
             return self._optimistic.option
 
@@ -124,9 +132,20 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
         if option not in _OPTIONS:
             raise ValueError(f"Invalid scenary option: {option}")
 
-        # Optimistic state
+        # Idempotency: if requested option equals the effective current one, skip.
+        effective = self.current_option
+        if (
+            effective is not None
+            and option.strip().lower() == str(effective).strip().lower()
+        ):
+            # English: avoid redundant network call when the option is already applied/optimistic.
+            return
+
+        # Optimistic state (event loop clock)
         self._optimistic.option = option
-        self._optimistic.valid_until_monotonic = time.monotonic() + _OPTIMISTIC_TTL_SEC
+        self._optimistic.valid_until_monotonic = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
 
         try:

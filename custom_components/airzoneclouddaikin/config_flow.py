@@ -1,10 +1,10 @@
 """Config & Options flow for DKN Cloud for HASS.
 
-This file keeps changes minimal and focused:
-- Adds a proper OptionsFlow so Home Assistant shows the "Options" button.
-- Stores scan_interval; OptionsFlow can override it later.
-- Adds a privacy-friendly opt-in flag for exposing PII-related identifiers in sensors
-  (not used yet to create entities; never logged nor included in diagnostics).
+Focus in this revision:
+- Keep minimal logic but rely on AirzoneAPI.login() behavior:
+  * Returns False only for 401 (invalid credentials).
+  * Raises on network issues (TimeoutError, ClientConnectorError) or 5xx.
+- Map errors to HA-friendly messages: 'invalid_auth' vs 'cannot_connect'.
 """
 
 from __future__ import annotations
@@ -23,11 +23,10 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-# Option keys (kept as plain strings to avoid public API rename churn)
+# Option keys (kept stable)
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_EXPOSE_PII = "expose_pii_identifiers"  # single opt-in switch for PII fields
 
-# --- User step schema (minimal change from previous versions) -----------------
 DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): cv.string,
@@ -35,7 +34,6 @@ DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_SCAN_INTERVAL, default=10): vol.All(
             vol.Coerce(int), vol.Range(min=10)
         ),
-        # PII opt-in is off by default; we never log PII regardless of this flag.
         vol.Optional(CONF_EXPOSE_PII, default=False): cv.boolean,
     }
 )
@@ -56,16 +54,13 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle the initial step where we collect credentials and base options."""
+        """Collect credentials and validate against the API."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate credentials by attempting a login against the API.
             try:
-                from .airzone_api import (
-                    AirzoneAPI,  # local import to avoid import cycles
-                )
-            except Exception as exc:  # defensive
+                from .airzone_api import AirzoneAPI  # local import to avoid cycles
+            except Exception as exc:
                 _LOGGER.exception("Failed to import AirzoneAPI: %s", exc)
                 errors["base"] = "unknown"
             else:
@@ -74,27 +69,25 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     user_input[CONF_USERNAME], user_input[CONF_PASSWORD], session
                 )
 
-                ok = False
                 try:
                     ok = await api.login()
-                except Exception as exc:  # network or unexpected
-                    _LOGGER.warning("Login attempt failed (network/other): %s", exc)
+                except Exception as exc:
+                    # Network/5xx → cannot_connect
+                    _LOGGER.warning("Login failed (network/other): %s", exc)
                     errors["base"] = "cannot_connect"
-
-                if ok:
-                    # Minimal change policy: keep inputs in data; options may override later.
-                    return self.async_create_entry(
-                        title="DKN Cloud for HASS",
-                        data={
-                            CONF_USERNAME: user_input[CONF_USERNAME],
-                            CONF_PASSWORD: user_input[CONF_PASSWORD],
-                            CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL, 10),
-                            CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False),
-                        },
-                    )
-
-                if "base" not in errors:
-                    # If we reached here, credentials were not accepted
+                else:
+                    if ok:
+                        return self.async_create_entry(
+                            title="DKN Cloud for HASS",
+                            data={
+                                CONF_USERNAME: user_input[CONF_USERNAME],
+                                CONF_PASSWORD: user_input[CONF_PASSWORD],
+                                CONF_SCAN_INTERVAL: user_input.get(
+                                    CONF_SCAN_INTERVAL, 10
+                                ),
+                                CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False),
+                            },
+                        )
                     errors["base"] = "invalid_auth"
 
         return self.async_show_form(
@@ -106,7 +99,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_import(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Support YAML import (not typically used for this integration)."""
+        """Support YAML import (not typical for this integration)."""
         return await self.async_step_user(user_input)
 
 
@@ -126,7 +119,6 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         - Otherwise, fall back to the stored data value.
         """
         if user_input is not None:
-            # Persist only in options; do not mutate the entry's data.
             return self.async_create_entry(title="", data=user_input)
 
         data = self._entry.data
