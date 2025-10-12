@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.9a4] - 2025-10-12
+### Breaking
+- Removed the `select.scenary` entity. Scene control now lives exclusively in the `climate` entity via `preset_modes` (`home`, `away`, `sleep`).
+### Migration
+- Replace any usages of:
+  - `service: select.select_option`
+  - `target: { entity_id: select.scenary_* }`
+  - `data: { option: "occupied" | "vacant" | "sleep" }`
+- With:
+  - `service: climate.set_preset_mode`
+  - `target: { entity_id: climate.<your_entity> }`
+  - `data: { preset_mode: "home" | "away" | "sleep" }`
+
 ## [0.3.9a3] - 2025-10-12
 ### Changed
 - `climate`: when the user triggers an active command (turn_on, set_hvac_mode!=OFF, set_temperature, set_fan_mode) while `preset_mode` is `away`, the entity now automatically switches scenary to `occupied` (`preset_mode` → `home`) before sending the command. This avoids backend auto-shutdowns that can occur in `vacant`.
