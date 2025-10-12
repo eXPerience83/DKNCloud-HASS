@@ -278,7 +278,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         - If current preset already equals requested, skip backend write.
         """
         if preset_mode not in (self.preset_modes or []):
-            _LOGGER.debug("Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes)
+            _LOGGER.debug(
+                "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
+            )
             return
 
         current = self.preset_mode
@@ -317,7 +319,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         # Optimistic cache: reflect new preset immediately with TTL.
         self._optimistic["scenary"] = scenary
-        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = (
+            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        )
         self.async_write_ha_state()
         self._schedule_refresh()
 
