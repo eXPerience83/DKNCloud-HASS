@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.9a2] - 2025-10-12
+### Fixed
+- `climate`: reflect backend scenary changes promptly by expiring the optimistic cache on coordinator updates and when TTL elapses. Prevents stale `preset_mode` when the state is changed from the web/app or when the backend transitions (e.g., vacant→occupied).
+
 ## [0.3.9a1] - 2025-10-12
 ### Added
 - `climate`: support for Home Assistant `preset_modes` (`home`, `away`, `sleep`) mapped to backend `scenary` (occupied, vacant, sleep). Idempotent writes with optimistic TTL.
