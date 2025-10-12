@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.9a3] - 2025-10-12
+### Changed
+- `climate`: when the user triggers an active command (turn_on, set_hvac_mode!=OFF, set_temperature, set_fan_mode) while `preset_mode` is `away`, the entity now automatically switches scenary to `occupied` (`preset_mode` → `home`) before sending the command. This avoids backend auto-shutdowns that can occur in `vacant`.
+### Fixed
+- `climate`: continue to reflect backend scenary changes promptly by expiring the optimistic cache on coordinator updates and when TTL elapses.
+
 ## [0.3.9a2] - 2025-10-12
 ### Fixed
 - `climate`: reflect backend scenary changes promptly by expiring the optimistic cache on coordinator updates and when TTL elapses. Prevents stale `preset_mode` when the state is changed from the web/app or when the backend transitions (e.g., vacant→occupied).
