@@ -12,6 +12,12 @@ This revision:
 - Add conservative idempotency for power (P1) in async_turn_on/off:
   skip when optimistic TTL indicates the target power is already in effect,
   or when backend snapshot already matches the requested power state.
+
+Preset modes (this revision):
+- Add preset_modes ["home", "away", "sleep"] mapped to backend 'scenary':
+  occupied → home, vacant → away, sleep → sleep.
+- Implement idempotent async_set_preset_mode with optimistic TTL, without auto-forcing scenary
+  after other writes (we always reflect what backend returns on refresh).
 """
 
 from __future__ import annotations
@@ -169,6 +175,32 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         code = self._backend_mode_code()
         return MODE_TO_HVAC.get(code or "", HVACMode.OFF)
 
+    # ---- Preset/scenary mapping -----------------------------------------
+
+    @staticmethod
+    def _scenary_to_preset(scenary: str | None) -> str | None:
+        """Map backend scenary to HA preset name."""
+        s = (scenary or "").strip().lower()
+        if s == "occupied":
+            return "home"
+        if s == "vacant":
+            return "away"
+        if s == "sleep":
+            return "sleep"
+        return None
+
+    @staticmethod
+    def _preset_to_scenary(preset: str) -> str | None:
+        """Map HA preset name to backend scenary."""
+        p = (preset or "").strip().lower()
+        if p == "home":
+            return "occupied"
+        if p == "away":
+            return "vacant"
+        if p == "sleep":
+            return "sleep"
+        return None
+
     # ---- Device info -----------------------------------------------------
 
     @property
@@ -224,6 +256,70 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         # Fallback when bitstring missing/invalid: expose common real modes.
         modes.extend([HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY])
         return modes
+
+    # ---- Presets (HA) ----------------------------------------------------
+
+    @property
+    def preset_modes(self) -> list[str] | None:
+        """Expose supported HA presets."""
+        return ["home", "away", "sleep"]
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return the active preset from backend scenary (or optimistic value)."""
+        scen = self._optimistic.get("scenary", self._device.get("scenary"))
+        return self._scenary_to_preset(str(scen) if scen is not None else None)
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set HA preset by writing backend scenary (idempotent + optimistic).
+
+        English:
+        - No auto-forcing scenary after other operations; we always reflect backend.
+        - If current preset already equals requested, skip backend write.
+        """
+        if preset_mode not in (self.preset_modes or []):
+            _LOGGER.debug("Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes)
+            return
+
+        current = self.preset_mode
+        if current == preset_mode:
+            # Idempotent: skip if nothing to change
+            return
+
+        scenary = self._preset_to_scenary(preset_mode)
+        if not scenary:
+            _LOGGER.debug("Unsupported preset -> scenary mapping: %s", preset_mode)
+            return
+
+        # Attempt API calls using known method names without changing other files.
+        api = getattr(self.coordinator, "api", None)
+        if api is None:
+            _LOGGER.error("API handle missing in coordinator; cannot set scenary")
+            return
+
+        try:
+            if hasattr(api, "put_device_scenary"):
+                await api.put_device_scenary(self._device_id, scenary)
+            elif hasattr(api, "set_device_scenary"):
+                await api.set_device_scenary(self._device_id, scenary)
+            elif hasattr(api, "update_device"):
+                await api.update_device(self._device_id, {"scenary": scenary})
+            elif hasattr(api, "put_device"):
+                await api.put_device(self._device_id, {"scenary": scenary})
+            else:
+                # No known method; surface as an error to the UI/log.
+                raise NotImplementedError("No scenary setter available on API client")
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
+            raise
+
+        # Optimistic cache: reflect new preset immediately with TTL.
+        self._optimistic["scenary"] = scenary
+        self._optimistic_expires = self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+        self.async_write_ha_state()
+        self._schedule_refresh()
 
     # ---- Temperature control --------------------------------------------
 
@@ -478,6 +574,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         elif mode == HVACMode.FAN_ONLY:
             feats |= ClimateEntityFeature.FAN_MODE
         # DRY/OFF: no fan/temperature features
+
+        # Presets are always available (mapped to scenary)
+        feats |= ClimateEntityFeature.PRESET_MODE
         return feats
 
     # ---- Write helpers ---------------------------------------------------
