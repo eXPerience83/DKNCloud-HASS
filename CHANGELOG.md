@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.9a1] - 2025-10-12
+### Added
+- `climate`: support for Home Assistant `preset_modes` (`home`, `away`, `sleep`) mapped to backend `scenary` (occupied, vacant, sleep). Idempotent writes with optimistic TTL.
+### Changed
+- `climate`: always include `PRESET_MODE` in `supported_features`. No auto-forcing scenary after other writes (reflect backend truth on refresh).
+### Notes
+- Configuration values like `sleep_time` and unoccupied min/max limits remain exposed via `number.*` entities for now.
+
 ## [0.3.8] - 2025-10-11
 ### Changed
 - CI: Run on Python 3.13 (latest patch) with a guard step enforcing `>= 3.13.2`.
