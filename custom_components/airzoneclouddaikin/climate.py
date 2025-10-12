@@ -19,9 +19,13 @@ Preset modes (this revision):
 - Implement idempotent async_set_preset_mode with optimistic TTL, without auto-forcing scenary
   after other writes (we always reflect what backend returns on refresh).
 
-Fix (this patch):
+Fixes (previous patch):
 - Ensure optimistic cache is expired/cleared on coordinator updates or when TTL has elapsed,
   so remote/backend changes (e.g., vacant→occupied) are reflected immediately.
+
+Enhancement (this patch):
+- If the user triggers an active command from climate while scenary=vacant (preset=away),
+  automatically switch to occupied (preset=home) first to avoid backend auto-shutdown in vacant.
 """
 
 from __future__ import annotations
@@ -346,6 +350,26 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self.async_write_ha_state()
         self._schedule_refresh()
 
+    # ---- Auto-exit AWAY on active commands -------------------------------
+
+    async def _auto_exit_away_if_needed(self, reason: str) -> None:
+        """Leave 'away' → 'home' if user triggers an active command.
+
+        English:
+        - Some backends auto-stop or revert when scenary='vacant' (away).
+          To honor the user's intent (turn on / change mode / change temp / fan),
+          force scenary='occupied' (home) once before the write.
+        - No effect if already 'home' or 'sleep'.
+        - Errors are logged at debug level and do not block the original command.
+        """
+        try:
+            # Ensure optimistic cache does not mask current preset
+            self._expire_optimistic_if_needed()
+            if self.preset_mode == "away":
+                await self.async_set_preset_mode("home")
+        except Exception as err:
+            _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
+
     # ---- Temperature control --------------------------------------------
 
     @property
@@ -404,6 +428,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         if mode not in (HVACMode.COOL, HVACMode.HEAT):
             _LOGGER.debug("Ignoring set_temperature in mode %s", mode)
             return
+
+        # If user adjusts setpoint while in away, exit away first.
+        await self._auto_exit_away_if_needed("set_temperature")
 
         # Clamp to device limits (use integer degrees as device expects)
         min_allowed = int(self.min_temp)
@@ -467,6 +494,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
             return
 
+        # If user adjusts fan while in away, exit away first.
+        await self._auto_exit_away_if_needed("set_fan_mode")
+
         option: str
         key: str
         if mode == HVACMode.HEAT:
@@ -514,6 +544,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             if backend_on:
                 return
 
+        # If user explicitly turns on while in away, exit away first.
+        await self._auto_exit_away_if_needed("turn_on")
+
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
         self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
@@ -556,6 +589,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             self.async_write_ha_state()
             self._schedule_refresh()
             return
+
+        # If user requests a non-OFF mode while in away, exit away first.
+        await self._auto_exit_away_if_needed("set_hvac_mode")
 
         # Idempotency: if already ON and current HVAC equals requested, skip sending P2.
         # English: Avoid unnecessary radio wake-ups and event spam.
