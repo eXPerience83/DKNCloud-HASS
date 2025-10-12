@@ -18,19 +18,23 @@ Preset modes (this revision):
   occupied → home, vacant → away, sleep → sleep.
 - Implement idempotent async_set_preset_mode with optimistic TTL, without auto-forcing scenary
   after other writes (we always reflect what backend returns on refresh).
+
+Fix (this patch):
+- Ensure optimistic cache is expired/cleared on coordinator updates or when TTL has elapsed,
+  so remote/backend changes (e.g., vacant→occupied) are reflected immediately.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable  # Added: for the cancel callback type
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -175,6 +179,21 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         code = self._backend_mode_code()
         return MODE_TO_HVAC.get(code or "", HVACMode.OFF)
 
+    # ---- Optimistic helpers ---------------------------------------------
+
+    def _optimistic_active(self) -> bool:
+        """Return True if optimistic cache is within TTL."""
+        return bool(
+            self._optimistic_expires
+            and self.coordinator.hass.loop.time() < self._optimistic_expires
+        )
+
+    def _expire_optimistic_if_needed(self) -> None:
+        """Expire optimistic cache when TTL elapsed."""
+        if self._optimistic and not self._optimistic_active():
+            self._optimistic.clear()
+            self._optimistic_expires = None
+
     # ---- Preset/scenary mapping -----------------------------------------
 
     @staticmethod
@@ -267,6 +286,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     @property
     def preset_mode(self) -> str | None:
         """Return the active preset from backend scenary (or optimistic value)."""
+        # Ensure optimistic cache does not mask backend after TTL
+        self._expire_optimistic_if_needed()
         scen = self._optimistic.get("scenary", self._device.get("scenary"))
         return self._scenary_to_preset(str(scen) if scen is not None else None)
 
@@ -637,6 +658,37 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
         )
 
+    # ---- Coordinator update hook ----------------------------------------
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Expire optimistic cache on coordinator updates or conflict.
+
+        English:
+        - If TTL elapsed, drop optimistic so backend truth is shown.
+        - If backend value conflicts with optimistic (e.g., scenary changed remotely),
+          prefer backend and clear optimistic immediately.
+        """
+        if self._optimistic:
+            now = self.coordinator.hass.loop.time()
+            if not self._optimistic_expires or now >= self._optimistic_expires:
+                self._optimistic.clear()
+                self._optimistic_expires = None
+            else:
+                # Conflict detection only for fields we override optimistically
+                try:
+                    if "scenary" in self._optimistic:
+                        scen_o = str(self._optimistic.get("scenary"))
+                        scen_b = str(self._device.get("scenary"))
+                        if scen_b and scen_b != scen_o:
+                            self._optimistic.clear()
+                            self._optimistic_expires = None
+                except Exception:
+                    self._optimistic.clear()
+                    self._optimistic_expires = None
+
+        super()._handle_coordinator_update()
+
     # ---- Availability / update ------------------------------------------
 
     @property
@@ -644,13 +696,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         return bool(self._device)
 
     async def async_update(self) -> None:
-        """Clear optimistic cache after TTL; data comes from coordinator."""
-        if (
-            self._optimistic_expires
-            and self.coordinator.hass.loop.time() > self._optimistic_expires
-        ):
-            self._optimistic.clear()
-            self._optimistic_expires = None
+        """(Unused by CoordinatorEntity) left as a no-op that also expires TTL if called."""
+        self._expire_optimistic_if_needed()
 
     async def async_will_remove_from_hass(self) -> None:
         """Called when entity is about to be removed from Home Assistant.
