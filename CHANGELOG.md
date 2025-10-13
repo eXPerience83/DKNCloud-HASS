@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- Climate: expose `current_temperature` (°C) sourced from coordinator `local_temp` for better UI parity with Home Assistant climate.
+
 ## [0.3.9a4] - 2025-10-12
 ### Changed
 - Kept the `select.scenary` entity to avoid breaking changes. The entity is now categorized under **Configuration** so it appears next to `number.*` settings (e.g., `sleep_time`, unoccupied min/max limits).
