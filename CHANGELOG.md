@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.9a5] - 2025-10-13
 - ### Changed
 - Centralized optimistic timings in `const.py`:
   - `OPTIMISTIC_TTL_SEC = 2.5`
