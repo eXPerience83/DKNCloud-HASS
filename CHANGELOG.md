@@ -1,8 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+- ### Changed
+- Centralized optimistic timings in `const.py`:
+  - `OPTIMISTIC_TTL_SEC = 2.5`
+  - `POST_WRITE_REFRESH_DELAY_SEC = 1.0`
+- `climate` and `switch` now use these shared constants for optimistic TTL and post-write delayed refresh.
+- `number` and `select` now use the shared `OPTIMISTIC_TTL_SEC` while keeping their immediate refresh flow (only TTL changed).
 ### Added
-- Climate: expose `current_temperature` (°C) sourced from coordinator `local_temp` for better UI parity with Home Assistant climate.
+- `climate`: exposes `current_temperature` (°C) from coordinator `local_temp` for better UI parity (read-only, no optimistic cache).
 
 ## [0.3.9a4] - 2025-10-12
 ### Changed
