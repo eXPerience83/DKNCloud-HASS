@@ -376,6 +376,17 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
     def temperature_unit(self) -> UnitOfTemperature:
         return UnitOfTemperature.CELSIUS
 
+    @property
+    def current_temperature(self) -> float | None:
+        """Return the current ambient temperature (°C) from coordinator snapshot.
+
+        English:
+        - Read-only value; we intentionally do NOT use optimistic cache for readings.
+        - Keeps UI precision to whole degrees via `_attr_precision`.
+        """
+        val = self._device.get("local_temp")
+        return self._parse_float(val)
+
     @staticmethod
     def _parse_float(val: Any) -> float | None:
         """Parse a backend numeric value that may come as '24.0' or '23,5'."""
