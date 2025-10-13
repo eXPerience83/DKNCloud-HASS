@@ -1,17 +1,11 @@
 # Changelog
 
 ## [0.3.9a4] - 2025-10-12
-### Breaking
-- Removed the `select.scenary` entity. Scene control now lives exclusively in the `climate` entity via `preset_modes` (`home`, `away`, `sleep`).
-### Migration
-- Replace any usages of:
-  - `service: select.select_option`
-  - `target: { entity_id: select.scenary_* }`
-  - `data: { option: "occupied" | "vacant" | "sleep" }`
-- With:
-  - `service: climate.set_preset_mode`
-  - `target: { entity_id: climate.<your_entity> }`
-  - `data: { preset_mode: "home" | "away" | "sleep" }`
+### Changed
+- Kept the `select.scenary` entity to avoid breaking changes. The entity is now categorized under **Configuration** so it appears next to `number.*` settings (e.g., `sleep_time`, unoccupied min/max limits).
+- Scene control remains available both via `climate.preset_modes` (`home`, `away`, `sleep`) and `select.scenary` (`occupied`, `vacant`, `sleep`).
+### Notes
+- For new automations, we recommend using `climate.set_preset_mode` for consistency with Home Assistant's climate presets. The legacy select remains available for convenience.
 
 ## [0.3.9a3] - 2025-10-12
 ### Changed
