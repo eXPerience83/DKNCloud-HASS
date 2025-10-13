@@ -31,10 +31,9 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN
+from .const import DOMAIN, OPTIMISTIC_TTL_SEC
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
-_OPTIMISTIC_TTL_SEC = 6.0  # Short TTL to keep UI snappy until next refresh
 
 
 async def async_setup_entry(
@@ -145,7 +144,7 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
         # Optimistic state (event loop clock)
         self._optimistic.option = option
         self._optimistic.valid_until_monotonic = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
 
