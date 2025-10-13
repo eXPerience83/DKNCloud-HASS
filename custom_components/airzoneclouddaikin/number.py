@@ -35,7 +35,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN
+from .const import DOMAIN, OPTIMISTIC_TTL_SEC
 
 # ------------------------
 # Sleep time constants
@@ -43,9 +43,6 @@ from .const import DOMAIN
 _SLEEP_MIN = 30
 _SLEEP_MAX = 120
 _SLEEP_STEP = 10
-
-# Optimistic TTL (seconds) to hide backend latency
-_OPTIMISTIC_TTL_SEC = 6.0
 
 # ------------------------
 # Unoccupied limits constants (hardcoded as per product UI)
@@ -220,7 +217,7 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
         # Optimistic state window
         self._optimistic.value = ivalue
         self._optimistic.valid_until_monotonic = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
 
