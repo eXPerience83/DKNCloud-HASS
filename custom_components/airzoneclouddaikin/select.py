@@ -12,6 +12,7 @@ Change (hygiene):
 This revision:
 - Add conservative idempotency: early-return if requested option equals the
   current effective option (considering optimistic TTL first).
+- Categorize the entity under Configuration so it appears next to number.* settings.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from typing import Any
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     DataUpdateCoordinator,
@@ -75,8 +76,8 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
     _attr_has_entity_name = True
     _attr_name = "Scenary"
     _attr_options = _OPTIONS
-    # Place this under Controls: explicit None (not Diagnostic, not Configuration).
-    _attr_entity_category = None
+    # Place under Configuration to group with number.* settings.
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
