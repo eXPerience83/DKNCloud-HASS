@@ -42,3 +42,8 @@ HEADERS_EVENTS = {
     "Content-Type": "application/json;charset=UTF-8",
     "Accept": "application/json, text/plain, */*",
 }
+
+# --- Shared optimistic timings (used by climate/switch/number/select) ----
+# English: Centralized values to keep UX consistent and ease future tuning.
+OPTIMISTIC_TTL_SEC: float = 2.5
+POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
