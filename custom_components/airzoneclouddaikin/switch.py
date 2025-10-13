@@ -22,14 +22,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    OPTIMISTIC_TTL_SEC,
+    POST_WRITE_REFRESH_DELAY_SEC,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-# Short optimistic TTL (seconds): UI reflects change immediately and holds briefly
-_OPTIMISTIC_TTL_SEC = 2.5
-# Delay (seconds) before asking the coordinator to refresh after a write
-_POST_WRITE_REFRESH_DELAY_SEC = 1.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
@@ -96,11 +95,11 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         """Set optimistic 'is_on' state with a short TTL and write state."""
         if is_on is not None:
             self._optimistic_is_on = is_on
-            self._optimistic_until = self._now() + _OPTIMISTIC_TTL_SEC
+            self._optimistic_until = self._now() + OPTIMISTIC_TTL_SEC
             self.async_write_ha_state()
 
     def _schedule_delayed_refresh(
-        self, delay: float = _POST_WRITE_REFRESH_DELAY_SEC
+        self, delay: float = POST_WRITE_REFRESH_DELAY_SEC
     ) -> None:
         """Schedule a coordinator refresh after a short delay to confirm optimistic changes.
 
