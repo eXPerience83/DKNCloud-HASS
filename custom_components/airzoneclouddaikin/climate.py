@@ -42,7 +42,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    OPTIMISTIC_TTL_SEC,
+    POST_WRITE_REFRESH_DELAY_SEC,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,9 +66,6 @@ HVAC_TO_MODE: dict[HVACMode, str] = {
     HVACMode.FAN_ONLY: "3",  # default; actual send uses _preferred_ventilate_code()
     HVACMode.DRY: "5",
 }
-
-_OPTIMISTIC_TTL_SEC: float = 2.5
-_POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
@@ -345,7 +346,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         # Optimistic cache: reflect new preset immediately with TTL.
         self._optimistic["scenary"] = scenary
         self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
         self._schedule_refresh()
@@ -456,7 +457,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             self._optimistic["heat_consign"] = temp
 
         self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
         self._schedule_refresh()
@@ -530,7 +531,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self._optimistic[key] = fan_mode
 
         self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
         self._schedule_refresh()
@@ -560,7 +561,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
-        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -585,7 +586,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         await self._send_p_event("P1", 0)
         self._optimistic.update({"power": "0"})
-        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -595,7 +596,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             await self._send_p_event("P1", 0)
             self._optimistic.update({"power": "0"})
             self._optimistic_expires = (
-                self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+                self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
             )
             self.async_write_ha_state()
             self._schedule_refresh()
@@ -628,7 +629,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
                 self._optimistic.update({"power": "1", "mode": mode_code})
 
         self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
         self._schedule_refresh()
@@ -702,7 +703,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         # Store the cancel handle returned by async_call_later
         self._cancel_scheduled_refresh = async_call_later(
-            self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
+            self.hass, POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
         )
 
     # ---- Coordinator update hook ----------------------------------------
