@@ -4,7 +4,7 @@ Highlights:
 - Centralized polling via DataUpdateCoordinator.
 - Robust parsing of installation relations (handles 'installation.id' or 'installation_id').
 - Options-aware: scan_interval is configurable post-setup.
-- Config numbers remain loaded (scene select has been removed; use climate presets).
+- Presets (select/number) are now ALWAYS loaded (opt-in removed).
 - Never logs or exposes PII (email, token, MAC, PIN, GPS).
 """
 
@@ -133,14 +133,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Load base platforms
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
-    # Load config numbers (scene select has been removed; use climate presets)
-    await hass.config_entries.async_forward_entry_setups(entry, ["number"])
+    # Presets ALWAYS loaded (opt-in removed)
+    await hass.config_entries.async_forward_entry_setups(entry, ["select", "number"])
 
     # Reload entry on options updates
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
     _LOGGER.info(
-        "DKN Cloud for HASS configured (scan_interval=%ss; numbers loaded).",
+        "DKN Cloud for HASS configured (scan_interval=%ss; presets loaded).",
         scan_interval,
     )
     return True
@@ -154,8 +154,8 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = True
-    # Unload all potentially-loaded platforms (select was removed)
-    for platform in _BASE_PLATFORMS + ["number"]:
+    # Unload all potentially-loaded platforms
+    for platform in _BASE_PLATFORMS + ["select", "number"]:
         try:
             ok = await hass.config_entries.async_forward_entry_unload(entry, platform)
             unload_ok = unload_ok and ok
