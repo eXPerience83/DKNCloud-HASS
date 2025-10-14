@@ -9,6 +9,10 @@ This revision (hygiene):
 - Use Home Assistant event loop clock for TTLs (hass.loop.time()).
 - Wire and cancel the delayed refresh handle to avoid stacked/late callbacks.
 - Add conservative idempotency for P1 ON/OFF to reduce redundant traffic.
+
+This change:
+- Remove the local _now() wrapper and use hass.loop.time() directly for consistency
+  with climate/select/number. No behavior change.
 """
 
 from __future__ import annotations
@@ -78,13 +82,9 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         """Return the current device snapshot from the coordinator."""
         return (self.coordinator.data or {}).get(self._device_id, {})  # type: ignore[no-any-return]
 
-    def _now(self) -> float:
-        """Return the Home Assistant event loop's monotonic time."""
-        return self.coordinator.hass.loop.time()
-
     def _optimistic_active(self) -> bool:
         """Return True if optimistic state is still within TTL."""
-        return self._now() < self._optimistic_until
+        return self.coordinator.hass.loop.time() < self._optimistic_until
 
     def _backend_power_is_on(self) -> bool:
         """Return backend-reported power (ignore optimistic)."""
@@ -95,7 +95,9 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         """Set optimistic 'is_on' state with a short TTL and write state."""
         if is_on is not None:
             self._optimistic_is_on = is_on
-            self._optimistic_until = self._now() + OPTIMISTIC_TTL_SEC
+            self._optimistic_until = (
+                self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
+            )
             self.async_write_ha_state()
 
     def _schedule_delayed_refresh(
