@@ -7,6 +7,9 @@ DOMAIN = "airzoneclouddaikin"
 CONF_USERNAME = "username"  # Your Airzone Cloud account email
 CONF_PASSWORD = "password"  # Your Airzone Cloud account password
 
+# Public manufacturer label used across platforms (Device Registry consistency).
+MANUFACTURER = "Daikin / Airzone"
+
 # API Endpoints (as defined in the original package)
 API_LOGIN = "/users/sign_in"
 API_INSTALLATION_RELATIONS = "/installation_relations"
