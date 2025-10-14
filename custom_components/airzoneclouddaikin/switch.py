@@ -13,6 +13,7 @@ This revision (hygiene):
 This change:
 - Remove the local _now() wrapper and use hass.loop.time() directly for consistency
   with climate/select/number. No behavior change.
+- Unify manufacturer using const.MANUFACTURER.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from .const import (
     DOMAIN,
     OPTIMISTIC_TTL_SEC,
     POST_WRITE_REFRESH_DELAY_SEC,
+    MANUFACTURER,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -192,7 +194,7 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
             # Ensure stable identifier even if 'dev' is still an empty snapshot.
             "identifiers": {(DOMAIN, dev.get("id") or self._device_id)},
             "name": dev.get("name"),
-            "manufacturer": "Daikin",
+            "manufacturer": MANUFACTURER,  # unified manufacturer label
             # Privacy: do not include PIN in model string.
             "model": dev.get("brand") or "Unknown",
             "sw_version": dev.get("firmware") or "Unknown",
