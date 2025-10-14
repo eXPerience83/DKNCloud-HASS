@@ -46,6 +46,7 @@ from .const import (
     DOMAIN,
     OPTIMISTIC_TTL_SEC,
     POST_WRITE_REFRESH_DELAY_SEC,
+    MANUFACTURER,  # unified manufacturer label
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -233,7 +234,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         dev = self._device
         return {
             "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": "Daikin / Airzone",
+            "manufacturer": MANUFACTURER,  # unified manufacturer label
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
