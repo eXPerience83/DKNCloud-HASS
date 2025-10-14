@@ -12,6 +12,10 @@ Changes (privacy robustness):
 - Introduce internal marker 'self._is_pii' for PII sensors.
 - Strengthen opt-out cleanup: remove by exact unique_id (device_id + attribute)
   for all known devices, and keep suffix-based fallback for legacy entries.
+
+This revision:
+- Add proper unit and device_class for 'sleep_time' to present minutes in UI:
+  device_class=duration and UnitOfTime.MINUTES.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -84,7 +88,8 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         "measurement",
     ),
-    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, None, None),
+    # sleep_time: show minutes explicitly via UnitOfTime.MINUTES
+    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, "duration", None),
     ("scenary", "Scenary", "mdi:account-clock", True, None, None),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
     ("status", "Status", "mdi:information-outline", True, None, None),
@@ -347,9 +352,16 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
-        self._attr_native_unit_of_measurement = (
-            UnitOfTemperature.CELSIUS if attribute in _TEMP_FLOAT_ATTRS else None
-        )
+
+        # Units
+        if attribute in _TEMP_FLOAT_ATTRS:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+        elif attribute == "sleep_time":
+            # Use minutes explicitly for UI consistency
+            self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
+        else:
+            self._attr_native_unit_of_measurement = None
+
         # Device & state classes
         if dev_class:
             try:
