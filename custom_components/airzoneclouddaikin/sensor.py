@@ -16,6 +16,9 @@ Changes (privacy robustness):
 This revision:
 - Add proper unit and device_class for 'sleep_time' to present minutes in UI:
   device_class=duration and UnitOfTime.MINUTES.
+
+This change (hygiene):
+- Unify manufacturer via const.MANUFACTURER in device_info to keep registry consistent.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, MANUFACTURER  # ← use centralized manufacturer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -249,6 +252,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ),
 ]
 
+
 # PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
 PII_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("mac", "MAC Address", "mdi:lan", True, None, None),
@@ -287,7 +291,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Strategy:
     #   1) Prefer exact unique_id match (device_id + '_' + pii_attribute) for all
     #      devices currently known in the coordinator snapshot.
-    #   2) Keep a fallback legacy rule: unique_id ending with '_<pii_attribute>'.
     try:
         if not expose_pii:
             reg = er.async_get(hass)
@@ -300,7 +303,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 if ent.domain != "sensor" or ent.platform != DOMAIN:
                     continue
                 uid = (ent.unique_id or "").strip()
-                # Remove by exact known uid (fallback removed to avoid overmatching)
                 if uid in computed_pii_uids:
                     reg.async_remove(ent.entity_id)
     except Exception as exc:  # Defensive: never fail setup because of registry ops
@@ -379,7 +381,7 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
         dev = self._device
         return {
             "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": "Daikin / Airzone",
+            "manufacturer": MANUFACTURER,  # unified manufacturer label
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
