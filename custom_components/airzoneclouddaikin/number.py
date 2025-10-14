@@ -14,6 +14,10 @@ Design notes:
 - No I/O in properties; reads come from DataUpdateCoordinator.
 - Entities are created only if the backend exposes the fields in GET /devices,
   same as sleep_time. If the field exists but is missing a value, HA shows 'unknown'.
+
+This change:
+- Unify manufacturer using const.MANUFACTURER in device_info.
+- Use UnitOfTime.MINUTES for DKNSleepTimeNumber to match sensor semantics.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import (
     DeviceInfo,
@@ -35,7 +40,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN, OPTIMISTIC_TTL_SEC
+from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
 
 # ------------------------
 # Sleep time constants
@@ -149,12 +154,11 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
     def device_info(self) -> DeviceInfo:
         """Return device registry info (no PII)."""
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        manufacturer = device.get("manufacturer") or "Daikin"
         model = device.get("model") or "DKN"
         sw_version = device.get("fw_version") or device.get("firmware")
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
-            manufacturer=manufacturer,
+            manufacturer=MANUFACTURER,  # unified manufacturer label
             model=model,
             sw_version=str(sw_version) if sw_version is not None else None,
             name=device.get("name") or f"Device {self._device_id}",
@@ -252,7 +256,7 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
     _attr_has_entity_name = True
     _attr_name = "Sleep time"
     _attr_icon = "mdi:power-sleep"
-    _attr_native_unit_of_measurement = "min"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES  # UI: show 'min'
 
     def __init__(
         self,
