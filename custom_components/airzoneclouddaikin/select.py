@@ -8,6 +8,7 @@ Options: "occupied", "vacant", "sleep".
 Change (hygiene):
 - Use Home Assistant event loop clock (hass.loop.time()) for optimistic TTL
   to stay consistent with HA's own schedulers and ease testing.
+- Unify manufacturer using const.MANUFACTURER.
 
 This revision:
 - Add conservative idempotency: early-return if requested option equals the
@@ -31,7 +32,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN, OPTIMISTIC_TTL_SEC
+from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
 
@@ -97,12 +98,11 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
     def device_info(self) -> DeviceInfo:
         """Return device registry info (no PII)."""
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        manufacturer = device.get("manufacturer") or "Daikin"
         model = device.get("model") or "DKN"
         sw_version = device.get("fw_version") or device.get("firmware")
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
-            manufacturer=manufacturer,
+            manufacturer=MANUFACTURER,  # unified manufacturer label
             model=model,
             sw_version=str(sw_version) if sw_version is not None else None,
             name=device.get("name") or f"Device {self._device_id}",
