@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.9a8] - 2025-10-14
+### Changed
+- Device registry: unified manufacturer label to `Daikin / Airzone` across switch/number/select.
+- Numbers: `sleep_time` now uses `UnitOfTime.MINUTES` for UI consistency (sensor already used minutes).
+### Security/Privacy
+- Sensors: stricter PII cleanup — remove entities only by exact `unique_id` match; legacy suffix fallback removed to prevent overmatching.
+
 ## [0.3.9a7] - 2025-10-14
 ### Changed
 - Switch: use `hass.loop.time()` directly for optimistic TTLs (removed local `_now()` wrapper) to stay consistent with climate/select/number. No behavior change.
