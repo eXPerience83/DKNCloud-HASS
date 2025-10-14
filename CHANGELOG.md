@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.9a6] - 2025-10-14
+### Fixed
+- API: 401 re-login no longer retries with the stale token. After refreshing the token we rebuild auth params, so the retry uses the new token.
+- Setup: wrap `login()` with `ConfigEntryNotReady` for network/server errors (clean recovery on startup).
+### Changed
+- Logging: mask HTTP paths in debug logs (no query string and only the first path segment).
+- Binary sensor: defensive guards when iterating the coordinator snapshot and reading the device.
+- Sensors: `sleep_time` now uses `device_class=duration` with unit `min` for better UI consistency (the `number` entity remains unchanged).
+
 ## [0.3.9a5] - 2025-10-13
 - ### Changed
 - Centralized optimistic timings in `const.py`:
