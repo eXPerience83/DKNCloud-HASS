@@ -9,6 +9,10 @@ Design:
 - Device class = power.
 
 Privacy: never log or expose PII (email/token/MAC/PIN/GPS).
+
+This revision:
+- Add defensive guards when iterating coordinator snapshot and reading device,
+  so early reloads or transient empty snapshots do not raise KeyErrors.
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         return
 
     entities: list[AirzoneDeviceOnBinarySensor] = []
-    for device_id in list(coordinator.data.keys()):
+    for device_id in list((coordinator.data or {}).keys()):
         entities.append(AirzoneDeviceOnBinarySensor(coordinator, device_id))
 
     async_add_entities(entities)
@@ -65,7 +69,7 @@ class AirzoneDeviceOnBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def _device(self) -> dict[str, Any]:
         """Return latest device snapshot from the coordinator."""
-        return self.coordinator.data.get(self._device_id, {})
+        return (self.coordinator.data or {}).get(self._device_id, {})
 
     @staticmethod
     def _normalize_power(val: Any) -> bool:
