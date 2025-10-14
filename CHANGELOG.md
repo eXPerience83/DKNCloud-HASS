@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.9a7] - 2025-10-14
+### Changed
+- Switch: use `hass.loop.time()` directly for optimistic TTLs (removed local `_now()` wrapper) to stay consistent with climate/select/number. No behavior change.
+
 ## [0.3.9a6] - 2025-10-14
 ### Fixed
 - API: 401 re-login no longer retries with the stale token. After refreshing the token we rebuild auth params, so the retry uses the new token.
