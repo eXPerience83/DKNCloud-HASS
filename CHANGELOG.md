@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.9a9] - 2025-10-14
+### Changed
+- **types:** Parameterized `CoordinatorEntity` with `AirzoneCoordinator` across all platforms to improve IDE/linters hints (`coordinator.api`, typed `coordinator.data`). Applies to:
+  - `climate.py`
+  - `switch.py`
+  - `sensor.py`
+  - `select.py`
+  - `number.py` (including the `_BaseDKNNumber` base class)
+  - `binary_sensor.py`
+  *No runtime changes.*
+### Developer Notes
+- Added local type annotations for `coordinator` in `async_setup_entry` where applicable to strengthen typing without altering behavior.
+
 ## [0.3.9a8] - 2025-10-14
 ### Changed
 - Device registry: unified manufacturer label to `Daikin / Airzone` across switch/number/select.
