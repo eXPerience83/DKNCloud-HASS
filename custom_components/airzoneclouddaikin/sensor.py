@@ -19,6 +19,10 @@ This revision:
 
 This change (hygiene):
 - Unify manufacturer via const.MANUFACTURER in device_info to keep registry consistent.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, MANUFACTURER  # ← use centralized manufacturer
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -273,7 +278,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
@@ -320,14 +326,19 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(entities)
 
 
-class AirzoneSensor(CoordinatorEntity, SensorEntity):
-    """Generic read-only sensor surfacing fields from device snapshot."""
+class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
+    """Generic read-only sensor surfacing fields from device snapshot.
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator,
+        coordinator: AirzoneCoordinator,
         device_id: str,
         attribute: str,
         friendly: str,
