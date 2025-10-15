@@ -14,6 +14,10 @@ This revision:
 - Add conservative idempotency: early-return if requested option equals the
   current effective option (considering optimistic TTL first).
 - Categorize the entity under Configuration so it appears next to number.* settings.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
 """
 
 from __future__ import annotations
@@ -26,13 +30,11 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .airzone_api import AirzoneAPI
 from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
 
@@ -44,7 +46,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up select entities for DKN Cloud from a config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = data["coordinator"]
+    coordinator: AirzoneCoordinator = data["coordinator"]
     api: AirzoneAPI = data["api"]
 
     entities: list[SelectEntity] = []
@@ -70,8 +72,13 @@ class _OptimisticState:
     valid_until_monotonic: float = 0.0
 
 
-class DKNScenarySelect(CoordinatorEntity, SelectEntity):
-    """Select entity to control scenary (occupied/vacant/sleep)."""
+class DKNScenarySelect(CoordinatorEntity[AirzoneCoordinator], SelectEntity):
+    """Select entity to control scenary (occupied/vacant/sleep).
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
     _attr_name = "Scenary"
@@ -82,7 +89,7 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:
