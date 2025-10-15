@@ -18,6 +18,10 @@ Design notes:
 This change:
 - Unify manufacturer using const.MANUFACTURER in device_info.
 - Use UnitOfTime.MINUTES for DKNSleepTimeNumber to match sensor semantics.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
 """
 
 from __future__ import annotations
@@ -34,13 +38,11 @@ from homeassistant.helpers.entity import (
     DeviceInfo,
     EntityCategory,  # Place these controls under Configuration
 )
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .airzone_api import AirzoneAPI
 from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 # ------------------------
 # Sleep time constants
@@ -68,7 +70,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up number entities for DKN Cloud from a config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = data["coordinator"]
+    coordinator: AirzoneCoordinator = data["coordinator"]
     api: AirzoneAPI = data["api"]
 
     entities: list[NumberEntity] = []
@@ -115,8 +117,13 @@ class _OptimisticState:
     valid_until_monotonic: float = 0.0
 
 
-class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
-    """Shared logic for DKN numbers (idempotent + optimistic)."""
+class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
+    """Shared logic for DKN numbers (idempotent + optimistic).
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     # Subclasses must set:
     # - _field_name
@@ -131,7 +138,7 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
         unique_suffix: str,
@@ -261,7 +268,7 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:
@@ -292,7 +299,7 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:
@@ -323,7 +330,7 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:
