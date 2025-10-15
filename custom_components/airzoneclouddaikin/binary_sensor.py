@@ -17,6 +17,9 @@ This revision:
 Typing-only change (A9):
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Add local type annotation for `coordinator` in async_setup_entry.
+
+This patch (hygiene):
+- Use const.MANUFACTURER for Device Registry consistency (no runtime change).
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, MANUFACTURER
 from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _LOGGER = logging.getLogger(__name__)
@@ -123,7 +126,7 @@ class AirzoneDeviceOnBinarySensor(
         dev = self._device
         return {
             "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": "Daikin / Airzone",
+            "manufacturer": MANUFACTURER,
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
