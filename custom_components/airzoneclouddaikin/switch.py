@@ -14,6 +14,10 @@ This change:
 - Remove the local _now() wrapper and use hass.loop.time() directly for consistency
   with climate/select/number. No behavior change.
 - Unify manufacturer using const.MANUFACTURER.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
 """
 
 from __future__ import annotations
@@ -33,6 +37,7 @@ from .const import (
     POST_WRITE_REFRESH_DELAY_SEC,
     MANUFACTURER,
 )
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,7 +49,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
@@ -56,10 +62,15 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
     async_add_entities(entities)
 
 
-class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
-    """Representation of a power switch for an Airzone device."""
+class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
+    """Representation of a power switch for an Airzone device.
 
-    def __init__(self, coordinator, device_id: str) -> None:
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
+
+    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         """Initialize the power switch bound to a device id."""
         super().__init__(coordinator)
         self._device_id = device_id
