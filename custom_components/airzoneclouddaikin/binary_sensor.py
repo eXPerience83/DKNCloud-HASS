@@ -13,6 +13,10 @@ Privacy: never log or expose PII (email/token/MAC/PIN/GPS).
 This revision:
 - Add defensive guards when iterating coordinator snapshot and reading device,
   so early reloads or transient empty snapshots do not raise KeyErrors.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +43,8 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
@@ -50,15 +56,22 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
     async_add_entities(entities)
 
 
-class AirzoneDeviceOnBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Boolean sensor indicating whether the device reports power ON."""
+class AirzoneDeviceOnBinarySensor(
+    CoordinatorEntity[AirzoneCoordinator], BinarySensorEntity
+):
+    """Boolean sensor indicating whether the device reports power ON.
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.POWER
     _attr_entity_registry_enabled_default = True  # enabled by default
     _attr_should_poll = False  # coordinator-driven
 
-    def __init__(self, coordinator, device_id: str) -> None:
+    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         super().__init__(coordinator)
         self._device_id = device_id
         self._attr_name = "Device On"
