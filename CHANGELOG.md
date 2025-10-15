@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.3.9a10] - 2025-10-14
+### Changed
+- Binary sensor: use `const.MANUFACTURER` for Device Registry consistency (metadata only).
+
 ## [0.3.9a9] - 2025-10-14
 ### Changed
 - **types:** Parameterized `CoordinatorEntity` with `AirzoneCoordinator` across all platforms to improve IDE/linters hints (`coordinator.api`, typed `coordinator.data`). Applies to:
