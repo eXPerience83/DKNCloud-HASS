@@ -26,6 +26,10 @@ Fixes (previous patch):
 Enhancement (this patch):
 - If the user triggers an active command from climate while scenary=vacant (preset=away),
   automatically switch to occupied (preset=home) first to avoid backend auto-shutdown in vacant.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
 """
 
 from __future__ import annotations
@@ -48,6 +52,7 @@ from .const import (
     POST_WRITE_REFRESH_DELAY_SEC,
     MANUFACTURER,  # unified manufacturer label
 )
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,7 +81,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
@@ -88,15 +94,20 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
     async_add_entities(entities)
 
 
-class AirzoneClimate(CoordinatorEntity, ClimateEntity):
-    """Representation of an Airzone Cloud Daikin climate device."""
+class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
+    """Representation of an Airzone Cloud Daikin climate device.
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
     _attr_precision = PRECISION_WHOLE  # UI precision: show whole degrees only
     _attr_target_temperature_step = 1.0  # UI step: force 1°C increments
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
-    def __init__(self, coordinator, device_id: str) -> None:
+    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         """Initialize the climate entity."""
         super().__init__(coordinator)
         self._device_id = device_id
