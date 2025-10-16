@@ -15,9 +15,12 @@ This revision:
   current effective option (considering optimistic TTL first).
 - Categorize the entity under Configuration so it appears next to number.* settings.
 
-Typing-only change (A9):
+A9 typing-only:
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
+
+This patch (metadata consistency):
+- Unify DeviceInfo across platforms and add MAC connection if present.
 """
 
 from __future__ import annotations
@@ -105,15 +108,19 @@ class DKNScenarySelect(CoordinatorEntity[AirzoneCoordinator], SelectEntity):
     def device_info(self) -> DeviceInfo:
         """Return device registry info (no PII)."""
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        model = device.get("model") or "DKN"
-        sw_version = device.get("fw_version") or device.get("firmware")
-        return DeviceInfo(
+        brand = device.get("brand")
+        firmware = device.get("firmware")
+        mac = device.get("mac")
+        info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             manufacturer=MANUFACTURER,  # unified manufacturer label
-            model=model,
-            sw_version=str(sw_version) if sw_version is not None else None,
-            name=device.get("name") or f"Device {self._device_id}",
+            model=brand or "Airzone DKN",
+            sw_version=str(firmware) if firmware is not None else "",
+            name=device.get("name") or "Airzone Device",
         )
+        if mac:
+            info["connections"] = {("mac", mac)}  # type: ignore[index]
+        return info
 
     # ---------- State ----------
     @property
