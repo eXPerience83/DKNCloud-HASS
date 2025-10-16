@@ -10,14 +10,12 @@ This revision (hygiene):
 - Wire and cancel the delayed refresh handle to avoid stacked/late callbacks.
 - Add conservative idempotency for P1 ON/OFF to reduce redundant traffic.
 
-This change:
-- Remove the local _now() wrapper and use hass.loop.time() directly for consistency
-  with climate/select/number. No behavior change.
-- Unify manufacturer using const.MANUFACTURER.
-
-Typing-only change (A9):
+A9 typing-only:
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Add local type annotation for `coordinator` in async_setup_entry.
+
+This patch (metadata consistency):
+- Unify DeviceInfo fallbacks with other platforms and keep MAC connection.
 """
 
 from __future__ import annotations
@@ -204,11 +202,11 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         info: dict[str, Any] = {
             # Ensure stable identifier even if 'dev' is still an empty snapshot.
             "identifiers": {(DOMAIN, dev.get("id") or self._device_id)},
-            "name": dev.get("name"),
+            "name": dev.get("name") or "Airzone Device",
             "manufacturer": MANUFACTURER,  # unified manufacturer label
             # Privacy: do not include PIN in model string.
-            "model": dev.get("brand") or "Unknown",
-            "sw_version": dev.get("firmware") or "Unknown",
+            "model": dev.get("brand") or "Airzone DKN",
+            "sw_version": dev.get("firmware") or "",
         }
         mac = dev.get("mac")
         if mac:
