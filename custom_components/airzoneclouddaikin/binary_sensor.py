@@ -10,16 +10,12 @@ Design:
 
 Privacy: never log or expose PII (email/token/MAC/PIN/GPS).
 
-This revision:
-- Add defensive guards when iterating coordinator snapshot and reading device,
-  so early reloads or transient empty snapshots do not raise KeyErrors.
-
-Typing-only change (A9):
+A9 typing-only:
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Add local type annotation for `coordinator` in async_setup_entry.
 
-This patch (hygiene):
-- Use const.MANUFACTURER for Device Registry consistency (no runtime change).
+This patch (metadata consistency):
+- Use const.MANUFACTURER and add MAC connection to align Device registry metadata with other platforms.
 """
 
 from __future__ import annotations
@@ -124,10 +120,14 @@ class AirzoneDeviceOnBinarySensor(
     @property
     def device_info(self):
         dev = self._device
-        return {
+        info = {
             "identifiers": {(DOMAIN, self._device_id)},
             "manufacturer": MANUFACTURER,
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
         }
+        mac = dev.get("mac")
+        if mac:
+            info["connections"] = {("mac", mac)}
+        return info
