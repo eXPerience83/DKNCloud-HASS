@@ -15,28 +15,31 @@ This revision:
   current effective option (considering optimistic TTL first).
 - Categorize the entity under Configuration so it appears next to number.* settings.
 
-A9 typing-only:
+Typing-only change (A9):
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
 
-This patch (metadata consistency):
-- Unify DeviceInfo across platforms and add MAC connection if present.
+Device Registry alignment (this patch):
+- device_info now returns a dict (not DeviceInfo) to match other platforms.
+- Fields: identifiers, manufacturer, model (brand or fallback), sw_version (firmware), name, and connections with MAC when present.
+- Removed any reference to 'fw_version' as backend returns 'firmware'.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
+from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
 
@@ -104,21 +107,28 @@ class DKNScenarySelect(CoordinatorEntity[AirzoneCoordinator], SelectEntity):
 
     # ---------- Device registry ----------
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return device registry info (no PII)."""
+    def device_info(self) -> dict[str, Any]:
+        """Return device registry info (PII-safe and unified across platforms).
+
+        Fields:
+        - identifiers: (DOMAIN, device_id)
+        - manufacturer: const.MANUFACTURER
+        - model: device['brand'] or "Airzone DKN"
+        - sw_version: device['firmware'] or ""
+        - name: device['name'] or "Airzone Device"
+        - connections: {("mac", mac)} if present
+        """
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        brand = device.get("brand")
-        firmware = device.get("firmware")
+        info: dict[str, Any] = {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "manufacturer": MANUFACTURER,
+            "model": device.get("brand") or "Airzone DKN",
+            "sw_version": device.get("firmware") or "",
+            "name": device.get("name") or "Airzone Device",
+        }
         mac = device.get("mac")
-        info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            manufacturer=MANUFACTURER,  # unified manufacturer label
-            model=brand or "Airzone DKN",
-            sw_version=str(firmware) if firmware is not None else "",
-            name=device.get("name") or "Airzone Device",
-        )
         if mac:
-            info["connections"] = {("mac", mac)}  # type: ignore[index]
+            info["connections"] = {("mac", mac)}
         return info
 
     # ---------- State ----------
