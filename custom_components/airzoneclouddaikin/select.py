@@ -8,32 +8,37 @@ Options: "occupied", "vacant", "sleep".
 Change (hygiene):
 - Use Home Assistant event loop clock (hass.loop.time()) for optimistic TTL
   to stay consistent with HA's own schedulers and ease testing.
+- Unify manufacturer using const.MANUFACTURER.
 
 This revision:
 - Add conservative idempotency: early-return if requested option equals the
   current effective option (considering optimistic TTL first).
+- Categorize the entity under Configuration so it appears next to number.* settings.
+
+A9 typing-only:
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
+
+This patch (metadata consistency):
+- Unify DeviceInfo across platforms and add MAC connection if present.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN
+from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
-_OPTIMISTIC_TTL_SEC = 6.0  # Short TTL to keep UI snappy until next refresh
 
 
 async def async_setup_entry(
@@ -43,7 +48,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up select entities for DKN Cloud from a config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = data["coordinator"]
+    coordinator: AirzoneCoordinator = data["coordinator"]
     api: AirzoneAPI = data["api"]
 
     entities: list[SelectEntity] = []
@@ -69,19 +74,24 @@ class _OptimisticState:
     valid_until_monotonic: float = 0.0
 
 
-class DKNScenarySelect(CoordinatorEntity, SelectEntity):
-    """Select entity to control scenary (occupied/vacant/sleep)."""
+class DKNScenarySelect(CoordinatorEntity[AirzoneCoordinator], SelectEntity):
+    """Select entity to control scenary (occupied/vacant/sleep).
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
     _attr_name = "Scenary"
     _attr_options = _OPTIONS
-    # Place this under Controls: explicit None (not Diagnostic, not Configuration).
-    _attr_entity_category = None
+    # Place under Configuration to group with number.* settings.
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:
@@ -97,16 +107,19 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
     def device_info(self) -> DeviceInfo:
         """Return device registry info (no PII)."""
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        manufacturer = device.get("manufacturer") or "Daikin"
-        model = device.get("model") or "DKN"
-        sw_version = device.get("fw_version") or device.get("firmware")
-        return DeviceInfo(
+        brand = device.get("brand")
+        firmware = device.get("firmware")
+        mac = device.get("mac")
+        info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
-            manufacturer=manufacturer,
-            model=model,
-            sw_version=str(sw_version) if sw_version is not None else None,
-            name=device.get("name") or f"Device {self._device_id}",
+            manufacturer=MANUFACTURER,  # unified manufacturer label
+            model=brand or "Airzone DKN",
+            sw_version=str(firmware) if firmware is not None else "",
+            name=device.get("name") or "Airzone Device",
         )
+        if mac:
+            info["connections"] = {("mac", mac)}  # type: ignore[index]
+        return info
 
     # ---------- State ----------
     @property
@@ -144,7 +157,7 @@ class DKNScenarySelect(CoordinatorEntity, SelectEntity):
         # Optimistic state (event loop clock)
         self._optimistic.option = option
         self._optimistic.valid_until_monotonic = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
 

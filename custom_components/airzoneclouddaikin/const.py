@@ -7,6 +7,9 @@ DOMAIN = "airzoneclouddaikin"
 CONF_USERNAME = "username"  # Your Airzone Cloud account email
 CONF_PASSWORD = "password"  # Your Airzone Cloud account password
 
+# Public manufacturer label used across platforms (Device Registry consistency).
+MANUFACTURER = "Daikin / Airzone"
+
 # API Endpoints (as defined in the original package)
 API_LOGIN = "/users/sign_in"
 API_INSTALLATION_RELATIONS = "/installation_relations"
@@ -42,3 +45,8 @@ HEADERS_EVENTS = {
     "Content-Type": "application/json;charset=UTF-8",
     "Accept": "application/json, text/plain, */*",
 }
+
+# --- Shared optimistic timings (used by climate/switch/number/select) ----
+# English: Centralized values to keep UX consistent and ease future tuning.
+OPTIMISTIC_TTL_SEC: float = 2.5
+POST_WRITE_REFRESH_DELAY_SEC: float = 1.0

@@ -14,28 +14,34 @@ Design notes:
 - No I/O in properties; reads come from DataUpdateCoordinator.
 - Entities are created only if the backend exposes the fields in GET /devices,
   same as sleep_time. If the field exists but is missing a value, HA shows 'unknown'.
+
+A9 typing-only:
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
+
+This patch (metadata consistency):
+- Unify DeviceInfo across platforms: manufacturer=const.MANUFACTURER, model=brand (fallback "Airzone DKN"),
+  sw_version=firmware (fallback ""), name=backend name (fallback "Airzone Device"), and add connections with MAC if present.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import (
     DeviceInfo,
     EntityCategory,  # Place these controls under Configuration
 )
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    DataUpdateCoordinator,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN
+from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
 
 # ------------------------
 # Sleep time constants
@@ -43,9 +49,6 @@ from .const import DOMAIN
 _SLEEP_MIN = 30
 _SLEEP_MAX = 120
 _SLEEP_STEP = 10
-
-# Optimistic TTL (seconds) to hide backend latency
-_OPTIMISTIC_TTL_SEC = 6.0
 
 # ------------------------
 # Unoccupied limits constants (hardcoded as per product UI)
@@ -66,7 +69,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up number entities for DKN Cloud from a config entry."""
     data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]] = data["coordinator"]
+    coordinator: AirzoneCoordinator = data["coordinator"]
     api: AirzoneAPI = data["api"]
 
     entities: list[NumberEntity] = []
@@ -113,8 +116,13 @@ class _OptimisticState:
     valid_until_monotonic: float = 0.0
 
 
-class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
-    """Shared logic for DKN numbers (idempotent + optimistic)."""
+class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
+    """Shared logic for DKN numbers (idempotent + optimistic).
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     # Subclasses must set:
     # - _field_name
@@ -129,7 +137,7 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
         unique_suffix: str,
@@ -152,16 +160,20 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
     def device_info(self) -> DeviceInfo:
         """Return device registry info (no PII)."""
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        manufacturer = device.get("manufacturer") or "Daikin"
-        model = device.get("model") or "DKN"
-        sw_version = device.get("fw_version") or device.get("firmware")
-        return DeviceInfo(
+        brand = device.get("brand")
+        firmware = device.get("firmware")
+        mac = device.get("mac")
+        info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
-            manufacturer=manufacturer,
-            model=model,
-            sw_version=str(sw_version) if sw_version is not None else None,
-            name=device.get("name") or f"Device {self._device_id}",
+            manufacturer=MANUFACTURER,  # unified manufacturer label
+            model=brand or "Airzone DKN",
+            sw_version=str(firmware) if firmware is not None else "",
+            name=device.get("name") or "Airzone Device",
         )
+        # Add MAC connection if present (helps HA group entities under the same Device)
+        if mac:
+            info["connections"] = {("mac", mac)}  # type: ignore[index]
+        return info
 
     # ---------- State ----------
     @property
@@ -220,7 +232,7 @@ class _BaseDKNNumber(CoordinatorEntity, NumberEntity):
         # Optimistic state window
         self._optimistic.value = ivalue
         self._optimistic.valid_until_monotonic = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
 
@@ -255,12 +267,12 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
     _attr_has_entity_name = True
     _attr_name = "Sleep time"
     _attr_icon = "mdi:power-sleep"
-    _attr_native_unit_of_measurement = "min"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES  # UI: show 'min'
 
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:
@@ -291,7 +303,7 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:
@@ -322,7 +334,7 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     def __init__(
         self,
         *,
-        coordinator: DataUpdateCoordinator[dict[str, dict[str, Any]]],
+        coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
         device_id: str,
     ) -> None:

@@ -1,5 +1,88 @@
 # Changelog
 
+## [0.3.9] - 2025-10-16
+### Changed
+- Device Registry metadata unified across all platforms:
+  - `manufacturer` from constant `MANUFACTURER`.
+  - `model` from device `brand` (fallback `"Airzone DKN"`).
+  - `sw_version` from device `firmware` (fallback `""`).
+  - `name` from device `name` (fallback `"Airzone Device"`).
+  - Added `connections` with MAC when available to ensure entities group under the same Device.
+  Affected files: `climate.py`, `sensor.py`, `switch.py`, `number.py`, `select.py`, `binary_sensor.py`.
+  *No runtime changes.*
+
+## [0.3.9a10] - 2025-10-14
+### Changed
+- Binary sensor: use `const.MANUFACTURER` for Device Registry consistency (metadata only).
+
+## [0.3.9a9] - 2025-10-14
+### Changed
+- **types:** Parameterized `CoordinatorEntity` with `AirzoneCoordinator` across all platforms to improve IDE/linters hints (`coordinator.api`, typed `coordinator.data`). Applies to:
+  - `climate.py`
+  - `switch.py`
+  - `sensor.py`
+  - `select.py`
+  - `number.py` (including the `_BaseDKNNumber` base class)
+  - `binary_sensor.py`
+  *No runtime changes.*
+### Developer Notes
+- Added local type annotations for `coordinator` in `async_setup_entry` where applicable to strengthen typing without altering behavior.
+
+## [0.3.9a8] - 2025-10-14
+### Changed
+- Device registry: unified manufacturer label to `Daikin / Airzone` across switch/number/select.
+- Numbers: `sleep_time` now uses `UnitOfTime.MINUTES` for UI consistency (sensor already used minutes).
+### Security/Privacy
+- Sensors: stricter PII cleanup — remove entities only by exact `unique_id` match; legacy suffix fallback removed to prevent overmatching.
+
+## [0.3.9a7] - 2025-10-14
+### Changed
+- Switch: use `hass.loop.time()` directly for optimistic TTLs (removed local `_now()` wrapper) to stay consistent with climate/select/number. No behavior change.
+
+## [0.3.9a6] - 2025-10-14
+### Fixed
+- API: 401 re-login no longer retries with the stale token. After refreshing the token we rebuild auth params, so the retry uses the new token.
+- Setup: wrap `login()` with `ConfigEntryNotReady` for network/server errors (clean recovery on startup).
+### Changed
+- Logging: mask HTTP paths in debug logs (no query string and only the first path segment).
+- Binary sensor: defensive guards when iterating the coordinator snapshot and reading the device.
+- Sensors: `sleep_time` now uses `device_class=duration` with unit `min` for better UI consistency (the `number` entity remains unchanged).
+
+## [0.3.9a5] - 2025-10-13
+- ### Changed
+- Centralized optimistic timings in `const.py`:
+  - `OPTIMISTIC_TTL_SEC = 2.5`
+  - `POST_WRITE_REFRESH_DELAY_SEC = 1.0`
+- `climate` and `switch` now use these shared constants for optimistic TTL and post-write delayed refresh.
+- `number` and `select` now use the shared `OPTIMISTIC_TTL_SEC` while keeping their immediate refresh flow (only TTL changed).
+### Added
+- `climate`: exposes `current_temperature` (°C) from coordinator `local_temp` for better UI parity (read-only, no optimistic cache).
+
+## [0.3.9a4] - 2025-10-12
+### Changed
+- Kept the `select.scenary` entity to avoid breaking changes. The entity is now categorized under **Configuration** so it appears next to `number.*` settings (e.g., `sleep_time`, unoccupied min/max limits).
+- Scene control remains available both via `climate.preset_modes` (`home`, `away`, `sleep`) and `select.scenary` (`occupied`, `vacant`, `sleep`).
+### Notes
+- For new automations, we recommend using `climate.set_preset_mode` for consistency with Home Assistant's climate presets. The legacy select remains available for convenience.
+
+## [0.3.9a3] - 2025-10-12
+### Changed
+- `climate`: when the user triggers an active command (turn_on, set_hvac_mode!=OFF, set_temperature, set_fan_mode) while `preset_mode` is `away`, the entity now automatically switches scenary to `occupied` (`preset_mode` → `home`) before sending the command. This avoids backend auto-shutdowns that can occur in `vacant`.
+### Fixed
+- `climate`: continue to reflect backend scenary changes promptly by expiring the optimistic cache on coordinator updates and when TTL elapses.
+
+## [0.3.9a2] - 2025-10-12
+### Fixed
+- `climate`: reflect backend scenary changes promptly by expiring the optimistic cache on coordinator updates and when TTL elapses. Prevents stale `preset_mode` when the state is changed from the web/app or when the backend transitions (e.g., vacant→occupied).
+
+## [0.3.9a1] - 2025-10-12
+### Added
+- `climate`: support for Home Assistant `preset_modes` (`home`, `away`, `sleep`) mapped to backend `scenary` (occupied, vacant, sleep). Idempotent writes with optimistic TTL.
+### Changed
+- `climate`: always include `PRESET_MODE` in `supported_features`. No auto-forcing scenary after other writes (reflect backend truth on refresh).
+### Notes
+- Configuration values like `sleep_time` and unoccupied min/max limits remain exposed via `number.*` entities for now.
+
 ## [0.3.8] - 2025-10-11
 ### Changed
 - CI: Run on Python 3.13 (latest patch) with a guard step enforcing `>= 3.13.2`.

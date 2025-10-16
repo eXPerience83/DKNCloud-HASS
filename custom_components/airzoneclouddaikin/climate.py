@@ -12,23 +12,50 @@ This revision:
 - Add conservative idempotency for power (P1) in async_turn_on/off:
   skip when optimistic TTL indicates the target power is already in effect,
   or when backend snapshot already matches the requested power state.
+
+Preset modes (this revision):
+- Add preset_modes ["home", "away", "sleep"] mapped to backend 'scenary':
+  occupied → home, vacant → away, sleep → sleep.
+- Implement idempotent async_set_preset_mode with optimistic TTL, without auto-forcing scenary
+  after other writes (we always reflect what backend returns on refresh).
+
+Fixes (previous patch):
+- Ensure optimistic cache is expired/cleared on coordinator updates or when TTL has elapsed,
+  so remote/backend changes (e.g., vacant→occupied) are reflected immediately.
+
+Enhancement (this patch):
+- If the user triggers an active command from climate while scenary=vacant (preset=away),
+  automatically switch to occupied (preset=home) first to avoid backend auto-shutdown in vacant.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
+
+This patch (metadata consistency, no runtime change):
+- Standardize Device Registry metadata and add MAC connection when available.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable  # Added: for the cancel callback type
+from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .const import (
+    DOMAIN,
+    MANUFACTURER,  # unified manufacturer label
+    OPTIMISTIC_TTL_SEC,
+    POST_WRITE_REFRESH_DELAY_SEC,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,9 +76,6 @@ HVAC_TO_MODE: dict[HVACMode, str] = {
     HVACMode.DRY: "5",
 }
 
-_OPTIMISTIC_TTL_SEC: float = 2.5
-_POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
-
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
     """Set up the climate platform from a config entry using the coordinator snapshot."""
@@ -60,7 +84,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
@@ -72,15 +97,20 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
     async_add_entities(entities)
 
 
-class AirzoneClimate(CoordinatorEntity, ClimateEntity):
-    """Representation of an Airzone Cloud Daikin climate device."""
+class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
+    """Representation of an Airzone Cloud Daikin climate device.
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
     _attr_precision = PRECISION_WHOLE  # UI precision: show whole degrees only
     _attr_target_temperature_step = 1.0  # UI step: force 1°C increments
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
-    def __init__(self, coordinator, device_id: str) -> None:
+    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         """Initialize the climate entity."""
         super().__init__(coordinator)
         self._device_id = device_id
@@ -169,19 +199,65 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         code = self._backend_mode_code()
         return MODE_TO_HVAC.get(code or "", HVACMode.OFF)
 
+    # ---- Optimistic helpers ---------------------------------------------
+
+    def _optimistic_active(self) -> bool:
+        """Return True if optimistic cache is within TTL."""
+        return bool(
+            self._optimistic_expires
+            and self.coordinator.hass.loop.time() < self._optimistic_expires
+        )
+
+    def _expire_optimistic_if_needed(self) -> None:
+        """Expire optimistic cache when TTL elapsed."""
+        if self._optimistic and not self._optimistic_active():
+            self._optimistic.clear()
+            self._optimistic_expires = None
+
+    # ---- Preset/scenary mapping -----------------------------------------
+
+    @staticmethod
+    def _scenary_to_preset(scenary: str | None) -> str | None:
+        """Map backend scenary to HA preset name."""
+        s = (scenary or "").strip().lower()
+        if s == "occupied":
+            return "home"
+        if s == "vacant":
+            return "away"
+        if s == "sleep":
+            return "sleep"
+        return None
+
+    @staticmethod
+    def _preset_to_scenary(preset: str) -> str | None:
+        """Map HA preset name to backend scenary."""
+        p = (preset or "").strip().lower()
+        if p == "home":
+            return "occupied"
+        if p == "away":
+            return "vacant"
+        if p == "sleep":
+            return "sleep"
+        return None
+
     # ---- Device info -----------------------------------------------------
 
     @property
     def device_info(self):
-        """Attach model/firmware; avoid exposing sensitive IDs."""
+        """Attach unified Device Registry metadata; avoid exposing PIN or logging PII."""
         dev = self._device
-        return {
+        info = {
             "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": "Daikin / Airzone",
+            "manufacturer": MANUFACTURER,  # unified manufacturer label
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
         }
+        mac = dev.get("mac")
+        if mac:
+            # Adding MAC ensures all entities are grouped under the same Device in HA.
+            info["connections"] = {("mac", mac)}
+        return info
 
     # ---- Core state ------------------------------------------------------
 
@@ -225,11 +301,112 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         modes.extend([HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY])
         return modes
 
+    # ---- Presets (HA) ----------------------------------------------------
+
+    @property
+    def preset_modes(self) -> list[str] | None:
+        """Expose supported HA presets."""
+        return ["home", "away", "sleep"]
+
+    @property
+    def preset_mode(self) -> str | None:
+        """Return the active preset from backend scenary (or optimistic value)."""
+        # Ensure optimistic cache does not mask backend after TTL
+        self._expire_optimistic_if_needed()
+        scen = self._optimistic.get("scenary", self._device.get("scenary"))
+        return self._scenary_to_preset(str(scen) if scen is not None else None)
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set HA preset by writing backend scenary (idempotent + optimistic).
+
+        English:
+        - No auto-forcing scenary after other operations; we always reflect backend.
+        - If current preset already equals requested, skip backend write.
+        """
+        if preset_mode not in (self.preset_modes or []):
+            _LOGGER.debug(
+                "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
+            )
+            return
+
+        current = self.preset_mode
+        if current == preset_mode:
+            # Idempotent: skip if nothing to change
+            return
+
+        scenary = self._preset_to_scenary(preset_mode)
+        if not scenary:
+            _LOGGER.debug("Unsupported preset -> scenary mapping: %s", preset_mode)
+            return
+
+        # Attempt API calls using known method names without changing other files.
+        api = getattr(self.coordinator, "api", None)
+        if api is None:
+            _LOGGER.error("API handle missing in coordinator; cannot set scenary")
+            return
+
+        try:
+            if hasattr(api, "put_device_scenary"):
+                await api.put_device_scenary(self._device_id, scenary)
+            elif hasattr(api, "set_device_scenary"):
+                await api.set_device_scenary(self._device_id, scenary)
+            elif hasattr(api, "update_device"):
+                await api.update_device(self._device_id, {"scenary": scenary})
+            elif hasattr(api, "put_device"):
+                await api.put_device(self._device_id, {"scenary": scenary})
+            else:
+                # No known method; surface as an error to the UI/log.
+                raise NotImplementedError("No scenary setter available on API client")
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:
+            _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
+            raise
+
+        # Optimistic cache: reflect new preset immediately with TTL.
+        self._optimistic["scenary"] = scenary
+        self._optimistic_expires = (
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
+        )
+        self.async_write_ha_state()
+        self._schedule_refresh()
+
+    # ---- Auto-exit AWAY on active commands -------------------------------
+
+    async def _auto_exit_away_if_needed(self, reason: str) -> None:
+        """Leave 'away' → 'home' if user triggers an active command.
+
+        English:
+        - Some backends auto-stop or revert when scenary='vacant' (away).
+          To honor the user's intent (turn on / change mode / change temp / fan),
+          force scenary='occupied' (home) once before the write.
+        - No effect if already 'home' or 'sleep'.
+        - Errors are logged at debug level and do not block the original command.
+        """
+        try:
+            # Ensure optimistic cache does not mask current preset
+            self._expire_optimistic_if_needed()
+            if self.preset_mode == "away":
+                await self.async_set_preset_mode("home")
+        except Exception as err:
+            _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
+
     # ---- Temperature control --------------------------------------------
 
     @property
     def temperature_unit(self) -> UnitOfTemperature:
         return UnitOfTemperature.CELSIUS
+
+    @property
+    def current_temperature(self) -> float | None:
+        """Return the current ambient temperature (°C) from coordinator snapshot.
+
+        English:
+        - Read-only value; we intentionally do NOT use optimistic cache for readings.
+        - Keeps UI precision to whole degrees via `_attr_precision`.
+        """
+        val = self._device.get("local_temp")
+        return self._parse_float(val)
 
     @staticmethod
     def _parse_float(val: Any) -> float | None:
@@ -284,6 +461,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             _LOGGER.debug("Ignoring set_temperature in mode %s", mode)
             return
 
+        # If user adjusts setpoint while in away, exit away first.
+        await self._auto_exit_away_if_needed("set_temperature")
+
         # Clamp to device limits (use integer degrees as device expects)
         min_allowed = int(self.min_temp)
         max_allowed = int(self.max_temp)
@@ -297,7 +477,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             self._optimistic["heat_consign"] = temp
 
         self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
         self._schedule_refresh()
@@ -346,6 +526,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
             return
 
+        # If user adjusts fan while in away, exit away first.
+        await self._auto_exit_away_if_needed("set_fan_mode")
+
         option: str
         key: str
         if mode == HVACMode.HEAT:
@@ -368,7 +551,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         self._optimistic[key] = fan_mode
 
         self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
         self._schedule_refresh()
@@ -393,9 +576,12 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             if backend_on:
                 return
 
+        # If user explicitly turns on while in away, exit away first.
+        await self._auto_exit_away_if_needed("turn_on")
+
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
-        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -420,7 +606,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         await self._send_p_event("P1", 0)
         self._optimistic.update({"power": "0"})
-        self._optimistic_expires = now + _OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -430,11 +616,14 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
             await self._send_p_event("P1", 0)
             self._optimistic.update({"power": "0"})
             self._optimistic_expires = (
-                self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+                self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
             )
             self.async_write_ha_state()
             self._schedule_refresh()
             return
+
+        # If user requests a non-OFF mode while in away, exit away first.
+        await self._auto_exit_away_if_needed("set_hvac_mode")
 
         # Idempotency: if already ON and current HVAC equals requested, skip sending P2.
         # English: Avoid unnecessary radio wake-ups and event spam.
@@ -460,7 +649,7 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
                 self._optimistic.update({"power": "1", "mode": mode_code})
 
         self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + _OPTIMISTIC_TTL_SEC
+            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
         )
         self.async_write_ha_state()
         self._schedule_refresh()
@@ -478,6 +667,9 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         elif mode == HVACMode.FAN_ONLY:
             feats |= ClimateEntityFeature.FAN_MODE
         # DRY/OFF: no fan/temperature features
+
+        # Presets are always available (mapped to scenary)
+        feats |= ClimateEntityFeature.PRESET_MODE
         return feats
 
     # ---- Write helpers ---------------------------------------------------
@@ -531,8 +723,39 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
 
         # Store the cancel handle returned by async_call_later
         self._cancel_scheduled_refresh = async_call_later(
-            self.hass, _POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
+            self.hass, POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
         )
+
+    # ---- Coordinator update hook ----------------------------------------
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Expire optimistic cache on coordinator updates or conflict.
+
+        English:
+        - If TTL elapsed, drop optimistic so backend truth is shown.
+        - If backend value conflicts with optimistic (e.g., scenary changed remotely),
+          prefer backend and clear optimistic immediately.
+        """
+        if self._optimistic:
+            now = self.coordinator.hass.loop.time()
+            if not self._optimistic_expires or now >= self._optimistic_expires:
+                self._optimistic.clear()
+                self._optimistic_expires = None
+            else:
+                # Conflict detection only for fields we override optimistically
+                try:
+                    if "scenary" in self._optimistic:
+                        scen_o = str(self._optimistic.get("scenary"))
+                        scen_b = str(self._device.get("scenary"))
+                        if scen_b and scen_b != scen_o:
+                            self._optimistic.clear()
+                            self._optimistic_expires = None
+                except Exception:
+                    self._optimistic.clear()
+                    self._optimistic_expires = None
+
+        super()._handle_coordinator_update()
 
     # ---- Availability / update ------------------------------------------
 
@@ -541,13 +764,8 @@ class AirzoneClimate(CoordinatorEntity, ClimateEntity):
         return bool(self._device)
 
     async def async_update(self) -> None:
-        """Clear optimistic cache after TTL; data comes from coordinator."""
-        if (
-            self._optimistic_expires
-            and self.coordinator.hass.loop.time() > self._optimistic_expires
-        ):
-            self._optimistic.clear()
-            self._optimistic_expires = None
+        """(Unused by CoordinatorEntity) left as a no-op that also expires TTL if called."""
+        self._expire_optimistic_if_needed()
 
     async def async_will_remove_from_hass(self) -> None:
         """Called when entity is about to be removed from Home Assistant.

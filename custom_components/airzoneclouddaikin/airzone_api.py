@@ -5,6 +5,11 @@ Notes:
 - 30s global timeout (configurable via const), retries/backoff are applied
   for write endpoints (/events and /devices/{id}).
 - Never log secrets (email/token/MAC/PIN).
+
+This revision:
+- Fix 401 re-login: after refreshing the token, re-build auth params so the retry
+  does NOT reuse the stale token.
+- Safer logging: mask paths in logs (no query string and no IDs/segments beyond the first).
 """
 
 from __future__ import annotations
@@ -62,6 +67,13 @@ class AirzoneAPI:
         """Return event-loop monotonic time (no hass context here)."""
         return asyncio.get_running_loop().time()
 
+    @staticmethod
+    def _safe_path(path: str) -> str:
+        """Return a masked path for logs (no query; only the first segment)."""
+        base = (path or "").partition("?")[0].lstrip("/")
+        first = base.split("/", 1)[0] if base else ""
+        return f"/{first}" if first else "/"
+
     async def _sleep(self, seconds: float) -> None:
         """Async sleep indirection (test-friendly)."""
         if seconds > 0:
@@ -89,6 +101,7 @@ class AirzoneAPI:
             headers.update(extra_headers)
 
         timeout = ClientTimeout(total=REQUEST_TIMEOUT)
+        spath = self._safe_path(path)
 
         try:
             async with self._session.request(
@@ -100,13 +113,13 @@ class AirzoneAPI:
                 return await resp.text()
         except ClientResponseError as cre:
             # Mask sensitive info; re-raise for caller classification/backoff.
-            _LOGGER.debug("HTTP %s %s failed: %s", method, path, cre)
+            _LOGGER.debug("HTTP %s %s failed: %s", method, spath, cre)
             raise
         except ClientConnectorError as cce:
-            _LOGGER.debug("HTTP %s %s connection error: %s", method, path, cce)
+            _LOGGER.debug("HTTP %s %s connection error: %s", method, spath, cce)
             raise
         except TimeoutError:
-            _LOGGER.debug("HTTP %s %s timed out", method, path)
+            _LOGGER.debug("HTTP %s %s timed out", method, spath)
             raise
 
     async def _authed_request_with_retries(
@@ -146,6 +159,13 @@ class AirzoneAPI:
                     _LOGGER.debug("401 received; attempting one re-login before retry.")
                     await self.login()
                     attempt += 1
+                    # IMPORTANT: refresh auth params so the retry does not reuse a stale token.
+                    if params is not None:
+                        new_auth = self._auth_params()
+                        # Overwrite auth keys into caller's params while preserving non-auth keys
+                        for k in ("user_email", "user_token"):
+                            if k in new_auth:
+                                params[k] = new_auth[k]
                     continue
 
                 # Backoff for 429 and 5xx
@@ -171,7 +191,7 @@ class AirzoneAPI:
                     _LOGGER.debug(
                         "Retrying %s %s after %s due to HTTP %s (attempt %d/%d)",
                         method,
-                        path,
+                        self._safe_path(path),
                         round(delay, 2),
                         status,
                         attempt + 1,

@@ -6,6 +6,10 @@ Highlights:
 - Options-aware: scan_interval is configurable post-setup.
 - Presets (select/number) are now ALWAYS loaded (opt-in removed).
 - Never logs or exposes PII (email, token, MAC, PIN, GPS).
+
+This revision:
+- Wrap login() with ConfigEntryNotReady also for network/external errors to let HA
+  retry cleanly while keeping logs and UX consistent.
 """
 
 from __future__ import annotations
@@ -103,7 +107,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api = AirzoneAPI(cfg.get("username"), cfg.get("password"), session)
 
     # Login should succeed (validated in config_flow), but treat runtime failures as NotReady
-    if not await api.login():
+    try:
+        ok = await api.login()
+    except Exception as exc:  # network issues, 5xx, etc.
+        _LOGGER.warning("Airzone login failed during setup (exception).")
+        raise ConfigEntryNotReady("Airzone Cloud login failed") from exc
+
+    if not ok:
         _LOGGER.warning("Airzone login failed during setup; entry not ready yet.")
         raise ConfigEntryNotReady("Airzone Cloud login failed")
 

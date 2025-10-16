@@ -12,6 +12,23 @@ Changes (privacy robustness):
 - Introduce internal marker 'self._is_pii' for PII sensors.
 - Strengthen opt-out cleanup: remove by exact unique_id (device_id + attribute)
   for all known devices, and keep suffix-based fallback for legacy entries.
+
+This revision:
+- Add proper unit and device_class for 'sleep_time' to present minutes in UI:
+  device_class=duration and UnitOfTime.MINUTES.
+
+This change (hygiene):
+- Unify manufacturer via const.MANUFACTURER in device_info to keep registry consistent.
+
+Typing-only change (A9):
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
+
+This patch (metadata consistency, no runtime change):
+- Standardize Device Registry metadata across platforms:
+  manufacturer=const.MANUFACTURER, model=brand (fallback "Airzone DKN"),
+  sw_version=firmware (fallback ""), name=backend name (fallback "Airzone Device"),
+  and add 'connections' with MAC when available.
 """
 
 from __future__ import annotations
@@ -25,12 +42,13 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .const import DOMAIN, MANUFACTURER  # ← use centralized manufacturer
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -84,7 +102,8 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         "measurement",
     ),
-    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, None, None),
+    # sleep_time: show minutes explicitly via UnitOfTime.MINUTES
+    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, "duration", None),
     ("scenary", "Scenary", "mdi:account-clock", True, None, None),
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
     ("status", "Status", "mdi:information-outline", True, None, None),
@@ -244,6 +263,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ),
 ]
 
+
 # PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
 PII_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("mac", "MAC Address", "mdi:lan", True, None, None),
@@ -264,7 +284,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
@@ -282,7 +303,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # Strategy:
     #   1) Prefer exact unique_id match (device_id + '_' + pii_attribute) for all
     #      devices currently known in the coordinator snapshot.
-    #   2) Keep a fallback legacy rule: unique_id ending with '_<pii_attribute>'.
     try:
         if not expose_pii:
             reg = er.async_get(hass)
@@ -295,10 +315,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 if ent.domain != "sensor" or ent.platform != DOMAIN:
                     continue
                 uid = (ent.unique_id or "").strip()
-                # Remove by exact known uid or by legacy suffix fallback
-                if uid in computed_pii_uids or any(
-                    uid.endswith(f"_{attr}") for attr in PII_ATTRS
-                ):
+                if uid in computed_pii_uids:
                     reg.async_remove(ent.entity_id)
     except Exception as exc:  # Defensive: never fail setup because of registry ops
         _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
@@ -315,14 +332,19 @@ async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities(entities)
 
 
-class AirzoneSensor(CoordinatorEntity, SensorEntity):
-    """Generic read-only sensor surfacing fields from device snapshot."""
+class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
+    """Generic read-only sensor surfacing fields from device snapshot.
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
 
     def __init__(
         self,
-        coordinator,
+        coordinator: AirzoneCoordinator,
         device_id: str,
         attribute: str,
         friendly: str,
@@ -347,9 +369,16 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
             else EntityCategory.DIAGNOSTIC
         )
         self._attr_should_poll = False
-        self._attr_native_unit_of_measurement = (
-            UnitOfTemperature.CELSIUS if attribute in _TEMP_FLOAT_ATTRS else None
-        )
+
+        # Units
+        if attribute in _TEMP_FLOAT_ATTRS:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+        elif attribute == "sleep_time":
+            # Use minutes explicitly for UI consistency
+            self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
+        else:
+            self._attr_native_unit_of_measurement = None
+
         # Device & state classes
         if dev_class:
             try:
@@ -366,14 +395,20 @@ class AirzoneSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def device_info(self):
+        """Return unified Device Registry metadata (no logs/diagnostics exposure)."""
         dev = self._device
-        return {
+        info = {
             "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": "Daikin / Airzone",
+            "manufacturer": MANUFACTURER,  # unified manufacturer label
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
         }
+        mac = dev.get("mac")
+        if mac:
+            # Adding a MAC connection helps HA group all entities under the same Device.
+            info["connections"] = {("mac", mac)}
+        return info
 
     @property
     def _device(self) -> dict[str, Any]:

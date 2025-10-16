@@ -9,6 +9,13 @@ This revision (hygiene):
 - Use Home Assistant event loop clock for TTLs (hass.loop.time()).
 - Wire and cancel the delayed refresh handle to avoid stacked/late callbacks.
 - Add conservative idempotency for P1 ON/OFF to reduce redundant traffic.
+
+A9 typing-only:
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
+
+This patch (metadata consistency):
+- Unify DeviceInfo fallbacks with other platforms and keep MAC connection.
 """
 
 from __future__ import annotations
@@ -22,14 +29,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .const import (
+    DOMAIN,
+    MANUFACTURER,
+    OPTIMISTIC_TTL_SEC,
+    POST_WRITE_REFRESH_DELAY_SEC,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-# Short optimistic TTL (seconds): UI reflects change immediately and holds briefly
-_OPTIMISTIC_TTL_SEC = 2.5
-# Delay (seconds) before asking the coordinator to refresh after a write
-_POST_WRITE_REFRESH_DELAY_SEC = 1.0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
@@ -39,7 +47,8 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
@@ -51,10 +60,15 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
     async_add_entities(entities)
 
 
-class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
-    """Representation of a power switch for an Airzone device."""
+class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
+    """Representation of a power switch for an Airzone device.
 
-    def __init__(self, coordinator, device_id: str) -> None:
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
+
+    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         """Initialize the power switch bound to a device id."""
         super().__init__(coordinator)
         self._device_id = device_id
@@ -79,13 +93,9 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         """Return the current device snapshot from the coordinator."""
         return (self.coordinator.data or {}).get(self._device_id, {})  # type: ignore[no-any-return]
 
-    def _now(self) -> float:
-        """Return the Home Assistant event loop's monotonic time."""
-        return self.coordinator.hass.loop.time()
-
     def _optimistic_active(self) -> bool:
         """Return True if optimistic state is still within TTL."""
-        return self._now() < self._optimistic_until
+        return self.coordinator.hass.loop.time() < self._optimistic_until
 
     def _backend_power_is_on(self) -> bool:
         """Return backend-reported power (ignore optimistic)."""
@@ -96,11 +106,13 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         """Set optimistic 'is_on' state with a short TTL and write state."""
         if is_on is not None:
             self._optimistic_is_on = is_on
-            self._optimistic_until = self._now() + _OPTIMISTIC_TTL_SEC
+            self._optimistic_until = (
+                self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
+            )
             self.async_write_ha_state()
 
     def _schedule_delayed_refresh(
-        self, delay: float = _POST_WRITE_REFRESH_DELAY_SEC
+        self, delay: float = POST_WRITE_REFRESH_DELAY_SEC
     ) -> None:
         """Schedule a coordinator refresh after a short delay to confirm optimistic changes.
 
@@ -190,11 +202,11 @@ class AirzonePowerSwitch(CoordinatorEntity, SwitchEntity):
         info: dict[str, Any] = {
             # Ensure stable identifier even if 'dev' is still an empty snapshot.
             "identifiers": {(DOMAIN, dev.get("id") or self._device_id)},
-            "name": dev.get("name"),
-            "manufacturer": "Daikin",
+            "name": dev.get("name") or "Airzone Device",
+            "manufacturer": MANUFACTURER,  # unified manufacturer label
             # Privacy: do not include PIN in model string.
-            "model": dev.get("brand") or "Unknown",
-            "sw_version": dev.get("firmware") or "Unknown",
+            "model": dev.get("brand") or "Airzone DKN",
+            "sw_version": dev.get("firmware") or "",
         }
         mac = dev.get("mac")
         if mac:

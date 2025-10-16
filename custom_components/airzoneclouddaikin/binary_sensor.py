@@ -9,6 +9,13 @@ Design:
 - Device class = power.
 
 Privacy: never log or expose PII (email/token/MAC/PIN/GPS).
+
+A9 typing-only:
+- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
+- Add local type annotation for `coordinator` in async_setup_entry.
+
+This patch (metadata consistency):
+- Use const.MANUFACTURER and add MAC connection to align Device registry metadata with other platforms.
 """
 
 from __future__ import annotations
@@ -22,7 +29,8 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .const import DOMAIN, MANUFACTURER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,27 +42,35 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    coordinator = data.get("coordinator")
+    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
+    coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
 
     entities: list[AirzoneDeviceOnBinarySensor] = []
-    for device_id in list(coordinator.data.keys()):
+    for device_id in list((coordinator.data or {}).keys()):
         entities.append(AirzoneDeviceOnBinarySensor(coordinator, device_id))
 
     async_add_entities(entities)
 
 
-class AirzoneDeviceOnBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Boolean sensor indicating whether the device reports power ON."""
+class AirzoneDeviceOnBinarySensor(
+    CoordinatorEntity[AirzoneCoordinator], BinarySensorEntity
+):
+    """Boolean sensor indicating whether the device reports power ON.
+
+    Typing-only note:
+    - CoordinatorEntity is parameterized so `self.coordinator.api` and
+      `self.coordinator.data` are correctly typed in IDEs/linters.
+    """
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.POWER
     _attr_entity_registry_enabled_default = True  # enabled by default
     _attr_should_poll = False  # coordinator-driven
 
-    def __init__(self, coordinator, device_id: str) -> None:
+    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         super().__init__(coordinator)
         self._device_id = device_id
         self._attr_name = "Device On"
@@ -65,7 +81,7 @@ class AirzoneDeviceOnBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def _device(self) -> dict[str, Any]:
         """Return latest device snapshot from the coordinator."""
-        return self.coordinator.data.get(self._device_id, {})
+        return (self.coordinator.data or {}).get(self._device_id, {})
 
     @staticmethod
     def _normalize_power(val: Any) -> bool:
@@ -104,10 +120,14 @@ class AirzoneDeviceOnBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def device_info(self):
         dev = self._device
-        return {
+        info = {
             "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": "Daikin / Airzone",
+            "manufacturer": MANUFACTURER,
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
         }
+        mac = dev.get("mac")
+        if mac:
+            info["connections"] = {("mac", mac)}
+        return info
