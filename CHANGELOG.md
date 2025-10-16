@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.9a11] - 2025-10-16
+### Changed
+- Device Registry metadata unified across all platforms:
+  - `manufacturer` from constant `MANUFACTURER`.
+  - `model` from device `brand` (fallback `"Airzone DKN"`).
+  - `sw_version` from device `firmware` (fallback `""`).
+  - `name` from device `name` (fallback `"Airzone Device"`).
+  - Added `connections` with MAC when available to ensure entities group under the same Device.
+  Affected files: `climate.py`, `sensor.py`, `switch.py`, `number.py`, `select.py`, `binary_sensor.py`.
+  *No runtime changes.*
+
 ## [0.3.9a10] - 2025-10-14
 ### Changed
 - Binary sensor: use `const.MANUFACTURER` for Device Registry consistency (metadata only).
