@@ -15,13 +15,13 @@ Design notes:
 - Entities are created only if the backend exposes the fields in GET /devices,
   same as sleep_time. If the field exists but is missing a value, HA shows 'unknown'.
 
-This change:
-- Unify manufacturer using const.MANUFACTURER in device_info.
-- Use UnitOfTime.MINUTES for DKNSleepTimeNumber to match sensor semantics.
-
-Typing-only change (A9):
+A9 typing-only:
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
+
+This patch (metadata consistency):
+- Unify DeviceInfo across platforms: manufacturer=const.MANUFACTURER, model=brand (fallback "Airzone DKN"),
+  sw_version=firmware (fallback ""), name=backend name (fallback "Airzone Device"), and add connections with MAC if present.
 """
 
 from __future__ import annotations
@@ -161,15 +161,20 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
     def device_info(self) -> DeviceInfo:
         """Return device registry info (no PII)."""
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        model = device.get("model") or "DKN"
-        sw_version = device.get("fw_version") or device.get("firmware")
-        return DeviceInfo(
+        brand = device.get("brand")
+        firmware = device.get("firmware")
+        mac = device.get("mac")
+        info = DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             manufacturer=MANUFACTURER,  # unified manufacturer label
-            model=model,
-            sw_version=str(sw_version) if sw_version is not None else None,
-            name=device.get("name") or f"Device {self._device_id}",
+            model=brand or "Airzone DKN",
+            sw_version=str(firmware) if firmware is not None else "",
+            name=device.get("name") or "Airzone Device",
         )
+        # Add MAC connection if present (helps HA group entities under the same Device)
+        if mac:
+            info["connections"] = {("mac", mac)}  # type: ignore[index]
+        return info
 
     # ---------- State ----------
     @property
