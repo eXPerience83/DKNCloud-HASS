@@ -83,7 +83,7 @@ Enter your Airzone Cloud **username** and **password**.
 ## 🏷️ What You Get
 
 - **Climate entity:**  
-  - All core modes (COOL, HEAT, FAN, DRY)  
+  - All core modes (COOL, HEAT, FAN_ONLY, DRY)  
   - Dynamic fan speed control
 - **Sensor entities:**  
   - Current temperature (`local_temp`)  
