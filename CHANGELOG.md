@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.3.9a11] - 2025-10-16
+## [0.3.9] - 2025-10-16
 ### Changed
 - Device Registry metadata unified across all platforms:
   - `manufacturer` from constant `MANUFACTURER`.
