@@ -15,7 +15,8 @@ A9 typing-only:
 - Add local type annotation for `coordinator` in async_setup_entry.
 
 This patch (metadata consistency):
-- Unify DeviceInfo fallbacks with other platforms and keep MAC connection.
+- Unify Device Registry metadata with other platforms and keep MAC connection.
+- **Identifiers** now always use `self._device_id` (aligned across platforms).
 """
 
 from __future__ import annotations
@@ -197,13 +198,21 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     @property
     def device_info(self) -> dict[str, Any]:
-        """Return device info for the device registry (without exposing the PIN)."""
+        """Return device info for the device registry (without exposing the PIN).
+
+        Unified across platforms:
+        - identifiers: (DOMAIN, self._device_id)
+        - manufacturer: MANUFACTURER
+        - model: brand or "Airzone DKN"
+        - sw_version: firmware or ""
+        - name: backend name or "Airzone Device"
+        - connections: {("mac", mac)} if present
+        """
         dev = self._device
         info: dict[str, Any] = {
-            # Ensure stable identifier even if 'dev' is still an empty snapshot.
-            "identifiers": {(DOMAIN, dev.get("id") or self._device_id)},
+            "identifiers": {(DOMAIN, self._device_id)},  # unified key
             "name": dev.get("name") or "Airzone Device",
-            "manufacturer": MANUFACTURER,  # unified manufacturer label
+            "manufacturer": MANUFACTURER,
             # Privacy: do not include PIN in model string.
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
