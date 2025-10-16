@@ -37,9 +37,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .airzone_api import AirzoneAPI
-from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
 from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .airzone_api import AirzoneAPI
+from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
 
 _OPTIONS = ["occupied", "vacant", "sleep"]
 
