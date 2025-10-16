@@ -26,8 +26,9 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
   Creates climate, temperature, diagnostic, and power entities for each device.
 - **Sleep timer ready:**  
   **Sleep Timer (min)** is enabled by default and shows remaining minutes as an integer.
-- **Diagnostic sensors (opt-in):**  
-  **MAC Address** and **PIN** are available as diagnostic sensors **disabled by default**. Enable only if you understand the privacy implications.
+- **Privacy-sensitive sensors (opt-in):**  
+  **MAC**, **PIN**, **installation/location** and related fields are available **only** when the **Expose PII identifiers** option is enabled.  
+  These sensors are **not diagnostic**, remain **disabled by default**, and should be used with care.
 - **Cleaner diagnostics:**  
   Sensors follow the Coordinator pattern (no per-entity I/O). Advanced/verbose fields remain disabled by default to avoid UI noise.
 - **Zero YAML required:**  
@@ -71,6 +72,8 @@ Enter your Airzone Cloud **username** and **password**.
 
 **Optional parameters:**
 - **Scan interval:** Data refresh interval (seconds, default: 10)
+- **Expose PII identifiers:** When enabled, creates extra privacy-sensitive sensors
+  (MAC, PIN, installation/location, etc.). Disabled by default.
 
 > **No YAML required!**  
 > All options are set via the Home Assistant UI.
@@ -91,7 +94,8 @@ Enter your Airzone Cloud **username** and **password**.
 - **Number/Select entities (preset-related):**  
   - `number.min_temp_unoccupied` (**12–22 °C**)  
   - `number.max_temp_unoccupied` (**24–34 °C**)  
-  - `number.autosleep_minutes` (AutoSleep time, integer minutes)
+  - `number.sleep_time` (**minutes**)  
+  - `select.scenary` (**occupied / vacant / sleep**)
 
 > Full API/command mapping and advanced usage in [info.md](./info.md).
 
@@ -127,8 +131,8 @@ Enter your Airzone Cloud **username** and **password**.
 ## ❓ FAQ / Troubleshooting
 
 **Q: What about scenes/presets? Can I change them from HA?**  
-A: The integration **exposes scene/preset state** in diagnostics and already lets you **tune the key knobs** that define a preset — for example, **Unoccupied Min/Max temperature** and **AutoSleep time** — directly from Home Assistant.  
-A one-click **preset switch** is on the roadmap; until then, you can adjust those parameters individually from their entities.
+A: Yes. The integration exposes a **Scenary** selector as `select.scenary` (`occupied`, `vacant`, `sleep`).
+You can also tune the related knobs — **Unoccupied Min/Max temperature** and **Sleep time** — directly from Home Assistant.
 
 **Q: Will HEAT_COOL (dual setpoint / “auto”) be supported?**  
 A: It is **planned** and will be introduced as **opt-in** once validated on real hardware. Behavior may vary by device/bitmask/firmware. If your unit supports it and you want to help test, please open an issue.
