@@ -23,6 +23,12 @@ This change (hygiene):
 Typing-only change (A9):
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Add local type annotation for `coordinator` in async_setup_entry.
+
+This patch (metadata consistency, no runtime change):
+- Standardize Device Registry metadata across platforms:
+  manufacturer=const.MANUFACTURER, model=brand (fallback "Airzone DKN"),
+  sw_version=firmware (fallback ""), name=backend name (fallback "Airzone Device"),
+  and add 'connections' with MAC when available.
 """
 
 from __future__ import annotations
@@ -389,14 +395,20 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
 
     @property
     def device_info(self):
+        """Return unified Device Registry metadata (no logs/diagnostics exposure)."""
         dev = self._device
-        return {
+        info = {
             "identifiers": {(DOMAIN, self._device_id)},
             "manufacturer": MANUFACTURER,  # unified manufacturer label
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
         }
+        mac = dev.get("mac")
+        if mac:
+            # Adding a MAC connection helps HA group all entities under the same Device.
+            info["connections"] = {("mac", mac)}
+        return info
 
     @property
     def _device(self) -> dict[str, Any]:
