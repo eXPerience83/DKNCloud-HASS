@@ -15,33 +15,38 @@ Design notes:
 - Entities are created only if the backend exposes the fields in GET /devices,
   same as sleep_time. If the field exists but is missing a value, HA shows 'unknown'.
 
-A9 typing-only:
+This change:
+- Unify manufacturer using const.MANUFACTURER in device_info.
+- Use UnitOfTime.MINUTES for DKNSleepTimeNumber to match sensor semantics.
+
+Typing-only change (A9):
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
 
-This patch (metadata consistency):
-- Unify DeviceInfo across platforms: manufacturer=const.MANUFACTURER, model=brand (fallback "Airzone DKN"),
-  sw_version=firmware (fallback ""), name=backend name (fallback "Airzone Device"), and add connections with MAC if present.
+Device Registry alignment (this patch):
+- device_info now returns a dict (not DeviceInfo) to match other platforms.
+- Fields: identifiers, manufacturer, model (brand or fallback), sw_version (firmware), name, and connections with MAC when present.
+- Removed any reference to 'fw_version' as backend returns 'firmware'.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import (
-    DeviceInfo,
     EntityCategory,  # Place these controls under Configuration
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
+from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 # ------------------------
 # Sleep time constants
@@ -157,22 +162,28 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
 
     # ---------- Device registry ----------
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return device registry info (no PII)."""
+    def device_info(self) -> dict[str, Any]:
+        """Return device registry info (PII-safe and unified across platforms).
+
+        Fields:
+        - identifiers: (DOMAIN, device_id)
+        - manufacturer: const.MANUFACTURER
+        - model: device['brand'] or "Airzone DKN"
+        - sw_version: device['firmware'] or ""
+        - name: device['name'] or "Airzone Device"
+        - connections: {("mac", mac)} if present
+        """
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        brand = device.get("brand")
-        firmware = device.get("firmware")
+        info: dict[str, Any] = {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "manufacturer": MANUFACTURER,
+            "model": device.get("brand") or "Airzone DKN",
+            "sw_version": device.get("firmware") or "",
+            "name": device.get("name") or "Airzone Device",
+        }
         mac = device.get("mac")
-        info = DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            manufacturer=MANUFACTURER,  # unified manufacturer label
-            model=brand or "Airzone DKN",
-            sw_version=str(firmware) if firmware is not None else "",
-            name=device.get("name") or "Airzone Device",
-        )
-        # Add MAC connection if present (helps HA group entities under the same Device)
         if mac:
-            info["connections"] = {("mac", mac)}  # type: ignore[index]
+            info["connections"] = {("mac", mac)}
         return info
 
     # ---------- State ----------
