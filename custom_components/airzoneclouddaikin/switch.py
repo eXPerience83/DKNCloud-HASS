@@ -29,13 +29,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 from .const import (
     DOMAIN,
+    MANUFACTURER,
     OPTIMISTIC_TTL_SEC,
     POST_WRITE_REFRESH_DELAY_SEC,
-    MANUFACTURER,
 )
-from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 
 _LOGGER = logging.getLogger(__name__)
 

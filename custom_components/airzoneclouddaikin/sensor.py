@@ -47,8 +47,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER  # ← use centralized manufacturer
 from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .const import DOMAIN, MANUFACTURER  # ← use centralized manufacturer
 
 _LOGGER = logging.getLogger(__name__)
 

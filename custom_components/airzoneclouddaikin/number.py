@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
@@ -40,9 +39,9 @@ from homeassistant.helpers.entity import (
 )
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .airzone_api import AirzoneAPI
-from .const import DOMAIN, OPTIMISTIC_TTL_SEC, MANUFACTURER
 from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .airzone_api import AirzoneAPI
+from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
 
 # ------------------------
 # Sleep time constants
