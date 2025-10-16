@@ -103,7 +103,7 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 📷 Screenshots
 
-![Panel Screenshot](https://github.com/eXPerience83/DKNCloud-HASS/raw/master/screenshot.png)
+![Panel Screenshot](screenshot.png)
 
 ---
 
