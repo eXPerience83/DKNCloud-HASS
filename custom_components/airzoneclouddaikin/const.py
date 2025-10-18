@@ -55,5 +55,4 @@ POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
 # English: Threshold to consider the device offline when `connection_date` gets too old.
 CONF_STALE_AFTER_MINUTES = "stale_after_minutes"
 STALE_AFTER_MINUTES_DEFAULT = 10
-STALE_AFTER_MINUTES_MIN = 6
-STALE_AFTER_MINUTES_MAX = 30
+# UI min/max are validated in config_flow.py only (range 6..30).
