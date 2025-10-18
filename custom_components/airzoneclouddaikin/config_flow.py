@@ -5,6 +5,10 @@ Focus in this revision:
   * Returns False only for 401 (invalid credentials).
   * Raises on network issues (TimeoutError, ClientConnectorError) or 5xx.
 - Map errors to HA-friendly messages: 'invalid_auth' vs 'cannot_connect'.
+
+This update:
+- Add 'stale_after_minutes' option (default 10, range 6..30) to control the passive
+  connectivity threshold without introducing extra network pings.
 """
 
 from __future__ import annotations
@@ -19,7 +23,13 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_STALE_AFTER_MINUTES,
+    STALE_AFTER_MINUTES_DEFAULT,
+    STALE_AFTER_MINUTES_MIN,
+    STALE_AFTER_MINUTES_MAX,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,7 +114,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
-    """Options flow to edit scan_interval and privacy flags."""
+    """Options flow to edit scan_interval, privacy flags and connectivity threshold."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
@@ -124,17 +134,24 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         data = self._entry.data
         opts = self._entry.options
 
-        current_scan = int(
-            opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10))
+        current_scan = int(opts.get("scan_interval", data.get("scan_interval", 10)))
+        current_pii = bool(opts.get("expose_pii_identifiers", data.get("expose_pii_identifiers", False)))
+        current_stale_after = int(
+            opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
         )
-        current_pii = bool(opts.get(CONF_EXPOSE_PII, data.get(CONF_EXPOSE_PII, False)))
 
         schema = vol.Schema(
             {
-                vol.Optional(CONF_SCAN_INTERVAL, default=current_scan): vol.All(
+                vol.Optional("scan_interval", default=current_scan): vol.All(
                     vol.Coerce(int), vol.Range(min=10)
                 ),
-                vol.Optional(CONF_EXPOSE_PII, default=current_pii): cv.boolean,
+                vol.Optional("expose_pii_identifiers", default=current_pii): cv.boolean,
+                vol.Optional(
+                    CONF_STALE_AFTER_MINUTES, default=current_stale_after
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=STALE_AFTER_MINUTES_MIN, max=STALE_AFTER_MINUTES_MAX),
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
