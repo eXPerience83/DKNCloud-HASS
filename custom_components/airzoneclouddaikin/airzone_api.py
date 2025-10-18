@@ -10,6 +10,10 @@ This revision:
 - Fix 401 re-login: after refreshing the token, re-build auth params so the retry
   does NOT reuse the stale token.
 - Safer logging: mask paths in logs (no query string and no IDs/segments beyond the first).
+
+This update (UX clarity on writes):
+- When POST /events returns 422, raise HomeAssistantError with a clear message:
+  "DKN WServer sin conexión (422)" so users understand the cause in HA UI.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from aiohttp import (
     ClientSession,
     ClientTimeout,
 )
+from homeassistant.exceptions import HomeAssistantError  # For clear UI messages
 
 from .const import (
     API_DEVICES,
@@ -257,7 +262,7 @@ class AirzoneAPI:
         resp = await self._request("GET", API_INSTALLATION_RELATIONS, params=params)
         # Normalize: return the list directly if wrapped
         if isinstance(resp, dict) and "installation_relations" in resp:
-            return resp.get("installation_relations")  # type: ignore[return-value]
+            return resp.get("installation_relations")
         if isinstance(resp, list):
             return resp
         return None
@@ -272,22 +277,34 @@ class AirzoneAPI:
             "GET", API_DEVICES, params=params, extra_headers=HEADERS_DEVICES
         )
         if isinstance(resp, dict) and "devices" in resp:
-            return resp.get("devices")  # type: ignore[return-value]
+            return resp.get("devices")
         if isinstance(resp, list):
             return resp
         return None
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
-        """POST to /events (realtime control) with JSON/XHR headers + retries."""
+        """POST to /events (realtime control) with JSON/XHR headers + retries.
+
+        English:
+        - If the backend returns 422, we raise a HomeAssistantError with a clear
+          user-facing message in Spanish as requested:
+          "DKN WServer sin conexión (422)".
+        """
         params = self._auth_params()
-        return await self._authed_request_with_retries(
-            "POST",
-            "events/",
-            params=params,
-            json=payload,
-            extra_headers=HEADERS_EVENTS,
-            allow_retry_login=True,
-        )
+        try:
+            return await self._authed_request_with_retries(
+                "POST",
+                "events/",
+                params=params,
+                json=payload,
+                extra_headers=HEADERS_EVENTS,
+                allow_retry_login=True,
+            )
+        except ClientResponseError as cre:
+            if cre.status == 422:
+                # Raise a HA-friendly error (no PII) with the exact message requested.
+                raise HomeAssistantError("DKN WServer sin conexión (422)") from cre
+            raise
 
     # ---------- Generic PUT helpers for /devices/<id> ----------
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
