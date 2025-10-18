@@ -50,3 +50,10 @@ HEADERS_EVENTS = {
 # English: Centralized values to keep UX consistent and ease future tuning.
 OPTIMISTIC_TTL_SEC: float = 2.5
 POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
+
+# ---------------- Connectivity options (passive, without pings) -----------
+# English: Threshold to consider the device offline when `connection_date` gets too old.
+CONF_STALE_AFTER_MINUTES = "stale_after_minutes"
+STALE_AFTER_MINUTES_DEFAULT = 10
+STALE_AFTER_MINUTES_MIN = 6
+STALE_AFTER_MINUTES_MAX = 30
