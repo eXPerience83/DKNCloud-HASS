@@ -24,11 +24,11 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
-    DOMAIN,
     CONF_STALE_AFTER_MINUTES,
+    DOMAIN,
     STALE_AFTER_MINUTES_DEFAULT,
-    STALE_AFTER_MINUTES_MIN,
     STALE_AFTER_MINUTES_MAX,
+    STALE_AFTER_MINUTES_MIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,7 +135,11 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         opts = self._entry.options
 
         current_scan = int(opts.get("scan_interval", data.get("scan_interval", 10)))
-        current_pii = bool(opts.get("expose_pii_identifiers", data.get("expose_pii_identifiers", False)))
+        current_pii = bool(
+            opts.get(
+                "expose_pii_identifiers", data.get("expose_pii_identifiers", False)
+            )
+        )
         current_stale_after = int(
             opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
         )

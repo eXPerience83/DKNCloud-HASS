@@ -18,21 +18,21 @@ This update:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
 from .const import (
+    CONF_STALE_AFTER_MINUTES,
     DOMAIN,
     MANUFACTURER,
-    CONF_STALE_AFTER_MINUTES,
     STALE_AFTER_MINUTES_DEFAULT,
 )
 
@@ -52,12 +52,16 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
 
-    stale_after_min = int(entry.options.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+    stale_after_min = int(
+        entry.options.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
+    )
     entities: list[BinarySensorEntity] = []
 
     for device_id in list((coordinator.data or {}).keys()):
         entities.append(AirzoneDeviceOnBinarySensor(coordinator, device_id))
-        entities.append(AirzoneWServerOnlineBinarySensor(coordinator, device_id, stale_after_min))
+        entities.append(
+            AirzoneWServerOnlineBinarySensor(coordinator, device_id, stale_after_min)
+        )
 
     async_add_entities(entities)
 
@@ -151,7 +155,9 @@ class AirzoneWServerOnlineBinarySensor(
     _attr_should_poll = False  # coordinator-driven
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(self, coordinator: AirzoneCoordinator, device_id: str, stale_after_min: int) -> None:
+    def __init__(
+        self, coordinator: AirzoneCoordinator, device_id: str, stale_after_min: int
+    ) -> None:
         super().__init__(coordinator)
         self._device_id = device_id
         self._stale_after_sec = max(60, int(stale_after_min) * 60)  # safety lower bound
@@ -172,8 +178,8 @@ class AirzoneWServerOnlineBinarySensor(
             ts = datetime.fromisoformat(str(raw))
             # Make sure we compare in UTC; backend provides tz-aware timestamps.
             if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
+                ts = ts.replace(tzinfo=UTC)
+            now = datetime.now(UTC)
             age = (now - ts).total_seconds()
             return age <= self._stale_after_sec
         except Exception:
@@ -192,8 +198,8 @@ class AirzoneWServerOnlineBinarySensor(
             if raw:
                 ts = datetime.fromisoformat(str(raw))
                 if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                age = int((datetime.now(timezone.utc) - ts).total_seconds())
+                    ts = ts.replace(tzinfo=UTC)
+                age = int((datetime.now(UTC) - ts).total_seconds())
         except Exception:
             age = None
         return {
