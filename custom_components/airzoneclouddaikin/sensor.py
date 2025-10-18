@@ -29,6 +29,10 @@ This patch (metadata consistency, no runtime change):
   manufacturer=const.MANUFACTURER, model=brand (fallback "Airzone DKN"),
   sw_version=firmware (fallback ""), name=backend name (fallback "Airzone Device"),
   and add 'connections' with MAC when available.
+
+This update (connectivity visibility):
+- Enable 'connection_date' timestamp sensor by default so users can always see
+  last connection without enabling extra diagnostics.
 """
 
 from __future__ import annotations
@@ -48,7 +52,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
-from .const import DOMAIN, MANUFACTURER  # ← use centralized manufacturer
+from .const import DOMAIN, MANUFACTURER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -177,7 +181,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         None,
     ),
-    # Ventilate variant (diagnostic, enabled): derive 3/8/none from modes bitmask
+    # Ventilate variant (diagnostic, enabled)
     (
         "ventilate_variant",
         "Ventilate Variant (3/8/none)",
@@ -186,7 +190,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
         None,
     ),
-    # Timestamps (disabled by default as requested)
+    # Timestamps (now: connection_date enabled-by-default)
     (
         "update_date",
         "Last Update (Device)",
@@ -199,7 +203,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "connection_date",
         "Last Connection",
         "mdi:clock-outline",
-        False,
+        True,  # ← enabled by default so users always see it
         "timestamp",
         None,
     ),
@@ -299,10 +303,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
     # --- Cleanup of PII entities when opted-out (safe and robust) ----------
-    # We remove previously-created PII sensors of THIS integration.
-    # Strategy:
-    #   1) Prefer exact unique_id match (device_id + '_' + pii_attribute) for all
-    #      devices currently known in the coordinator snapshot.
     try:
         if not expose_pii:
             reg = er.async_get(hass)
@@ -317,7 +317,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 uid = (ent.unique_id or "").strip()
                 if uid in computed_pii_uids:
                     reg.async_remove(ent.entity_id)
-    except Exception as exc:  # Defensive: never fail setup because of registry ops
+    except Exception as exc:
         _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
 
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
