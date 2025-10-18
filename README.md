@@ -38,6 +38,13 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 - **Preset knobs from HA:**  
   You can adjust **Unoccupied Min/Max temperature** and **AutoSleep time** directly from Home Assistant (numbers/selects), even if the preset switch itself is not exposed yet.
 
+### Passive connectivity monitor
+
+- The integration exposes `sensor.<id>_last_connection` (timestamp, enabled by default) and `binary_sensor.<id>_wserver_online` (connectivity, enabled by default).
+- Online/offline is derived **passively** from the age of `connection_date` (no extra pings).
+- Option `stale_after_minutes` (default **10**, range **6–30**) controls the threshold before considering the device offline.
+- When a control request fails with HTTP **422**, the UI shows a clear error message: **“DKN WServer sin conexión (422)”**.
+
 ---
 
 ## 🧭 Mode Mapping
