@@ -6,9 +6,10 @@ Focus in this revision:
   * Raises on network issues (TimeoutError, ClientConnectorError) or 5xx.
 - Map errors to HA-friendly messages: 'invalid_auth' vs 'cannot_connect'.
 
-This update:
-- Add 'stale_after_minutes' option (default 10, range 6..30) to control the passive
-  connectivity threshold without introducing extra network pings.
+This update (UI-only limits kept local to the flow):
+- Add 'stale_after_minutes' option with default from const.py (10) and UI range 6..30.
+- Validate 'scan_interval' only in this flow with default 10 and UI range 10..30.
+- Remove dependency on const-level min/max to keep a single source of truth per layer.
 """
 
 from __future__ import annotations
@@ -27,8 +28,6 @@ from .const import (
     CONF_STALE_AFTER_MINUTES,
     DOMAIN,
     STALE_AFTER_MINUTES_DEFAULT,
-    STALE_AFTER_MINUTES_MAX,
-    STALE_AFTER_MINUTES_MIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,8 +40,9 @@ DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
+        # UI-only validation: default 10, range 10..30
         vol.Optional(CONF_SCAN_INTERVAL, default=10): vol.All(
-            vol.Coerce(int), vol.Range(min=10)
+            vol.Coerce(int), vol.Range(min=10, max=30)
         ),
         vol.Optional(CONF_EXPOSE_PII, default=False): cv.boolean,
     }
@@ -146,15 +146,17 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
+                # UI-only validation: default 10, range 10..30
                 vol.Optional("scan_interval", default=current_scan): vol.All(
-                    vol.Coerce(int), vol.Range(min=10)
+                    vol.Coerce(int), vol.Range(min=10, max=30)
                 ),
                 vol.Optional("expose_pii_identifiers", default=current_pii): cv.boolean,
+                # UI-only validation: default from const, range 6..30
                 vol.Optional(
                     CONF_STALE_AFTER_MINUTES, default=current_stale_after
                 ): vol.All(
                     vol.Coerce(int),
-                    vol.Range(min=STALE_AFTER_MINUTES_MIN, max=STALE_AFTER_MINUTES_MAX),
+                    vol.Range(min=6, max=30),
                 ),
             }
         )
