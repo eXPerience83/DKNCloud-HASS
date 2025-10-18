@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- `binary_sensor.<id>_wserver_online` (connectivity), enabled by default.
+- `sensor.<id>_last_connection` now enabled by default (timestamp).
+- Options: `stale_after_minutes` (default 10, range 6–30).
+### Changed
+- Clearer UX on write failures: POST `/events` returning **422** now raises
+  `HomeAssistantError("DKN WServer sin conexión (422)")` for better visibility in HA UI.
+
 ## [0.3.9] - 2025-10-16
 ### Fixed
 - number/select: correct DeviceInfo usage (return dict / assign `connections` properly) to prevent runtime TypeError.
