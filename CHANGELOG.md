@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.10a1] - 2025-10-19
+### Removed
+- Duplicate sensors `sleep_time` and `scenary` to avoid `unique_id` collisions with `number.sleep_time` and `select.scenary`. Values remain available via Number/Select entities.
+### Notes
+- If you had `sensor.*_sleep_time` or `sensor.*_scenary` previously, they may appear as restored/unavailable entries in the registry. You can safely remove them from the UI.
 ### Added
 - `binary_sensor.<id>_wserver_online` (connectivity), enabled by default.
 - `sensor.<id>_last_connection` now enabled by default (timestamp).
