@@ -1,15 +1,13 @@
 """Config & Options flow for DKN Cloud for HASS.
 
-Focus in this revision:
-- Keep minimal logic but rely on AirzoneAPI.login() behavior:
-  * Returns False only for 401 (invalid credentials).
-  * Raises on network issues (TimeoutError, ClientConnectorError) or 5xx.
-- Map errors to HA-friendly messages: 'invalid_auth' vs 'cannot_connect'.
+Focus in this revision (P0 hotfix):
+- Avoid logging exception objects on login failures, as their string representation
+  might include request URLs with sensitive query parameters. We log only a neutral
+  message or the exception type, never the full exception text.
 
-This update (UI-only limits kept local to the flow):
-- Add 'stale_after_minutes' option with default from const.py (10) and UI range 6..30.
-- Validate 'scan_interval' only in this flow with default 10 and UI range 10..30.
-- Remove dependency on const-level min/max to keep a single source of truth per layer.
+Other notes kept from previous revision:
+- AirzoneAPI.login() returns False only for 401 (invalid credentials).
+- Network/5xx raise and are mapped to 'cannot_connect'.
 """
 
 from __future__ import annotations
@@ -83,7 +81,10 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ok = await api.login()
                 except Exception as exc:
                     # Network/5xx → cannot_connect
-                    _LOGGER.warning("Login failed (network/other): %s", exc)
+                    # IMPORTANT: Do NOT log the full exception (it may include full URLs).
+                    _LOGGER.warning(
+                        "Login failed (network/other): %s", type(exc).__name__
+                    )
                     errors["base"] = "cannot_connect"
                 else:
                     if ok:
