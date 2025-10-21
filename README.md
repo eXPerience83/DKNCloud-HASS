@@ -23,20 +23,19 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 - **Fully integrated climate control:**  
   Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
 - **Automatic device/sensor creation:**  
-  Creates climate, temperature, diagnostic, and power entities for each device.
-- **Sleep timer ready:**  
-  **Sleep Timer (min)** is enabled by default and shows remaining minutes as an integer.
+  Creates climate, temperature, diagnostic, and connectivity entities for each device.
+- **Preset controls ready:**  
+  Adjust **Sleep time** via `number.sleep_time` and **Scenary** via `select.scenary` directly from Home Assistant.
 - **Privacy-sensitive sensors (opt-in):**  
   **MAC**, **PIN**, **installation/location** and related fields are available **only** when the **Expose PII identifiers** option is enabled.  
   These sensors are **not diagnostic**, remain **disabled by default**, and should be used with care.
-- **Cleaner diagnostics:**  
-  Sensors follow the Coordinator pattern (no per-entity I/O). Advanced/verbose fields remain disabled by default to avoid UI noise.
-- **Zero YAML required:**  
-  All configuration via Home Assistant UI.
-- **HACS-compatible (custom repo):**  
-  Easy updates from a custom repository.
-- **Preset knobs from HA:**  
-  You can adjust **Unoccupied Min/Max temperature** and **AutoSleep time** directly from Home Assistant (numbers/selects), even if the preset switch itself is not exposed yet.
+
+### Passive connectivity monitor
+
+- The integration exposes `sensor.<id>_last_connection` (timestamp, enabled by default) and `binary_sensor.<id>_wserver_online` (connectivity, enabled by default).
+- Online/offline is derived **passively** from the age of `connection_date` (no extra pings).
+- Option `stale_after_minutes` (default **10**, range **6–30**) controls the threshold before considering the device offline.
+- When a control request fails with HTTP **422**, the UI shows a clear error message: **“DKN WServer sin conexión (422)”**.
 
 ---
 

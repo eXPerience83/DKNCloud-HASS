@@ -8,27 +8,23 @@ Privacy:
 - Do not expose PIN as a sensor by default; PII sensors are opt-in.
 - Redact secrets in logs and diagnostics (see diagnostics.py).
 
-Changes (privacy robustness):
-- Introduce internal marker 'self._is_pii' for PII sensors.
-- Strengthen opt-out cleanup: remove by exact unique_id (device_id + attribute)
-  for all known devices, and keep suffix-based fallback for legacy entries.
+Previous changes:
+- Introduced internal marker 'self._is_pii' for PII sensors.
+- Strengthened opt-out cleanup: remove by exact unique_id (device_id + attribute)
+  for all known devices. Keep code minimal and safe.
 
 This revision:
-- Add proper unit and device_class for 'sleep_time' to present minutes in UI:
-  device_class=duration and UnitOfTime.MINUTES.
+- Remove duplicate "sleep_time" and "scenary" from core sensors to avoid unique_id
+  collisions with number.sleep_time and select.scenary. Their values remain visible/
+  controllable via Number/Select entities. (No changes to Number/Select files.)
+- Keep "connection_date" timestamp sensor enabled-by-default for connectivity visibility.
 
-This change (hygiene):
-- Unify manufacturer via const.MANUFACTURER in device_info to keep registry consistent.
-
-Typing-only change (A9):
+Typing-only:
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
 - Add local type annotation for `coordinator` in async_setup_entry.
 
-This patch (metadata consistency, no runtime change):
-- Standardize Device Registry metadata across platforms:
-  manufacturer=const.MANUFACTURER, model=brand (fallback "Airzone DKN"),
-  sw_version=firmware (fallback ""), name=backend name (fallback "Airzone Device"),
-  and add 'connections' with MAC when available.
+Metadata consistency:
+- Use const.MANUFACTURER in device_info to keep registry consistent across platforms.
 """
 
 from __future__ import annotations
@@ -47,8 +43,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
-from .const import DOMAIN, MANUFACTURER  # ← use centralized manufacturer
+from .__init__ import AirzoneCoordinator  # typing-aware coordinator
+from .const import DOMAIN, MANUFACTURER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,9 +98,8 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         "measurement",
     ),
-    # sleep_time: show minutes explicitly via UnitOfTime.MINUTES
-    ("sleep_time", "Sleep Timer (min)", "mdi:timer-sand", True, "duration", None),
-    ("scenary", "Scenary", "mdi:account-clock", True, None, None),
+    # Removed "sleep_time" sensor (now provided by number.sleep_time)
+    # Removed "scenary" sensor (now provided by select.scenary)
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
     ("status", "Status", "mdi:information-outline", True, None, None),
     ("mode", "Mode Code (Raw)", "mdi:numeric", True, None, None),
@@ -177,7 +172,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         None,
     ),
-    # Ventilate variant (diagnostic, enabled): derive 3/8/none from modes bitmask
+    # Ventilate variant (diagnostic, enabled)
     (
         "ventilate_variant",
         "Ventilate Variant (3/8/none)",
@@ -186,7 +181,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
         None,
     ),
-    # Timestamps (disabled by default as requested)
+    # Timestamps (now: connection_date enabled-by-default)
     (
         "update_date",
         "Last Update (Device)",
@@ -199,7 +194,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "connection_date",
         "Last Connection",
         "mdi:clock-outline",
-        False,
+        True,  # ← enabled by default so users always see it
         "timestamp",
         None,
     ),
@@ -299,10 +294,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
     )
 
     # --- Cleanup of PII entities when opted-out (safe and robust) ----------
-    # We remove previously-created PII sensors of THIS integration.
-    # Strategy:
-    #   1) Prefer exact unique_id match (device_id + '_' + pii_attribute) for all
-    #      devices currently known in the coordinator snapshot.
     try:
         if not expose_pii:
             reg = er.async_get(hass)
@@ -317,7 +308,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 uid = (ent.unique_id or "").strip()
                 if uid in computed_pii_uids:
                     reg.async_remove(ent.entity_id)
-    except Exception as exc:  # Defensive: never fail setup because of registry ops
+    except Exception as exc:
         _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
 
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
@@ -374,7 +365,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         if attribute in _TEMP_FLOAT_ATTRS:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
         elif attribute == "sleep_time":
-            # Use minutes explicitly for UI consistency
+            # This path remains harmless if no sensor is created for 'sleep_time'.
             self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
         else:
             self._attr_native_unit_of_measurement = None

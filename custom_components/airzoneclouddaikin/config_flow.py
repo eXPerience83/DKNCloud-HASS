@@ -1,10 +1,13 @@
 """Config & Options flow for DKN Cloud for HASS.
 
-Focus in this revision:
-- Keep minimal logic but rely on AirzoneAPI.login() behavior:
-  * Returns False only for 401 (invalid credentials).
-  * Raises on network issues (TimeoutError, ClientConnectorError) or 5xx.
-- Map errors to HA-friendly messages: 'invalid_auth' vs 'cannot_connect'.
+Focus in this revision (P0 hotfix):
+- Avoid logging exception objects on login failures, as their string representation
+  might include request URLs with sensitive query parameters. We log only a neutral
+  message or the exception type, never the full exception text.
+
+Other notes kept from previous revision:
+- AirzoneAPI.login() returns False only for 401 (invalid credentials).
+- Network/5xx raise and are mapped to 'cannot_connect'.
 """
 
 from __future__ import annotations
@@ -19,7 +22,11 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .const import (
+    CONF_STALE_AFTER_MINUTES,
+    DOMAIN,
+    STALE_AFTER_MINUTES_DEFAULT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,8 +38,9 @@ DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
+        # UI-only validation: default 10, range 10..30
         vol.Optional(CONF_SCAN_INTERVAL, default=10): vol.All(
-            vol.Coerce(int), vol.Range(min=10)
+            vol.Coerce(int), vol.Range(min=10, max=30)
         ),
         vol.Optional(CONF_EXPOSE_PII, default=False): cv.boolean,
     }
@@ -73,7 +81,10 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ok = await api.login()
                 except Exception as exc:
                     # Network/5xx → cannot_connect
-                    _LOGGER.warning("Login failed (network/other): %s", exc)
+                    # IMPORTANT: Do NOT log the full exception (it may include full URLs).
+                    _LOGGER.warning(
+                        "Login failed (network/other): %s", type(exc).__name__
+                    )
                     errors["base"] = "cannot_connect"
                 else:
                     if ok:
@@ -104,7 +115,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
-    """Options flow to edit scan_interval and privacy flags."""
+    """Options flow to edit scan_interval, privacy flags and connectivity threshold."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
@@ -124,17 +135,30 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         data = self._entry.data
         opts = self._entry.options
 
-        current_scan = int(
-            opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10))
+        current_scan = int(opts.get("scan_interval", data.get("scan_interval", 10)))
+        current_pii = bool(
+            opts.get(
+                "expose_pii_identifiers", data.get("expose_pii_identifiers", False)
+            )
         )
-        current_pii = bool(opts.get(CONF_EXPOSE_PII, data.get(CONF_EXPOSE_PII, False)))
+        current_stale_after = int(
+            opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
+        )
 
         schema = vol.Schema(
             {
-                vol.Optional(CONF_SCAN_INTERVAL, default=current_scan): vol.All(
-                    vol.Coerce(int), vol.Range(min=10)
+                # UI-only validation: default 10, range 10..30
+                vol.Optional("scan_interval", default=current_scan): vol.All(
+                    vol.Coerce(int), vol.Range(min=10, max=30)
                 ),
-                vol.Optional(CONF_EXPOSE_PII, default=current_pii): cv.boolean,
+                vol.Optional("expose_pii_identifiers", default=current_pii): cv.boolean,
+                # UI-only validation: default from const, range 6..30
+                vol.Optional(
+                    CONF_STALE_AFTER_MINUTES, default=current_stale_after
+                ): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=6, max=30),
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
