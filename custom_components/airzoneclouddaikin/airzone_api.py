@@ -6,14 +6,10 @@ Notes:
   for write endpoints (/events and /devices/{id}).
 - Never log secrets (email/token/MAC/PIN).
 
-This revision:
-- Fix 401 re-login: after refreshing the token, re-build auth params so the retry
-  does NOT reuse the stale token.
-- Safer logging: mask paths in logs (no query string and no IDs/segments beyond the first).
-
-This update (UX clarity on writes):
-- When POST /events returns 422, raise HomeAssistantError with a clear message:
-  "DKN WServer sin conexión (422)" so users understand the cause in HA UI.
+This revision (P0 hotfix):
+- Avoid logging ClientResponseError objects because their string representation
+  may include the full request URL (including query with sensitive params).
+  We now log only method, a masked path, and the HTTP status code.
 """
 
 from __future__ import annotations
@@ -117,11 +113,18 @@ class AirzoneAPI:
                     return await resp.json()
                 return await resp.text()
         except ClientResponseError as cre:
-            # Mask sensitive info; re-raise for caller classification/backoff.
-            _LOGGER.debug("HTTP %s %s failed: %s", method, spath, cre)
+            # Do NOT log the exception object (it may embed the full URL with secrets).
+            # Log only method, masked path, and status code.
+            _LOGGER.debug(
+                "HTTP %s %s failed with status %s",
+                method,
+                spath,
+                getattr(cre, "status", "unknown"),
+            )
             raise
-        except ClientConnectorError as cce:
-            _LOGGER.debug("HTTP %s %s connection error: %s", method, spath, cce)
+        except ClientConnectorError:
+            # Connection errors are informative without leaking secrets.
+            _LOGGER.debug("HTTP %s %s connection error", method, spath)
             raise
         except TimeoutError:
             _LOGGER.debug("HTTP %s %s timed out", method, spath)
