@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.10] - 2025-10-21
+### Security
+- Avoid logging `ClientResponseError` objects which may embed full request URLs with sensitive query parameters (user_token/user_email). Now logs only method, masked path, and HTTP status code in `airzone_api.py`.
+- In `config_flow.py`, stop interpolating the exception object on login failures to prevent accidental leakage of request URLs in logs.
+### Notes
+- This release does not change any runtime behavior or API calls; it only improves logging hygiene to protect secrets
+
 ## [0.3.10a1] - 2025-10-19
 ### Removed
 - Duplicate sensors `sleep_time` and `scenary` to avoid `unique_id` collisions with `number.sleep_time` and `select.scenary`. Values remain available via Number/Select entities.
