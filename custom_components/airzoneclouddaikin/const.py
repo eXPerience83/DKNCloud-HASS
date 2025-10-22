@@ -4,8 +4,6 @@ This file includes API endpoints and basic configuration constants.
 """
 
 DOMAIN = "airzoneclouddaikin"
-CONF_USERNAME = "username"  # Your Airzone Cloud account email
-CONF_PASSWORD = "password"  # Your Airzone Cloud account password
 
 # Public manufacturer label used across platforms (Device Registry consistency).
 MANUFACTURER = "Daikin / Airzone"
