@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.11] - 2025-10-22
+### Security & Privacy
+- Switched to **token-only** storage: the integration no longer persists the account password in the config entry.
+- Added **Reauthentication flow**: on HTTP 401 the integration prompts reauth and updates the stored token (the password is never kept).
+- **Migration**: legacy entries with a stored password attempt a **one-time login** on startup to obtain a token and purge the password.
+  - If the login **fails due to invalid credentials**, a **reauth** is requested.
+  - If the login **fails due to transient errors** (network/429/5xx), reauth is **not** shown; Home Assistant retries later.
+- Diagnostics hardening: kept static redaction and added a regex-based redaction pass for future-sensitive keys.
+
 ## [0.3.10] - 2025-10-21
 ### Security
 - Avoid logging `ClientResponseError` objects which may embed full request URLs with sensitive query parameters (user_token/user_email). Now logs only method, masked path, and HTTP status code in `airzone_api.py`.
