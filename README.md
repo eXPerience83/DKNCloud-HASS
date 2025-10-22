@@ -1,8 +1,4 @@
 # ❄️ DKN Cloud for HASS
-<p align="center">
-  <img src="https://raw.githubusercontent.com/home-assistant/brands/master/custom_integrations/airzoneclouddaikin/icon.png" alt="DKN Cloud for HASS logo" width="140"/>
-</p>
-
 
 **Control your Daikin Airzone Cloud (dkn.airzonecloud.com) HVAC systems natively from Home Assistant.**  
 Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnostics, and temperature at your fingertips.
