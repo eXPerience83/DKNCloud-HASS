@@ -1,16 +1,14 @@
 """Diagnostics for DKN Cloud for HASS (Airzone Cloud).
 
-Provides a sanitized snapshot of the config entry, coordinator state and
-device data. Uses Home Assistant's async_redact_data to remove secrets/PII.
-
-Scope:
-- Never include raw passwords, tokens, emails, MAC/PIN, GPS coordinates.
-- Summarize entry.data keys instead of dumping their values.
-- Include coordinator status and the full devices snapshot (redacted).
+P1 hardening:
+- Keep static redaction set (TO_REDACT).
+- Add an extra regex-based redaction pass to catch any future key names
+  that contain sensitive semantics (token/mail/email/mac/pin/lat/lon/gps/coord).
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -19,7 +17,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
-# Fields to redact anywhere in the structure (nested keys included).
+# Static fields to redact anywhere in the structure (nested keys included).
 TO_REDACT = {
     # Auth & identity
     "email",
@@ -43,6 +41,30 @@ TO_REDACT = {
     "location",
 }
 
+# Additional regex-based redaction for future/unknown keys
+_RE_PATTERNS = [
+    re.compile(r"token", re.IGNORECASE),
+    re.compile(r"mail|email", re.IGNORECASE),
+    re.compile(r"\bmac\b", re.IGNORECASE),
+    re.compile(r"\bpin\b", re.IGNORECASE),
+    re.compile(r"lat|lon|gps|coord", re.IGNORECASE),
+]
+
+
+def _redact_by_regex(obj: Any) -> Any:
+    """Recursively redact any dict key that matches our regex patterns."""
+    if isinstance(obj, dict):
+        out: dict[str, Any] = {}
+        for k, v in obj.items():
+            if any(p.search(k) for p in _RE_PATTERNS):
+                out[k] = "***"
+            else:
+                out[k] = _redact_by_regex(v)
+        return out
+    if isinstance(obj, list):
+        return [_redact_by_regex(x) for x in obj]
+    return obj
+
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
@@ -51,7 +73,6 @@ async def async_get_config_entry_diagnostics(
     domain_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     coordinator = domain_data.get("coordinator")
 
-    # Build a conservative snapshot; avoid dumping secrets from entry.data.
     entry_summary = {
         "title": entry.title,
         "data_keys": sorted(list(entry.data.keys())),  # keys only, no values
@@ -65,7 +86,7 @@ async def async_get_config_entry_diagnostics(
         if interval is not None:
             try:
                 interval = interval.total_seconds()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 interval = str(interval)
         coord_summary = {
             "last_update_success": getattr(coordinator, "last_update_success", None),
@@ -74,10 +95,8 @@ async def async_get_config_entry_diagnostics(
             "devices": getattr(coordinator, "data", {}),
         }
 
-    raw = {
-        "entry": entry_summary,
-        "coordinator": coord_summary,
-    }
+    raw = {"entry": entry_summary, "coordinator": coord_summary}
 
-    # Redact secrets and PII recursively.
-    return async_redact_data(raw, TO_REDACT)
+    # First, apply static redaction; then a defensive regex pass.
+    redacted = async_redact_data(raw, TO_REDACT)
+    return _redact_by_regex(redacted)
