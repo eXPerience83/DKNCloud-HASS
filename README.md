@@ -1,7 +1,11 @@
 # ❄️ DKN Cloud for HASS
+<p align="center">
+  <img src="https://raw.githubusercontent.com/home-assistant/brands/master/custom_integrations/airzoneclouddaikin/icon.png" alt="DKN Cloud for HASS logo" width="140"/>
+</p>
+
 
 **Control your Daikin Airzone Cloud (dkn.airzonecloud.com) HVAC systems natively from Home Assistant.**  
-Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnostics, and temperature at your fingertips.
+Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnostics, and temperature at your fingertips.
 
 <!-- Badges -->
 [![GitHub Release](https://img.shields.io/github/v/release/eXPerience83/DKNCloud-HASS)](https://github.com/eXPerience83/DKNCloud-HASS/releases)
@@ -11,7 +15,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 <!-- CodeQL: Default setup doesn't guarantee a repo workflow file, so use a static badge -->
 [![CodeQL](https://img.shields.io/badge/CodeQL-Enabled-success?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/security/code-scanning)
 [![License](https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/blob/main/LICENSE)
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg?style=flat)](https://hacs.xyz)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-orange.svg?style=flat)](https://hacs.xyz)
 [![Python](https://img.shields.io/badge/python-3.13.2%2B-blue)](https://www.python.org/)
 [![Ko-fi](https://img.shields.io/badge/Ko%E2%80%91fi-Support%20this%20project-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/experience83)
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/eXPerience83)
@@ -55,12 +59,15 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wifi adapter" — climate, fan, diagnost
 
 ## ⚙️ Installation
 
-### HACS (Custom repository — Manual)
-1. Go to **HACS → Integrations**  
-2. Click **⋮ → Custom repositories**  
-3. **Add:** `https://github.com/eXPerience83/DKNCloud-HASS` (Category: **Integration**)  
-4. **Search & install**: **DKN Cloud for HASS**  
-5. **Restart** Home Assistant
+### HACS (Default store — Recommended)
+1. In Home Assistant, go to **HACS → Integrations**  
+2. Search for **DKN Cloud for HASS**  
+3. Click **Install** and then **Restart** Home Assistant  
+4. Go to **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for HASS**  
+   [![Open your Home Assistant instance and start setting up DKN Cloud for HASS.](https://my.home-assistant.io/badges/integration.svg)](https://my.home-assistant.io/redirect/integration/?domain=airzoneclouddaikin)
+
+> **Manual (advanced; not needed when using HACS):**  
+> Copy `custom_components/airzoneclouddaikin/` into your `<config>/custom_components/` folder and restart.
 
 ---
 
@@ -95,6 +102,9 @@ Enter your Airzone Cloud **username** and **password**.
   - `number.max_temp_unoccupied` (**24–34 °C**)  
   - `number.sleep_time` (**minutes**)  
   - `select.scenary` (**occupied / vacant / sleep**)
+- **Binary sensor entities:**
+  - `binary_sensor.<id>_device_on` — reflects the device power state (enabled by default)
+  - `binary_sensor.<id>_wserver_online` — passive connectivity status (enabled by default)
 
 > Full API/command mapping and advanced usage in [info.md](./info.md).
 
