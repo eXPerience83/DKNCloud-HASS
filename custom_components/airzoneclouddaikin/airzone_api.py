@@ -177,7 +177,9 @@ class AirzoneAPI:
                                 delay = max(delay, float(retry_after))
                         except Exception:  # noqa: BLE001
                             pass
-                        self._cooldown_until = max(self._cooldown_until, now + min(delay, 10.0))
+                        self._cooldown_until = max(
+                            self._cooldown_until, now + min(delay, 10.0)
+                        )
                     _LOGGER.debug(
                         "Retrying %s %s after %s due to HTTP %s (attempt %d/%d)",
                         method,
@@ -212,9 +214,9 @@ class AirzoneAPI:
                 return False
             raise
 
-        token = (resp or {}).get("user", {}).get("authentication_token") or (resp or {}).get(
-            "authentication_token"
-        )
+        token = (resp or {}).get("user", {}).get("authentication_token") or (
+            resp or {}
+        ).get("authentication_token")
         if not token:
             _LOGGER.debug("Login response did not include expected token field.")
             return False

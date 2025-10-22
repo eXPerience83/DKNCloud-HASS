@@ -73,12 +73,16 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 session = async_get_clientsession(self.hass)
                 api = AirzoneAPI(
-                    user_input[CONF_USERNAME], session, password=user_input[CONF_PASSWORD]
+                    user_input[CONF_USERNAME],
+                    session,
+                    password=user_input[CONF_PASSWORD],
                 )
                 try:
                     ok = await api.login()
                 except Exception as exc:  # noqa: BLE001
-                    _LOGGER.warning("Login failed (network/other): %s", type(exc).__name__)
+                    _LOGGER.warning(
+                        "Login failed (network/other): %s", type(exc).__name__
+                    )
                     errors["base"] = "cannot_connect"
                 else:
                     if ok and api.token:
@@ -87,13 +91,17 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             data={
                                 CONF_USERNAME: user_input[CONF_USERNAME],
                                 "user_token": api.token,
-                                CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL, 10),
+                                CONF_SCAN_INTERVAL: user_input.get(
+                                    CONF_SCAN_INTERVAL, 10
+                                ),
                                 CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False),
                             },
                         )
                     errors["base"] = "invalid_auth"
 
-        return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA, errors=errors)
+        return self.async_show_form(
+            step_id="user", data_schema=DATA_SCHEMA, errors=errors
+        )
 
     # ---------- Reauth ----------
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
@@ -117,22 +125,31 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema({vol.Required(CONF_PASSWORD): cv.string})
 
         if user_input is None:
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
 
         session = async_get_clientsession(self.hass)
         from .airzone_api import AirzoneAPI  # local import
+
         api = AirzoneAPI(username, session, password=user_input[CONF_PASSWORD])
 
         try:
             ok = await api.login()
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Reauth login failed (network/other): %s", type(exc).__name__)
+            _LOGGER.warning(
+                "Reauth login failed (network/other): %s", type(exc).__name__
+            )
             errors["base"] = "cannot_connect"
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
 
         if not ok or not api.token:
             errors["base"] = "invalid_auth"
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
 
         new_data = dict(entry.data)
         new_data["user_token"] = api.token
@@ -148,7 +165,9 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Display/process options form (options preferred over data)."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -157,8 +176,14 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         opts = self._entry.options
 
         current_scan = int(opts.get("scan_interval", data.get("scan_interval", 10)))
-        current_pii = bool(opts.get("expose_pii_identifiers", data.get("expose_pii_identifiers", False)))
-        current_stale_after = int(opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+        current_pii = bool(
+            opts.get(
+                "expose_pii_identifiers", data.get("expose_pii_identifiers", False)
+            )
+        )
+        current_stale_after = int(
+            opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
+        )
 
         schema = vol.Schema(
             {
@@ -166,9 +191,9 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
                     vol.Coerce(int), vol.Range(min=10, max=30)
                 ),
                 vol.Optional("expose_pii_identifiers", default=current_pii): cv.boolean,
-                vol.Optional(CONF_STALE_AFTER_MINUTES, default=current_stale_after): vol.All(
-                    vol.Coerce(int), vol.Range(min=6, max=30)
-                ),
+                vol.Optional(
+                    CONF_STALE_AFTER_MINUTES, default=current_stale_after
+                ): vol.All(vol.Coerce(int), vol.Range(min=6, max=30)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

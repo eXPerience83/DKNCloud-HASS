@@ -19,11 +19,11 @@ from typing import Any
 
 from aiohttp import ClientResponseError
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.const import CONF_USERNAME
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .airzone_api import AirzoneAPI
 from .const import DOMAIN
@@ -146,7 +146,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api = AirzoneAPI(username, session, password=None, token=token)
 
     scan_interval = int(
-        entry.options.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
+        entry.options.get(
+            "scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
+        )
     )
 
     coordinator: AirzoneCoordinator = AirzoneCoordinator(
