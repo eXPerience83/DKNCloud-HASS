@@ -9,6 +9,10 @@ Key points:
     - If login() returns False (invalid auth / unexpected schema) → open reauth and raise NotReady.
     - If login() raises (network/429/5xx/timeout) → do NOT open reauth; raise NotReady to retry later.
 - Coordinator: on HTTP 401 from reads, open a reauth flow once and surface UpdateFailed.
+
+Fix (this patch):
+- Preserve any existing 'reauth_requested' flag set during the *first* refresh to avoid
+  spawning multiple reauth flows when the initial update fails with 401.
 """
 
 from __future__ import annotations
@@ -160,13 +164,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     coordinator.api = api
 
+    # First refresh: may set reauth_requested=True inside _async_update_data
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data[DOMAIN][entry.entry_id] = {
-        "api": api,
-        "coordinator": coordinator,
-        "reauth_requested": False,  # reset after a successful refresh
-    }
+    # ---- Preserve any previously-set 'reauth_requested' flag (FIX) ----
+    bucket = hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    prev_flag = bool(bucket.get("reauth_requested", False))
+    bucket["api"] = api
+    bucket["coordinator"] = coordinator
+    # Keep the flag if it was set during first refresh; otherwise default to False.
+    bucket["reauth_requested"] = prev_flag
 
     # Load platforms
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
