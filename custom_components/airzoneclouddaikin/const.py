@@ -3,12 +3,13 @@
 This file includes API endpoints and basic configuration constants.
 """
 
+# Domain key (must match manifest.json and the integration folder name)
 DOMAIN = "airzoneclouddaikin"
 
 # Public manufacturer label used across platforms (Device Registry consistency).
 MANUFACTURER = "Daikin / Airzone"
 
-# API Endpoints (as defined in the original package)
+# ----------------------------- API Endpoints ------------------------------
 API_LOGIN = "/users/sign_in"
 API_INSTALLATION_RELATIONS = "/installation_relations"
 API_DEVICES = "/devices"
@@ -17,12 +18,14 @@ API_EVENTS = "/events"
 # Base URL for the API
 BASE_URL = "https://dkn.airzonecloud.com"
 
+# ----------------------------- HTTP Defaults ------------------------------
 # Standard User-Agent to be used in all API requests
-# (Kept as provided by the project; do not disclose Home Assistant in UA)
+# (Kept browser-like; do not disclose Home Assistant in UA)
+# P2: slightly more generic UA to reduce fingerprinting.
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/134.0.0.0 Safari/537.36"
+    "Chrome/130.0.0.0 Safari/537.36"
 )
 
 # Global HTTP timeout (seconds).
