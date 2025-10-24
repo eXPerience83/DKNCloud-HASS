@@ -17,7 +17,8 @@ This revision:
 - Remove duplicate "sleep_time" and "scenary" from core sensors to avoid unique_id
   collisions with number.sleep_time and select.scenary. Their values remain visible/
   controllable via Number/Select entities. (No changes to Number/Select files.)
-- Keep "connection_date" timestamp sensor enabled-by-default for connectivity visibility.
+- Make "connection_date" timestamp sensor disabled-by-default to avoid clutter
+  in Activity/Logbook by default. Binary "WServer Online" remains unaffected.
 
 Typing-only:
 - Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
@@ -181,7 +182,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
         None,
     ),
-    # Timestamps (now: connection_date enabled-by-default)
+    # Timestamps (connection_date now disabled-by-default)
     (
         "update_date",
         "Last Update (Device)",
@@ -194,7 +195,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "connection_date",
         "Last Connection",
         "mdi:clock-outline",
-        True,  # ← enabled by default so users always see it
+        False,  # disabled by default to reduce noise in Activity/Logbook
         "timestamp",
         None,
     ),
