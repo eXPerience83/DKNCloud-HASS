@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.12] - 2025-10-24
+### Hygiene & Small Hardening
+- **Sensors:** `*_last_connection` (timestamp) is now **disabled by default** for new installs to reduce Activity/Logbook noise. (Binary `WServer Online` unaffected.)
+- **Manifest:** removed unused `after_dependencies: ["http"]` and bumped version to **0.3.12**.
+- **Networking:** slightly more generic browser **User-Agent** (`Chrome/130`) to reduce fingerprinting while preserving compatibility.
+
 ## [0.3.11] - 2025-10-22
 ### Security & Privacy
 - Switched to **token-only** storage: the integration no longer persists the account password in the config entry.
