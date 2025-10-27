@@ -31,14 +31,14 @@ from homeassistant.util import dt as dt_util
 
 from .airzone_api import AirzoneAPI
 from .const import (
-    DOMAIN,
     CONF_STALE_AFTER_MINUTES,
-    STALE_AFTER_MINUTES_DEFAULT,
+    DOMAIN,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
     PN_KEY_PREFIX,
-    PN_TITLES,
     PN_MESSAGES,
+    PN_TITLES,
+    STALE_AFTER_MINUTES_DEFAULT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -285,9 +285,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     last_iso = str(dev.get("connection_date") or "—")
                     # Compute minutes (approximate)
-                    dt_last = dt_util.parse_datetime(
-                        str(dev.get("connection_date") or "")
-                    ) or now
+                    dt_last = (
+                        dt_util.parse_datetime(str(dev.get("connection_date") or ""))
+                        or now
+                    )
                     mins = int(
                         max(
                             0,
@@ -363,9 +364,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = True
     for platform in _BASE_PLATFORMS + ["select", "number"]:
         try:
-            ok = await hass.config_entries.async_forward_entry_unload(
-                entry, platform
-            )
+            ok = await hass.config_entries.async_forward_entry_unload(entry, platform)
             unload_ok = unload_ok and ok
         except Exception:  # noqa: BLE001
             continue

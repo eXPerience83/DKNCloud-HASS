@@ -142,7 +142,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             # P3: enforce a UI-level timeout to avoid hanging forms.
             ok = await asyncio.wait_for(api.login(), timeout=60.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("Reauth login timed out after 60s.")
             errors["base"] = "timeout"
             return self.async_show_form(
