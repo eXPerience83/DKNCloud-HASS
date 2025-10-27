@@ -268,14 +268,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 st["since_offline"] = now
                 st["notified"] = False
                 _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
-                return  # keep things light; process next cycle
+                continue  # process remaining devices in this cycle
 
             # While OFFLINE: check debounce and notify once
             if not last and not online:
                 since = st.get("since_offline")
                 if since is None:
                     st["since_offline"] = now
-                    return
+                    continue
                 if (
                     not st.get("notified")
                     and (now - since).total_seconds() >= OFFLINE_DEBOUNCE_SEC
@@ -302,7 +302,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     )
                     st["notified"] = True
                     _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
-                return
+                continue
 
             # Transition: OFFLINE -> ONLINE
             if not last and online:
@@ -323,12 +323,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 _LOGGER.info("[%s] WServer back online.", dev_id)
 
-                def _auto_dismiss(_now) -> None:
-                    """Auto-dismiss the short 'back online' banner."""
-                    hass.components.persistent_notification.async_dismiss(nid_online)
-
-                async_call_later(hass, ONLINE_BANNER_TTL_SEC, _auto_dismiss)
-                return
+                # Bind the notification id as a default argument to avoid late binding.
+                async_call_later(
+                    hass,
+                    ONLINE_BANNER_TTL_SEC,
+                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(  # noqa: E501
+                        _nid
+                    ),
+                )
+                continue
 
             # No transition: update last state to current for completeness
             st["last"] = online
