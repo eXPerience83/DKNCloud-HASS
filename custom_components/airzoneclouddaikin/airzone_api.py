@@ -1,10 +1,13 @@
 """Airzone Cloud API client (dkn.airzonecloud.com).
 
-P1 cleanup:
-- Removed any notion of "silent re-login". HTTP 401 is surfaced so the
-  coordinator can open a reauth flow.
-- Backoff is applied only to transient 429/5xx responses.
-- Logging remains secret-safe (P0 hotfix).
+Auth & resilience:
+- No "silent re-login": HTTP 401 is surfaced so the coordinator opens a reauth flow.
+- Backoff with jitter is applied to transient 429/5xx responses.
+- P2 addition: GET endpoints now also use backoff (not just writes).
+- Logging remains secret-safe (never prints full URLs with query params).
+
+Note:
+- 401 is *never* retried here; it must bubble up to the coordinator.
 """
 
 from __future__ import annotations
@@ -232,8 +235,13 @@ class AirzoneAPI:
             return
 
     async def fetch_installations(self) -> list[dict[str, Any]] | None:
+        """GET /installation_relations with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {"format": "json"}
-        resp = await self._request("GET", API_INSTALLATION_RELATIONS, params=params)
+        resp = await self._authed_request_with_retries(
+            "GET",
+            API_INSTALLATION_RELATIONS,
+            params=params,
+        )
         if isinstance(resp, dict) and "installation_relations" in resp:
             return resp.get("installation_relations")
         if isinstance(resp, list):
@@ -241,12 +249,16 @@ class AirzoneAPI:
         return None
 
     async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
+        """GET /devices with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {
             "format": "json",
             "installation_id": str(installation_id),
         }
-        resp = await self._request(
-            "GET", API_DEVICES, params=params, extra_headers=HEADERS_DEVICES
+        resp = await self._authed_request_with_retries(
+            "GET",
+            API_DEVICES,
+            params=params,
+            extra_headers=HEADERS_DEVICES,
         )
         if isinstance(resp, dict) and "devices" in resp:
             return resp.get("devices")
