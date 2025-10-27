@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.15a1 — Connectivity notifications (PR A)
+- Added persistent notifications for ES.DKNWSERVER connectivity:
+  - One **offline** banner per device (deduplicated by a stable `notification_id`).
+  - **Auto-dismiss** of the offline banner when the device comes back online.
+  - Short **“back online”** banner that closes automatically after ~20s.
+- Reuses existing `stale_after_minutes` option to decide offline state.
+- Includes a 90s debounce to reduce flapping and avoids exposing any PII.
+
 ## [0.3.14] - 2025-10-27
 ### Small Hardening (UI + Debug)
 - **Reauth flow:** added a **60s UI timeout** on the reauthentication login step. This prevents the form from hanging indefinitely if the tab is left open or the network stalls.
