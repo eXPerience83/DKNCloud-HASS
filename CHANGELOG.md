@@ -1,12 +1,19 @@
 # Changelog
 
-## [0.3.12] - 2025-10-27
+## [0.3.14] - 2025-10-27
+### Small Hardening (UI + Debug)
+- **Reauth flow:** added a **60s UI timeout** on the reauthentication login step. This prevents the form from hanging indefinitely if the tab is left open or the network stalls.
+- **AirzoneAPI:** implemented a **safe `__repr__`** that masks the email and never prints the token, protecting against accidental `repr()` in logs or traces.
+
+## [0.3.13] - 2025-10-27
+- **Resilience:** GET endpoints (`fetch_installations`, `fetch_devices`) now use the same **backoff with jitter** as writes for **429/5xx** (HTTP **401** still propagates to reauth).
+- **Async correctness:** explicitly **re-raise `asyncio.CancelledError`** in setup/migration and coordinator update so HA cancellations (reload/stop) are not turned into `NotReady`/`UpdateFailed`.
+
+## [0.3.12] - 2025-10-24
 ### Hygiene & Small Hardening
 - **Sensors:** `*_last_connection` (timestamp) is now **disabled by default** for new installs to reduce Activity/Logbook noise. (Binary `WServer Online` unaffected.)
 - **Manifest:** removed unused `after_dependencies: ["http"]` and bumped version to **0.3.12**.
 - **Networking:** slightly more generic browser **User-Agent** (`Chrome/130`) to reduce fingerprinting while preserving compatibility.
-- **Resilience:** GET endpoints (`fetch_installations`, `fetch_devices`) now use the same **backoff with jitter** as writes for **429/5xx** (HTTP **401** still propagates to reauth).
-- **Async correctness:** explicitly **re-raise `asyncio.CancelledError`** in setup/migration and coordinator update so HA cancellations (reload/stop) are not turned into `NotReady`/`UpdateFailed`.
 
 ## [0.3.11] - 2025-10-22
 ### Security & Privacy
