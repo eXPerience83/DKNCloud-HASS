@@ -1,26 +1,20 @@
-"""DKN Cloud for HASS integration setup (P1: token-only storage + reauth).
+"""DKN Cloud for HASS integration setup with connectivity notifications (PR A).
 
-Key points:
-- No password persisted in the config entry; only username (email) + user_token.
-- On setup:
-  * If 'user_token' exists, we use it (no login on startup).
-  * If a legacy 'password' exists (and no token), attempt one-time login to migrate
-    token and purge password.
-    - If login() returns False (invalid auth / unexpected schema) → open reauth and raise NotReady.
-    - If login() raises (network/429/5xx/timeout) → do NOT open reauth; raise NotReady to retry later.
-- Coordinator: on HTTP 401 from reads, open a reauth flow once and surface UpdateFailed.
-
-Fixes in P2:
-- Explicitly re-raise asyncio.CancelledError in both the migration login block and the
-  coordinator update path, so HA cancellations (reload/stop) are not turned into
-  UpdateFailed/NotReady by mistake.
-- Preserve any existing 'reauth_requested' flag set during the *first* refresh to avoid
-  spawning multiple reauth flows when the initial update fails with 401.
+Key points implemented in this file:
+- Token-only storage + reauth flow on 401 (as before).
+- DataUpdateCoordinator fetch remains the same.
+- NEW: Post-refresh listener detects ONLINE↔OFFLINE transitions per device_id
+  using connection_date + stale_after_minutes, with a 90s debounce to avoid
+  flapping, and manages persistent notifications:
+  * One "offline" notification per device (stable notification_id).
+  * Auto-dismiss of the "offline" banner when the device comes back online.
+  * Optional "back online" banner that auto-closes after 20s.
+- No I/O in entity properties; everything happens around the coordinator.
 """
 
 from __future__ import annotations
 
-import asyncio  # Added for explicit CancelledError handling
+import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
@@ -31,10 +25,21 @@ from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    CONF_STALE_AFTER_MINUTES,
+    STALE_AFTER_MINUTES_DEFAULT,
+    OFFLINE_DEBOUNCE_SEC,
+    ONLINE_BANNER_TTL_SEC,
+    PN_KEY_PREFIX,
+    PN_TITLES,
+    PN_MESSAGES,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +112,56 @@ async def _async_update_data(
         raise UpdateFailed(
             f"Failed to update Airzone data: {type(err).__name__}"
         ) from err
+
+
+def _choose_lang(hass: HomeAssistant) -> str:
+    """Choose language code. Prefer Spanish if HA is set to Spanish."""
+    lang = (getattr(hass.config, "language", None) or "").lower()
+    return "es" if lang.startswith("es") else "en"
+
+
+def _fmt(
+    hass: HomeAssistant,
+    kind: str,  # "offline" | "online"
+    name: str,
+    ts_local: str,
+    last_iso: str | None,
+    mins: int | None,
+) -> tuple[str, str]:
+    """Render title & message with minimal localization.
+
+    English: We avoid full runtime i18n complexity for now; we pick ES if HA
+    language starts with 'es', otherwise EN. No PII in these strings.
+    """
+    lang = _choose_lang(hass)
+    titles = PN_TITLES.get(lang) or PN_TITLES["en"]
+    msgs = PN_MESSAGES.get(lang) or PN_MESSAGES["en"]
+
+    title = titles[kind].format(name=name)
+    if kind == "offline":
+        message = msgs[kind].format(
+            ts_local=ts_local, last_iso=last_iso or "—", mins=mins or 0
+        )
+    else:
+        message = msgs[kind].format(ts_local=ts_local)
+    return title, message
+
+
+def _is_online(dev: dict[str, Any], now: dt_util.dt, stale_minutes: int) -> bool:
+    """Compute online state based on connection_date age.
+
+    English: If the timestamp cannot be parsed, assume online to prevent false alarms.
+    """
+    s = dev.get("connection_date")
+    if not s:
+        return False
+    dt = dt_util.parse_datetime(str(s))
+    if dt is None:
+        return True
+    # Normalize to UTC for age calculation
+    dt = dt_util.as_utc(dt)
+    age = (now - dt).total_seconds()
+    return age <= stale_minutes * 60
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -185,6 +240,86 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bucket["coordinator"] = coordinator
     # Keep the flag if it was set during first refresh; otherwise default to False.
     bucket["reauth_requested"] = prev_flag
+
+    # ---------------- NEW: connectivity notifications listener -------------
+    # English: We keep a small per-device state (previous online/offline and
+    # the instant when the offline transition was first seen).
+    notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
+    stale_minutes = int(entry.options.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+
+    def _on_coordinator_update() -> None:
+        now = dt_util.utcnow()
+        data = coordinator.data or {}
+
+        for dev_id, dev in data.items():
+            name = str(dev.get("name") or dev_id)
+            online = _is_online(dev, now, stale_minutes)
+            st = notify_state.setdefault(
+                dev_id, {"last": True, "since_offline": None, "notified": False}
+            )
+            last = bool(st["last"])
+
+            # Transition: ONLINE -> OFFLINE
+            if last and not online:
+                st["last"] = False
+                st["since_offline"] = now
+                st["notified"] = False
+                _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
+                return  # keep things light; process next cycle
+
+            # While OFFLINE: check debounce and notify once
+            if not last and not online:
+                since = st.get("since_offline")
+                if since is None:
+                    st["since_offline"] = now
+                    return
+                if not st.get("notified") and (now - since).total_seconds() >= OFFLINE_DEBOUNCE_SEC:
+                    # Build and create the persistent notification (single ID)
+                    nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
+                    ts_local = dt_util.as_local(now).strftime("%H:%M")
+                    last_iso = str(dev.get("connection_date") or "—")
+                    # Compute minutes (approximate)
+                    dt_last = dt_util.parse_datetime(str(dev.get("connection_date") or "")) or now
+                    mins = int(max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60))
+                    title, message = _fmt(hass, "offline", name, ts_local, last_iso, mins)
+                    hass.components.persistent_notification.async_create(
+                        message=message, title=title, notification_id=nid
+                    )
+                    st["notified"] = True
+                    _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
+                return
+
+            # Transition: OFFLINE -> ONLINE
+            if not last and online:
+                st["last"] = True
+                st["since_offline"] = None
+                was_notified = bool(st.get("notified"))
+                st["notified"] = False
+
+                nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
+                # Always dismiss the offline banner if it existed
+                hass.components.persistent_notification.async_dismiss(nid)
+
+                # Show "back online" banner (auto-dismiss after ONLINE_BANNER_TTL_SEC)
+                ts_local = dt_util.as_local(now).strftime("%H:%M")
+                title, message = _fmt(hass, "online", name, ts_local, None, None)
+                nid_online = f"{nid}:online"
+                hass.components.persistent_notification.async_create(
+                    message=message, title=title, notification_id=nid_online
+                )
+                _LOGGER.info("[%s] WServer back online.", dev_id)
+
+                def _auto_dismiss(_now) -> None:
+                    hass.components.persistent_notification.async_dismiss(nid_online)
+
+                async_call_later(hass, ONLINE_BANNER_TTL_SEC, _auto_dismiss)
+                return
+
+            # No transition: update last state to current for completeness
+            st["last"] = online
+
+    # Attach the listener (will run on every successful data refresh)
+    coordinator.async_add_listener(_on_coordinator_update)
 
     # Load platforms
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
