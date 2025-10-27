@@ -10,13 +10,17 @@ Key points:
     - If login() raises (network/429/5xx/timeout) → do NOT open reauth; raise NotReady to retry later.
 - Coordinator: on HTTP 401 from reads, open a reauth flow once and surface UpdateFailed.
 
-Fix (this patch):
+Fixes in P2:
+- Explicitly re-raise asyncio.CancelledError in both the migration login block and the
+  coordinator update path, so HA cancellations (reload/stop) are not turned into
+  UpdateFailed/NotReady by mistake.
 - Preserve any existing 'reauth_requested' flag set during the *first* refresh to avoid
   spawning multiple reauth flows when the initial update fails with 401.
 """
 
 from __future__ import annotations
 
+import asyncio  # Added for explicit CancelledError handling
 import logging
 from datetime import timedelta
 from typing import Any
@@ -80,6 +84,10 @@ async def _async_update_data(
 
         return data
 
+    except asyncio.CancelledError:
+        # English: propagate cancellations without converting them into UpdateFailed
+        # so HA reload/stop remains clean.
+        raise
     except ClientResponseError as cre:
         if cre.status == 401:
             bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
@@ -118,6 +126,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         legacy_api = AirzoneAPI(username, session, password=password, token=None)
         try:
             ok = await legacy_api.login()
+        except asyncio.CancelledError:
+            # English: do not convert cancel into NotReady; just bubble up.
+            raise
         except Exception as exc:  # network/429/5xx/timeout/etc.
             # Do NOT open reauth on transient errors; let HA retry cleanly.
             _LOGGER.warning(
