@@ -3,8 +3,12 @@
 Auth & resilience:
 - No "silent re-login": HTTP 401 is surfaced so the coordinator opens a reauth flow.
 - Backoff with jitter is applied to transient 429/5xx responses.
-- P2 addition: GET endpoints now also use backoff (not just writes).
+- P2: GET endpoints also use backoff (not just writes).
 - Logging remains secret-safe (never prints full URLs with query params).
+
+P3:
+- Provide a safe __repr__ that never leaks the token and masks the email,
+  protecting against accidental repr() in logs or traces.
 
 Note:
 - 401 is *never* retried here; it must bubble up to the coordinator.
@@ -58,6 +62,23 @@ class AirzoneAPI:
         self._session = session
         self._token: str | None = token
         self._cooldown_until: float = 0.0
+
+    def __repr__(self) -> str:
+        """Return a safe representation that never leaks secrets.
+
+        English:
+        - Mask the email to avoid PII leakage.
+        - Never include the token value; show only if it's present.
+        """
+        u = str(self._username or "")
+        masked_u = "***"
+        if "@" in u and u:
+            # Mask like "j***@***"
+            masked_u = f"{u[0]}***@***"
+        elif u:
+            masked_u = f"{u[0]}***"
+        token_state = "set" if bool(self._token) else "none"
+        return f"AirzoneAPI(username='{masked_u}', token={token_state})"
 
     # --------------------------
     # Public props
