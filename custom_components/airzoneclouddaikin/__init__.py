@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from aiohttp import ClientResponseError
@@ -147,10 +147,11 @@ def _fmt(
     return title, message
 
 
-def _is_online(dev: dict[str, Any], now: dt_util.dt, stale_minutes: int) -> bool:
+def _is_online(dev: dict[str, Any], now: datetime, stale_minutes: int) -> bool:
     """Compute online state based on connection_date age.
 
-    English: If the timestamp cannot be parsed, assume online to prevent false alarms.
+    English: If the timestamp cannot be parsed, assume online to prevent false
+    alarms. If absent, treat as offline because we lack evidence of connectivity.
     """
     s = dev.get("connection_date")
     if not s:
@@ -245,7 +246,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # English: We keep a small per-device state (previous online/offline and
     # the instant when the offline transition was first seen).
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
-    stale_minutes = int(entry.options.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+    stale_minutes = int(
+        entry.options.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
+    )
 
     def _on_coordinator_update() -> None:
         now = dt_util.utcnow()
@@ -273,15 +276,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if since is None:
                     st["since_offline"] = now
                     return
-                if not st.get("notified") and (now - since).total_seconds() >= OFFLINE_DEBOUNCE_SEC:
+                if (
+                    not st.get("notified")
+                    and (now - since).total_seconds() >= OFFLINE_DEBOUNCE_SEC
+                ):
                     # Build and create the persistent notification (single ID)
                     nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     last_iso = str(dev.get("connection_date") or "—")
                     # Compute minutes (approximate)
-                    dt_last = dt_util.parse_datetime(str(dev.get("connection_date") or "")) or now
-                    mins = int(max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60))
-                    title, message = _fmt(hass, "offline", name, ts_local, last_iso, mins)
+                    dt_last = dt_util.parse_datetime(
+                        str(dev.get("connection_date") or "")
+                    ) or now
+                    mins = int(
+                        max(
+                            0,
+                            (now - dt_util.as_utc(dt_last)).total_seconds() // 60,
+                        )
+                    )
+                    title, message = _fmt(
+                        hass, "offline", name, ts_local, last_iso, mins
+                    )
                     hass.components.persistent_notification.async_create(
                         message=message, title=title, notification_id=nid
                     )
@@ -293,7 +308,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not last and online:
                 st["last"] = True
                 st["since_offline"] = None
-                was_notified = bool(st.get("notified"))
                 st["notified"] = False
 
                 nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
@@ -310,6 +324,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info("[%s] WServer back online.", dev_id)
 
                 def _auto_dismiss(_now) -> None:
+                    """Auto-dismiss the short 'back online' banner."""
                     hass.components.persistent_notification.async_dismiss(nid_online)
 
                 async_call_later(hass, ONLINE_BANNER_TTL_SEC, _auto_dismiss)
@@ -345,7 +360,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = True
     for platform in _BASE_PLATFORMS + ["select", "number"]:
         try:
-            ok = await hass.config_entries.async_forward_entry_unload(entry, platform)
+            ok = await hass.config_entries.async_forward_entry_unload(
+                entry, platform
+            )
             unload_ok = unload_ok and ok
         except Exception:  # noqa: BLE001
             continue
