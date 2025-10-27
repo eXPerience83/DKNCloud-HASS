@@ -1,15 +1,20 @@
-"""Config & Options flow for DKN Cloud for HASS (P1: token-only + reauth).
+"""Config & Options flow for DKN Cloud for HASS (P1/P3).
 
 Changes:
-- On initial setup, store username (email) + user_token (no password).
-- Reauth flow asks for password, performs login, updates the token in the entry,
-  and never persists the password.
-- Logging is careful not to leak exceptions/URLs with secrets.
-- YAML import is *not* supported; only UI flows are provided.
+- P1: On initial setup, store username (email) + user_token (no password).
+      Reauth asks for password, performs login, updates the token in the entry,
+      and never persists the password. YAML import is not supported (UI-only).
+- P3: Add a UI-level timeout (60s) to the reauth login step so the form cannot
+      hang indefinitely if the browser tab is left open or the network stalls.
+
+Notes:
+- The HTTP layer already enforces a ClientTimeout(total=30s). The UI timeout
+  complements it and provides a clear error message to the user.
 """
 
 from __future__ import annotations
 
+import asyncio  # P3: needed for asyncio.wait_for / TimeoutError
 import logging
 from typing import Any
 
@@ -135,7 +140,14 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         api = AirzoneAPI(username, session, password=user_input[CONF_PASSWORD])
 
         try:
-            ok = await api.login()
+            # P3: enforce a UI-level timeout to avoid hanging forms.
+            ok = await asyncio.wait_for(api.login(), timeout=60.0)
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Reauth login timed out after 60s.")
+            errors["base"] = "timeout"
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning(
                 "Reauth login failed (network/other): %s", type(exc).__name__
