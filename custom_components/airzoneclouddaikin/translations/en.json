@@ -1,0 +1,9 @@
+{
+  "title": "DKN Cloud for HASS",
+  "notify": {
+    "offline_title": "DKN Cloud — {name} offline",
+    "online_title": "DKN Cloud — {name} back online",
+    "offline_body": "Connection lost at {ts_local}. Last contact: {last_iso} (about {mins} min ago).",
+    "online_body": "Connection restored at {ts_local}."
+  }
+}
