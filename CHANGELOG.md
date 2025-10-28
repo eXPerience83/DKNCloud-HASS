@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.16a1 - 2025-10-28
 ### Added
 - Climate: Fan modes normalized when `availables_speeds == 3` — the UI now shows
   `low / medium / high`. Other devices keep numeric labels (`1..N`). No behavior
