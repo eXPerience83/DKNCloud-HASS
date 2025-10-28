@@ -337,8 +337,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # No transition: update last state to current for completeness
             st["last"] = online
 
-    # Attach the listener (will run on every successful data refresh)
-    coordinator.async_add_listener(_on_coordinator_update)
+    # Attach the listener and keep its unsubscribe to avoid leaks on reload/unload.
+    # English: Always register the unsubscribe callback with the entry.
+    unsub = coordinator.async_add_listener(_on_coordinator_update)
+    entry.async_on_unload(unsub)
 
     # Load platforms
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
