@@ -15,8 +15,9 @@ P4-A/B:
   source of truth for the UA. GET endpoints no longer pass extra headers.
 - Replace hard-coded paths with API_* constants for coherence (no runtime change).
 
-This module keeps timeout handling Ruff/Black-friendly:
+Timeouts:
 - Catch only built-in TimeoutError (asyncio.TimeoutError is an alias on 3.11+).
+- Do ONE gentle retry on timeouts.
 
 Note:
 - 401 is *never* retried here; it must bubble up to the coordinator.
@@ -109,6 +110,7 @@ class AirzoneAPI:
 
     @staticmethod
     def _safe_path(path: str) -> str:
+        """Return a safe path fragment for logs (no query string, no secrets)."""
         base = (path or "").partition("?")[0].lstrip("/")
         first = base.split("/", 1)[0] if base else ""
         return f"/{first}" if first else "/"
@@ -221,7 +223,9 @@ class AirzoneAPI:
                     await self._sleep(delay)
                     continue
 
+                # Other HTTP errors → propagate
                 raise
+
             except TimeoutError:
                 # ONE gentle retry on timeout with short backoff
                 if attempt >= 1:
@@ -237,7 +241,9 @@ class AirzoneAPI:
                 attempt += 1
                 await self._sleep(delay)
                 continue
+
             except ClientConnectorError:
+                # Connection issues → propagate (HA will surface the error)
                 raise
 
     # --------------------------
@@ -318,7 +324,8 @@ class AirzoneAPI:
             )
         except ClientResponseError as cre:
             if cre.status == 422:
-                raise HomeAssistantError("DKN WServer sin conexión (422)") from cre
+                # Service call messages are not translated by HA, keep neutral English.
+                raise HomeAssistantError("DKN WServer not connected (422)") from cre
             raise
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
@@ -330,7 +337,9 @@ class AirzoneAPI:
         )
 
     async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
+        """PUT scenary field (compat with backend spelling)."""
         return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})
 
     async def put_device_sleep_time(self, device_id: str, minutes: int) -> Any:
+        """PUT sleep_time (minutes)."""
         return await self.put_device_fields(device_id, {"sleep_time": int(minutes)})
