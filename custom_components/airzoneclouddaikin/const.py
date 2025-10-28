@@ -35,15 +35,14 @@ USER_AGENT = (
 REQUEST_TIMEOUT = 30
 
 # --- Endpoint-specific minimal headers (browser-like) ---------------------
-# English: Keep headers minimal and consistent with the cURL examples.
-# - GET /devices: only a browser-like User-Agent.
-HEADERS_DEVICES = {
-    "User-Agent": USER_AGENT,
-}
+# English:
+# Keep headers minimal and let _request() always inject the global User-Agent.
+# For GETs we do not need any extra headers beyond the UA already added by _request().
 
 # - POST /events: JSON payload plus XHR-style headers as per the cURL example.
 HEADERS_EVENTS = {
-    "User-Agent": USER_AGENT,
+    # "User-Agent" is intentionally omitted here to avoid duplication;
+    # _request() always injects the global USER_AGENT.
     "X-Requested-With": "XMLHttpRequest",
     "Content-Type": "application/json;charset=UTF-8",
     "Accept": "application/json, text/plain, */*",
