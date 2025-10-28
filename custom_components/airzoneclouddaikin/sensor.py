@@ -1,30 +1,15 @@
-"""Sensor platform for DKN Cloud for HASS (Airzone Cloud).
+"""Sensors for DKN Cloud for HASS (Airzone Cloud).
 
-Consistent creation off coordinator.data (dict by device_id).
-Core sensors enabled-by-default so they are visible out-of-the-box.
-No I/O in properties; updates come from the coordinator.
+Key points:
+- Entities are created from coordinator.data (dict keyed by device_id).
+- No I/O in properties; updates come via the DataUpdateCoordinator.
+- Privacy: PII sensors are opt-in and never diagnostic; secrets are never logged.
+- Timestamps are parsed with HA helpers (tz-aware, DST-safe).
+- Diagnostic sensor 'fan_modes_normalized' tells if UI uses low/medium/high or numeric.
 
-Privacy:
-- Do not expose PIN as a sensor by default; PII sensors are opt-in.
-- Redact secrets in logs and diagnostics (see diagnostics.py).
-
-Previous changes:
-- Introduced internal marker 'self._is_pii' for PII sensors.
-- Strengthened opt-out cleanup: remove by exact unique_id (device_id + attribute)
-  for all known devices. Keep code minimal and safe.
-
-This revision:
-- Remove duplicate "sleep_time" and "scenary" from core sensors to avoid unique_id
-  collisions with number.sleep_time and select.scenary. Their values remain visible/
-  controllable via Number/Select entities. (No changes to Number/Select files.)
-- Make "connection_date" timestamp sensor disabled-by-default to avoid clutter
-  in Activity/Logbook by default. Binary "WServer Online" remains unaffected.
-
-New in this update:
-- Parse timestamps using Home Assistant helpers (dt_util.parse_datetime) and
-  return timezone-aware datetimes (dt_util.as_local) for TZ/DST correctness.
-- Add diagnostic sensor 'fan_modes_normalized' to reveal whether UI uses common
-  labels (low/medium/high) or numeric strings (1..N), derived from 'availables_speeds'.
+Notes for maintainers:
+- Keep CORE_SENSORS focused on day-to-day values.
+- Keep DIAG_SENSORS useful but not noisy (many disabled by default).
 """
 
 from __future__ import annotations
@@ -41,9 +26,9 @@ from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util  # TZ/DST-safe parsing & conversion
+from homeassistant.util import dt as dt_util
 
-from .__init__ import AirzoneCoordinator  # typing-aware coordinator
+from .__init__ import AirzoneCoordinator
 from .const import DOMAIN, MANUFACTURER
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,8 +83,6 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         "measurement",
     ),
-    # Removed "sleep_time" sensor (now provided by number.sleep_time)
-    # Removed "scenary" sensor (now provided by select.scenary)
     ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
     ("status", "Status", "mdi:information-outline", True, None, None),
     ("mode", "Mode Code (Raw)", "mdi:numeric", True, None, None),
@@ -118,9 +101,7 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
 # Diagnostics (some enabled by default per our decisions)
 DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True, None, None),
-    # IMPORTANT: 'power' requested enabled-by-default
     ("power", "Power State (Raw)", "mdi:power", True, None, None),
-    # 'units' should be disabled-by-default
     ("units", "Units", "mdi:ruler", False, None, None),
     # Unoccupied ranges (enabled)
     (
@@ -181,7 +162,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
         None,
     ),
-    # New: whether we expose low/medium/high (True) or numeric (False)
+    # Whether UI shows low/medium/high (True) or numeric 1..N (False)
     (
         "fan_modes_normalized",
         "Fan Modes Normalized",
@@ -207,7 +188,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "timestamp",
         None,
     ),
-    # --- Slats (diagnostic, disabled by default) ---
+    # Slats (diagnostic, disabled by default)
     (
         "ver_state_slats",
         "Vertical Slats State",
@@ -267,7 +248,6 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ),
 ]
 
-
 # PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
 PII_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("mac", "MAC Address", "mdi:lan", True, None, None),
@@ -301,7 +281,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         )
     )
 
-    # --- Cleanup of PII entities when opted-out (safe and robust) ----------
+    # Cleanup PII entities when opted-out (safe and robust)
     try:
         if not expose_pii:
             reg = er.async_get(hass)
@@ -315,12 +295,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 uid = (ent.unique_id or "").strip()
                 if uid in computed_pii_uids:
                     reg.async_remove(ent.entity_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
 
     specs = list(CORE_SENSORS) + list(DIAG_SENSORS)
     if expose_pii:
-        specs += PII_SENSORS  # add PII when opted-in
+        specs += PII_SENSORS
 
     entities: list[AirzoneSensor] = []
     for device_id in list((coordinator.data or {}).keys()):
@@ -331,12 +311,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
-    """Generic read-only sensor surfacing fields from device snapshot.
-
-    Typing-only note:
-    - CoordinatorEntity is parameterized so `self.coordinator.api` and
-      `self.coordinator.data` are correctly typed in IDEs/linters.
-    """
+    """Read-only sensor surfacing fields from the device snapshot."""
 
     _attr_has_entity_name = True
 
@@ -372,7 +347,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         if attribute in _TEMP_FLOAT_ATTRS:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
         elif attribute == "sleep_time":
-            # This path remains harmless if no sensor is created for 'sleep_time'.
+            # Harmless if no sensor is created for 'sleep_time'
             self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
         else:
             self._attr_native_unit_of_measurement = None
@@ -381,30 +356,30 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         if dev_class:
             try:
                 self._attr_device_class = getattr(SensorDeviceClass, dev_class.upper())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 self._attr_device_class = None
         if state_class:
             try:
                 self._attr_state_class = getattr(SensorStateClass, state_class.upper())
-            except Exception:
+            except Exception:  # noqa: BLE001
                 self._attr_state_class = None
+
         # Default visibility
         self._attr_entity_registry_enabled_default = enabled_by_default
 
     @property
     def device_info(self):
-        """Return unified Device Registry metadata (no logs/diagnostics exposure)."""
+        """Return unified Device Registry metadata."""
         dev = self._device
         info = {
             "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": MANUFACTURER,  # unified manufacturer label
+            "manufacturer": MANUFACTURER,
             "model": dev.get("brand") or "Airzone DKN",
             "sw_version": dev.get("firmware") or "",
             "name": dev.get("name") or "Airzone Device",
         }
         mac = dev.get("mac")
         if mac:
-            # Adding a MAC connection helps HA group all entities under the same Device.
             info["connections"] = {("mac", mac)}
         return info
 
@@ -424,7 +399,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         try:
             f = float(str(val).replace(",", "."))
             return round(f, 1)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
 
     @staticmethod
@@ -435,7 +410,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         try:
             f = float(str(val).replace(",", "."))
             return round(f, 6)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
 
     @property
@@ -451,7 +426,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             try:
                 ts = dt_util.parse_datetime(str(val)) if val else None
                 return dt_util.as_local(ts) if ts is not None else None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return None
 
         # Friendly handling for machine_errors: collapse empty to "No errors"
@@ -468,7 +443,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             val = self._device.get(self._attribute)
             try:
                 return int(str(val))
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return None
 
         # Mode text derived from `mode` code (includes 6/7/8 for completeness)
@@ -477,12 +452,12 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             mapping = {
                 "1": "cool",
                 "2": "heat",
-                "3": "ventilate",  # shown as FAN_ONLY in HA climate
+                "3": "ventilate",
                 "4": "auto (heat_cool)",
                 "5": "dry",
                 "6": "cool_air",
                 "7": "heat_air",
-                "8": "ventilate (alt)",  # alternate ventilate code
+                "8": "ventilate (alt)",
             }
             return mapping.get(code, "unknown")
 
@@ -498,12 +473,12 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
                     return "8"
             return "none"
 
-        # NEW: whether fan modes are normalized (low/medium/high) or numeric (1..N)
+        # Whether fan modes are normalized (low/medium/high) or numeric (1..N)
         if self._attribute == "fan_modes_normalized":
             try:
                 n = int(self._device.get("availables_speeds") or 0)
                 return bool(n == 3)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return False
 
         # PII nested fields (latitude/longitude live under "location")
