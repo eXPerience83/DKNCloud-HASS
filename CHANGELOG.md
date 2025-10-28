@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.3.15a1 — Connectivity notifications (PR A)
+## 0.3.15a2 - 2025-10-28
+### Changed
+- Centralized **User-Agent** handling in the HTTP helper: removed redundant per-endpoint headers.
+- `HEADERS_EVENTS` no longer carries `User-Agent` (the global UA is injected by `_request()`).
+- Removed `HEADERS_DEVICES` and stopped passing extra headers in `fetch_devices()`.
+
+## 0.3.15a1 - 2025-10-27
 - Added persistent notifications for ES.DKNWSERVER connectivity:
   - One **offline** banner per device (deduplicated by a stable `notification_id`).
   - **Auto-dismiss** of the offline banner when the device comes back online.
