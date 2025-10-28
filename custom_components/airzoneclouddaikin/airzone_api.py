@@ -15,9 +15,8 @@ P4-A/B:
   source of truth for the UA. GET endpoints no longer pass extra headers.
 - Replace hard-coded paths with API_* constants for coherence (no runtime change).
 
-This update:
-- Add ONE gentle retry on TimeoutError with short backoff (does not affect 401/reauth;
-  429/5xx logic unchanged).
+This module keeps timeout handling Ruff/Black-friendly:
+- Catch only built-in TimeoutError (asyncio.TimeoutError is an alias on 3.11+).
 
 Note:
 - 401 is *never* retried here; it must bubble up to the coordinator.
