@@ -15,6 +15,10 @@ P4-A/B:
   source of truth for the UA. GET endpoints no longer pass extra headers.
 - Replace hard-coded paths with API_* constants for coherence (no runtime change).
 
+This update:
+- Add ONE gentle retry on TimeoutError with short backoff (does not affect 401/reauth;
+  429/5xx logic unchanged).
+
 Note:
 - 401 is *never* retried here; it must bubble up to the coordinator.
 """
@@ -71,12 +75,7 @@ class AirzoneAPI:
         self._cooldown_until: float = 0.0
 
     def __repr__(self) -> str:
-        """Return a safe representation that never leaks secrets.
-
-        English:
-        - Mask the email to avoid PII leakage.
-        - Never include the token value; show only if it's present.
-        """
+        """Return a safe representation that never leaks secrets."""
         u = str(self._username or "")
         masked_u = "***"
         if "@" in u and u:
@@ -169,7 +168,7 @@ class AirzoneAPI:
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> Any:
-        """Authenticated request with limited retries for 429/5xx.
+        """Authenticated request with limited retries for 429/5xx + ONE retry on timeout.
 
         English:
         - 401 is *not* retried here; it is propagated so the coordinator opens reauth.
@@ -224,7 +223,22 @@ class AirzoneAPI:
                     continue
 
                 raise
-            except (TimeoutError, ClientConnectorError):
+            except TimeoutError:
+                # ONE gentle retry on timeout with short backoff
+                if attempt >= 1:
+                    raise
+                delay = 0.4 * (2**attempt) + random.uniform(0.0, _JITTER)
+                _LOGGER.debug(
+                    "Retrying %s %s after timeout (attempt %d): %ss",
+                    method,
+                    self._safe_path(path),
+                    attempt + 1,
+                    round(delay, 2),
+                )
+                attempt += 1
+                await self._sleep(delay)
+                continue
+            except ClientConnectorError:
                 raise
 
     # --------------------------
