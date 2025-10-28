@@ -24,7 +24,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
-    # Registry used for safe removal of PII entities when opted-out.
+
+# Registry used for safe removal of PII entities when opted-out.
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util  # tz-aware parsing & local conversion
