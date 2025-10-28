@@ -13,6 +13,7 @@ MANUFACTURER = "Daikin / Airzone"
 
 # ----------------------------- API Endpoints ------------------------------
 API_LOGIN = "/users/sign_in"
+API_LOGOUT = "/users/sign_out"
 API_INSTALLATION_RELATIONS = "/installation_relations"
 API_DEVICES = "/devices"
 API_EVENTS = "/events"
