@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+### Added
+- Climate: Fan modes normalized when `availables_speeds == 3` — the UI now shows
+  `low / medium / high`. Other devices keep numeric labels (`1..N`). No behavior
+  change in DRY/OFF (fan selector hidden).
+### Diagnostics
+- New diagnostic sensor: `fan_modes_normalized` (True/False) to indicate whether
+  the UI uses common labels (`low/medium/high`) or numeric ones (`1..N`).
+
 ## 0.3.15a7 - 2025-10-28
 ### Security/Privacy
 - Diagnostics: expanded static redaction set (owner_id, installer_email/phone, postal_code, device_ids, serial/uuid) and defensive regex for owner/installer/phone/postal.
