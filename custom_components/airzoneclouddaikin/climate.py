@@ -468,7 +468,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         # Map label to numeric when normalized
         value_to_send = (
-            self._label_to_num(fan_mode) if self._use_normalized_fan_labels() else fan_mode
+            self._label_to_num(fan_mode)
+            if self._use_normalized_fan_labels()
+            else fan_mode
         )
 
         if mode == HVACMode.HEAT:
