@@ -10,11 +10,15 @@ Changes:
 Notes:
 - The HTTP layer already enforces a ClientTimeout(total=30s). The UI timeout
   complements it and provides a clear error message to the user.
+
+Implementation note:
+- Catch only built-in TimeoutError. On Python 3.11+ asyncio.TimeoutError is an
+  alias of TimeoutError, so this remains correct while satisfying Ruff/Black.
 """
 
 from __future__ import annotations
 
-import asyncio  # P3: needed for asyncio.wait_for / TimeoutError
+import asyncio
 import logging
 from typing import Any
 
@@ -140,7 +144,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         api = AirzoneAPI(username, session, password=user_input[CONF_PASSWORD])
 
         try:
-            # P3: enforce a UI-level timeout to avoid hanging forms.
+            # UI-level 60s guard; built-in TimeoutError also covers asyncio timeouts.
             ok = await asyncio.wait_for(api.login(), timeout=60.0)
         except TimeoutError:
             _LOGGER.warning("Reauth login timed out after 60s.")
