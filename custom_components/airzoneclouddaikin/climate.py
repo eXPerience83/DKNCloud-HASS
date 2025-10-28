@@ -12,6 +12,10 @@ Enhancements in this patch:
 - Advertise TURN_ON/TURN_OFF in supported_features (explicit methods already implemented).
 - min_temp/max_temp: per-mode limits (cold/heat); in OFF/FAN_ONLY/DRY return a neutral
   combined range from backend limits. UI does not show temperature in those modes.
+
+Fan modes normalization (non-breaking):
+- If the device reports exactly 3 speeds, expose common labels: ["low","medium","high"].
+- Otherwise, keep numeric labels ["1".."N"].
 """
 
 from __future__ import annotations
@@ -108,6 +112,23 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return max(0, n)
         except Exception:
             return 0
+
+    def _use_normalized_fan_labels(self) -> bool:
+        """Return True when we should expose low/medium/high instead of numeric."""
+        return self._fan_speed_max() == 3
+
+    @staticmethod
+    def _num_to_label(num: str) -> str:
+        """Map '1'/'2'/'3' to 'low'/'medium'/'high' (fallback to input if unknown)."""
+        mapping = {"1": "low", "2": "medium", "3": "high"}
+        return mapping.get(str(num), str(num))
+
+    @staticmethod
+    def _label_to_num(label: str) -> str:
+        """Map 'low'/'medium'/'high' to '1'/'2'/'3' (fallback to input if unknown)."""
+        norm = (label or "").strip().lower()
+        mapping = {"low": "1", "medium": "2", "high": "3"}
+        return mapping.get(norm, label)
 
     def _device_power_on(self) -> bool:
         """Normalize backend/optimistic power to bool."""
@@ -399,14 +420,18 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @property
     def fan_modes(self) -> list[str] | None:
+        """Expose common labels when exactly 3 speeds exist; otherwise numeric."""
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             return []
         n = self._fan_speed_max()
-        return [str(i) for i in range(1, n + 1)] if n > 0 else []
+        if n == 3:
+            return ["low", "medium", "high"]
+        return [str(i) for i in range(1, n + 1)]
 
     @property
     def fan_mode(self) -> str | None:
+        """Return current fan mode; map 1/2/3 to low/medium/high when normalized."""
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             return None
@@ -420,18 +445,31 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             key = "heat_speed" if code == "8" else "cold_speed"
 
         val = self._optimistic.get(key, self._device.get(key))
-        return str(val) if val else None
+        if not val:
+            return None
+
+        sval = str(val)
+        if self._use_normalized_fan_labels():
+            return self._num_to_label(sval)
+        return sval
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
+        """Accept normalized labels (low/medium/high) or numeric strings."""
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             _LOGGER.debug("Ignoring set_fan_mode in mode %s", mode)
             return
-        if fan_mode not in (self.fan_modes or []):
-            _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
+        allowed = self.fan_modes or []
+        if fan_mode not in allowed:
+            _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, allowed)
             return
 
         await self._auto_exit_away_if_needed("set_fan_mode")
+
+        # Map label to numeric when normalized
+        value_to_send = (
+            self._label_to_num(fan_mode) if self._use_normalized_fan_labels() else fan_mode
+        )
 
         if mode == HVACMode.HEAT:
             option = "P4"
@@ -448,8 +486,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 option = "P3"
                 key = "cold_speed"
 
-        await self._send_p_event(option, fan_mode)
-        self._optimistic[key] = fan_mode
+        await self._send_p_event(option, value_to_send)
+        self._optimistic[key] = value_to_send
 
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
