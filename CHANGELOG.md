@@ -1,21 +1,18 @@
 # Changelog
 
-## 0.3.15a4 - 2025-10-28
-### Added
-- `climate`: advertise `TURN_ON`/`TURN_OFF` in `supported_features` (on/off already implemented).
+## 0.3.15a5 - 2025-10-28
 ### Changed
+- `binary_sensor`: use `dt_util.parse_datetime` + `dt_util.as_utc` for `connection_date` parsing (aligned with `__init__.py`, safer across TZ/DST and formats).
+- `airzone_api`: add a single retry on `TimeoutError` with short backoff (does not affect 401/reauth; 429/5xx logic unchanged).
 - `climate`: `min_temp`/`max_temp` now use **per-mode** limits (cold/heat); in `OFF/FAN_ONLY/DRY` a **neutral** combined range is returned (UI hides temperature in those modes).
 - `airzone_api`: use `API_LOGOUT` constant for the sign-out endpoint (coherence/DRY, no runtime change).
-
-## 0.3.15a3 - 2025-10-28
-### Fixed
-- Properly **unsubscribe** the connectivity listener on reload/unload to avoid leaks.
-
-## 0.3.15a2 - 2025-10-28
-### Changed
 - Centralized **User-Agent** handling in the HTTP helper: removed redundant per-endpoint headers.
 - `HEADERS_EVENTS` no longer carries `User-Agent` (the global UA is injected by `_request()`).
 - Removed `HEADERS_DEVICES` and stopped passing extra headers in `fetch_devices()`.
+### Added
+- `climate`: advertise `TURN_ON`/`TURN_OFF` in `supported_features` (on/off already implemented).
+### Fixed
+- Properly **unsubscribe** the connectivity listener on reload/unload to avoid leaks.
 
 ## 0.3.15a1 - 2025-10-27
 - Added persistent notifications for ES.DKNWSERVER connectivity:
