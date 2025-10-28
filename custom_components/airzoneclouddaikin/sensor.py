@@ -17,20 +17,17 @@ This revision:
 - Remove duplicate "sleep_time" and "scenary" from core sensors to avoid unique_id
   collisions with number.sleep_time and select.scenary. Their values remain visible/
   controllable via Number/Select entities. (No changes to Number/Select files.)
-- Keep "connection_date" timestamp sensor enabled-by-default for connectivity visibility.
+- Make "connection_date" timestamp sensor disabled-by-default to avoid clutter
+  in Activity/Logbook by default. Binary "WServer Online" remains unaffected.
 
-Typing-only:
-- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
-- Add local type annotation for `coordinator` in async_setup_entry.
-
-Metadata consistency:
-- Use const.MANUFACTURER in device_info to keep registry consistent across platforms.
+New in this update:
+- Parse timestamps using Home Assistant helpers (dt_util.parse_datetime) and
+  return timezone-aware datetimes (dt_util.as_local) for TZ/DST correctness.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -42,6 +39,7 @@ from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util  # TZ/DST-safe parsing & conversion
 
 from .__init__ import AirzoneCoordinator  # typing-aware coordinator
 from .const import DOMAIN, MANUFACTURER
@@ -181,7 +179,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
         None,
     ),
-    # Timestamps (now: connection_date enabled-by-default)
+    # Timestamps (connection_date disabled-by-default to reduce noise)
     (
         "update_date",
         "Last Update (Device)",
@@ -194,7 +192,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "connection_date",
         "Last Connection",
         "mdi:clock-outline",
-        True,  # ← enabled by default so users always see it
+        False,
         "timestamp",
         None,
     ),
@@ -279,7 +277,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
         _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
         return
 
-    # Typing-only: keep .get() + None check; annotate as Optional for IDEs.
     coordinator: AirzoneCoordinator | None = data.get("coordinator")
     if coordinator is None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
@@ -301,7 +298,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
             computed_pii_uids = {
                 f"{dev_id}_{attr}" for dev_id in known_device_ids for attr in PII_ATTRS
             }
-
             for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
                 if ent.domain != "sensor" or ent.platform != DOMAIN:
                     continue
@@ -438,11 +434,12 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             val = self._device.get(self._attribute)
             return self._parse_float1(val)
 
-        # Timestamps -> datetime (HA will display in local timezone)
+        # Timestamps -> tz-aware datetime (HA will display in local timezone)
         if self._attribute in _TIMESTAMP_ATTRS:
             val = self._device.get(self._attribute)
             try:
-                return datetime.fromisoformat(str(val)) if val else None
+                ts = dt_util.parse_datetime(str(val)) if val else None
+                return dt_util.as_local(ts) if ts is not None else None
             except Exception:
                 return None
 

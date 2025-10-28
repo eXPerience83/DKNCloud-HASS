@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.3.15a7 - 2025-10-28
+### Security/Privacy
+- Diagnostics: expanded static redaction set (owner_id, installer_email/phone, postal_code, device_ids, serial/uuid) and defensive regex for owner/installer/phone/postal.
+### Changed
+- Service call 422 text switched to neutral English: "DKN WServer not connected (422)".
+- Sensors: parse timestamps using `dt_util.parse_datetime` and return timezone-aware datetimes with `dt_util.as_local` for correct TZ/DST handling in Logbook/History.
+- `binary_sensor`: use `dt_util.parse_datetime` + `dt_util.as_utc` for `connection_date` parsing (aligned with `__init__.py`, safer across TZ/DST and formats).
+- `airzone_api`: add a single retry on `TimeoutError` with short backoff (does not affect 401/reauth; 429/5xx logic unchanged).
+- `climate`: `min_temp`/`max_temp` now use **per-mode** limits (cold/heat); in `OFF/FAN_ONLY/DRY` a **neutral** combined range is returned (UI hides temperature in those modes).
+- `airzone_api`: use `API_LOGOUT` constant for the sign-out endpoint (coherence/DRY, no runtime change).
+- Centralized **User-Agent** handling in the HTTP helper: removed redundant per-endpoint headers.
+- `HEADERS_EVENTS` no longer carries `User-Agent` (the global UA is injected by `_request()`).
+- Removed `HEADERS_DEVICES` and stopped passing extra headers in `fetch_devices()`.
+### Added
+- `climate`: advertise `TURN_ON`/`TURN_OFF` in `supported_features` (on/off already implemented).
+- EN/ES translations for Config/Options flow: field labels, steps, errors, aborts.
+### Fixed
+- Properly **unsubscribe** the connectivity listener on reload/unload to avoid leaks.
+
+## 0.3.15a1 - 2025-10-27
+- Added persistent notifications for ES.DKNWSERVER connectivity:
+  - One **offline** banner per device (deduplicated by a stable `notification_id`).
+  - **Auto-dismiss** of the offline banner when the device comes back online.
+  - Short **“back online”** banner that closes automatically after ~20s.
+- Reuses existing `stale_after_minutes` option to decide offline state.
+- Includes a 90s debounce to reduce flapping and avoids exposing any PII.
+
+## [0.3.14] - 2025-10-27
+### Small Hardening (UI + Debug)
+- **Reauth flow:** added a **60s UI timeout** on the reauthentication login step. This prevents the form from hanging indefinitely if the tab is left open or the network stalls.
+- **AirzoneAPI:** implemented a **safe `__repr__`** that masks the email and never prints the token, protecting against accidental `repr()` in logs or traces.
+
+## [0.3.13] - 2025-10-27
+- **Resilience:** GET endpoints (`fetch_installations`, `fetch_devices`) now use the same **backoff with jitter** as writes for **429/5xx** (HTTP **401** still propagates to reauth).
+- **Async correctness:** explicitly **re-raise `asyncio.CancelledError`** in setup/migration and coordinator update so HA cancellations (reload/stop) are not turned into `NotReady`/`UpdateFailed`.
+
+## [0.3.12] - 2025-10-24
+### Hygiene & Small Hardening
+- **Sensors:** `*_last_connection` (timestamp) is now **disabled by default** for new installs to reduce Activity/Logbook noise. (Binary `WServer Online` unaffected.)
+- **Manifest:** removed unused `after_dependencies: ["http"]` and bumped version to **0.3.12**.
+- **Networking:** slightly more generic browser **User-Agent** (`Chrome/130`) to reduce fingerprinting while preserving compatibility.
+
+## [0.3.11] - 2025-10-22
+### Security & Privacy
+- Switched to **token-only** storage: the integration no longer persists the account password in the config entry.
+- Added **Reauthentication flow**: on HTTP 401 the integration prompts reauth and updates the stored token (the password is never kept).
+- **Migration**: legacy entries with a stored password attempt a **one-time login** on startup to obtain a token and purge the password.
+  - If the login **fails due to invalid credentials**, a **reauth** is requested.
+  - If the login **fails due to transient errors** (network/429/5xx), reauth is **not** shown; Home Assistant retries later.
+- Diagnostics hardening: kept static redaction and added a regex-based redaction pass for future-sensitive keys.
+
 ## [0.3.10] - 2025-10-21
 ### Security
 - Avoid logging `ClientResponseError` objects which may embed full request URLs with sensitive query parameters (user_token/user_email). Now logs only method, masked path, and HTTP status code in `airzone_api.py`.

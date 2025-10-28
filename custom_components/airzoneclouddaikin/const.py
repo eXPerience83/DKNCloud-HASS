@@ -3,15 +3,17 @@
 This file includes API endpoints and basic configuration constants.
 """
 
+from __future__ import annotations
+
+# Domain key (must match manifest.json and the integration folder name)
 DOMAIN = "airzoneclouddaikin"
-CONF_USERNAME = "username"  # Your Airzone Cloud account email
-CONF_PASSWORD = "password"  # Your Airzone Cloud account password
 
 # Public manufacturer label used across platforms (Device Registry consistency).
 MANUFACTURER = "Daikin / Airzone"
 
-# API Endpoints (as defined in the original package)
+# ----------------------------- API Endpoints ------------------------------
 API_LOGIN = "/users/sign_in"
+API_LOGOUT = "/users/sign_out"
 API_INSTALLATION_RELATIONS = "/installation_relations"
 API_DEVICES = "/devices"
 API_EVENTS = "/events"
@@ -19,12 +21,14 @@ API_EVENTS = "/events"
 # Base URL for the API
 BASE_URL = "https://dkn.airzonecloud.com"
 
+# ----------------------------- HTTP Defaults ------------------------------
 # Standard User-Agent to be used in all API requests
-# (Kept as provided by the project; do not disclose Home Assistant in UA)
+# (Kept browser-like; do not disclose Home Assistant in UA)
+# P2: slightly more generic UA to reduce fingerprinting.
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/134.0.0.0 Safari/537.36"
+    "Chrome/130.0.0.0 Safari/537.36"
 )
 
 # Global HTTP timeout (seconds).
@@ -32,15 +36,14 @@ USER_AGENT = (
 REQUEST_TIMEOUT = 30
 
 # --- Endpoint-specific minimal headers (browser-like) ---------------------
-# English: Keep headers minimal and consistent with the cURL examples.
-# - GET /devices: only a browser-like User-Agent.
-HEADERS_DEVICES = {
-    "User-Agent": USER_AGENT,
-}
+# English:
+# Keep headers minimal and let _request() always inject the global User-Agent.
+# For GETs we do not need any extra headers beyond the UA already added by _request().
 
 # - POST /events: JSON payload plus XHR-style headers as per the cURL example.
 HEADERS_EVENTS = {
-    "User-Agent": USER_AGENT,
+    # "User-Agent" is intentionally omitted here to avoid duplication;
+    # _request() always injects the global USER_AGENT.
     "X-Requested-With": "XMLHttpRequest",
     "Content-Type": "application/json;charset=UTF-8",
     "Accept": "application/json, text/plain, */*",
@@ -56,3 +59,45 @@ POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
 CONF_STALE_AFTER_MINUTES = "stale_after_minutes"
 STALE_AFTER_MINUTES_DEFAULT = 10
 # UI min/max are validated in config_flow.py only (range 6..30).
+
+# -------------------- UX: Persistent notifications (PR A) -----------------
+# English: Debounce to avoid flapping (seconds the device must remain offline
+# before raising a notification).
+OFFLINE_DEBOUNCE_SEC = 90
+
+# English: Time to auto-dismiss the "back online" banner (seconds).
+ONLINE_BANNER_TTL_SEC = 20
+
+# English: Notification ID prefix (stable per device_id to avoid duplicates).
+PN_KEY_PREFIX = f"{DOMAIN}:wserver_offline:"
+
+# English: Minimal i18n templates (kept here to avoid runtime i18n complexity).
+# We prefer Spanish if hass.config.language starts with "es"; otherwise English.
+PN_TITLES = {
+    "en": {
+        "offline": "DKN Cloud — {name} offline",
+        "online": "DKN Cloud — {name} back online",
+    },
+    "es": {
+        "offline": "DKN Cloud — {name} sin conexión",
+        "online": "DKN Cloud — {name} en línea de nuevo",
+    },
+}
+
+PN_MESSAGES = {
+    "en": {
+        # Keep short and privacy-safe; do not include PII (email/token/MAC/GPS).
+        "offline": (
+            "Connection lost at {ts_local}. "
+            "Last contact: {last_iso} (about {mins} min ago)."
+        ),
+        "online": "Connection restored at {ts_local}.",
+    },
+    "es": {
+        "offline": (
+            "Conexión perdida a las {ts_local}. "
+            "Último contacto: {last_iso} (hace ~{mins} min)."
+        ),
+        "online": "Conexión restablecida a las {ts_local}.",
+    },
+}

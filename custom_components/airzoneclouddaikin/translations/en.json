@@ -1,0 +1,47 @@
+{
+  "title": "DKN Cloud for HASS",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sign in",
+        "description": "Enter your Airzone Cloud account email and password.",
+        "data": {
+          "username": "Email",
+          "password": "Password",
+          "scan_interval": "Scan interval (seconds)",
+          "expose_pii_identifiers": "Expose PII identifiers (advanced)",
+          "stale_after_minutes": "Offline after (minutes)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate",
+        "description": "Your token is no longer valid for {username}. Enter the account password to generate a new token.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Cannot connect to Airzone Cloud.",
+      "timeout": "The request timed out. Please try again.",
+      "unknown": "Unexpected error. Check logs for more details."
+    },
+    "abort": {
+      "reauth_successful": "Reauthentication successful.",
+      "reauth_failed": "Reauthentication failed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "data": {
+          "scan_interval": "Scan interval (seconds)",
+          "expose_pii_identifiers": "Expose PII identifiers (advanced)",
+          "stale_after_minutes": "Offline after (minutes)"
+        }
+      }
+    }
+  }
+}

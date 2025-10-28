@@ -1,17 +1,24 @@
-"""Config & Options flow for DKN Cloud for HASS.
+"""Config & Options flow for DKN Cloud for HASS (P1/P3).
 
-Focus in this revision (P0 hotfix):
-- Avoid logging exception objects on login failures, as their string representation
-  might include request URLs with sensitive query parameters. We log only a neutral
-  message or the exception type, never the full exception text.
+Changes:
+- P1: On initial setup, store username (email) + user_token (no password).
+      Reauth asks for password, performs login, updates the token in the entry,
+      and never persists the password. YAML import is not supported (UI-only).
+- P3: Add a UI-level timeout (60s) to the reauth login step so the form cannot
+      hang indefinitely if the browser tab is left open or the network stalls.
 
-Other notes kept from previous revision:
-- AirzoneAPI.login() returns False only for 401 (invalid credentials).
-- Network/5xx raise and are mapped to 'cannot_connect'.
+Notes:
+- The HTTP layer already enforces a ClientTimeout(total=30s). The UI timeout
+  complements it and provides a clear error message to the user.
+
+Implementation note:
+- Catch only built-in TimeoutError. On Python 3.11+ asyncio.TimeoutError is an
+  alias of TimeoutError, so this remains correct while satisfying Ruff/Black.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -32,13 +39,12 @@ _LOGGER = logging.getLogger(__name__)
 
 # Option keys (kept stable)
 CONF_SCAN_INTERVAL = "scan_interval"
-CONF_EXPOSE_PII = "expose_pii_identifiers"  # single opt-in switch for PII fields
+CONF_EXPOSE_PII = "expose_pii_identifiers"
 
 DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USERNAME): cv.string,
+        vol.Required(CONF_USERNAME): cv.string,  # stores email
         vol.Required(CONF_PASSWORD): cv.string,
-        # UI-only validation: default 10, range 10..30
         vol.Optional(CONF_SCAN_INTERVAL, default=10): vol.All(
             vol.Coerce(int), vol.Range(min=10, max=30)
         ),
@@ -52,47 +58,48 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self) -> None:
+        self._reauth_entry_id: str | None = None
+
     @staticmethod
     def async_get_options_flow(
         entry: config_entries.ConfigEntry,
     ) -> config_entries.OptionsFlow:
-        """Return the options flow handler for an existing entry."""
         return AirzoneOptionsFlow(entry)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Collect credentials and validate against the API."""
+        """Collect credentials, perform login to obtain a token, and create the entry."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             try:
-                from .airzone_api import AirzoneAPI  # local import to avoid cycles
-            except Exception as exc:
-                _LOGGER.exception("Failed to import AirzoneAPI: %s", exc)
+                from .airzone_api import AirzoneAPI  # local import
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.exception("Failed to import AirzoneAPI: %s", type(exc).__name__)
                 errors["base"] = "unknown"
             else:
                 session = async_get_clientsession(self.hass)
                 api = AirzoneAPI(
-                    user_input[CONF_USERNAME], user_input[CONF_PASSWORD], session
+                    user_input[CONF_USERNAME],
+                    session,
+                    password=user_input[CONF_PASSWORD],
                 )
-
                 try:
                     ok = await api.login()
-                except Exception as exc:
-                    # Network/5xx → cannot_connect
-                    # IMPORTANT: Do NOT log the full exception (it may include full URLs).
+                except Exception as exc:  # noqa: BLE001
                     _LOGGER.warning(
                         "Login failed (network/other): %s", type(exc).__name__
                     )
                     errors["base"] = "cannot_connect"
                 else:
-                    if ok:
+                    if ok and api.token:
                         return self.async_create_entry(
                             title="DKN Cloud for HASS",
                             data={
                                 CONF_USERNAME: user_input[CONF_USERNAME],
-                                CONF_PASSWORD: user_input[CONF_PASSWORD],
+                                "user_token": api.token,
                                 CONF_SCAN_INTERVAL: user_input.get(
                                     CONF_SCAN_INTERVAL, 10
                                 ),
@@ -102,16 +109,70 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     errors["base"] = "invalid_auth"
 
         return self.async_show_form(
-            step_id="user",
-            data_schema=DATA_SCHEMA,
-            errors=errors,
+            step_id="user", data_schema=DATA_SCHEMA, errors=errors
         )
 
-    async def async_step_import(
+    # ---------- Reauth ----------
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+        """Start reauth for an existing entry (entry_id provided in context)."""
+        self._reauth_entry_id = (self.context or {}).get("entry_id")
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Support YAML import (not typical for this integration)."""
-        return await self.async_step_user(user_input)
+        """Ask for password, perform login, update the token, never persist password."""
+        errors: dict[str, str] = {}
+
+        entry = None
+        if self._reauth_entry_id:
+            entry = self.hass.config_entries.async_get_entry(self._reauth_entry_id)
+        if entry is None:
+            return self.async_abort(reason="reauth_failed")
+
+        username = entry.data.get(CONF_USERNAME)
+        schema = vol.Schema({vol.Required(CONF_PASSWORD): cv.string})
+
+        if user_input is None:
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
+
+        session = async_get_clientsession(self.hass)
+        from .airzone_api import AirzoneAPI  # local import
+
+        api = AirzoneAPI(username, session, password=user_input[CONF_PASSWORD])
+
+        try:
+            # UI-level 60s guard; built-in TimeoutError also covers asyncio timeouts.
+            ok = await asyncio.wait_for(api.login(), timeout=60.0)
+        except TimeoutError:
+            _LOGGER.warning("Reauth login timed out after 60s.")
+            errors["base"] = "timeout"
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "Reauth login failed (network/other): %s", type(exc).__name__
+            )
+            errors["base"] = "cannot_connect"
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
+
+        if not ok or not api.token:
+            errors["base"] = "invalid_auth"
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
+
+        new_data = dict(entry.data)
+        new_data["user_token"] = api.token
+        new_data.pop(CONF_PASSWORD, None)
+        self.hass.config_entries.async_update_entry(entry, data=new_data)
+
+        return self.async_abort(reason="reauth_successful")
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
@@ -123,12 +184,7 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Display/process options form.
-
-        We prefer options over data as the source of truth:
-        - If an option exists, use it.
-        - Otherwise, fall back to the stored data value.
-        """
+        """Display/process options form (options preferred over data)."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
@@ -147,18 +203,13 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
-                # UI-only validation: default 10, range 10..30
                 vol.Optional("scan_interval", default=current_scan): vol.All(
                     vol.Coerce(int), vol.Range(min=10, max=30)
                 ),
                 vol.Optional("expose_pii_identifiers", default=current_pii): cv.boolean,
-                # UI-only validation: default from const, range 6..30
                 vol.Optional(
                     CONF_STALE_AFTER_MINUTES, default=current_stale_after
-                ): vol.All(
-                    vol.Coerce(int),
-                    vol.Range(min=6, max=30),
-                ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=6, max=30)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
