@@ -23,6 +23,8 @@ This revision:
 New in this update:
 - Parse timestamps using Home Assistant helpers (dt_util.parse_datetime) and
   return timezone-aware datetimes (dt_util.as_local) for TZ/DST correctness.
+- Add diagnostic sensor 'fan_modes_normalized' to reveal whether UI uses common
+  labels (low/medium/high) or numeric strings (1..N), derived from 'availables_speeds'.
 """
 
 from __future__ import annotations
@@ -175,6 +177,15 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "ventilate_variant",
         "Ventilate Variant (3/8/none)",
         "mdi:shuffle-variant",
+        True,
+        None,
+        None,
+    ),
+    # New: whether we expose low/medium/high (True) or numeric (False)
+    (
+        "fan_modes_normalized",
+        "Fan Modes Normalized",
+        "mdi:fan-check",
         True,
         None,
         None,
@@ -486,6 +497,14 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
                 if sup8:
                     return "8"
             return "none"
+
+        # NEW: whether fan modes are normalized (low/medium/high) or numeric (1..N)
+        if self._attribute == "fan_modes_normalized":
+            try:
+                n = int(self._device.get("availables_speeds") or 0)
+                return bool(n == 3)
+            except Exception:
+                return False
 
         # PII nested fields (latitude/longitude live under "location")
         if self._attribute in {"latitude", "longitude"}:
