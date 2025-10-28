@@ -1,9 +1,14 @@
 """Diagnostics for DKN Cloud for HASS (Airzone Cloud).
 
-P1 hardening:
-- Keep static redaction set (TO_REDACT).
-- Add an extra regex-based redaction pass to catch any future key names
-  that contain sensitive semantics (token/mail/email/mac/pin/lat/lon/gps/coord).
+Goal:
+- Keep diagnostics useful for troubleshooting while protecting user privacy.
+- Redact sensitive keys that appear in Airzone responses (devices + nested installation).
+- Keep implementation minimal, aligned with the current style (key-based redaction).
+
+Notes:
+- We intentionally do not scrub string *values* (URLs, free text) to stay close to your
+  current approach. If the backend ever injects secrets inside strings, consider adding
+  a value-scrubbing pass in the future.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
 
-# Static fields to redact anywhere in the structure (nested keys included).
+# --- Static redaction keys (redacted wherever they appear, nested included) ---
 TO_REDACT = {
     # Auth & identity
     "email",
@@ -26,28 +31,37 @@ TO_REDACT = {
     "authentication_token",
     "token",
     "user_token",
-    # Device identifiers / PII
+    # Device/installation identifiers
     "mac",
     "pin",
+    "serial",
+    "uuid",
     "installation_id",
-    "spot_name",
-    "complete_name",
-    "time_zone",
-    # Location data
+    "owner_id",
+    "device_ids",
+    # Installer / ownership contact
+    "installer_email",
+    "installer_phone",
+    # Location / PII
+    "location",
     "latitude",
     "longitude",
     "lat",
     "lon",
-    "location",
+    "postal_code",
+    "spot_name",
+    "complete_name",
+    "time_zone",
 }
 
-# Additional regex-based redaction for future/unknown keys
+# --- Defensive regex for *keys* (keep minimal, focused) ---
+# Matches are case-insensitive and applied on dict keys only.
 _RE_PATTERNS = [
-    re.compile(r"token", re.IGNORECASE),
+    re.compile(r"token|auth(entication)?|secret|api.?key", re.IGNORECASE),
     re.compile(r"mail|email", re.IGNORECASE),
-    re.compile(r"\bmac\b", re.IGNORECASE),
-    re.compile(r"\bpin\b", re.IGNORECASE),
-    re.compile(r"lat|lon|gps|coord", re.IGNORECASE),
+    re.compile(r"\bmac\b|\bpin\b|\buuid\b|\bserial\b", re.IGNORECASE),
+    re.compile(r"lat|lon|gps|coord|location", re.IGNORECASE),
+    re.compile(r"owner(_?id)?|installer|phone|postal|zip", re.IGNORECASE),
 ]
 
 
@@ -75,7 +89,7 @@ async def async_get_config_entry_diagnostics(
 
     entry_summary = {
         "title": entry.title,
-        "data_keys": sorted(list(entry.data.keys())),  # keys only, no values
+        "data_keys": sorted(list(entry.data.keys())),  # keys only, never values
         "options": entry.options,
         "version": getattr(entry, "version", None),
     }
@@ -97,6 +111,7 @@ async def async_get_config_entry_diagnostics(
 
     raw = {"entry": entry_summary, "coordinator": coord_summary}
 
-    # First, apply static redaction; then a defensive regex pass.
+    # 1) Known keys
     redacted = async_redact_data(raw, TO_REDACT)
+    # 2) Defensive regex pass (keys only; values unchanged)
     return _redact_by_regex(redacted)
