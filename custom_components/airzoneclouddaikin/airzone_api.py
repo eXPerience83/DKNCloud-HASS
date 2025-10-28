@@ -39,6 +39,7 @@ from .const import (
     API_EVENTS,
     API_INSTALLATION_RELATIONS,
     API_LOGIN,
+    API_LOGOUT,
     BASE_URL,
     HEADERS_EVENTS,
     REQUEST_TIMEOUT,
@@ -79,7 +80,6 @@ class AirzoneAPI:
         u = str(self._username or "")
         masked_u = "***"
         if "@" in u and u:
-            # Mask like "j***@***"
             masked_u = f"{u[0]}***@***"
         elif u:
             masked_u = f"{u[0]}***"
@@ -257,7 +257,7 @@ class AirzoneAPI:
     async def sign_out(self) -> None:
         """Optional sign out endpoint (best-effort)."""
         try:
-            await self._request("DELETE", "users/sign_out", params=self._auth_params())
+            await self._request("DELETE", API_LOGOUT, params=self._auth_params())
         except Exception:  # noqa: BLE001
             return
 
