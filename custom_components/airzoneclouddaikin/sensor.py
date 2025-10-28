@@ -24,9 +24,10 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
+    # Registry used for safe removal of PII entities when opted-out.
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util
+from homeassistant.util import dt as dt_util  # tz-aware parsing & local conversion
 
 from .__init__ import AirzoneCoordinator
 from .const import DOMAIN, MANUFACTURER
@@ -83,9 +84,11 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "temperature",
         "measurement",
     ),
-    ("modes", "Supported Modes (Bitmask)", "mdi:toggle-switch", True, None, None),
+    # Bitmask of supported modes → code icon
+    ("modes", "Supported Modes (Bitmask)", "mdi:code-braces", True, None, None),
     ("status", "Status", "mdi:information-outline", True, None, None),
-    ("mode", "Mode Code (Raw)", "mdi:numeric", True, None, None),
+    # Raw numeric mode code → code icon
+    ("mode", "Mode Code (Raw)", "mdi:code-braces", True, None, None),
     ("mode_text", "Mode (Text)", "mdi:format-list-bulleted", True, None, None),
     ("machine_errors", "Machine Errors", "mdi:alert-octagon", True, None, None),
     ("firmware", "Firmware Version", "mdi:chip", True, None, None),
@@ -281,7 +284,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         )
     )
 
-    # Cleanup PII entities when opted-out (safe and robust)
+    # Cleanup PII entities when opted-out (safe and robust).
+    # We compute expected unique_ids and remove only exact matches under this config entry.
     try:
         if not expose_pii:
             reg = er.async_get(hass)
@@ -332,7 +336,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         self._attr_name = friendly
         self._attr_icon = icon
         self._attr_unique_id = f"{device_id}_{attribute}"
-        # Internal privacy marker
+        # Internal privacy marker for PII-opted entities
         self._is_pii: bool = attribute in PII_ATTRS
 
         # Entity category: daily-use whitelist and PII are NOT diagnostic; rest are diagnostic
@@ -434,7 +438,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             val = self._device.get(self._attribute)
             if val in (None, "", [], 0, "0"):
                 return "No errors"
-            if isinstance(val, (list, tuple)):
+            if isinstance(val, list | tuple):  # Ruff UP038-compliant
                 return ", ".join(str(x) for x in val) if val else "No errors"
             return str(val)
 
