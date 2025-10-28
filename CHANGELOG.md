@@ -1,7 +1,10 @@
 # Changelog
 
-## 0.3.15a6 - 2025-10-28
+## 0.3.15a7 - 2025-10-28
+### Security/Privacy
+- Diagnostics: expanded static redaction set (owner_id, installer_email/phone, postal_code, device_ids, serial/uuid) and defensive regex for owner/installer/phone/postal.
 ### Changed
+- Service call 422 text switched to neutral English: "DKN WServer not connected (422)".
 - Sensors: parse timestamps using `dt_util.parse_datetime` and return timezone-aware datetimes with `dt_util.as_local` for correct TZ/DST handling in Logbook/History.
 - `binary_sensor`: use `dt_util.parse_datetime` + `dt_util.as_utc` for `connection_date` parsing (aligned with `__init__.py`, safer across TZ/DST and formats).
 - `airzone_api`: add a single retry on `TimeoutError` with short backoff (does not affect 401/reauth; 429/5xx logic unchanged).
@@ -12,6 +15,7 @@
 - Removed `HEADERS_DEVICES` and stopped passing extra headers in `fetch_devices()`.
 ### Added
 - `climate`: advertise `TURN_ON`/`TURN_OFF` in `supported_features` (on/off already implemented).
+- EN/ES translations for Config/Options flow: field labels, steps, errors, aborts.
 ### Fixed
 - Properly **unsubscribe** the connectivity listener on reload/unload to avoid leaks.
 
