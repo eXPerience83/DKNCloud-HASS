@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.15a4 - 2025-10-28
+### Added
+- `climate`: advertise `TURN_ON`/`TURN_OFF` in `supported_features` (on/off already implemented).
+### Changed
+- `climate`: `min_temp`/`max_temp` now use **per-mode** limits (cold/heat); in `OFF/FAN_ONLY/DRY` a **neutral** combined range is returned (UI hides temperature in those modes).
+- `airzone_api`: use `API_LOGOUT` constant for the sign-out endpoint (coherence/DRY, no runtime change).
+
 ## 0.3.15a3 - 2025-10-28
 ### Fixed
 - Properly **unsubscribe** the connectivity listener on reload/unload to avoid leaks.
