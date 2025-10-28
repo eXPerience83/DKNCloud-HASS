@@ -10,6 +10,10 @@ P3:
 - Provide a safe __repr__ that never leaks the token and masks the email,
   protecting against accidental repr() in logs or traces.
 
+P4-A:
+- Remove redundant per-endpoint User-Agent headers. _request() is the single
+  source of truth for the UA. GET endpoints no longer pass extra headers.
+
 Note:
 - 401 is *never* retried here; it must bubble up to the coordinator.
 """
@@ -33,7 +37,6 @@ from .const import (
     API_DEVICES,
     API_INSTALLATION_RELATIONS,
     BASE_URL,
-    HEADERS_DEVICES,
     HEADERS_EVENTS,
     REQUEST_TIMEOUT,
     USER_AGENT,
@@ -279,7 +282,6 @@ class AirzoneAPI:
             "GET",
             API_DEVICES,
             params=params,
-            extra_headers=HEADERS_DEVICES,
         )
         if isinstance(resp, dict) and "devices" in resp:
             return resp.get("devices")
