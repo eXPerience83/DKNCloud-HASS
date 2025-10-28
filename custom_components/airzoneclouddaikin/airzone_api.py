@@ -3,16 +3,17 @@
 Auth & resilience:
 - No "silent re-login": HTTP 401 is surfaced so the coordinator opens a reauth flow.
 - Backoff with jitter is applied to transient 429/5xx responses.
-- P2: GET endpoints also use backoff (not just writes).
+- GET endpoints also use backoff (not just writes).
 - Logging remains secret-safe (never prints full URLs with query params).
 
 P3:
 - Provide a safe __repr__ that never leaks the token and masks the email,
   protecting against accidental repr() in logs or traces.
 
-P4-A:
+P4-A/B:
 - Remove redundant per-endpoint User-Agent headers. _request() is the single
   source of truth for the UA. GET endpoints no longer pass extra headers.
+- Replace hard-coded paths with API_* constants for coherence (no runtime change).
 
 Note:
 - 401 is *never* retried here; it must bubble up to the coordinator.
@@ -35,7 +36,9 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     API_DEVICES,
+    API_EVENTS,
     API_INSTALLATION_RELATIONS,
+    API_LOGIN,
     BASE_URL,
     HEADERS_EVENTS,
     REQUEST_TIMEOUT,
@@ -235,7 +238,7 @@ class AirzoneAPI:
 
         data = {"email": self._username, "password": self._password}
         try:
-            resp = await self._request("POST", "users/sign_in", json=data)
+            resp = await self._request("POST", API_LOGIN, json=data)
         except ClientResponseError as cre:
             if cre.status == 401:
                 return False
@@ -295,7 +298,7 @@ class AirzoneAPI:
         try:
             return await self._authed_request_with_retries(
                 "POST",
-                "events/",
+                API_EVENTS,
                 params=params,
                 json=payload,
                 extra_headers=HEADERS_EVENTS,
