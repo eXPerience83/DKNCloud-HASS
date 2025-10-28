@@ -9,7 +9,7 @@
 - New diagnostic sensor: `fan_modes_normalized` (True/False) to indicate whether
   the UI uses common labels (`low/medium/high`) or numeric ones (`1..N`).
 
-## 0.3.15a7 - 2025-10-28
+## 0.3.15 - 2025-10-28
 ### Security/Privacy
 - Diagnostics: expanded static redaction set (owner_id, installer_email/phone, postal_code, device_ids, serial/uuid) and defensive regex for owner/installer/phone/postal.
 ### Changed
