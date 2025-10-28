@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.15a3 - 2025-10-28
+### Fixed
+- Properly **unsubscribe** the connectivity listener on reload/unload to avoid leaks.
+
 ## 0.3.15a2 - 2025-10-28
 ### Changed
 - Centralized **User-Agent** handling in the HTTP helper: removed redundant per-endpoint headers.
