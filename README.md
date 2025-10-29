@@ -183,9 +183,9 @@ For privacy, logs **never** print your email or token.
 
 Starting with **0.4.0**:
 - The legacy `select.scenary` entity is **removed**. Use climate **preset modes**: `home`, `away`, `sleep`.
-- The login token is stored in `entry.options` (encrypted at rest by HA). Passwords are never persisted.
+- The login token is stored in `config_entry.options['user_token']`. **Home Assistant does not encrypt `config_entries` (`data` or `options`) by default**; we keep the token in Options to separate identity data (in `data`) from credentials-like settings and to reduce churn when editing options. Passwords are never persisted.
 
-> Rationale: Persisting a token (not the password) improves privacy while keeping the UX simple. Reauthentication is only required if the backend returns HTTP 401.
+> Reauth: You’ll be asked for the account password only if the backend returns HTTP 401 or the token becomes invalid.
 
 ---
 
