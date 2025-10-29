@@ -29,7 +29,7 @@ from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo, CONNECTION_NETWORK_MAC
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -233,20 +233,24 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return rich device metadata for the device registry."""
+        """Return rich device metadata for the device registry.
+
+        Note:
+            We pass the MAC via the `connections` constructor parameter using
+            `CONNECTION_NETWORK_MAC` to avoid mutating the DeviceInfo object post-creation.
+        """
         dev = self._device
-        info = DeviceInfo(
+        mac = str(dev.get("mac") or "").strip() or None
+        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
+
+        return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             manufacturer=MANUFACTURER,
             model=dev.get("brand") or "Airzone DKN",
             sw_version=str(dev.get("firmware") or ""),
             name=dev.get("name") or "Airzone Device",
+            connections=connections,
         )
-        mac = dev.get("mac")
-        if mac:
-            # HA will normalize the connection type to "mac"
-            info["connections"] = {("mac", str(mac))}
-        return info
 
     # ---- Core state ------------------------------------------------------
 
