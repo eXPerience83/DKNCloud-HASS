@@ -25,7 +25,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneCoordinator
-from .const import DOMAIN, MANUFACTURER, INTERNAL_STALE_AFTER_SEC
+from .const import DOMAIN, INTERNAL_STALE_AFTER_SEC, MANUFACTURER
 
 _LOGGER = logging.getLogger(__name__)
 
