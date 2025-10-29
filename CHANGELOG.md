@@ -1,12 +1,10 @@
 # Changelog
 
-## [0.4.0a8] - 2025-10-29
+## [0.4.0a9] - 2025-10-29
 ### Refactor
-- Device Registry: unify `DeviceInfo` across all platforms (climate, binary_sensor,
-  sensor, switch, number) and pass `connections` via the constructor using
-  `CONNECTION_NETWORK_MAC` when a MAC is available.
-
-## [0.4.0a7] - 2025-10-29
+- Device Registry: pass `connections` via the `DeviceInfo` constructor using
+  `CONNECTION_NETWORK_MAC` across all platforms (climate, binary_sensor, sensor,
+  switch, number). Avoid post-construction mutation of `DeviceInfo`.
 ### Breaking/Behavior
 - Remove all migration paths. From now on, the integration stores the token at rest in
   `entry.options['user_token']` from day one; `entry.data` contains only the username.
@@ -28,9 +26,13 @@
 ### Breaking
 - Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy
   `select.scenary` entity is removed. Update automations to use `climate.set_preset_mode`.
-### Security
+### Security/Privacy
 - Password is never persisted; it is used transiently for login/reauth and wiped from
   memory as soon as possible.
+- Clarify documentation: Home Assistant does **not** encrypt `config_entries`
+  (`data` or `options`) by default. We keep the token in `entry.options`
+  for structural reasons (separation from identity data) and to reduce churn
+  when editing options, **not** for encryption.
 ### Refactor
 - `device_info` now returns a `DeviceInfo` object for HA's device registry.
 ### UX
