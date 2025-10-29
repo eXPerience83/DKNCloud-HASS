@@ -296,7 +296,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         try:
             # Canonical write path (no legacy helpers).
-            await api.put_device_fields(self._device_id, {"device": {"scenary": scenary}})
+            await api.put_device_fields(
+                self._device_id, {"device": {"scenary": scenary}}
+            )
         except asyncio.CancelledError:
             raise
         except Exception as err:
