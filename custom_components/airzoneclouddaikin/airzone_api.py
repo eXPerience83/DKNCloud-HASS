@@ -2,9 +2,8 @@
 
 Auth & resilience:
 - No "silent re-login": HTTP 401 is surfaced so the coordinator opens a reauth flow.
-- Backoff with jitter is applied to transient 429/5xx responses.
-- GET endpoints also use backoff (not just writes).
-- Logging remains secret-safe (never prints full URLs with query params).
+- Backoff with jitter is applied to transient 429/5xx responses (GET and writes).
+- Logging remains secret-safe (never logs full URLs with query params).
 
 P3:
 - Provide a safe __repr__ that never leaks the token and masks the email,
@@ -19,8 +18,9 @@ Timeouts:
 - Catch only built-in TimeoutError (asyncio.TimeoutError is an alias on 3.11+).
 - Do ONE gentle retry on timeouts.
 
-Note:
-- 401 is *never* retried here; it must bubble up to the coordinator.
+Important:
+- 401 is never retried here; it must bubble up to the coordinator.
+- Legacy "scenary" helpers have been **removed**. Use put_device_fields(...) instead.
 """
 
 from __future__ import annotations
@@ -324,22 +324,19 @@ class AirzoneAPI:
             )
         except ClientResponseError as cre:
             if cre.status == 422:
-                # Service call messages are not translated by HA, keep neutral English.
+                # Service call messages are not translated by HA, keep neutral English for now (i18n pending).
                 raise HomeAssistantError("DKN WServer not connected (422)") from cre
             raise
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
-        """PUT /devices/{id} with provided payload (retries for 429/5xx)."""
+        """PUT /devices/{id} with provided payload (retries for 429/5xx).
+
+        Canonical method for *all* device field writes (including what used to be "scenary").
+        Example:
+            await api.put_device_fields("123", {"device": {"preset": "sleep"}})
+        """
         params = self._auth_params() | {"format": "json"}
         path = f"{API_DEVICES}/{device_id}"
         return await self._authed_request_with_retries(
             "PUT", path, params=params, json=payload
         )
-
-    async def put_device_scenary(self, device_id: str, scenary: str) -> Any:
-        """PUT scenary field (compat with backend spelling)."""
-        return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})
-
-    async def put_device_sleep_time(self, device_id: str, minutes: int) -> Any:
-        """PUT sleep_time (minutes)."""
-        return await self.put_device_fields(device_id, {"sleep_time": int(minutes)})

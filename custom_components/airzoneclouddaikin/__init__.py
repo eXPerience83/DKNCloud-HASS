@@ -1,29 +1,28 @@
-"""DKN Cloud for HASS integration setup with connectivity notifications (PR A).
+"""DKN Cloud for HASS integration setup (0.4.0a8, options guardrails; no migrations).
 
-Key points implemented in this file:
-- Token-only storage + reauth flow on 401 (as before).
-- DataUpdateCoordinator fetch remains the same.
-- NEW: Post-refresh listener detects ONLINE↔OFFLINE transitions per device_id
-  using connection_date + stale_after_minutes, with a 90s debounce to avoid
-  flapping, and manages persistent notifications:
-  * One "offline" notification per device (stable notification_id).
-  * Auto-dismiss of the "offline" banner when the device comes back online.
-  * Optional "back online" banner that auto-closes after 20s.
-- No I/O in entity properties; everything happens around the coordinator.
+Key points in this revision:
+- Token and settings are read exclusively from entry.options (no data fallback).
+- Removed the `stale_after_minutes` option. Offline detection now uses a fixed
+  internal threshold (10 minutes) plus a 90 s debounce for notifications.
+- Select platform remains removed (preset modes are native in climate).
+- Keep and cancel async_call_later handles via entry.async_on_unload(...) to avoid leaks.
+- On 401 in the coordinator, open a reauth flow; on missing token in setup, raise
+  ConfigEntryAuthFailed so HA triggers the reauth UI.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
 from aiohttp import ClientResponseError
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -31,20 +30,22 @@ from homeassistant.util import dt as dt_util
 
 from .airzone_api import AirzoneAPI
 from .const import (
-    CONF_STALE_AFTER_MINUTES,
     DOMAIN,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
     PN_KEY_PREFIX,
     PN_MESSAGES,
     PN_TITLES,
-    STALE_AFTER_MINUTES_DEFAULT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10
+# Fixed stale threshold for connectivity (minutes).
+OFFLINE_STALE_MINUTES = 10
+
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
+_EXTRA_PLATFORMS: list[str] = ["number"]  # keep number for now
 
 
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -90,8 +91,6 @@ async def _async_update_data(
         return data
 
     except asyncio.CancelledError:
-        # English: propagate cancellations without converting them into UpdateFailed
-        # so HA reload/stop remains clean.
         raise
     except ClientResponseError as cre:
         if cre.status == 401:
@@ -102,8 +101,8 @@ async def _async_update_data(
                 hass.async_create_task(
                     hass.config_entries.flow.async_init(
                         DOMAIN,
-                        context={"source": "reauth", "entry_id": entry.entry_id},
-                        data={CONF_USERNAME: entry.data.get(CONF_USERNAME)},
+                        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+                        data=dict(entry.data),
                     )
                 )
             raise UpdateFailed("Authentication required (401)") from cre
@@ -128,11 +127,7 @@ def _fmt(
     last_iso: str | None,
     mins: int | None,
 ) -> tuple[str, str]:
-    """Render title & message with minimal localization.
-
-    English: We avoid full runtime i18n complexity for now; we pick ES if HA
-    language starts with 'es', otherwise EN. No PII in these strings.
-    """
+    """Render title & message with minimal localization; no PII in these strings."""
     lang = _choose_lang(hass)
     titles = PN_TITLES.get(lang) or PN_TITLES["en"]
     msgs = PN_MESSAGES.get(lang) or PN_MESSAGES["en"]
@@ -147,11 +142,11 @@ def _fmt(
     return title, message
 
 
-def _is_online(dev: dict[str, Any], now: datetime, stale_minutes: int) -> bool:
+def _is_online(dev: dict[str, Any], now: datetime) -> bool:
     """Compute online state based on connection_date age.
 
-    English: If the timestamp cannot be parsed, assume online to prevent false
-    alarms. If absent, treat as offline because we lack evidence of connectivity.
+    If the timestamp cannot be parsed, assume online to prevent false alarms.
+    If absent, treat as offline because we lack evidence of connectivity.
     """
     s = dev.get("connection_date")
     if not s:
@@ -159,96 +154,58 @@ def _is_online(dev: dict[str, Any], now: datetime, stale_minutes: int) -> bool:
     dt = dt_util.parse_datetime(str(s))
     if dt is None:
         return True
-    # Normalize to UTC for age calculation
     dt = dt_util.as_utc(dt)
     age = (now - dt).total_seconds()
-    return age <= stale_minutes * 60
+    return age <= OFFLINE_STALE_MINUTES * 60
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up DKN Cloud for HASS from a config entry."""
+    """Set up DKN Cloud for HASS from a config entry (no migrations)."""
     hass.data.setdefault(DOMAIN, {})
     cfg = entry.data
+    opts = entry.options
 
     session = async_get_clientsession(hass)
-    # Canonical key is CONF_USERNAME, which stores the email.
     username = cfg.get(CONF_USERNAME)
-    token = cfg.get("user_token")
-    password = cfg.get("password")  # legacy only
 
-    # --- Migration: password -> token (one-time) ---
-    if password and not token:
-        _LOGGER.info("Migrating entry to token-only storage (one-time login).")
-        legacy_api = AirzoneAPI(username, session, password=password, token=None)
-        try:
-            ok = await legacy_api.login()
-        except asyncio.CancelledError:
-            # English: do not convert cancel into NotReady; just bubble up.
-            raise
-        except Exception as exc:  # network/429/5xx/timeout/etc.
-            # Do NOT open reauth on transient errors; let HA retry cleanly.
-            _LOGGER.warning(
-                "Migration deferred due to %s; will retry later.",
-                type(exc).__name__,
-            )
-            raise ConfigEntryNotReady("Temporary error during migration") from exc
+    # Read token exclusively from options (no fallback to data).
+    token = opts.get("user_token")
 
-        if not ok:
-            # Invalid auth or unexpected response (no token): require reauth.
-            _LOGGER.warning("Migration invalid auth; requiring reauth.")
-            hass.async_create_task(
-                hass.config_entries.flow.async_init(
-                    DOMAIN,
-                    context={"source": "reauth", "entry_id": entry.entry_id},
-                    data={CONF_USERNAME: username},
-                )
-            )
-            raise ConfigEntryNotReady("Reauth required to migrate token")
-
-        # Persist new token and purge password
-        token = legacy_api.token
-        new_data = dict(cfg)
-        new_data.pop("password", None)
-        new_data["user_token"] = token
-        hass.config_entries.async_update_entry(entry, data=new_data)
-        _LOGGER.info("Migration completed: password purged; token stored.")
+    if not token:
+        _LOGGER.warning(
+            "No token available in options; raising ConfigEntryAuthFailed to trigger reauth."
+        )
+        raise ConfigEntryAuthFailed("Token required; reauth triggered")
 
     # Runtime API: token-only
     api = AirzoneAPI(username, session, password=None, token=token)
 
-    scan_interval = int(
-        entry.options.get(
-            "scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
-        )
-    )
+    scan_interval = int(opts.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
+    # Runtime clamp for safety even if UI guardrails are bypassed.
+    scan_interval = max(10, min(30, scan_interval))
 
     coordinator: AirzoneCoordinator = AirzoneCoordinator(
         hass,
         _LOGGER,
         name="airzone_data",
         update_method=lambda: _async_update_data(hass, entry, api),
-        update_interval=timedelta(seconds=max(10, scan_interval)),
+        update_interval=timedelta(seconds=scan_interval),
     )
     coordinator.api = api
 
-    # First refresh: may set reauth_requested=True inside _async_update_data
     await coordinator.async_config_entry_first_refresh()
 
-    # ---- Preserve any previously-set 'reauth_requested' flag (FIX) ----
-    bucket = hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
     prev_flag = bool(bucket.get("reauth_requested", False))
     bucket["api"] = api
     bucket["coordinator"] = coordinator
-    # Keep the flag if it was set during first refresh; otherwise default to False.
     bucket["reauth_requested"] = prev_flag
 
-    # ---------------- NEW: connectivity notifications listener -------------
-    # English: We keep a small per-device state (previous online/offline and
-    # the instant when the offline transition was first seen).
+    # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
-    stale_minutes = int(
-        entry.options.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
-    )
+
+    cancel_handles: list[Callable[[], None]] = []
+    bucket["cancel_handles"] = cancel_handles
 
     def _on_coordinator_update() -> None:
         now = dt_util.utcnow()
@@ -256,7 +213,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         for dev_id, dev in data.items():
             name = str(dev.get("name") or dev_id)
-            online = _is_online(dev, now, stale_minutes)
+            online = _is_online(dev, now)
             st = notify_state.setdefault(
                 dev_id, {"last": True, "since_offline": None, "notified": False}
             )
@@ -268,7 +225,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 st["since_offline"] = now
                 st["notified"] = False
                 _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
-                continue  # process remaining devices in this cycle
+                continue
 
             # While OFFLINE: check debounce and notify once
             if not last and not online:
@@ -280,20 +237,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     not st.get("notified")
                     and (now - since).total_seconds() >= OFFLINE_DEBOUNCE_SEC
                 ):
-                    # Build and create the persistent notification (single ID)
                     nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     last_iso = str(dev.get("connection_date") or "—")
-                    # Compute minutes (approximate)
                     dt_last = (
                         dt_util.parse_datetime(str(dev.get("connection_date") or ""))
                         or now
                     )
                     mins = int(
-                        max(
-                            0,
-                            (now - dt_util.as_utc(dt_last)).total_seconds() // 60,
-                        )
+                        max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
                     )
                     title, message = _fmt(
                         hass, "offline", name, ts_local, last_iso, mins
@@ -312,10 +264,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 st["notified"] = False
 
                 nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                # Always dismiss the offline banner if it existed
                 hass.components.persistent_notification.async_dismiss(nid)
 
-                # Show "back online" banner (auto-dismiss after ONLINE_BANNER_TTL_SEC)
                 ts_local = dt_util.as_local(now).strftime("%H:%M")
                 title, message = _fmt(hass, "online", name, ts_local, None, None)
                 nid_online = f"{nid}:online"
@@ -324,33 +274,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 _LOGGER.info("[%s] WServer back online.", dev_id)
 
-                # Bind the notification id as a default argument to avoid late binding.
-                async_call_later(
+                cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(  # noqa: E501
+                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
                         _nid
                     ),
                 )
+                cancel_handles.append(cancel)
+                entry.async_on_unload(cancel)
                 continue
 
-            # No transition: update last state to current for completeness
+            # No transition
             st["last"] = online
 
-    # Attach the listener and keep its unsubscribe to avoid leaks on reload/unload.
-    # English: Always register the unsubscribe callback with the entry.
     unsub = coordinator.async_add_listener(_on_coordinator_update)
     entry.async_on_unload(unsub)
 
-    # Load platforms
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
-    await hass.config_entries.async_forward_entry_setups(entry, ["select", "number"])
+    if _EXTRA_PLATFORMS:
+        await hass.config_entries.async_forward_entry_setups(entry, _EXTRA_PLATFORMS)
 
-    # Options updates
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
     _LOGGER.info(
-        "DKN Cloud for HASS configured (scan_interval=%ss; token-only auth).",
+        "DKN Cloud for HASS configured (scan_interval=%ss; token from options).",
         scan_interval,
     )
     return True
@@ -364,13 +312,18 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = True
-    for platform in _BASE_PLATFORMS + ["select", "number"]:
+    for platform in _BASE_PLATFORMS + _EXTRA_PLATFORMS:
         try:
             ok = await hass.config_entries.async_forward_entry_unload(entry, platform)
             unload_ok = unload_ok and ok
         except Exception:  # noqa: BLE001
             continue
 
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+    bucket = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {}) if unload_ok else {}
+    for cancel in bucket.get("cancel_handles", []):
+        try:
+            cancel()
+        except Exception:  # noqa: BLE001
+            pass
+
     return unload_ok

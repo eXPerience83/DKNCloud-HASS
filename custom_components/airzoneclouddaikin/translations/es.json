@@ -9,8 +9,7 @@
           "username": "Email",
           "password": "Contraseña",
           "scan_interval": "Intervalo de sondeo (segundos)",
-          "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
-          "stale_after_minutes": "Considerar offline tras (minutos)"
+          "expose_pii_identifiers": "Exponer identificadores PII (avanzado)"
         }
       },
       "reauth_confirm": {
@@ -38,8 +37,7 @@
         "title": "Opciones",
         "data": {
           "scan_interval": "Intervalo de sondeo (segundos)",
-          "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
-          "stale_after_minutes": "Considerar offline tras (minutos)"
+          "expose_pii_identifiers": "Exponer identificadores PII (avanzado)"
         }
       }
     }

@@ -1,6 +1,58 @@
 # Changelog
 
-## 0.3.15a7 - 2025-10-28
+## [0.4.0 - RC1] - 2025-10-29
+### Changed
+- Options guardrails: `scan_interval` now constrained to 10–30 s (default 10).
+- Remove `stale_after_minutes` from Options/UI; connectivity uses a fixed 10-minute
+  staleness threshold plus a 90 s debounce for notifications.
+- Runtime clamps `scan_interval` to 10–30 s even if Options are bypassed.
+### Refactor
+- Device Registry: pass `connections` via the `DeviceInfo` constructor using
+  `CONNECTION_NETWORK_MAC` across all platforms (climate, binary_sensor, sensor,
+  switch, number). Avoid post-construction mutation of `DeviceInfo`.
+- `device_info` now returns a `DeviceInfo` object for HA’s device registry.
+### Breaking/Behavior
+- Remove all migration paths. From now on, the integration stores the token at rest in
+  `entry.options['user_token']` from day one; `entry.data` contains only the username.
+  No fallback to `entry.data` remains.
+### Fixed
+- Options flow always merges with existing options, preserving hidden keys
+  (notably `user_token`) and avoiding accidental credential loss.
+- config_flow: preserve hidden options (`user_token`) when saving Options to avoid
+  post-restart auth failures.
+- config_flow: reauth flow robustly resolves the target entry even if `entry_id`
+  is missing from the context, ensuring the password UI appears.
+- config_flow: avoid hard imports of optional locals at import time to prevent
+  rare 500 errors when modules aren’t ready.
+- climate: write preset modes (`home`, `away`, `sleep`) via the canonical
+  `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path.
+  Removed legacy fallbacks to deprecated scenary helpers. Optimistic scenary
+  state is kept and invalidated on backend mismatch.
+- Cancel `async_call_later` handles on unload to avoid potential leaks.
+- Clean imports/consts after removing `stale_after_minutes`.
+### Breaking
+- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy
+  `select.scenary` entity is removed. Update automations to use `climate.set_preset_mode`.
+### Security/Privacy
+- Password is never persisted; it is used transiently for login/reauth and wiped from
+  memory as soon as possible.
+- Clarification: we **do not rely on or promise encryption at rest** for `config_entries`
+  (`data` or `options`). We keep the token in `entry.options` for structural reasons
+  (separation from identity data) and to reduce churn when editing options.
+### Docs
+- README: remove all mentions of `select.scenary`, highlight native preset modes, and
+  keep the **Acknowledgments** section intact.
+
+## [0.3.16a1] - 2025-10-28
+### Added
+- Climate: Fan modes normalized when `availables_speeds == 3` — the UI shows
+  `low / medium / high`. Other devices keep numeric labels (`1..N`). No behavior
+  change in DRY/OFF (fan selector hidden).
+### Diagnostics
+- New diagnostic sensor: `fan_modes_normalized` (True/False) to indicate whether
+  the UI uses common labels (`low/medium/high`) or numeric ones (`1..N`).
+
+## 0.3.15 - 2025-10-28
 ### Security/Privacy
 - Diagnostics: expanded static redaction set (owner_id, installer_email/phone, postal_code, device_ids, serial/uuid) and defensive regex for owner/installer/phone/postal.
 ### Changed

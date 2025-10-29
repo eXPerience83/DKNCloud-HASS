@@ -1,17 +1,22 @@
 """Home Assistant climate entity for DKN Cloud (Airzone Cloud).
 
+P4-B changes in this revision (0.4.0a3):
+- BREAKING: Use native `preset_modes` (home/away/sleep) instead of exposing a
+  separate select.scenary entity. Preset ↔ scenary mapping is handled internally.
+- FIX: Write presets via the canonical API method `put_device_fields(...)`
+  (helpers like put_device_scenary/set_device_scenary/update_device/put_device
+  have been removed from the API client).
+- REFACTOR: Return a `DeviceInfo` object from `device_info` for forward compatibility.
+- CONSISTENCY: Keep explicit TURN_ON/TURN_OFF advertised in supported_features.
+- METADATA: Pass MAC via constructor `connections` using CONNECTION_NETWORK_MAC (no post-mutation).
+
 Key behaviors (concise):
-- Coordinator-based: no I/O inside properties; writes go via /events and a short refresh.
+- Coordinator-based: no I/O in properties; writes go via /events and short refresh.
 - Integer-only setpoints: precision = whole degrees, target_temperature_step = 1.0 °C.
 - Supported HVAC modes: COOL / HEAT / FAN_ONLY / DRY (no AUTO/HEAT_COOL for now).
 - API mapping: P1=power, P2=mode, P7/P8=setpoint (cool/heat), P3/P4=fan (cool/heat).
 - Ventilate policy: prefer P2=3 if supported; else P2=8; else do not expose FAN_ONLY.
 - Privacy: never log or expose secrets (email/token/MAC/PIN).
-
-Enhancements in this patch:
-- Advertise TURN_ON/TURN_OFF in supported_features (explicit methods already implemented).
-- min_temp/max_temp: per-mode limits (cold/heat); in OFF/FAN_ONLY/DRY return a neutral
-  combined range from backend limits. UI does not show temperature in those modes.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -109,6 +115,23 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         except Exception:
             return 0
 
+    def _use_normalized_fan_labels(self) -> bool:
+        """Return True when we should expose low/medium/high instead of numeric."""
+        return self._fan_speed_max() == 3
+
+    @staticmethod
+    def _num_to_label(num: str) -> str:
+        """Map '1'/'2'/'3' to 'low'/'medium'/'high' (fallback to input if unknown)."""
+        mapping = {"1": "low", "2": "medium", "3": "high"}
+        return mapping.get(str(num), str(num))
+
+    @staticmethod
+    def _label_to_num(label: str) -> str:
+        """Map 'low'/'medium'/'high' to '1'/'2'/'3' (fallback to input if unknown)."""
+        norm = (label or "").strip().lower()
+        mapping = {"low": "1", "medium": "2", "high": "3"}
+        return mapping.get(norm, label)
+
     def _device_power_on(self) -> bool:
         """Normalize backend/optimistic power to bool."""
         p = self._optimistic.get("power", self._device.get("power"))
@@ -169,6 +192,20 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self._optimistic.clear()
             self._optimistic_expires = None
 
+    def _optimistic_deadline(self) -> float:
+        """Compute an optimistic deadline that always covers at least one refresh window.
+
+        We keep the UX responsive while avoiding UI flicker where the very first
+        coordinator refresh still shows the pre-write snapshot.
+        """
+        try:
+            ttl = max(
+                float(OPTIMISTIC_TTL_SEC), float(POST_WRITE_REFRESH_DELAY_SEC) + 2.0
+            )
+        except Exception:
+            ttl = float(OPTIMISTIC_TTL_SEC)
+        return self.coordinator.hass.loop.time() + ttl
+
     # ---- Preset/scenary mapping -----------------------------------------
 
     @staticmethod
@@ -196,19 +233,24 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Device info -----------------------------------------------------
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
+        """Return rich device metadata for the device registry.
+
+        NOTE: We pass the MAC through the constructor 'connections' using
+        CONNECTION_NETWORK_MAC and avoid mutating the object after creation.
+        """
         dev = self._device
-        info = {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": MANUFACTURER,
-            "model": dev.get("brand") or "Airzone DKN",
-            "sw_version": dev.get("firmware") or "",
-            "name": dev.get("name") or "Airzone Device",
-        }
-        mac = dev.get("mac")
-        if mac:
-            info["connections"] = {("mac", mac)}
-        return info
+        mac = (str(dev.get("mac") or "").strip()) or None
+        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
+
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            manufacturer=MANUFACTURER,
+            model=dev.get("brand") or "Airzone DKN",
+            sw_version=str(dev.get("firmware") or ""),
+            name=dev.get("name") or "Airzone Device",
+            connections=connections,
+        )
 
     # ---- Core state ------------------------------------------------------
 
@@ -249,6 +291,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         return self._scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Map HA preset → backend scenary and write via put_device_fields()."""
         if preset_mode not in (self.preset_modes or []):
             _LOGGER.debug(
                 "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
@@ -270,26 +313,19 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         try:
-            if hasattr(api, "put_device_scenary"):
-                await api.put_device_scenary(self._device_id, scenary)
-            elif hasattr(api, "set_device_scenary"):
-                await api.set_device_scenary(self._device_id, scenary)
-            elif hasattr(api, "update_device"):
-                await api.update_device(self._device_id, {"scenary": scenary})
-            elif hasattr(api, "put_device"):
-                await api.put_device(self._device_id, {"scenary": scenary})
-            else:
-                raise NotImplementedError("No scenary setter available on API client")
+            # Canonical write path (no legacy helpers).
+            await api.put_device_fields(
+                self._device_id, {"device": {"scenary": scenary}}
+            )
         except asyncio.CancelledError:
             raise
         except Exception as err:
             _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
             raise
 
+        # Optimistic state while we await the refresh.
         self._optimistic["scenary"] = scenary
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -389,9 +425,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             await self._send_p_event("P8", f"{temp}.0")
             self._optimistic["heat_consign"] = temp
 
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -399,14 +433,18 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @property
     def fan_modes(self) -> list[str] | None:
+        """Expose common labels when exactly 3 speeds exist; otherwise numeric."""
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             return []
         n = self._fan_speed_max()
-        return [str(i) for i in range(1, n + 1)] if n > 0 else []
+        if n == 3:
+            return ["low", "medium", "high"]
+        return [str(i) for i in range(1, n + 1)]
 
     @property
     def fan_mode(self) -> str | None:
+        """Return current fan mode; map 1/2/3 to low/medium/high when normalized."""
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             return None
@@ -420,18 +458,33 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             key = "heat_speed" if code == "8" else "cold_speed"
 
         val = self._optimistic.get(key, self._device.get(key))
-        return str(val) if val else None
+        if not val:
+            return None
+
+        sval = str(val)
+        if self._use_normalized_fan_labels():
+            return self._num_to_label(sval)
+        return sval
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
+        """Accept normalized labels (low/medium/high) or numeric strings."""
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY):
             _LOGGER.debug("Ignoring set_fan_mode in mode %s", mode)
             return
-        if fan_mode not in (self.fan_modes or []):
-            _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, self.fan_modes)
+        allowed = self.fan_modes or []
+        if fan_mode not in allowed:
+            _LOGGER.debug("Invalid fan_mode %s (allowed %s)", fan_mode, allowed)
             return
 
         await self._auto_exit_away_if_needed("set_fan_mode")
+
+        # Map label to numeric when normalized
+        value_to_send = (
+            self._label_to_num(fan_mode)
+            if self._use_normalized_fan_labels()
+            else fan_mode
+        )
 
         if mode == HVACMode.HEAT:
             option = "P4"
@@ -448,12 +501,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 option = "P3"
                 key = "cold_speed"
 
-        await self._send_p_event(option, fan_mode)
-        self._optimistic[key] = fan_mode
+        await self._send_p_event(option, value_to_send)
+        self._optimistic[key] = value_to_send
 
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -479,7 +530,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
-        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -502,7 +553,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         await self._send_p_event("P1", 0)
         self._optimistic.update({"power": "0"})
-        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -510,9 +561,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if hvac_mode == HVACMode.OFF:
             await self._send_p_event("P1", 0)
             self._optimistic.update({"power": "0"})
-            self._optimistic_expires = (
-                self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-            )
+            self._optimistic_expires = self._optimistic_deadline()
             self.async_write_ha_state()
             self._schedule_refresh()
             return
@@ -538,9 +587,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 await self._send_p_event("P2", mode_code)
                 self._optimistic.update({"power": "1", "mode": mode_code})
 
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -620,6 +667,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 self._optimistic.clear()
                 self._optimistic_expires = None
             else:
+                # If backend scenary differs from our optimistic one, drop optimistic early.
                 try:
                     if "scenary" in self._optimistic:
                         scen_o = str(self._optimistic.get("scenary"))

@@ -24,7 +24,6 @@ BASE_URL = "https://dkn.airzonecloud.com"
 # ----------------------------- HTTP Defaults ------------------------------
 # Standard User-Agent to be used in all API requests
 # (Kept browser-like; do not disclose Home Assistant in UA)
-# P2: slightly more generic UA to reduce fingerprinting.
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -32,15 +31,9 @@ USER_AGENT = (
 )
 
 # Global HTTP timeout (seconds).
-# English: Align with HA expectations and slow links; was 15, now 30 by default.
 REQUEST_TIMEOUT = 30
 
 # --- Endpoint-specific minimal headers (browser-like) ---------------------
-# English:
-# Keep headers minimal and let _request() always inject the global User-Agent.
-# For GETs we do not need any extra headers beyond the UA already added by _request().
-
-# - POST /events: JSON payload plus XHR-style headers as per the cURL example.
 HEADERS_EVENTS = {
     # "User-Agent" is intentionally omitted here to avoid duplication;
     # _request() always injects the global USER_AGENT.
@@ -49,29 +42,22 @@ HEADERS_EVENTS = {
     "Accept": "application/json, text/plain, */*",
 }
 
-# --- Shared optimistic timings (used by climate/switch/number/select) ----
-# English: Centralized values to keep UX consistent and ease future tuning.
+# --- Shared optimistic timings (used by climate/switch/number) ----
 OPTIMISTIC_TTL_SEC: float = 2.5
 POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
 
-# ---------------- Connectivity options (passive, without pings) -----------
-# English: Threshold to consider the device offline when `connection_date` gets too old.
-CONF_STALE_AFTER_MINUTES = "stale_after_minutes"
-STALE_AFTER_MINUTES_DEFAULT = 10
-# UI min/max are validated in config_flow.py only (range 6..30).
-
 # -------------------- UX: Persistent notifications (PR A) -----------------
-# English: Debounce to avoid flapping (seconds the device must remain offline
+# Debounce to avoid flapping (seconds the device must remain offline
 # before raising a notification).
 OFFLINE_DEBOUNCE_SEC = 90
 
-# English: Time to auto-dismiss the "back online" banner (seconds).
+# Time to auto-dismiss the "back online" banner (seconds).
 ONLINE_BANNER_TTL_SEC = 20
 
-# English: Notification ID prefix (stable per device_id to avoid duplicates).
+# Notification ID prefix (stable per device_id to avoid duplicates).
 PN_KEY_PREFIX = f"{DOMAIN}:wserver_offline:"
 
-# English: Minimal i18n templates (kept here to avoid runtime i18n complexity).
+# Minimal i18n templates (kept here to avoid runtime i18n complexity).
 # We prefer Spanish if hass.config.language starts with "es"; otherwise English.
 PN_TITLES = {
     "en": {
@@ -101,3 +87,8 @@ PN_MESSAGES = {
         "online": "Conexión restablecida a las {ts_local}.",
     },
 }
+
+# ---------------- Connectivity / online sensors (fixed policy) ------------
+# Fixed internal threshold for passive connectivity sensors (e.g. wserver_online):
+# If last contact age <= 10 minutes, consider "online" (notifications add a 90s debounce).
+INTERNAL_STALE_AFTER_SEC = 10 * 60
