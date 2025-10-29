@@ -1,19 +1,21 @@
-"""Config & Options flow for DKN Cloud for HASS (P1/P3).
+"""Config & Options flow for DKN Cloud for HASS (P4-B prep).
 
-Changes:
-- P1: On initial setup, store username (email) + user_token (no password).
-      Reauth asks for password, performs login, updates the token in the entry,
-      and never persists the password. YAML import is not supported (UI-only).
-- P3: Add a UI-level timeout (60s) to the reauth login step so the form cannot
-      hang indefinitely if the browser tab is left open or the network stalls.
+Changes in this revision (0.4.0):
+- SECURITY: Keep token at rest in entry.options instead of entry.data.
+- CHORE: Immediately wipe the local password variable after login (reduce lifetime in memory).
+- REAUTH: Update token into entry.options (merge with existing options), never persist password.
+- OPTIONS: Still manage scan_interval / expose_pii_identifiers / stale_after in options.
 
-Notes:
-- The HTTP layer already enforces a ClientTimeout(total=30s). The UI timeout
-  complements it and provides a clear error message to the user.
+Implementation notes:
+- Home Assistant's ConfigFlow API doesn't allow creating options atomically at
+  entry creation time. We therefore create the entry with data (username only)
+  and migrate the freshly obtained token into options during setup/migration.
+- We ALSO update options directly on reauth (since we already have the entry).
 
-Implementation note:
-- Catch only built-in TimeoutError. On Python 3.11+ asyncio.TimeoutError is an
-  alias of TimeoutError, so this remains correct while satisfying Ruff/Black.
+This file intentionally does not add UX flags like "show_connectivity_notifications"
+and does not obfuscate names: you requested notifications to be always-on and the
+current message format doesn't surface PII.
+
 """
 
 from __future__ import annotations
@@ -37,13 +39,13 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Option keys (kept stable)
+# Stable option keys
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_EXPOSE_PII = "expose_pii_identifiers"
 
 DATA_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USERNAME): cv.string,  # stores email
+        vol.Required(CONF_USERNAME): cv.string,  # email
         vol.Required(CONF_PASSWORD): cv.string,
         vol.Optional(CONF_SCAN_INTERVAL, default=10): vol.All(
             vol.Coerce(int), vol.Range(min=10, max=30)
@@ -56,7 +58,8 @@ DATA_SCHEMA = vol.Schema(
 class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the config flow for DKN Cloud for HASS."""
 
-    VERSION = 1
+    # Bump version so HA can run async_migrate_entry when needed.
+    VERSION = 2
 
     def __init__(self) -> None:
         self._reauth_entry_id: str | None = None
@@ -81,11 +84,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
             else:
                 session = async_get_clientsession(self.hass)
-                api = AirzoneAPI(
-                    user_input[CONF_USERNAME],
-                    session,
-                    password=user_input[CONF_PASSWORD],
-                )
+                # Keep a local reference to password and wipe it right after use.
+                _pwd = user_input.get(CONF_PASSWORD)
+                api = AirzoneAPI(user_input[CONF_USERNAME], session, password=_pwd)
                 try:
                     ok = await api.login()
                 except Exception as exc:  # noqa: BLE001
@@ -94,17 +95,26 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                     errors["base"] = "cannot_connect"
                 else:
+                    # Wipe password from memory ASAP (hardening)
+                    try:
+                        if _pwd is not None:
+                            _pwd = None
+                        if CONF_PASSWORD in user_input:
+                            user_input[CONF_PASSWORD] = None
+                            del user_input[CONF_PASSWORD]
+                    except Exception:  # noqa: BLE001
+                        pass
+
                     if ok and api.token:
+                        # Create entry with username only. Token will be migrated
+                        # into entry.options during setup/migration.
                         return self.async_create_entry(
                             title="DKN Cloud for HASS",
-                            data={
-                                CONF_USERNAME: user_input[CONF_USERNAME],
-                                "user_token": api.token,
-                                CONF_SCAN_INTERVAL: user_input.get(
-                                    CONF_SCAN_INTERVAL, 10
-                                ),
-                                CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False),
-                            },
+                            data={CONF_USERNAME: user_input[CONF_USERNAME],
+                                  # temporary compatibility fields (read by setup to move to options)
+                                  "user_token": api.token,
+                                  CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL, 10),
+                                  CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False)},
                         )
                     errors["base"] = "invalid_auth"
 
@@ -121,7 +131,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Ask for password, perform login, update the token, never persist password."""
+        """Ask for password, perform login, update the token in entry.options, never persist password."""
         errors: dict[str, str] = {}
 
         entry = None
@@ -141,7 +151,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         session = async_get_clientsession(self.hass)
         from .airzone_api import AirzoneAPI  # local import
 
-        api = AirzoneAPI(username, session, password=user_input[CONF_PASSWORD])
+        # Keep a local reference and wipe it after use.
+        _pwd = user_input.get(CONF_PASSWORD)
+        api = AirzoneAPI(username, session, password=_pwd)
 
         try:
             # UI-level 60s guard; built-in TimeoutError also covers asyncio timeouts.
@@ -161,16 +173,26 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="reauth_confirm", data_schema=schema, errors=errors
             )
 
+        # Wipe password from memory ASAP (hardening)
+        try:
+            if _pwd is not None:
+                _pwd = None
+            if user_input and CONF_PASSWORD in user_input:
+                user_input[CONF_PASSWORD] = None
+                del user_input[CONF_PASSWORD]
+        except Exception:  # noqa: BLE001
+            pass
+
         if not ok or not api.token:
             errors["base"] = "invalid_auth"
             return self.async_show_form(
                 step_id="reauth_confirm", data_schema=schema, errors=errors
             )
 
-        new_data = dict(entry.data)
-        new_data["user_token"] = api.token
-        new_data.pop(CONF_PASSWORD, None)
-        self.hass.config_entries.async_update_entry(entry, data=new_data)
+        # Merge new token into options; never write password.
+        new_opts = dict(entry.options)
+        new_opts["user_token"] = api.token
+        self.hass.config_entries.async_update_entry(entry, options=new_opts)
 
         return self.async_abort(reason="reauth_successful")
 
