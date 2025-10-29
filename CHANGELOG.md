@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 - UNRELEASED
+### Breaking
+- Removed `select.scenary` platform. Use native `climate.set_preset_mode` with `home/away/sleep`.
+  Update automations accordingly.
+### Security
+- Store `user_token` in `config_entry.options` instead of `data`. Legacy `password` is removed.
+  A migration moves existing tokens from data to options automatically.
+### Fixes
+- Cancel `async_call_later` handles on unload to avoid potential leaks.
+### Notes
+- If you upgrade from < 0.4.0, please go through any 0.4.x release before 0.5.0 so that
+  your config entry migrates secrets out of `data`. If no token is present, the integration
+  will ask you to re-authenticate.
+
 ## 0.3.16a1 - 2025-10-28
 ### Added
 - Climate: Fan modes normalized when `availables_speeds == 3` — the UI now shows
