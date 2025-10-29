@@ -1,32 +1,12 @@
 """Number platform for DKN Cloud for HASS: sleep_time and unoccupied limits.
 
+0.4.0 metadata consistency:
+- device_info now returns a DeviceInfo object (aligned with climate/sensor/switch).
+- Keep optimistic/idempotent writes and clamping.
+
 Implements NumberEntity for:
-- device 'sleep_time' via AirzoneAPI.put_device_sleep_time()
-  * Valid range: 30..120 minutes, step 10.
-  * Optimistic UI with short TTL, then coordinator refresh.
-- device 'min_temp_unoccupied' and 'max_temp_unoccupied' via AirzoneAPI.put_device_fields()
-  * Fixed ranges (hardcoded by product UI):
-      - min_temp_unoccupied (HEAT): 12..22 °C (step 1)
-      - max_temp_unoccupied (COOL): 24..34 °C (step 1)
-  * Same optimistic/idempotent behavior and refresh.
-
-Design notes:
-- No I/O in properties; reads come from DataUpdateCoordinator.
-- Entities are created only if the backend exposes the fields in GET /devices,
-  same as sleep_time. If the field exists but is missing a value, HA shows 'unknown'.
-
-This change:
-- Unify manufacturer using const.MANUFACTURER in device_info.
-- Use UnitOfTime.MINUTES for DKNSleepTimeNumber to match sensor semantics.
-
-Typing-only change (A9):
-- Import AirzoneCoordinator and parameterize CoordinatorEntity[AirzoneCoordinator].
-- Update type annotations to use AirzoneCoordinator instead of DataUpdateCoordinator.
-
-Device Registry alignment (this patch):
-- device_info now returns a dict (not DeviceInfo) to match other platforms.
-- Fields: identifiers, manufacturer, model (brand or fallback), sw_version (firmware), name, and connections with MAC when present.
-- Removed any reference to 'fw_version' as backend returns 'firmware'.
+- 'sleep_time' (30..120 min, step 10) via AirzoneAPI.put_device_sleep_time() or fields API.
+- 'min_temp_unoccupied' (12..22 °C) and 'max_temp_unoccupied' (24..34 °C) via put_device_fields().
 """
 
 from __future__ import annotations
@@ -39,12 +19,11 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import (
-    EntityCategory,  # Place these controls under Configuration
-)
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .__init__ import AirzoneCoordinator  # typing-aware coordinator (A9)
+from .__init__ import AirzoneCoordinator
 from .airzone_api import AirzoneAPI
 from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
 
@@ -58,10 +37,8 @@ _SLEEP_STEP = 10
 # ------------------------
 # Unoccupied limits constants (hardcoded as per product UI)
 # ------------------------
-# English: Heat → minimum temperature while unoccupied
 _UNOCC_HEAT_MIN = 12
 _UNOCC_HEAT_MAX = 22
-# English: Cool → maximum temperature while unoccupied
 _UNOCC_COOL_MIN = 24
 _UNOCC_COOL_MAX = 34
 _UNOCC_STEP = 1
@@ -122,17 +99,7 @@ class _OptimisticState:
 
 
 class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
-    """Shared logic for DKN numbers (idempotent + optimistic).
-
-    Typing-only note:
-    - CoordinatorEntity is parameterized so `self.coordinator.api` and
-      `self.coordinator.data` are correctly typed in IDEs/linters.
-    """
-
-    # Subclasses must set:
-    # - _field_name
-    # - _native_min/_native_max/_native_step
-    # - _attr_name, _attr_icon, _attr_native_unit_of_measurement
+    """Shared logic for DKN numbers (idempotent + optimistic)."""
 
     _field_name: str
     _native_min: int
@@ -147,7 +114,6 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         device_id: str,
         unique_suffix: str,
     ) -> None:
-        """Initialize entity."""
         super().__init__(coordinator)
         self._api = api
         self._device_id = device_id
@@ -162,28 +128,19 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
 
     # ---------- Device registry ----------
     @property
-    def device_info(self) -> dict[str, Any]:
-        """Return device registry info (PII-safe and unified across platforms).
-
-        Fields:
-        - identifiers: (DOMAIN, device_id)
-        - manufacturer: const.MANUFACTURER
-        - model: device['brand'] or "Airzone DKN"
-        - sw_version: device['firmware'] or ""
-        - name: device['name'] or "Airzone Device"
-        - connections: {("mac", mac)} if present
-        """
+    def device_info(self) -> DeviceInfo:
+        """Return device registry info (PII-safe and unified across platforms)."""
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        info: dict[str, Any] = {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": MANUFACTURER,
-            "model": device.get("brand") or "Airzone DKN",
-            "sw_version": device.get("firmware") or "",
-            "name": device.get("name") or "Airzone Device",
-        }
+        info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            manufacturer=MANUFACTURER,
+            model=device.get("brand") or "Airzone DKN",
+            sw_version=str(device.get("firmware") or ""),
+            name=device.get("name") or "Airzone Device",
+        )
         mac = device.get("mac")
         if mac:
-            info["connections"] = {("mac", mac)}
+            info["connections"] = {("mac", str(mac))}
         return info
 
     # ---------- State ----------
@@ -207,8 +164,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         )
         try:
             return int(val) if val is not None else None
-        except Exception:
-            # Defensive: ignore invalid values
+        except Exception:  # noqa: BLE001
             return None
 
     async def async_set_native_value(self, value: float) -> None:
@@ -233,14 +189,13 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             )
             try:
                 effective = int(raw) if raw is not None else None
-            except Exception:
+            except Exception:  # noqa: BLE001
                 effective = None
 
         if effective is not None and effective == ivalue:
-            # English: Avoid redundant network call.
             return
 
-        # Optimistic state window
+        # Optimistic window
         self._optimistic.value = ivalue
         self._optimistic.valid_until_monotonic = (
             self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
@@ -248,10 +203,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         self.async_write_ha_state()
 
         try:
-            # Root-level payload, as confirmed by captured cURL.
-            await self._api.put_device_fields(
-                self._device_id, {self._field_name: ivalue}
-            )
+            await self._api.put_device_fields(self._device_id, {self._field_name: ivalue})
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -264,9 +216,6 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             await self.coordinator.async_request_refresh()
 
 
-# ------------------------
-# Sleep time number
-# ------------------------
 class DKNSleepTimeNumber(_BaseDKNNumber):
     """Number entity to control sleep_time in minutes."""
 
@@ -278,7 +227,7 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
     _attr_has_entity_name = True
     _attr_name = "Sleep time"
     _attr_icon = "mdi:power-sleep"
-    _attr_native_unit_of_measurement = UnitOfTime.MINUTES  # UI: show 'min'
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES  # UI: 'min'
 
     def __init__(
         self,
@@ -295,9 +244,6 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
         )
 
 
-# ------------------------
-# Unoccupied Heat (min)
-# ------------------------
 class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     """Number entity to control unoccupied heat min temperature (°C)."""
 
@@ -326,9 +272,6 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
         )
 
 
-# ------------------------
-# Unoccupied Cool (max)
-# ------------------------
 class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     """Number entity to control unoccupied cool max temperature (°C)."""
 
