@@ -195,7 +195,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         changed = True
 
     if changed or entry.version < 2:
-        hass.config_entries.async_update_entry(entry, data=data, options=opts, version=2)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=opts, version=2
+        )
         _LOGGER.info("Entry migrated to version 2 (token in options, no password).")
 
     return True
@@ -215,13 +217,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if not token:
         # Let HA drive the reauth flow; avoid starting it manually here to prevent races.
-        _LOGGER.warning("No token available; raising ConfigEntryAuthFailed to trigger reauth.")
+        _LOGGER.warning(
+            "No token available; raising ConfigEntryAuthFailed to trigger reauth."
+        )
         raise ConfigEntryAuthFailed("Token required; reauth triggered")
 
     # Runtime API: token-only
     api = AirzoneAPI(username, session, password=None, token=token)
 
-    scan_interval = int(opts.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)))
+    scan_interval = int(
+        opts.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
+    )
 
     coordinator: AirzoneCoordinator = AirzoneCoordinator(
         hass,
@@ -281,10 +287,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     last_iso = str(dev.get("connection_date") or "—")
                     dt_last = (
-                        dt_util.parse_datetime(str(dev.get("connection_date") or "")) or now
+                        dt_util.parse_datetime(str(dev.get("connection_date") or ""))
+                        or now
                     )
-                    mins = int(max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60))
-                    title, message = _fmt(hass, "offline", name, ts_local, last_iso, mins)
+                    mins = int(
+                        max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
+                    )
+                    title, message = _fmt(
+                        hass, "offline", name, ts_local, last_iso, mins
+                    )
                     hass.components.persistent_notification.async_create(
                         message=message, title=title, notification_id=nid
                     )
@@ -312,7 +323,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(_nid),
+                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
+                        _nid
+                    ),
                 )
                 cancel_handles.append(cancel)
                 entry.async_on_unload(cancel)
@@ -331,7 +344,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.info(
         "DKN Cloud for HASS configured (scan_interval=%ss; token from options).",
-        int(opts.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))),
+        int(
+            opts.get(
+                "scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
+            )
+        ),
     )
     return True
 
