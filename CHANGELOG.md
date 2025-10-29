@@ -1,10 +1,16 @@
 # Changelog
 
-## [0.4.0a9] - 2025-10-29
+## [0.4.0a10] - 2025-10-29
+### Changed
+- Options guardrails: `scan_interval` now constrained to 10–30 s (default 10).
+- Remove `stale_after_minutes` from Options/UI; connectivity uses a fixed 10-minute
+  staleness threshold plus a 90 s debounce for notifications.
+- Runtime clamps `scan_interval` to 10–30 s even if Options are bypassed.
 ### Refactor
 - Device Registry: pass `connections` via the `DeviceInfo` constructor using
   `CONNECTION_NETWORK_MAC` across all platforms (climate, binary_sensor, sensor,
   switch, number). Avoid post-construction mutation of `DeviceInfo`.
+- `device_info` now returns a `DeviceInfo` object for HA's device registry.
 ### Breaking/Behavior
 - Remove all migration paths. From now on, the integration stores the token at rest in
   `entry.options['user_token']` from day one; `entry.data` contains only the username.
@@ -23,6 +29,7 @@
   Removed legacy fallbacks to deprecated scenary helpers. Optimistic scenary
   state is kept and invalidated on backend mismatch.
 - Cancel `async_call_later` handles on unload to avoid potential leaks.
+- Clean imports/consts after removing `stale_after_minutes`.
 ### Breaking
 - Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy
   `select.scenary` entity is removed. Update automations to use `climate.set_preset_mode`.
@@ -33,8 +40,6 @@
   (`data` or `options`) by default. We keep the token in `entry.options`
   for structural reasons (separation from identity data) and to reduce churn
   when editing options, **not** for encryption.
-### Refactor
-- `device_info` now returns a `DeviceInfo` object for HA's device registry.
 ### UX
 - Climate: extend the optimistic window to always cover at least one coordinator
   refresh after writes (fan/preset/temp/on/off/mode) to eliminate transient flicker.
