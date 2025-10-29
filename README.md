@@ -23,7 +23,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
   Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
 - **Native climate presets:**  
   Use Home Assistant **preset modes** (`home`, `away`, `sleep`) directly on the climate entity.  
-  The integration maps these presets to the backend fields internally (no `select.scenary` entity).
+  The integration maps these presets to backend fields internally — **no `select.scenary` entity**.
 - **Automatic device/sensor creation:**  
   Creates climate, temperature, diagnostic, and connectivity entities for each device.
 - **Sleep timer & unoccupied limits:**  
