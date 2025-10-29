@@ -122,9 +122,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             from .airzone_api import AirzoneAPI
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.exception(
-                "Failed to import AirzoneAPI: %s", type(exc).__name__
-            )
+            _LOGGER.exception("Failed to import AirzoneAPI: %s", type(exc).__name__)
             return self.async_show_form(
                 step_id="user",
                 data_schema=_user_schema(user_input),
@@ -145,9 +143,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors={"base": "timeout"},
             )
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning(
-                "Login failed (network/other): %s", type(exc).__name__
-            )
+            _LOGGER.warning("Login failed (network/other): %s", type(exc).__name__)
             return self.async_show_form(
                 step_id="user",
                 data_schema=_user_schema(user_input),
@@ -294,8 +290,6 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
             user_input.get(CONF_EXPOSE_PII, defaults[CONF_EXPOSE_PII])
         )
         next_opts[CONF_STALE_AFTER_MINUTES] = int(
-            user_input.get(
-                CONF_STALE_AFTER_MINUTES, defaults[CONF_STALE_AFTER_MINUTES]
-            )
+            user_input.get(CONF_STALE_AFTER_MINUTES, defaults[CONF_STALE_AFTER_MINUTES])
         )
         return self.async_create_entry(title="", data=next_opts)
