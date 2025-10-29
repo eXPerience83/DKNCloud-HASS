@@ -49,18 +49,22 @@ MAX_STALE = 180
 def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): cv.string,
+            vol.Required(
+                CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")
+            ): cv.string,
             vol.Required(CONF_PASSWORD): cv.string,
-            vol.Optional("scan_interval", default=defaults.get("scan_interval", 10)): vol.All(
-                vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)
-            ),
+            vol.Optional(
+                "scan_interval", default=defaults.get("scan_interval", 10)
+            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)),
             vol.Optional(
                 "expose_pii_identifiers",
                 default=defaults.get("expose_pii_identifiers", False),
             ): cv.boolean,
             vol.Optional(
                 CONF_STALE_AFTER_MINUTES,
-                default=defaults.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT),
+                default=defaults.get(
+                    CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT
+                ),
             ): vol.All(vol.Coerce(int), vol.Range(min=MIN_STALE, max=MAX_STALE)),
         }
     )
@@ -69,16 +73,18 @@ def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
 def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Optional("scan_interval", default=defaults.get("scan_interval", 10)): vol.All(
-                vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)
-            ),
+            vol.Optional(
+                "scan_interval", default=defaults.get("scan_interval", 10)
+            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)),
             vol.Optional(
                 "expose_pii_identifiers",
                 default=defaults.get("expose_pii_identifiers", False),
             ): cv.boolean,
             vol.Optional(
                 CONF_STALE_AFTER_MINUTES,
-                default=defaults.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT),
+                default=defaults.get(
+                    CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT
+                ),
             ): vol.All(vol.Coerce(int), vol.Range(min=MIN_STALE, max=MAX_STALE)),
         }
     )
@@ -103,7 +109,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Initial step: email+password + first options."""
         if user_input is None:
             return self.async_show_form(step_id="user", data_schema=_user_schema({}))
@@ -114,7 +122,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # First, try to obtain token
         try:
             token = await _api_login(self.hass, email, password)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return self.async_show_form(
                 step_id="user",
                 data_schema=_user_schema(user_input),
@@ -132,23 +140,31 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         options = {
             "user_token": token,
             "scan_interval": int(user_input.get("scan_interval", 10)),
-            "expose_pii_identifiers": bool(user_input.get("expose_pii_identifiers", False)),
+            "expose_pii_identifiers": bool(
+                user_input.get("expose_pii_identifiers", False)
+            ),
             CONF_STALE_AFTER_MINUTES: int(
                 user_input.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
             ),
         }
 
         # Create entry with minimal data and all tunables in options
-        return self.async_create_entry(title=email, data={CONF_USERNAME: email}, options=options)
+        return self.async_create_entry(
+            title=email, data={CONF_USERNAME: email}, options=options
+        )
 
     # ----------------- REAUTH -----------------
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
         """Handle start of reauth; show confirm step."""
-        self._reauth_entry = await self.async_set_unique_id(entry_data.get(CONF_USERNAME))
+        self._reauth_entry = await self.async_set_unique_id(
+            entry_data.get(CONF_USERNAME)
+        )
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         """Prompt only for the password, then refresh the token."""
         entry = None
         # Find the entry for this domain/username
@@ -172,7 +188,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             token = await _api_login(self.hass, email, password)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return self.async_show_form(
                 step_id="reauth_confirm",
                 data_schema=vol.Schema({vol.Required(CONF_PASSWORD): cv.string}),
@@ -203,21 +219,37 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
             self._entry = config_entry
 
-        async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        async def async_step_init(
+            self, user_input: dict[str, Any] | None = None
+        ) -> FlowResult:
             defaults = dict(self._entry.options)
             if user_input is None:
-                return self.async_show_form(step_id="init", data_schema=_options_schema(defaults))
+                return self.async_show_form(
+                    step_id="init", data_schema=_options_schema(defaults)
+                )
 
             # Merge: keep any unknown keys (e.g., 'user_token')
             next_opts = dict(self._entry.options)
             next_opts.update(
                 {
-                    "scan_interval": int(user_input.get("scan_interval", defaults.get("scan_interval", 10))),
+                    "scan_interval": int(
+                        user_input.get(
+                            "scan_interval", defaults.get("scan_interval", 10)
+                        )
+                    ),
                     "expose_pii_identifiers": bool(
-                        user_input.get("expose_pii_identifiers", defaults.get("expose_pii_identifiers", False))
+                        user_input.get(
+                            "expose_pii_identifiers",
+                            defaults.get("expose_pii_identifiers", False),
+                        )
                     ),
                     CONF_STALE_AFTER_MINUTES: int(
-                        user_input.get(CONF_STALE_AFTER_MINUTES, defaults.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+                        user_input.get(
+                            CONF_STALE_AFTER_MINUTES,
+                            defaults.get(
+                                CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT
+                            ),
+                        )
                     ),
                 }
             )
