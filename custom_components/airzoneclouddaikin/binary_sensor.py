@@ -1,8 +1,9 @@
 """Binary sensor platform for DKN Cloud for HASS (Airzone Cloud).
 
 0.4.0 metadata consistency:
-- Pass MAC via constructor 'connections' using CONNECTION_NETWORK_MAC (no post-mutation).
+- Pass MAC via DeviceInfo.connections using CONNECTION_NETWORK_MAC.
 - device_info returns a DeviceInfo object (aligned with climate/number/sensor/switch).
+- Connectivity uses a fixed internal threshold (10 minutes) — no user option.
 
 Creates boolean sensors per device:
 - device_on: derived from backend "power" field.
@@ -24,12 +25,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneCoordinator
-from .const import (
-    CONF_STALE_AFTER_MINUTES,
-    DOMAIN,
-    MANUFACTURER,
-    STALE_AFTER_MINUTES_DEFAULT,
-)
+from .const import DOMAIN, MANUFACTURER, INTERNAL_STALE_AFTER_SEC
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,16 +42,10 @@ async def async_setup_entry(hass, entry, async_add_entities) -> None:
         _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
         return
 
-    stale_after_min = int(
-        entry.options.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
-    )
     entities: list[BinarySensorEntity] = []
-
     for device_id in list((coordinator.data or {}).keys()):
         entities.append(AirzoneDeviceOnBinarySensor(coordinator, device_id))
-        entities.append(
-            AirzoneWServerOnlineBinarySensor(coordinator, device_id, stale_after_min)
-        )
+        entities.append(AirzoneWServerOnlineBinarySensor(coordinator, device_id))
 
     async_add_entities(entities)
 
@@ -108,7 +98,7 @@ class AirzoneDeviceOnBinarySensor(
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return Device Registry metadata (connections via constructor)."""
+        """Return Device Registry metadata (connections via DeviceInfo)."""
         dev = self._device
         mac = (str(dev.get("mac") or "").strip()) or None
         connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
@@ -134,12 +124,11 @@ class AirzoneWServerOnlineBinarySensor(
     _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(
-        self, coordinator: AirzoneCoordinator, device_id: str, stale_after_min: int
-    ) -> None:
+    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         super().__init__(coordinator)
         self._device_id = device_id
-        self._stale_after_sec = max(60, int(stale_after_min) * 60)
+        # Fixed internal threshold; notifications add a separate 90s debounce.
+        self._stale_after_sec = int(INTERNAL_STALE_AFTER_SEC)
         self._attr_name = "WServer Online"
         self._attr_unique_id = f"{device_id}_wserver_online"
 
@@ -149,7 +138,7 @@ class AirzoneWServerOnlineBinarySensor(
 
     @property
     def is_on(self) -> bool:
-        """Return True if connection_date age <= stale threshold (TZ-safe)."""
+        """Return True if connection_date age <= fixed threshold (TZ-safe)."""
         raw = self._device.get("connection_date")
         if not raw:
             return False
@@ -189,7 +178,7 @@ class AirzoneWServerOnlineBinarySensor(
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return Device Registry metadata (connections via constructor)."""
+        """Return Device Registry metadata (connections via DeviceInfo)."""
         dev = self._device
         mac = (str(dev.get("mac") or "").strip()) or None
         connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
