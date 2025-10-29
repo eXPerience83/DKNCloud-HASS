@@ -10,7 +10,7 @@
 - Device Registry: pass `connections` via the `DeviceInfo` constructor using
   `CONNECTION_NETWORK_MAC` across all platforms (climate, binary_sensor, sensor,
   switch, number). Avoid post-construction mutation of `DeviceInfo`.
-- `device_info` now returns a `DeviceInfo` object for HA's device registry.
+- `device_info` now returns a `DeviceInfo` object for HA’s device registry.
 ### Breaking/Behavior
 - Remove all migration paths. From now on, the integration stores the token at rest in
   `entry.options['user_token']` from day one; `entry.data` contains only the username.
@@ -22,9 +22,9 @@
   post-restart auth failures.
 - config_flow: reauth flow robustly resolves the target entry even if `entry_id`
   is missing from the context, ensuring the password UI appears.
-- config_flow: avoid hard imports of optional constants at import time to prevent
-  rare 500 errors when local consts are not present.
-- climate: Write preset modes (`home`, `away`, `sleep`) via the canonical
+- config_flow: avoid hard imports of optional locals at import time to prevent
+  rare 500 errors when modules aren’t ready.
+- climate: write preset modes (`home`, `away`, `sleep`) via the canonical
   `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path.
   Removed legacy fallbacks to deprecated scenary helpers. Optimistic scenary
   state is kept and invalidated on backend mismatch.
@@ -36,13 +36,12 @@
 ### Security/Privacy
 - Password is never persisted; it is used transiently for login/reauth and wiped from
   memory as soon as possible.
-- Clarify documentation: Home Assistant does **not** encrypt `config_entries`
-  (`data` or `options`) by default. We keep the token in `entry.options`
-  for structural reasons (separation from identity data) and to reduce churn
-  when editing options, **not** for encryption.
-### UX
-- Climate: extend the optimistic window to always cover at least one coordinator
-  refresh after writes (fan/preset/temp/on/off/mode) to eliminate transient flicker.
+- Clarification: we **do not rely on or promise encryption at rest** for `config_entries`
+  (`data` or `options`). We keep the token in `entry.options` for structural reasons
+  (separation from identity data) and to reduce churn when editing options.
+### Docs
+- README: remove all mentions of `select.scenary`, highlight native preset modes, and
+  keep the **Acknowledgments** section intact.
 
 ## [0.3.16a1] - 2025-10-28
 ### Added
