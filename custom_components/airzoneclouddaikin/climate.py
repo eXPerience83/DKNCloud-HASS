@@ -191,6 +191,18 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self._optimistic.clear()
             self._optimistic_expires = None
 
+    def _optimistic_deadline(self) -> float:
+        """Compute an optimistic deadline that always covers at least one refresh window.
+
+        We keep the UX responsive while avoiding UI flicker where the very first
+        coordinator refresh still shows the pre-write snapshot.
+        """
+        try:
+            ttl = max(float(OPTIMISTIC_TTL_SEC), float(POST_WRITE_REFRESH_DELAY_SEC) + 2.0)
+        except Exception:
+            ttl = float(OPTIMISTIC_TTL_SEC)
+        return self.coordinator.hass.loop.time() + ttl
+
     # ---- Preset/scenary mapping -----------------------------------------
 
     @staticmethod
@@ -307,9 +319,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         # Optimistic state while we await the refresh.
         self._optimistic["scenary"] = scenary
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -409,9 +419,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             await self._send_p_event("P8", f"{temp}.0")
             self._optimistic["heat_consign"] = temp
 
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -490,9 +498,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         await self._send_p_event(option, value_to_send)
         self._optimistic[key] = value_to_send
 
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -518,7 +524,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         await self._send_p_event("P1", 1)
         self._optimistic.update({"power": "1"})
-        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -541,7 +547,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         await self._send_p_event("P1", 0)
         self._optimistic.update({"power": "0"})
-        self._optimistic_expires = now + OPTIMISTIC_TTL_SEC
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
@@ -549,9 +555,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if hvac_mode == HVACMode.OFF:
             await self._send_p_event("P1", 0)
             self._optimistic.update({"power": "0"})
-            self._optimistic_expires = (
-                self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-            )
+            self._optimistic_expires = self._optimistic_deadline()
             self.async_write_ha_state()
             self._schedule_refresh()
             return
@@ -577,9 +581,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 await self._send_p_event("P2", mode_code)
                 self._optimistic.update({"power": "1", "mode": mode_code})
 
-        self._optimistic_expires = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
+        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
         self._schedule_refresh()
 
