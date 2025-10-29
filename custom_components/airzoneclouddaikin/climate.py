@@ -8,6 +8,7 @@ P4-B changes in this revision (0.4.0a3):
   have been removed from the API client).
 - REFACTOR: Return a `DeviceInfo` object from `device_info` for forward compatibility.
 - CONSISTENCY: Keep explicit TURN_ON/TURN_OFF advertised in supported_features.
+- METADATA: Pass MAC via constructor `connections` using CONNECTION_NETWORK_MAC (no post-mutation).
 
 Key behaviors (concise):
 - Coordinator-based: no I/O in properties; writes go via /events and short refresh.
@@ -235,12 +236,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def device_info(self) -> DeviceInfo:
         """Return rich device metadata for the device registry.
 
-        Note:
-            We pass the MAC via the `connections` constructor parameter using
-            `CONNECTION_NETWORK_MAC` to avoid mutating the DeviceInfo object post-creation.
+        NOTE: We pass the MAC through the constructor 'connections' using
+        CONNECTION_NETWORK_MAC and avoid mutating the object after creation.
         """
         dev = self._device
-        mac = str(dev.get("mac") or "").strip() or None
+        mac = (str(dev.get("mac") or "").strip()) or None
         connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
 
         return DeviceInfo(
