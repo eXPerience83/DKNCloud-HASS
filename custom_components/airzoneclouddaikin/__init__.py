@@ -173,7 +173,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     token = opts.get("user_token")
 
     if not token:
-        _LOGGER.warning("No token available in options; raising ConfigEntryAuthFailed to trigger reauth.")
+        _LOGGER.warning(
+            "No token available in options; raising ConfigEntryAuthFailed to trigger reauth."
+        )
         raise ConfigEntryAuthFailed("Token required; reauth triggered")
 
     # Runtime API: token-only
@@ -239,10 +241,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     last_iso = str(dev.get("connection_date") or "—")
                     dt_last = (
-                        dt_util.parse_datetime(str(dev.get("connection_date") or "")) or now
+                        dt_util.parse_datetime(str(dev.get("connection_date") or ""))
+                        or now
                     )
-                    mins = int(max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60))
-                    title, message = _fmt(hass, "offline", name, ts_local, last_iso, mins)
+                    mins = int(
+                        max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
+                    )
+                    title, message = _fmt(
+                        hass, "offline", name, ts_local, last_iso, mins
+                    )
                     hass.components.persistent_notification.async_create(
                         message=message, title=title, notification_id=nid
                     )
@@ -270,7 +277,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(_nid),
+                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
+                        _nid
+                    ),
                 )
                 cancel_handles.append(cancel)
                 entry.async_on_unload(cancel)
