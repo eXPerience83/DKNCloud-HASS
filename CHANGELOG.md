@@ -2,6 +2,8 @@
 
 ## 0.4.0 - UNRELEASED
 ### Breaking
+- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary`
+  entity is removed. Update automations to use `climate.set_preset_mode`.
 - Removed `select.scenary` platform. Use native `climate.set_preset_mode` with `home/away/sleep`.
   Update automations accordingly.
 ### Security
@@ -9,6 +11,8 @@
   A migration moves existing tokens from data to options automatically.
 ### Fixes
 - Cancel `async_call_later` handles on unload to avoid potential leaks.
+### Refactor
+- `device_info` now returns a `DeviceInfo` object for HA's device registry.
 ### Notes
 - If you upgrade from < 0.4.0, please go through any 0.4.x release before 0.5.0 so that
   your config entry migrates secrets out of `data`. If no token is present, the integration
