@@ -110,11 +110,15 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         # into entry.options during setup/migration.
                         return self.async_create_entry(
                             title="DKN Cloud for HASS",
-                            data={CONF_USERNAME: user_input[CONF_USERNAME],
-                                  # temporary compatibility fields (read by setup to move to options)
-                                  "user_token": api.token,
-                                  CONF_SCAN_INTERVAL: user_input.get(CONF_SCAN_INTERVAL, 10),
-                                  CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False)},
+                            data={
+                                CONF_USERNAME: user_input[CONF_USERNAME],
+                                # temporary compatibility fields (read by setup to move to options)
+                                "user_token": api.token,
+                                CONF_SCAN_INTERVAL: user_input.get(
+                                    CONF_SCAN_INTERVAL, 10
+                                ),
+                                CONF_EXPOSE_PII: user_input.get(CONF_EXPOSE_PII, False),
+                            },
                         )
                     errors["base"] = "invalid_auth"
 

@@ -200,7 +200,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         changed = True
 
     if changed or entry.version < 2:
-        hass.config_entries.async_update_entry(entry, data=data, options=opts, version=2)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=opts, version=2
+        )
         _LOGGER.info("Entry migrated to version 2 (token in options, no password).")
 
     return True
@@ -258,9 +260,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
-    stale_minutes = int(
-        opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
-    )
+    stale_minutes = int(opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
 
     # Track cancel handles for auto-dismiss banners so we can cancel on unload.
     cancel_handles: list[Callable[[], None]] = []
@@ -300,7 +300,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     last_iso = str(dev.get("connection_date") or "—")
                     dt_last = (
-                        dt_util.parse_datetime(str(dev.get("connection_date") or "")) or now
+                        dt_util.parse_datetime(str(dev.get("connection_date") or ""))
+                        or now
                     )
                     mins = int(
                         max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
@@ -363,7 +364,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.info(
         "DKN Cloud for HASS configured (scan_interval=%ss; token from options).",
-        int(opts.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))),
+        int(
+            opts.get(
+                "scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)
+            )
+        ),
     )
     return True
 
