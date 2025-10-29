@@ -1,15 +1,13 @@
-"""DKN Cloud for HASS integration setup (0.4.0a7, no-migrations).
+"""DKN Cloud for HASS integration setup (0.4.0a8, options guardrails; no migrations).
 
 Key points in this revision:
 - Token and settings are read exclusively from entry.options (no data fallback).
-- No migration function is provided; older entries without token in options will
-  be reauthed by HA as needed.
+- Removed the `stale_after_minutes` option. Offline detection now uses a fixed
+  internal threshold (10 minutes) plus a 90 s debounce for notifications.
 - Select platform remains removed (preset modes are native in climate).
 - Keep and cancel async_call_later handles via entry.async_on_unload(...) to avoid leaks.
 - On 401 in the coordinator, open a reauth flow; on missing token in setup, raise
   ConfigEntryAuthFailed so HA triggers the reauth UI.
-
-Notifications remain always-on as requested.
 """
 
 from __future__ import annotations
@@ -32,19 +30,20 @@ from homeassistant.util import dt as dt_util
 
 from .airzone_api import AirzoneAPI
 from .const import (
-    CONF_STALE_AFTER_MINUTES,
     DOMAIN,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
     PN_KEY_PREFIX,
     PN_MESSAGES,
     PN_TITLES,
-    STALE_AFTER_MINUTES_DEFAULT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10
+# Fixed stale threshold for connectivity (minutes).
+OFFLINE_STALE_MINUTES = 10
+
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
 _EXTRA_PLATFORMS: list[str] = ["number"]  # keep number for now
 
@@ -143,7 +142,7 @@ def _fmt(
     return title, message
 
 
-def _is_online(dev: dict[str, Any], now: datetime, stale_minutes: int) -> bool:
+def _is_online(dev: dict[str, Any], now: datetime) -> bool:
     """Compute online state based on connection_date age.
 
     If the timestamp cannot be parsed, assume online to prevent false alarms.
@@ -157,7 +156,7 @@ def _is_online(dev: dict[str, Any], now: datetime, stale_minutes: int) -> bool:
         return True
     dt = dt_util.as_utc(dt)
     age = (now - dt).total_seconds()
-    return age <= stale_minutes * 60
+    return age <= OFFLINE_STALE_MINUTES * 60
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -182,13 +181,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api = AirzoneAPI(username, session, password=None, token=token)
 
     scan_interval = int(opts.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
+    # Runtime clamp for safety even if UI guardrails are bypassed.
+    scan_interval = max(10, min(30, scan_interval))
 
     coordinator: AirzoneCoordinator = AirzoneCoordinator(
         hass,
         _LOGGER,
         name="airzone_data",
         update_method=lambda: _async_update_data(hass, entry, api),
-        update_interval=timedelta(seconds=max(10, scan_interval)),
+        update_interval=timedelta(seconds=scan_interval),
     )
     coordinator.api = api
 
@@ -202,7 +203,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
-    stale_minutes = int(opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
 
     cancel_handles: list[Callable[[], None]] = []
     bucket["cancel_handles"] = cancel_handles
@@ -213,7 +213,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         for dev_id, dev in data.items():
             name = str(dev.get("name") or dev_id)
-            online = _is_online(dev, now, stale_minutes)
+            online = _is_online(dev, now)
             st = notify_state.setdefault(
                 dev_id, {"last": True, "since_offline": None, "notified": False}
             )
@@ -299,7 +299,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     _LOGGER.info(
         "DKN Cloud for HASS configured (scan_interval=%ss; token from options).",
-        int(opts.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)),
+        scan_interval,
     )
     return True
 
