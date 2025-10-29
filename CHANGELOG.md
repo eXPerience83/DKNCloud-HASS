@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0a5 - 2025-10-29
+## 0.4.0a6 - 2025-10-29
 ### Fix
 - config_flow: preserve hidden options (notably `user_token`) when saving Options to
   avoid post-restart auth failures.
