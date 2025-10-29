@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0a3 - 2025-10-29
+## 0.4.0a4 - 2025-10-29
 ### Fix
 - climate: Write preset modes (`home`, `away`, `sleep`) via the canonical
   `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path.
@@ -21,6 +21,10 @@
 - If you upgrade from < 0.4.0, please go through any 0.4.x release before 0.5.0 so that
   your config entry migrates secrets out of `data`. If no token is present, the integration
   will ask you to re-authenticate.
+### UX
+- climate: Extend the optimistic window to always cover at least one coordinator
+  refresh after writes (fan/preset/temp/on/off/mode). This eliminates transient
+  flicker where the first refresh still shows the previous snapshot.
 
 ## 0.3.16a1 - 2025-10-28
 ### Added
