@@ -1,20 +1,11 @@
 """Binary sensor platform for DKN Cloud for HASS (Airzone Cloud).
 
+0.4.0 metadata consistency:
+- device_info now returns a DeviceInfo object (aligned with climate/number/sensor/switch).
+
 Creates boolean sensors per device:
 - device_on: derived from backend "power" field.
 - wserver_online: derived from last connection timestamp age (passive connectivity).
-
-Design:
-- Coordinator-backed (no I/O in properties).
-- Enabled-by-default.
-- Device classes: power (device_on) and connectivity (wserver_online).
-
-Privacy: never log or expose PII (email/token/MAC/PIN/GPS).
-
-This update:
-- Use HA dt_util.parse_datetime + dt_util.as_utc to parse connection_date
-  (TZ/DST safe and aligned with __init__.py logic).
-- If timestamp parsing fails, do NOT force offline to avoid false positives.
 """
 
 from __future__ import annotations
@@ -26,11 +17,12 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .__init__ import AirzoneCoordinator  # typing-aware coordinator
+from .__init__ import AirzoneCoordinator
 from .const import (
     CONF_STALE_AFTER_MINUTES,
     DOMAIN,
@@ -74,8 +66,8 @@ class AirzoneDeviceOnBinarySensor(
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.POWER
-    _attr_entity_registry_enabled_default = True  # enabled by default
-    _attr_should_poll = False  # coordinator-driven
+    _attr_entity_registry_enabled_default = True
+    _attr_should_poll = False
 
     def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
         super().__init__(coordinator)
@@ -90,11 +82,7 @@ class AirzoneDeviceOnBinarySensor(
 
     @staticmethod
     def _normalize_power(val: Any) -> bool:
-        """Normalize backend power to boolean.
-
-        Accepts "1"/1/True/"on"/"true"/"yes" as ON;
-        "0"/0/False/"off"/"false"/"no"/""/None as OFF.
-        """
+        """Normalize backend power to boolean."""
         s = str(val).strip().lower()
         if s in ("1", "on", "true", "yes"):
             return True
@@ -104,7 +92,7 @@ class AirzoneDeviceOnBinarySensor(
             return val
         try:
             return bool(int(val))
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
     @property
@@ -118,18 +106,19 @@ class AirzoneDeviceOnBinarySensor(
         return bool(self._device)
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
+        """Return Device Registry metadata."""
         dev = self._device
-        info = {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": MANUFACTURER,
-            "model": dev.get("brand") or "Airzone DKN",
-            "sw_version": dev.get("firmware") or "",
-            "name": dev.get("name") or "Airzone Device",
-        }
+        info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            manufacturer=MANUFACTURER,
+            model=dev.get("brand") or "Airzone DKN",
+            sw_version=str(dev.get("firmware") or ""),
+            name=dev.get("name") or "Airzone Device",
+        )
         mac = dev.get("mac")
         if mac:
-            info["connections"] = {("mac", mac)}
+            info["connections"] = {("mac", str(mac))}
         return info
 
 
@@ -140,8 +129,8 @@ class AirzoneWServerOnlineBinarySensor(
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-    _attr_entity_registry_enabled_default = True  # enabled by default
-    _attr_should_poll = False  # coordinator-driven
+    _attr_entity_registry_enabled_default = True
+    _attr_should_poll = False
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
@@ -149,7 +138,7 @@ class AirzoneWServerOnlineBinarySensor(
     ) -> None:
         super().__init__(coordinator)
         self._device_id = device_id
-        self._stale_after_sec = max(60, int(stale_after_min) * 60)  # safety lower bound
+        self._stale_after_sec = max(60, int(stale_after_min) * 60)
         self._attr_name = "WServer Online"
         self._attr_unique_id = f"{device_id}_wserver_online"
 
@@ -165,15 +154,13 @@ class AirzoneWServerOnlineBinarySensor(
             return False
         try:
             ts = dt_util.parse_datetime(str(raw))
-            # If we cannot parse the timestamp, do not force offline (avoid false alarms).
             if ts is None:
                 return True
             ts = dt_util.as_utc(ts)
             now = dt_util.utcnow()
             age = (now - ts).total_seconds()
             return age <= self._stale_after_sec
-        except Exception:
-            # Conservative: keep current state as "online" on parse error paths.
+        except Exception:  # noqa: BLE001
             return True
 
     @property
@@ -191,7 +178,7 @@ class AirzoneWServerOnlineBinarySensor(
                 if ts is not None:
                     ts = dt_util.as_utc(ts)
                     age = int((dt_util.utcnow() - ts).total_seconds())
-        except Exception:
+        except Exception:  # noqa: BLE001
             age = None
         return {
             "last_connection": str(raw) if raw else None,
@@ -200,16 +187,17 @@ class AirzoneWServerOnlineBinarySensor(
         }
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
+        """Return Device Registry metadata."""
         dev = self._device
-        info = {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": MANUFACTURER,
-            "model": dev.get("brand") or "Airzone DKN",
-            "sw_version": dev.get("firmware") or "",
-            "name": dev.get("name") or "Airzone Device",
-        }
+        info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            manufacturer=MANUFACTURER,
+            model=dev.get("brand") or "Airzone DKN",
+            sw_version=str(dev.get("firmware") or ""),
+            name=dev.get("name") or "Airzone Device",
+        )
         mac = dev.get("mac")
         if mac:
-            info["connections"] = {("mac", mac)}
+            info["connections"] = {("mac", str(mac))}
         return info
