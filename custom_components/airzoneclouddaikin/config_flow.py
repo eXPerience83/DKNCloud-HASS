@@ -16,6 +16,7 @@ Security & UX
 - ConfigFlow.VERSION == 2, aligned with entry migration.
 
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -40,7 +41,9 @@ CONF_STALE_AFTER_MINUTES = "stale_after_minutes"
 
 # Fallback default if const import is unavailable or missing the symbol
 try:  # soft dependency
-    from .const import STALE_AFTER_MINUTES_DEFAULT as _STALE_DEFAULT  # type: ignore[attr-defined]
+    from .const import (
+        STALE_AFTER_MINUTES_DEFAULT as _STALE_DEFAULT,  # type: ignore[attr-defined]
+    )
 except Exception:  # noqa: BLE001
     _STALE_DEFAULT = 12  # sane fallback
 
@@ -83,7 +86,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 session = async_get_clientsession(self.hass)
                 pwd = (user_input.get(CONF_PASSWORD) or "").strip()
-                api = AirzoneAPI((user_input.get(CONF_USERNAME) or "").strip(), session, password=pwd)
+                api = AirzoneAPI(
+                    (user_input.get(CONF_USERNAME) or "").strip(), session, password=pwd
+                )
                 try:
                     ok = await api.login()
                 except Exception as exc:  # noqa: BLE001
@@ -104,17 +109,25 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         return self.async_create_entry(
                             title="DKN Cloud for HASS",
                             data={
-                                CONF_USERNAME: (user_input.get(CONF_USERNAME) or "").strip(),
+                                CONF_USERNAME: (
+                                    user_input.get(CONF_USERNAME) or ""
+                                ).strip(),
                                 # Place token and basic tunables in data, they will be migrated to options.
                                 "user_token": api.token,
-                                CONF_SCAN_INTERVAL: int(user_input.get(CONF_SCAN_INTERVAL, 10)),
-                                CONF_EXPOSE_PII: bool(user_input.get(CONF_EXPOSE_PII, False)),
+                                CONF_SCAN_INTERVAL: int(
+                                    user_input.get(CONF_SCAN_INTERVAL, 10)
+                                ),
+                                CONF_EXPOSE_PII: bool(
+                                    user_input.get(CONF_EXPOSE_PII, False)
+                                ),
                                 CONF_STALE_AFTER_MINUTES: int(_STALE_DEFAULT),
                             },
                         )
                     errors["base"] = "invalid_auth"
 
-        return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA, errors=errors)
+        return self.async_show_form(
+            step_id="user", data_schema=DATA_SCHEMA, errors=errors
+        )
 
     # -------------------------------- Reauth ---------------------------------
 
@@ -127,7 +140,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if entry:
             self._reauth_entry_id = entry.entry_id
         else:
-            _LOGGER.warning("Reauth started without resolvable entry; will still render password form.")
+            _LOGGER.warning(
+                "Reauth started without resolvable entry; will still render password form."
+            )
             self._reauth_entry_id = None
         return await self.async_step_reauth_confirm()
 
@@ -169,14 +184,20 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema({vol.Required(CONF_PASSWORD): cv.string})
 
         if user_input is None:
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
 
         try:
             from .airzone_api import AirzoneAPI  # local import
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.exception("Failed to import AirzoneAPI during reauth: %s", type(exc).__name__)
+            _LOGGER.exception(
+                "Failed to import AirzoneAPI during reauth: %s", type(exc).__name__
+            )
             errors["base"] = "unknown"
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
 
         session = async_get_clientsession(self.hass)
         pwd = (user_input.get(CONF_PASSWORD) or "").strip()
@@ -184,14 +205,18 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         try:
             ok = await asyncio.wait_for(api.login(), timeout=60.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _LOGGER.warning("Reauth login timed out after 60s.")
             errors["base"] = "timeout"
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Reauth login failed: %s", type(exc).__name__)
             errors["base"] = "cannot_connect"
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
         finally:
             # Wipe password ASAP
             try:
@@ -205,7 +230,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if not ok or not getattr(api, "token", None):
             errors["base"] = "invalid_auth"
-            return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+            return self.async_show_form(
+                step_id="reauth_confirm", data_schema=schema, errors=errors
+            )
 
         # Merge new token into options; never persist password
         new_opts = dict(entry.options)
@@ -219,7 +246,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ------------------------------ Options ----------------------------------
 
     @staticmethod
-    def async_get_options_flow(entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+    def async_get_options_flow(
+        entry: config_entries.ConfigEntry,
+    ) -> config_entries.OptionsFlow:
         return AirzoneOptionsFlow(entry)
 
 
@@ -229,20 +258,33 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
         data = self._entry.data
         opts = self._entry.options
 
         cur_scan = int(opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10)))
         cur_pii = bool(opts.get(CONF_EXPOSE_PII, data.get(CONF_EXPOSE_PII, False)))
-        cur_stale = int(opts.get(CONF_STALE_AFTER_MINUTES, data.get(CONF_STALE_AFTER_MINUTES, _STALE_DEFAULT)))
+        cur_stale = int(
+            opts.get(
+                CONF_STALE_AFTER_MINUTES,
+                data.get(CONF_STALE_AFTER_MINUTES, _STALE_DEFAULT),
+            )
+        )
 
         if user_input is not None:
             # Start from existing options to avoid dropping hidden keys
             new_options: dict[str, Any] = dict(opts)
-            new_options[CONF_SCAN_INTERVAL] = int(user_input.get(CONF_SCAN_INTERVAL, cur_scan))
-            new_options[CONF_EXPOSE_PII] = bool(user_input.get(CONF_EXPOSE_PII, cur_pii))
-            new_options[CONF_STALE_AFTER_MINUTES] = int(user_input.get(CONF_STALE_AFTER_MINUTES, cur_stale))
+            new_options[CONF_SCAN_INTERVAL] = int(
+                user_input.get(CONF_SCAN_INTERVAL, cur_scan)
+            )
+            new_options[CONF_EXPOSE_PII] = bool(
+                user_input.get(CONF_EXPOSE_PII, cur_pii)
+            )
+            new_options[CONF_STALE_AFTER_MINUTES] = int(
+                user_input.get(CONF_STALE_AFTER_MINUTES, cur_stale)
+            )
 
             # Safety net: if token still lives in data (during 0.4.x migration), copy it once
             if "user_token" not in new_options and "user_token" in data:
@@ -252,9 +294,13 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
-                vol.Optional(CONF_SCAN_INTERVAL, default=cur_scan): vol.All(vol.Coerce(int), vol.Range(min=10, max=30)),
+                vol.Optional(CONF_SCAN_INTERVAL, default=cur_scan): vol.All(
+                    vol.Coerce(int), vol.Range(min=10, max=30)
+                ),
                 vol.Optional(CONF_EXPOSE_PII, default=cur_pii): cv.boolean,
-                vol.Optional(CONF_STALE_AFTER_MINUTES, default=cur_stale): vol.All(vol.Coerce(int), vol.Range(min=6, max=30)),
+                vol.Optional(CONF_STALE_AFTER_MINUTES, default=cur_stale): vol.All(
+                    vol.Coerce(int), vol.Range(min=6, max=30)
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
