@@ -219,17 +219,25 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         data = self._entry.data
         opts = self._entry.options
 
-        current_scan = int(opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10)))
+        current_scan = int(
+            opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10))
+        )
         current_pii = bool(opts.get(CONF_EXPOSE_PII, data.get(CONF_EXPOSE_PII, False)))
-        current_stale_after = int(opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+        current_stale_after = int(
+            opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
+        )
 
         if user_input is not None:
             # Start from existing options to avoid dropping hidden keys.
             new_options: dict[str, Any] = dict(opts)
 
             # Overwrite with form values
-            new_options[CONF_SCAN_INTERVAL] = int(user_input.get(CONF_SCAN_INTERVAL, current_scan))
-            new_options[CONF_EXPOSE_PII] = bool(user_input.get(CONF_EXPOSE_PII, current_pii))
+            new_options[CONF_SCAN_INTERVAL] = int(
+                user_input.get(CONF_SCAN_INTERVAL, current_scan)
+            )
+            new_options[CONF_EXPOSE_PII] = bool(
+                user_input.get(CONF_EXPOSE_PII, current_pii)
+            )
             new_options[CONF_STALE_AFTER_MINUTES] = int(
                 user_input.get(CONF_STALE_AFTER_MINUTES, current_stale_after)
             )
