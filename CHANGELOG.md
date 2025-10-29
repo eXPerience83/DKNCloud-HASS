@@ -1,7 +1,13 @@
 # Changelog
 
-## 0.4.0a6 - 2025-10-29
-### Fix
+## [0.4.0a7] - 2025-10-29
+### Breaking/Behavior
+- Remove all migration paths. The integration now stores the token at rest in
+  `entry.options['user_token']` from day one; `entry.data` contains only the
+  username. No fallback to `entry.data` remains.
+### Fixed
+- Options flow now always merges with existing options, preserving hidden keys
+  (notably `user_token`) and avoiding accidental credential loss.
 - config_flow: preserve hidden options (notably `user_token`) when saving Options to
   avoid post-restart auth failures.
 - config_flow: reauth flow now robustly resolves the target entry even if `entry_id`
@@ -21,6 +27,8 @@
 ### Security
 - Store `user_token` in `config_entry.options` instead of `data`. Legacy `password` is removed.
   A migration moves existing tokens from data to options automatically.
+- Password is never persisted; it is used transiently for login/reauth and
+  wiped from memory as soon as possible.
 ### Refactor
 - `device_info` now returns a `DeviceInfo` object for HA's device registry.
 ### Notes
