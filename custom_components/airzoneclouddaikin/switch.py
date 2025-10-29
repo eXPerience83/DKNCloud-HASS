@@ -2,8 +2,8 @@
 
 Metadata consistency (0.4.0):
 - Device Registry: return a DeviceInfo object (not a plain dict), aligned with climate.py.
-- Identifiers are unified as (DOMAIN, self._device_id), and MAC goes in connections.
-- Keep existing optimistic write + delayed refresh pattern, idempotent P1 ON/OFF.
+- Pass MAC via constructor 'connections' using CONNECTION_NETWORK_MAC (no post-mutation).
+- Identifiers unified as (DOMAIN, self._device_id); keep optimistic ON/OFF pattern.
 
 Behavior:
 - CoordinatorEntity snapshot: no I/O in properties.
@@ -19,7 +19,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo, CONNECTION_NETWORK_MAC
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -177,19 +177,23 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device registry info (PII-safe and unified across platforms)."""
+        """Return device registry info (PII-safe and unified across platforms).
+
+        NOTE: Pass MAC via 'connections' at construction time using
+        CONNECTION_NETWORK_MAC; avoid mutating the object after creation.
+        """
         dev = self._device
-        info = DeviceInfo(
+        mac = (str(dev.get("mac") or "").strip()) or None
+        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
+
+        return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             manufacturer=MANUFACTURER,
             model=dev.get("brand") or "Airzone DKN",
             sw_version=str(dev.get("firmware") or ""),
             name=dev.get("name") or "Airzone Device",
+            connections=connections,
         )
-        mac = dev.get("mac")
-        if mac:
-            info["connections"] = {("mac", str(mac))}
-        return info
 
     # -----------------------------
     # Write operations
