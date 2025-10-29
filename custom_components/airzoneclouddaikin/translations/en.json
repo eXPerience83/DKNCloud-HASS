@@ -9,8 +9,7 @@
           "username": "Email",
           "password": "Password",
           "scan_interval": "Scan interval (seconds)",
-          "expose_pii_identifiers": "Expose PII identifiers (advanced)",
-          "stale_after_minutes": "Offline after (minutes)"
+          "expose_pii_identifiers": "Expose PII identifiers (advanced)"
         }
       },
       "reauth_confirm": {
@@ -38,8 +37,7 @@
         "title": "Options",
         "data": {
           "scan_interval": "Scan interval (seconds)",
-          "expose_pii_identifiers": "Expose PII identifiers (advanced)",
-          "stale_after_minutes": "Offline after (minutes)"
+          "expose_pii_identifiers": "Expose PII identifiers (advanced)"
         }
       }
     }
