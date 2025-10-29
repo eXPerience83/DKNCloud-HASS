@@ -1,21 +1,18 @@
 """Home Assistant climate entity for DKN Cloud (Airzone Cloud).
 
+P4-B changes in this revision (0.4.0):
+- BREAKING: Use native `preset_modes` (home/away/sleep) instead of exposing a
+  separate select.scenary entity. Preset ↔ scenary mapping is handled internally.
+- REFACTOR: Return a `DeviceInfo` object from `device_info` for forward compatibility.
+- CONSISTENCY: Keep explicit TURN_ON/TURN_OFF advertised in supported_features.
+
 Key behaviors (concise):
-- Coordinator-based: no I/O inside properties; writes go via /events and a short refresh.
+- Coordinator-based: no I/O in properties; writes go via /events and short refresh.
 - Integer-only setpoints: precision = whole degrees, target_temperature_step = 1.0 °C.
 - Supported HVAC modes: COOL / HEAT / FAN_ONLY / DRY (no AUTO/HEAT_COOL for now).
 - API mapping: P1=power, P2=mode, P7/P8=setpoint (cool/heat), P3/P4=fan (cool/heat).
 - Ventilate policy: prefer P2=3 if supported; else P2=8; else do not expose FAN_ONLY.
 - Privacy: never log or expose secrets (email/token/MAC/PIN).
-
-Enhancements in this patch:
-- Advertise TURN_ON/TURN_OFF in supported_features (explicit methods already implemented).
-- min_temp/max_temp: per-mode limits (cold/heat); in OFF/FAN_ONLY/DRY return a neutral
-  combined range from backend limits. UI does not show temperature in those modes.
-
-Fan modes normalization (non-breaking):
-- If the device reports exactly 3 speeds, expose common labels: ["low","medium","high"].
-- Otherwise, keep numeric labels ["1".."N"].
 """
 
 from __future__ import annotations
@@ -31,6 +28,7 @@ from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTempera
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.device_registry import DeviceInfo
 
 from .__init__ import AirzoneCoordinator
 from .const import (
@@ -217,18 +215,20 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Device info -----------------------------------------------------
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
+        """Return rich device metadata for the device registry."""
         dev = self._device
-        info = {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": MANUFACTURER,
-            "model": dev.get("brand") or "Airzone DKN",
-            "sw_version": dev.get("firmware") or "",
-            "name": dev.get("name") or "Airzone Device",
-        }
+        info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            manufacturer=MANUFACTURER,
+            model=dev.get("brand") or "Airzone DKN",
+            sw_version=str(dev.get("firmware") or ""),
+            name=dev.get("name") or "Airzone Device",
+        )
         mac = dev.get("mac")
         if mac:
-            info["connections"] = {("mac", mac)}
+            # HA will normalize the connection type to "mac"
+            info["connections"] = {("mac", str(mac))}
         return info
 
     # ---- Core state ------------------------------------------------------
