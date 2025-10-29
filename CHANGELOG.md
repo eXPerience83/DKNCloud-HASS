@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.4.0a2 - 2025-10-29
+## 0.4.0a3 - 2025-10-29
+### Fix
+- climate: Write preset modes (`home`, `away`, `sleep`) via the canonical
+  `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path.
+  Removed legacy fallbacks to deprecated scenary helpers. Optimistic scenary
+  state is kept and invalidated on backend mismatch.
+- Cancel `async_call_later` handles on unload to avoid potential leaks.
 ### Breaking
 - Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary`
   entity is removed. Update automations to use `climate.set_preset_mode`.
@@ -9,8 +15,6 @@
 ### Security
 - Store `user_token` in `config_entry.options` instead of `data`. Legacy `password` is removed.
   A migration moves existing tokens from data to options automatically.
-### Fixes
-- Cancel `async_call_later` handles on unload to avoid potential leaks.
 ### Refactor
 - `device_info` now returns a `DeviceInfo` object for HA's device registry.
 ### Notes
