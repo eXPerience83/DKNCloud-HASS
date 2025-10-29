@@ -1,15 +1,13 @@
 """Sensors for DKN Cloud for HASS (Airzone Cloud).
 
+0.4.0 metadata consistency:
+- device_info now returns a DeviceInfo object (aligned with other platforms).
+- Keep PII policy: sensors only created if expose_pii_identifiers=True; never log secrets.
+
 Key points:
 - Entities are created from coordinator.data (dict keyed by device_id).
 - No I/O in properties; updates come via the DataUpdateCoordinator.
-- Privacy: PII sensors are opt-in and never diagnostic; secrets are never logged.
-- Timestamps are parsed with HA helpers (tz-aware, DST-safe).
-- Diagnostic sensor 'fan_modes_normalized' tells if UI uses low/medium/high or numeric.
-
-Notes for maintainers:
-- Keep CORE_SENSORS focused on day-to-day values.
-- Keep DIAG_SENSORS useful but not noisy (many disabled by default).
+- Timestamps parsed with HA helpers (tz-aware).
 """
 
 from __future__ import annotations
@@ -24,11 +22,10 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
-
-# Registry used for safe removal of PII entities when opted-out.
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import dt as dt_util  # tz-aware parsing & local conversion
+from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneCoordinator
 from .const import DOMAIN, MANUFACTURER
@@ -77,25 +74,15 @@ _NON_DIAG_WHITELIST = {
 # Sensor specs (attribute, friendly, icon, enabled_by_default, device_class, state_class)
 # ---------------------------
 CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
-    (
-        "local_temp",
-        "Local Temperature",
-        "mdi:thermometer",
-        True,
-        "temperature",
-        "measurement",
-    ),
-    # Bitmask of supported modes → code icon
+    ("local_temp", "Local Temperature", "mdi:thermometer", True, "temperature", "measurement"),
     ("modes", "Supported Modes (Bitmask)", "mdi:code-braces", True, None, None),
     ("status", "Status", "mdi:information-outline", True, None, None),
-    # Raw numeric mode code → code icon
     ("mode", "Mode Code (Raw)", "mdi:code-braces", True, None, None),
     ("mode_text", "Mode (Text)", "mdi:format-list-bulleted", True, None, None),
     ("machine_errors", "Machine Errors", "mdi:alert-octagon", True, None, None),
     ("firmware", "Firmware Version", "mdi:chip", True, None, None),
     ("brand", "Brand/Model", "mdi:factory", True, None, None),
     ("availables_speeds", "Available Fan Speeds", "mdi:fan", True, None, None),
-    # Setpoints and fan speeds (kept enabled)
     ("cold_consign", "Cool Setpoint", "mdi:snowflake", True, "temperature", None),
     ("heat_consign", "Heat Setpoint", "mdi:fire", True, "temperature", None),
     ("cold_speed", "Cool Fan Speed", "mdi:fan", True, None, None),
@@ -107,149 +94,24 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True, None, None),
     ("power", "Power State (Raw)", "mdi:power", True, None, None),
     ("units", "Units", "mdi:ruler", False, None, None),
-    # Unoccupied ranges (enabled)
-    (
-        "min_temp_unoccupied",
-        "Min Temp Unoccupied",
-        "mdi:thermometer-low",
-        True,
-        "temperature",
-        None,
-    ),
-    (
-        "max_temp_unoccupied",
-        "Max Temp Unoccupied",
-        "mdi:thermometer-high",
-        True,
-        "temperature",
-        None,
-    ),
-    # Device limits (enabled)
-    (
-        "min_limit_cold",
-        "Min Limit Cool",
-        "mdi:thermometer-chevron-down",
-        True,
-        "temperature",
-        None,
-    ),
-    (
-        "max_limit_cold",
-        "Max Limit Cool",
-        "mdi:thermometer-chevron-up",
-        True,
-        "temperature",
-        None,
-    ),
-    (
-        "min_limit_heat",
-        "Min Limit Heat",
-        "mdi:thermometer-chevron-down",
-        True,
-        "temperature",
-        None,
-    ),
-    (
-        "max_limit_heat",
-        "Max Limit Heat",
-        "mdi:thermometer-chevron-up",
-        True,
-        "temperature",
-        None,
-    ),
-    # Ventilate variant (diagnostic, enabled)
-    (
-        "ventilate_variant",
-        "Ventilate Variant (3/8/none)",
-        "mdi:shuffle-variant",
-        True,
-        None,
-        None,
-    ),
-    # Whether UI shows low/medium/high (True) or numeric 1..N (False)
-    (
-        "fan_modes_normalized",
-        "Fan Modes Normalized",
-        "mdi:fan-check",
-        True,
-        None,
-        None,
-    ),
-    # Timestamps (connection_date disabled-by-default to reduce noise)
-    (
-        "update_date",
-        "Last Update (Device)",
-        "mdi:clock-check-outline",
-        False,
-        "timestamp",
-        None,
-    ),
-    (
-        "connection_date",
-        "Last Connection",
-        "mdi:clock-outline",
-        False,
-        "timestamp",
-        None,
-    ),
-    # Slats (diagnostic, disabled by default)
-    (
-        "ver_state_slats",
-        "Vertical Slats State",
-        "mdi:unfold-more-vertical",
-        False,
-        None,
-        None,
-    ),
-    (
-        "ver_position_slats",
-        "Vertical Slats Position",
-        "mdi:unfold-more-vertical",
-        False,
-        None,
-        None,
-    ),
-    (
-        "hor_state_slats",
-        "Horizontal Slats State",
-        "mdi:unfold-more-horizontal",
-        False,
-        None,
-        None,
-    ),
-    (
-        "hor_position_slats",
-        "Horizontal Slats Position",
-        "mdi:unfold-more-horizontal",
-        False,
-        None,
-        None,
-    ),
-    (
-        "ver_cold_slats",
-        "Vertical Slats (Cool Pattern)",
-        "mdi:snowflake",
-        False,
-        None,
-        None,
-    ),
+    ("min_temp_unoccupied", "Min Temp Unoccupied", "mdi:thermometer-low", True, "temperature", None),
+    ("max_temp_unoccupied", "Max Temp Unoccupied", "mdi:thermometer-high", True, "temperature", None),
+    ("min_limit_cold", "Min Limit Cool", "mdi:thermometer-chevron-down", True, "temperature", None),
+    ("max_limit_cold", "Max Limit Cool", "mdi:thermometer-chevron-up", True, "temperature", None),
+    ("min_limit_heat", "Min Limit Heat", "mdi:thermometer-chevron-down", True, "temperature", None),
+    ("max_limit_heat", "Max Limit Heat", "mdi:thermometer-chevron-up", True, "temperature", None),
+    ("ventilate_variant", "Ventilate Variant (3/8/none)", "mdi:shuffle-variant", True, None, None),
+    ("fan_modes_normalized", "Fan Modes Normalized", "mdi:fan-check", True, None, None),
+    ("update_date", "Last Update (Device)", "mdi:clock-check-outline", False, "timestamp", None),
+    ("connection_date", "Last Connection", "mdi:clock-outline", False, "timestamp", None),
+    ("ver_state_slats", "Vertical Slats State", "mdi:unfold-more-vertical", False, None, None),
+    ("ver_position_slats", "Vertical Slats Position", "mdi:unfold-more-vertical", False, None, None),
+    ("hor_state_slats", "Horizontal Slats State", "mdi:unfold-more-horizontal", False, None, None),
+    ("hor_position_slats", "Horizontal Slats Position", "mdi:unfold-more-horizontal", False, None, None),
+    ("ver_cold_slats", "Vertical Slats (Cool Pattern)", "mdi:snowflake", False, None, None),
     ("ver_heat_slats", "Vertical Slats (Heat Pattern)", "mdi:fire", False, None, None),
-    (
-        "hor_cold_slats",
-        "Horizontal Slats (Cool Pattern)",
-        "mdi:snowflake",
-        False,
-        None,
-        None,
-    ),
-    (
-        "hor_heat_slats",
-        "Horizontal Slats (Heat Pattern)",
-        "mdi:fire",
-        False,
-        None,
-        None,
-    ),
+    ("hor_cold_slats", "Horizontal Slats (Cool Pattern)", "mdi:snowflake", False, None, None),
+    ("hor_heat_slats", "Horizontal Slats (Heat Pattern)", "mdi:fire", False, None, None),
 ]
 
 # PII sensors (created only when expose_pii_identifiers=True; not diagnostic)
@@ -285,8 +147,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         )
     )
 
-    # Cleanup PII entities when opted-out (safe and robust).
-    # We compute expected unique_ids and remove only exact matches under this config entry.
+    # Cleanup PII entities when opted-out
     try:
         if not expose_pii:
             reg = er.async_get(hass)
@@ -337,10 +198,8 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         self._attr_name = friendly
         self._attr_icon = icon
         self._attr_unique_id = f"{device_id}_{attribute}"
-        # Internal privacy marker for PII-opted entities
         self._is_pii: bool = attribute in PII_ATTRS
 
-        # Entity category: daily-use whitelist and PII are NOT diagnostic; rest are diagnostic
         self._attr_entity_category = (
             None
             if attribute in _NON_DIAG_WHITELIST or self._is_pii
@@ -352,7 +211,6 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         if attribute in _TEMP_FLOAT_ATTRS:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
         elif attribute == "sleep_time":
-            # Harmless if no sensor is created for 'sleep_time'
             self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
         else:
             self._attr_native_unit_of_measurement = None
@@ -369,23 +227,22 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             except Exception:  # noqa: BLE001
                 self._attr_state_class = None
 
-        # Default visibility
         self._attr_entity_registry_enabled_default = enabled_by_default
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return unified Device Registry metadata."""
         dev = self._device
-        info = {
-            "identifiers": {(DOMAIN, self._device_id)},
-            "manufacturer": MANUFACTURER,
-            "model": dev.get("brand") or "Airzone DKN",
-            "sw_version": dev.get("firmware") or "",
-            "name": dev.get("name") or "Airzone Device",
-        }
+        info = DeviceInfo(
+            identifiers={(DOMAIN, self._device_id)},
+            manufacturer=MANUFACTURER,
+            model=dev.get("brand") or "Airzone DKN",
+            sw_version=str(dev.get("firmware") or ""),
+            name=dev.get("name") or "Airzone Device",
+        )
         mac = dev.get("mac")
         if mac:
-            info["connections"] = {("mac", mac)}
+            info["connections"] = {("mac", str(mac))}
         return info
 
     @property
@@ -434,16 +291,16 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             except Exception:  # noqa: BLE001
                 return None
 
-        # Friendly handling for machine_errors: collapse empty to "No errors"
+        # Friendly handling for machine_errors
         if self._attribute == "machine_errors":
             val = self._device.get(self._attribute)
             if val in (None, "", [], 0, "0"):
                 return "No errors"
-            if isinstance(val, list | tuple):  # Ruff UP038-compliant
+            if isinstance(val, list | tuple):  # UP038-compliant
                 return ", ".join(str(x) for x in val) if val else "No errors"
             return str(val)
 
-        # Mode code exposed as integer
+        # Mode code as integer
         if self._attribute == "mode":
             val = self._device.get(self._attribute)
             try:
@@ -451,7 +308,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             except Exception:  # noqa: BLE001
                 return None
 
-        # Mode text derived from `mode` code (includes 6/7/8 for completeness)
+        # Mode text derived from `mode` code
         if self._attribute == "mode_text":
             code = str(self._device.get("mode", "")).strip()
             mapping = {
@@ -466,7 +323,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             }
             return mapping.get(code, "unknown")
 
-        # Ventilate variant diagnostic: derive from 'modes' bitstring only.
+        # Ventilate variant from bitstring
         if self._attribute == "ventilate_variant":
             bitstr = str(self._device.get("modes") or "")
             if bitstr and all(ch in "01" for ch in bitstr):
@@ -492,5 +349,5 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             raw = loc.get(self._attribute)
             return self._parse_float6(raw)
 
-        # Plain values (status, brand, firmware, etc.)
+        # Plain values
         return self._device.get(self._attribute)
