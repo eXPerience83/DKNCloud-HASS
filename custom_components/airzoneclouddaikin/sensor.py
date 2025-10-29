@@ -157,7 +157,7 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         None,
         None,
     ),
-    ("fan_modes_normalized", "Fan Modes Normalized", "mdi:fan-check", True, None, None),
+    ("fan_modes_normalized", "Fan Modes Normalized", "mdi:fan", True, None, None),
     (
         "update_date",
         "Last Update (Device)",
