@@ -198,7 +198,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         coordinator refresh still shows the pre-write snapshot.
         """
         try:
-            ttl = max(float(OPTIMISTIC_TTL_SEC), float(POST_WRITE_REFRESH_DELAY_SEC) + 2.0)
+            ttl = max(
+                float(OPTIMISTIC_TTL_SEC), float(POST_WRITE_REFRESH_DELAY_SEC) + 2.0
+            )
         except Exception:
             ttl = float(OPTIMISTIC_TTL_SEC)
         return self.coordinator.hass.loop.time() + ttl
