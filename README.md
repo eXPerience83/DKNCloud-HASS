@@ -8,7 +8,6 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 [![hassfest validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml)
 [![HACS validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml)
 [![Lint](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/lint.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/lint.yml)
-<!-- CodeQL: Default setup doesn't guarantee a repo workflow file, so use a static badge -->
 [![CodeQL](https://img.shields.io/badge/CodeQL-Enabled-success?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/security/code-scanning)
 [![License](https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/blob/main/LICENSE)
 [![HACS Default](https://img.shields.io/badge/HACS-Default-orange.svg?style=flat)](https://hacs.xyz)
@@ -22,10 +21,13 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 - **Fully integrated climate control:**  
   Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
+- **Native climate presets:**  
+  Use Home Assistant **preset modes** (`home`, `away`, `sleep`) directly on the climate entity.  
+  The integration maps these presets to the backend fields internally (no `select.scenary` entity).
 - **Automatic device/sensor creation:**  
   Creates climate, temperature, diagnostic, and connectivity entities for each device.
-- **Preset controls ready:**  
-  Adjust **Sleep time** via `number.sleep_time` and **Scenary** via `select.scenary` directly from Home Assistant.
+- **Sleep timer & unoccupied limits:**  
+  Tune **Sleep time** via `number.sleep_time`, **unoccupied min/max** via `number.min_temp_unoccupied` / `number.max_temp_unoccupied`.
 - **Privacy-sensitive sensors (opt-in):**  
   **MAC**, **PIN**, **installation/location** and related fields are available **only** when the **Expose PII identifiers** option is enabled.  
   These sensors are **not diagnostic**, remain **disabled by default**, and should be used with care.
@@ -34,8 +36,8 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 - The integration exposes `sensor.<id>_last_connection` (timestamp, enabled by default) and `binary_sensor.<id>_wserver_online` (connectivity, enabled by default).
 - Online/offline is derived **passively** from the age of `connection_date` (no extra pings).
-- Option `stale_after_minutes` (default **10**, range **6–30**) controls the threshold before considering the device offline.
-- When a control request fails with HTTP **422**, the UI shows a clear error message: **“DKN WServer sin conexión (422)”**.
+- Option `stale_after_minutes` (default **10**) controls the threshold before considering the device offline.
+- When a control request fails with HTTP **422**, Home Assistant shows: **“DKN WServer not connected (422)”**.
 
 ---
 
@@ -85,19 +87,19 @@ Enter your Airzone Cloud **username** and **password**.
 ## 🏷️ What You Get
 
 - **Climate entity:**  
-  - All core modes (COOL, HEAT, FAN_ONLY, DRY)  
-  - Dynamic fan speed control
+  - Modes: COOL, HEAT, FAN_ONLY, DRY  
+  - Dynamic fan speed control  
+  - **Preset modes**: `home`, `away`, `sleep` (use `climate.set_preset_mode`)
 - **Sensor entities:**  
   - Current temperature (`local_temp`)  
-  - Sleep timer in minutes  
-  - Diagnostics: modes, scenes, program status, and more (opt-in)
+  - Sleep timer (minutes)  
+  - Diagnostics: modes, program status, slats (opt-in)
 - **Switch entity:**  
   - Power ON/OFF per device
-- **Number/Select entities (preset-related):**  
+- **Number entities (config):**  
   - `number.min_temp_unoccupied` (**12–22 °C**)  
   - `number.max_temp_unoccupied` (**24–34 °C**)  
-  - `number.sleep_time` (**minutes**)  
-  - `select.scenary` (**occupied / vacant / sleep**)
+  - `number.sleep_time` (**minutes**)
 - **Binary sensor entities:**
   - `binary_sensor.<id>_device_on` — reflects the device power state (enabled by default)
   - `binary_sensor.<id>_wserver_online` — passive connectivity status (enabled by default)
@@ -124,29 +126,26 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🛣️ Roadmap
 
-- [ ] **Translations (i18n)** — expose and translate all sensors/diagnostics (EN/ES/CA/DE/FR/IT/PL/RU/UK…)  
-- [ ] **Docs** — examples for advanced scenes/presets and troubleshooting  
-- [ ] **HEAT_COOL (opt-in)** — field validation across devices/firmwares before enabling  
-- [ ] **Auto Fan Speed (opt-in, experimental)** — controller that selects fan speed (e.g., **P3/P4**) based on the **ΔT** between `local_temp` and the setpoint, with **1 °C discrete thresholds** (device reports integers), **hysteresis** to avoid chatter, and **active only in HEAT/COOL** (not in FAN_ONLY/DRY/OFF)
-
-*(Some diagnostics and extra sensors are already implemented; future work focuses on localization and UX details.)*
+- [ ] **Translations (i18n)** — translate 422 and connectivity banners; add locales (EN/ES/CA/DE/FR/IT/PL/RU/UK…)  
+- [ ] **Docs** — examples for automations using **preset modes**  
+- [ ] **HEAT_COOL (opt-in)** — validate across devices/firmwares before enabling  
+- [ ] **Auto Fan Speed (opt-in, experimental)** — controller that selects fan speed (e.g., **P3/P4**) based on **ΔT** (discrete **1 °C** steps & hysteresis), active only in **HEAT/COOL**
 
 ---
 
 ## ❓ FAQ / Troubleshooting
 
-**Q: What about scenes/presets? Can I change them from HA?**  
-A: Yes. The integration exposes a **Scenary** selector as `select.scenary` (`occupied`, `vacant`, `sleep`).
-You can also tune the related knobs — **Unoccupied Min/Max temperature** and **Sleep time** — directly from Home Assistant.
+**Q: How do I change scenes/presets?**  
+A: Use **climate presets** on the climate entity (`preset_modes`: `home`, `away`, `sleep`) and the service **`climate.set_preset_mode`**. This supersedes the legacy `select.scenary` entity.
 
 **Q: Will HEAT_COOL (dual setpoint / “auto”) be supported?**  
-A: It is **planned** and will be introduced as **opt-in** once validated on real hardware. Behavior may vary by device/bitmask/firmware. If your unit supports it and you want to help test, please open an issue.
+A: Planned as **opt-in** once validated on real hardware. Behavior may vary by device/bitmask/firmware.
 
 **Q: Will there be an automatic fan speed?**  
-A: Yes, it’s **planned/experimental**. The idea is to adapt fan speed (e.g., **P3/P4**) to the **ΔT** between room temperature and the target setpoint, using **1 °C** thresholds and **hysteresis**. It will operate only in **HEAT/COOL** modes.
+A: Planned/experimental. It will adapt fan speed (e.g., **P3/P4**) to the **ΔT** with **1 °C** thresholds and **hysteresis**, only in **HEAT/COOL**.
 
 **Q: Can I control vertical/horizontal slats?**  
-A: Slat state/position is shown in diagnostic sensors; control is not implemented but fields are exposed for advanced users.
+A: Slat state/position is shown in diagnostic sensors; control is not implemented.
 
 **Q: Where can I find advanced API usage, all device fields, and curl examples?**  
 A: See [info.md](./info.md).
@@ -155,11 +154,11 @@ A: See [info.md](./info.md).
 
 ## 🤝 How to Contribute
 
-Pull requests for features, **translations**, and fixes are welcome!
+PRs for features, **translations**, and fixes are welcome!
 
 - Open issues and PRs in [GitHub Issues](https://github.com/eXPerience83/DKNCloud-HASS/issues)  
-- For **translations**: contribute keys under `translations/` with ISO language codes, aligning with Home Assistant guidelines  
-- Follow the code style enforced by **Ruff** and **Black** (see CI status above)
+- For **translations**: contribute keys under `translations/` per HA guidelines  
+- Follow the code style enforced by **Ruff** and **Black** (see CI)
 
 ---
 
@@ -174,30 +173,19 @@ If you find this integration useful, you can support development via:
 
 ### Networking & Reliability
 
-This integration uses a per-request timeout of **30 s** and **exponential backoff with jitter** for `429/5xx` responses.  
-If the backend is temporarily unavailable, Home Assistant will retry the config entry startup (**ConfigEntryNotReady**).  
+This integration uses a per-request timeout of **30 s** and **exponential backoff with jitter** for `429/5xx`.  
+If the backend is temporarily unavailable, Home Assistant retries the config entry (**ConfigEntryNotReady**).  
 For privacy, logs **never** print your email or token.
 
 ---
 
 ### Authentication & Privacy
 
-Starting with **0.3.11**, this integration stores your Airzone Cloud **email** and a **user token**.  
-We **do not** persist your password. If the backend invalidates the token (for example after changing your password on the Airzone website), Home Assistant will ask you to **re-authenticate** from the Integrations UI.
 Starting with **0.4.0**:
-- The `select.scenary` entity is removed. Use climate presets: `home`, `away`, `sleep`.
+- The legacy `select.scenary` entity is **removed**. Use climate **preset modes**: `home`, `away`, `sleep`.
 - The login token is stored in `entry.options` (encrypted at rest by HA). Passwords are never persisted.
 
-> Rationale: Persisting a token (and not the password) improves privacy while keeping the UX simple. Reauthentication is only required if the backend returns HTTP 401.
-
----
-
-## 🧰 Development status
-
-- **Python:** 3.13.2+  
-- **CI:** Ruff + Black on Python 3.13 (latest patch) with a guard for `>= 3.13.2`  
-- **Actions:** Using `actions/checkout@v5` (Node 24 runtime)  
-- **Security:** GitHub **CodeQL** code scanning is enabled (default setup)
+> Rationale: Persisting a token (not the password) improves privacy while keeping the UX simple. Reauthentication is only required if the backend returns HTTP 401.
 
 ---
 
