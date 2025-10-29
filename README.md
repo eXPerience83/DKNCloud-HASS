@@ -184,6 +184,9 @@ For privacy, logs **never** print your email or token.
 
 Starting with **0.3.11**, this integration stores your Airzone Cloud **email** and a **user token**.  
 We **do not** persist your password. If the backend invalidates the token (for example after changing your password on the Airzone website), Home Assistant will ask you to **re-authenticate** from the Integrations UI.
+Starting with **0.4.0**:
+- The `select.scenary` entity is removed. Use climate presets: `home`, `away`, `sleep`.
+- The login token is stored in `entry.options` (encrypted at rest by HA). Passwords are never persisted.
 
 > Rationale: Persisting a token (and not the password) improves privacy while keeping the UX simple. Reauthentication is only required if the backend returns HTTP 401.
 
