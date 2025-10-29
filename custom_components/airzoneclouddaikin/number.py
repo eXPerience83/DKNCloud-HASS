@@ -2,6 +2,7 @@
 
 0.4.0 metadata consistency:
 - device_info now returns a DeviceInfo object (aligned with climate/sensor/switch).
+- Pass MAC via constructor 'connections' using CONNECTION_NETWORK_MAC (no post-mutation).
 - Keep optimistic/idempotent writes and clamping.
 
 Implements NumberEntity for:
@@ -18,7 +19,7 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo, CONNECTION_NETWORK_MAC
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -128,19 +129,23 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
     # ---------- Device registry ----------
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device registry info (PII-safe and unified across platforms)."""
+        """Return device registry info (PII-safe and unified across platforms).
+
+        NOTE: Pass MAC via 'connections' at construction time using
+        CONNECTION_NETWORK_MAC; avoid mutating the object after creation.
+        """
         device = (self.coordinator.data or {}).get(self._device_id, {})
-        info = DeviceInfo(
+        mac = (str(device.get("mac") or "").strip()) or None
+        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
+
+        return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             manufacturer=MANUFACTURER,
             model=device.get("brand") or "Airzone DKN",
             sw_version=str(device.get("firmware") or ""),
             name=device.get("name") or "Airzone Device",
+            connections=connections,
         )
-        mac = device.get("mac")
-        if mac:
-            info["connections"] = {("mac", str(mac))}
-        return info
 
     # ---------- State ----------
     @property
