@@ -3,6 +3,7 @@
 0.4.0 metadata consistency:
 - device_info now returns a DeviceInfo object (aligned with other platforms).
 - Keep PII policy: sensors only created if expose_pii_identifiers=True; never log secrets.
+- METADATA: Pass MAC via constructor `connections` using CONNECTION_NETWORK_MAC (no post-mutation).
 
 Key points:
 - Entities are created from coordinator.data (dict keyed by device_id).
@@ -352,12 +353,11 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
     def device_info(self) -> DeviceInfo:
         """Return unified Device Registry metadata.
 
-        Note:
-            Pass MAC via `connections` in the constructor using CONNECTION_NETWORK_MAC
-            to avoid post-construction mutations.
+        NOTE: We pass the MAC through the constructor 'connections' using
+        CONNECTION_NETWORK_MAC and avoid mutating the object after creation.
         """
         dev = self._device
-        mac = str(dev.get("mac") or "").strip() or None
+        mac = (str(dev.get("mac") or "").strip()) or None
         connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
 
         return DeviceInfo(
