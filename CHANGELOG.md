@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.4.0RC1] - 2025-10-29
+## [0.4.0 - RC1] - 2025-10-29
 ### Changed
 - Options guardrails: `scan_interval` now constrained to 10–30 s (default 10).
 - Remove `stale_after_minutes` from Options/UI; connectivity uses a fixed 10-minute
