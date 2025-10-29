@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
@@ -203,7 +202,9 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         self.async_write_ha_state()
 
         try:
-            await self._api.put_device_fields(self._device_id, {self._field_name: ivalue})
+            await self._api.put_device_fields(
+                self._device_id, {self._field_name: ivalue}
+            )
         except asyncio.CancelledError:
             raise
         except Exception:
