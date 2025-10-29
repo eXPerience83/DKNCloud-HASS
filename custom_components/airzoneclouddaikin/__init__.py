@@ -16,14 +16,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 from aiohttp import ClientResponseError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -45,8 +46,8 @@ _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10
 # We stop loading "select" here; it will be removed in the breaking change.
-_BASE_PLATFORMS: List[str] = ["climate", "sensor", "switch", "binary_sensor"]
-_EXTRA_PLATFORMS: List[str] = ["number"]  # keep number for now
+_BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
+_EXTRA_PLATFORMS: list[str] = ["number"]  # keep number for now
 
 
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -232,7 +233,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Runtime API: token-only
     api = AirzoneAPI(username, session, password=None, token=token)
 
-    scan_interval = int(opts.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC)))
+    scan_interval = int(
+        opts.get("scan_interval", cfg.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
+    )
 
     coordinator: AirzoneCoordinator = AirzoneCoordinator(
         hass,
@@ -247,18 +250,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     # Preserve any previously-set 'reauth_requested' flag (if any)
-    bucket: Dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
     prev_flag = bool(bucket.get("reauth_requested", False))
     bucket["api"] = api
     bucket["coordinator"] = coordinator
     bucket["reauth_requested"] = prev_flag
 
     # ---------------- Connectivity notifications listener ----------------
-    notify_state: Dict[str, Dict[str, Any]] = bucket.setdefault("notify_state", {})
-    stale_minutes = int(opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+    notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
+    stale_minutes = int(
+        opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
+    )
 
     # Track cancel handles for auto-dismiss banners so we can cancel on unload.
-    cancel_handles: List[Callable[[], None]] = []
+    cancel_handles: list[Callable[[], None]] = []
     bucket["cancel_handles"] = cancel_handles
 
     def _on_coordinator_update() -> None:
@@ -297,8 +302,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     dt_last = (
                         dt_util.parse_datetime(str(dev.get("connection_date") or "")) or now
                     )
-                    mins = int(max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60))
-                    title, message = _fmt(hass, "offline", name, ts_local, last_iso, mins)
+                    mins = int(
+                        max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
+                    )
+                    title, message = _fmt(
+                        hass, "offline", name, ts_local, last_iso, mins
+                    )
                     hass.components.persistent_notification.async_create(
                         message=message, title=title, notification_id=nid
                     )
@@ -329,7 +338,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(_nid),
+                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
+                        _nid
+                    ),
                 )
                 cancel_handles.append(cancel)
                 entry.async_on_unload(cancel)
