@@ -1,7 +1,12 @@
 # Changelog
 
-## 0.4.0a4 - 2025-10-29
+## 0.4.0a5 - 2025-10-29
 ### Fix
+- options: Preserve hidden keys (notably `user_token`) when saving Options.
+  This prevents token loss and the "Token required; reauth triggered" setup
+  failure after toggling settings like PII.
+- reauth: Keep the dedicated password prompt and write the fresh token into
+  `entry.options["user_token"]` (never persist the password).
 - climate: Write preset modes (`home`, `away`, `sleep`) via the canonical
   `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path.
   Removed legacy fallbacks to deprecated scenary helpers. Optimistic scenary
