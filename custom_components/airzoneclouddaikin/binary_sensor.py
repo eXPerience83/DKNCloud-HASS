@@ -1,7 +1,8 @@
 """Binary sensor platform for DKN Cloud for HASS (Airzone Cloud).
 
 0.4.0 metadata consistency:
-- device_info now returns a DeviceInfo object (aligned with climate/number/sensor/switch).
+- Pass MAC via constructor 'connections' using CONNECTION_NETWORK_MAC (no post-mutation).
+- device_info returns a DeviceInfo object (aligned with climate/number/sensor/switch).
 
 Creates boolean sensors per device:
 - device_on: derived from backend "power" field.
@@ -17,7 +18,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo, CONNECTION_NETWORK_MAC
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -107,19 +108,19 @@ class AirzoneDeviceOnBinarySensor(
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return Device Registry metadata."""
+        """Return Device Registry metadata (connections via constructor)."""
         dev = self._device
-        info = DeviceInfo(
+        mac = (str(dev.get("mac") or "").strip()) or None
+        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
+
+        return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             manufacturer=MANUFACTURER,
             model=dev.get("brand") or "Airzone DKN",
             sw_version=str(dev.get("firmware") or ""),
             name=dev.get("name") or "Airzone Device",
+            connections=connections,
         )
-        mac = dev.get("mac")
-        if mac:
-            info["connections"] = {("mac", str(mac))}
-        return info
 
 
 class AirzoneWServerOnlineBinarySensor(
@@ -188,16 +189,16 @@ class AirzoneWServerOnlineBinarySensor(
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return Device Registry metadata."""
+        """Return Device Registry metadata (connections via constructor)."""
         dev = self._device
-        info = DeviceInfo(
+        mac = (str(dev.get("mac") or "").strip()) or None
+        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
+
+        return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             manufacturer=MANUFACTURER,
             model=dev.get("brand") or "Airzone DKN",
             sw_version=str(dev.get("firmware") or ""),
             name=dev.get("name") or "Airzone Device",
+            connections=connections,
         )
-        mac = dev.get("mac")
-        if mac:
-            info["connections"] = {("mac", str(mac))}
-        return info
