@@ -87,3 +87,8 @@ PN_MESSAGES = {
         "online": "Conexión restablecida a las {ts_local}.",
     },
 }
+
+# ---------------- Connectivity / online sensors (fixed policy) ------------
+# Fixed internal threshold for passive connectivity sensors (e.g. wserver_online):
+# If last contact age <= 10 minutes, consider "online" (notifications add a 90s debounce).
+INTERNAL_STALE_AFTER_SEC = 10 * 60
