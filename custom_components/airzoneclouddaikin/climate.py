@@ -1,8 +1,11 @@
 """Home Assistant climate entity for DKN Cloud (Airzone Cloud).
 
-P4-B changes in this revision (0.4.0):
+P4-B changes in this revision (0.4.0a3):
 - BREAKING: Use native `preset_modes` (home/away/sleep) instead of exposing a
   separate select.scenary entity. Preset ↔ scenary mapping is handled internally.
+- FIX: Write presets via the canonical API method `put_device_fields(...)`
+  (helpers like put_device_scenary/set_device_scenary/update_device/put_device
+  have been removed from the API client).
 - REFACTOR: Return a `DeviceInfo` object from `device_info` for forward compatibility.
 - CONSISTENCY: Keep explicit TURN_ON/TURN_OFF advertised in supported_features.
 
@@ -270,6 +273,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         return self._scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Map HA preset → backend scenary and write via put_device_fields()."""
         if preset_mode not in (self.preset_modes or []):
             _LOGGER.debug(
                 "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
@@ -291,22 +295,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         try:
-            if hasattr(api, "put_device_scenary"):
-                await api.put_device_scenary(self._device_id, scenary)
-            elif hasattr(api, "set_device_scenary"):
-                await api.set_device_scenary(self._device_id, scenary)
-            elif hasattr(api, "update_device"):
-                await api.update_device(self._device_id, {"scenary": scenary})
-            elif hasattr(api, "put_device"):
-                await api.put_device(self._device_id, {"scenary": scenary})
-            else:
-                raise NotImplementedError("No scenary setter available on API client")
+            # Canonical write path (no legacy helpers).
+            await api.put_device_fields(self._device_id, {"device": {"scenary": scenary}})
         except asyncio.CancelledError:
             raise
         except Exception as err:
             _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
             raise
 
+        # Optimistic state while we await the refresh.
         self._optimistic["scenary"] = scenary
         self._optimistic_expires = (
             self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
@@ -660,6 +657,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 self._optimistic.clear()
                 self._optimistic_expires = None
             else:
+                # If backend scenary differs from our optimistic one, drop optimistic early.
                 try:
                     if "scenary" in self._optimistic:
                         scen_o = str(self._optimistic.get("scenary"))
