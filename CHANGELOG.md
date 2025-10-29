@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0a1 - 2025-10-29
+## 0.4.0a2 - 2025-10-29
 ### Breaking
 - Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary`
   entity is removed. Update automations to use `climate.set_preset_mode`.
