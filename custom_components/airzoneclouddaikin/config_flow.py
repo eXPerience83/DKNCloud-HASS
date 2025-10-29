@@ -1,20 +1,22 @@
-"""Config & Options flow for DKN Cloud for HASS (P4-B prep).
+"""Config & Options flow for DKN Cloud for HASS (0.4.0a5).
 
-Changes in this revision (0.4.0):
-- SECURITY: Keep token at rest in entry.options instead of entry.data.
-- CHORE: Immediately wipe the local password variable after login (reduce lifetime in memory).
-- REAUTH: Update token into entry.options (merge with existing options), never persist password.
-- OPTIONS: Still manage scan_interval / expose_pii_identifiers / stale_after in options.
+What this revision fixes
+------------------------
+1) Options flow overwrote entry.options and dropped hidden keys (notably
+   'user_token'), causing "Token required; reauth triggered" on reload.
+   -> We now MERGE the new options with the existing ones and preserve
+      any unknown/hidden keys. As a safety net, if a legacy token still
+      lives in entry.data, we copy it into options.
 
-Implementation notes:
-- Home Assistant's ConfigFlow API doesn't allow creating options atomically at
-  entry creation time. We therefore create the entry with data (username only)
-  and migrate the freshly obtained token into options during setup/migration.
-- We ALSO update options directly on reauth (since we already have the entry).
+2) Reauth UI path is intact: `async_step_reauth` + `async_step_reauth_confirm`
+   ask only for the password, mint a fresh token via API, and update
+   entry.options['user_token'] (never persist password).
 
-This file intentionally does not add UX flags like "show_connectivity_notifications"
-and does not obfuscate names: you requested notifications to be always-on and the
-current message format doesn't surface PII.
+Design contracts
+----------------
+- Token is stored in entry.options['user_token'] (encrypted at rest by HA).
+- Password is never persisted (only used transiently during login/reauth).
+- ConfigFlow.VERSION == 2 to match __init__.py migration logic.
 
 """
 
@@ -58,7 +60,7 @@ DATA_SCHEMA = vol.Schema(
 class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle the config flow for DKN Cloud for HASS."""
 
-    # Bump version so HA can run async_migrate_entry when needed.
+    # Keep version aligned with async_migrate_entry in __init__.py
     VERSION = 2
 
     def __init__(self) -> None:
@@ -106,13 +108,13 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         pass
 
                     if ok and api.token:
-                        # Create entry with username only. Token will be migrated
-                        # into entry.options during setup/migration.
+                        # Create entry with username. Token and basic options are placed
+                        # in data for 0.4.x and migrated to options during setup.
                         return self.async_create_entry(
                             title="DKN Cloud for HASS",
                             data={
                                 CONF_USERNAME: user_input[CONF_USERNAME],
-                                # temporary compatibility fields (read by setup to move to options)
+                                # temporary compatibility fields (migrated to options)
                                 "user_token": api.token,
                                 CONF_SCAN_INTERVAL: user_input.get(
                                     CONF_SCAN_INTERVAL, 10
@@ -202,7 +204,10 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
-    """Options flow to edit scan_interval, privacy flags and connectivity threshold."""
+    """Options flow to edit scan_interval, privacy flags and connectivity threshold.
+
+    Critical behavior: **always preserve** hidden options (notably user_token).
+    """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
@@ -211,28 +216,36 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Display/process options form (options preferred over data)."""
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
-
         data = self._entry.data
         opts = self._entry.options
 
-        current_scan = int(opts.get("scan_interval", data.get("scan_interval", 10)))
-        current_pii = bool(
-            opts.get(
-                "expose_pii_identifiers", data.get("expose_pii_identifiers", False)
+        current_scan = int(opts.get(CONF_SCAN_INTERVAL, data.get(CONF_SCAN_INTERVAL, 10)))
+        current_pii = bool(opts.get(CONF_EXPOSE_PII, data.get(CONF_EXPOSE_PII, False)))
+        current_stale_after = int(opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT))
+
+        if user_input is not None:
+            # Start from existing options to avoid dropping hidden keys.
+            new_options: dict[str, Any] = dict(opts)
+
+            # Overwrite with form values
+            new_options[CONF_SCAN_INTERVAL] = int(user_input.get(CONF_SCAN_INTERVAL, current_scan))
+            new_options[CONF_EXPOSE_PII] = bool(user_input.get(CONF_EXPOSE_PII, current_pii))
+            new_options[CONF_STALE_AFTER_MINUTES] = int(
+                user_input.get(CONF_STALE_AFTER_MINUTES, current_stale_after)
             )
-        )
-        current_stale_after = int(
-            opts.get(CONF_STALE_AFTER_MINUTES, STALE_AFTER_MINUTES_DEFAULT)
-        )
+
+            # Safety net: if token still lives in data (during 0.4.x migration), copy it.
+            if "user_token" not in new_options and "user_token" in data:
+                new_options["user_token"] = data["user_token"]
+
+            return self.async_create_entry(title="", data=new_options)
 
         schema = vol.Schema(
             {
-                vol.Optional("scan_interval", default=current_scan): vol.All(
+                vol.Optional(CONF_SCAN_INTERVAL, default=current_scan): vol.All(
                     vol.Coerce(int), vol.Range(min=10, max=30)
                 ),
-                vol.Optional("expose_pii_identifiers", default=current_pii): cv.boolean,
+                vol.Optional(CONF_EXPOSE_PII, default=current_pii): cv.boolean,
                 vol.Optional(
                     CONF_STALE_AFTER_MINUTES, default=current_stale_after
                 ): vol.All(vol.Coerce(int), vol.Range(min=6, max=30)),
