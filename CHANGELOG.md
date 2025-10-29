@@ -1,48 +1,45 @@
 # Changelog
 
+## [0.4.0a8] - 2025-10-29
+### Refactor
+- Device Registry: unify `DeviceInfo` across all platforms (climate, binary_sensor,
+  sensor, switch, number) and pass `connections` via the constructor using
+  `CONNECTION_NETWORK_MAC` when a MAC is available.
+
 ## [0.4.0a7] - 2025-10-29
 ### Breaking/Behavior
-- Remove all migration paths. The integration now stores the token at rest in
-  `entry.options['user_token']` from day one; `entry.data` contains only the
-  username. No fallback to `entry.data` remains.
+- Remove all migration paths. From now on, the integration stores the token at rest in
+  `entry.options['user_token']` from day one; `entry.data` contains only the username.
+  No fallback to `entry.data` remains.
 ### Fixed
-- Options flow now always merges with existing options, preserving hidden keys
+- Options flow always merges with existing options, preserving hidden keys
   (notably `user_token`) and avoiding accidental credential loss.
-- config_flow: preserve hidden options (notably `user_token`) when saving Options to
-  avoid post-restart auth failures.
-- config_flow: reauth flow now robustly resolves the target entry even if `entry_id`
+- config_flow: preserve hidden options (`user_token`) when saving Options to avoid
+  post-restart auth failures.
+- config_flow: reauth flow robustly resolves the target entry even if `entry_id`
   is missing from the context, ensuring the password UI appears.
-- config_flow: avoid hard imports of optional constants at import time, preventing
-  rare 500 errors when the local consts are not present.
+- config_flow: avoid hard imports of optional constants at import time to prevent
+  rare 500 errors when local consts are not present.
 - climate: Write preset modes (`home`, `away`, `sleep`) via the canonical
   `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path.
   Removed legacy fallbacks to deprecated scenary helpers. Optimistic scenary
   state is kept and invalidated on backend mismatch.
 - Cancel `async_call_later` handles on unload to avoid potential leaks.
 ### Breaking
-- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary`
-  entity is removed. Update automations to use `climate.set_preset_mode`.
-- Removed `select.scenary` platform. Use native `climate.set_preset_mode` with `home/away/sleep`.
-  Update automations accordingly.
+- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy
+  `select.scenary` entity is removed. Update automations to use `climate.set_preset_mode`.
 ### Security
-- Store `user_token` in `config_entry.options` instead of `data`. Legacy `password` is removed.
-  A migration moves existing tokens from data to options automatically.
-- Password is never persisted; it is used transiently for login/reauth and
-  wiped from memory as soon as possible.
+- Password is never persisted; it is used transiently for login/reauth and wiped from
+  memory as soon as possible.
 ### Refactor
 - `device_info` now returns a `DeviceInfo` object for HA's device registry.
-### Notes
-- If you upgrade from < 0.4.0, please go through any 0.4.x release before 0.5.0 so that
-  your config entry migrates secrets out of `data`. If no token is present, the integration
-  will ask you to re-authenticate.
 ### UX
-- climate: Extend the optimistic window to always cover at least one coordinator
-  refresh after writes (fan/preset/temp/on/off/mode). This eliminates transient
-  flicker where the first refresh still shows the previous snapshot.
+- Climate: extend the optimistic window to always cover at least one coordinator
+  refresh after writes (fan/preset/temp/on/off/mode) to eliminate transient flicker.
 
-## 0.3.16a1 - 2025-10-28
+## [0.3.16a1] - 2025-10-28
 ### Added
-- Climate: Fan modes normalized when `availables_speeds == 3` — the UI now shows
+- Climate: Fan modes normalized when `availables_speeds == 3` — the UI shows
   `low / medium / high`. Other devices keep numeric labels (`1..N`). No behavior
   change in DRY/OFF (fan selector hidden).
 ### Diagnostics
