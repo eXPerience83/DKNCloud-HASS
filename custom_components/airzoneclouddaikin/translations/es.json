@@ -41,5 +41,20 @@
         }
       }
     }
+  },
+  "exceptions": {
+    "wserver_not_connected": {
+      "message": "DKN WServer sin conexión (422)"
+    }
+  },
+  "issues": {
+    "offline": {
+      "title": "DKN Cloud — {name} sin conexión",
+      "description": "Conexión perdida a las {ts_local}. Último contacto: {last_iso} (hace ~{mins} min)."
+    },
+    "online": {
+      "title": "DKN Cloud — {name} en línea de nuevo",
+      "description": "Conexión restablecida a las {ts_local}."
+    }
   }
 }
