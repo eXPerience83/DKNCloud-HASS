@@ -1,11 +1,3 @@
-# Auto formatter (Ruff --fix + Black) on Python >=3.13.2
-# Changes:
-# - Use actions/checkout@v5 (Node 24).
-# - Keep setup-python@v5; assert >=3.13.2.
-# - Add owner guard in the commit/push step to avoid failures on forks:
-#   if: github.repository_owner == 'eXPerience83'
-# Why: Only the canonical repo should push formatting commits.
-
 name: Auto Format (Black + Ruff)
 
 on:
@@ -26,57 +18,41 @@ concurrency:
 jobs:
   format:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          # Fetch full history so Black/Ruff can make decisions with full context (e.g. isort).
           fetch-depth: 0
+          ref: ${{ github.event.inputs.target_branch || github.ref }}
 
-      - name: Resolve target branch
-        id: resolve_branch
-        shell: bash
-        run: |
-          if [ -n "${{ github.event.inputs.target_branch }}" ]; then
-            echo "branch=${{ github.event.inputs.target_branch }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "branch=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout target branch (if different)
-        if: ${{ steps.resolve_branch.outputs.branch != github.ref_name }}
-        run: |
-          git fetch origin "${{ steps.resolve_branch.outputs.branch }}"
-          git checkout "${{ steps.resolve_branch.outputs.branch }}"
-
-      - name: Setup Python 3.13 (latest patch)
+      - name: Setup Python 3.14 (latest patch)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-          cache: pip
+          python-version: "3.14"
+          cache: "pip"
 
-      - name: Assert Python >= 3.13.2
+      - name: Assert Python >= 3.14.0
         run: |
           python - <<'PY'
           import sys
-          ver = sys.version_info
-          assert (ver.major, ver.minor, ver.micro) >= (3, 13, 2), sys.version
+          assert sys.version_info >= (3, 14, 0), sys.version
+          print("Python OK:", sys.version)
           PY
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
 
       - name: Install formatters
         run: |
-          python -m pip install --upgrade pip
           python -m pip install "ruff==0.6.*" "black==25.*"
 
-      - name: Ruff (apply fixes)
-        run: ruff check . --fix
+      - name: Ruff --fix
+        run: ruff check --fix .
 
-      - name: Black (apply formatting)
+      - name: Black
         run: black .
 
-      # Only push from the canonical repo owner to avoid failures on forks.
-      - name: Commit & push if changes
+      - name: Commit & push if changes (canonical repo only)
         if: github.repository_owner == 'eXPerience83'
         shell: bash
         run: |
@@ -89,4 +65,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "style: apply Ruff fixes and Black formatting"
-          git push origin HEAD:"${{ steps.resolve_branch.outputs.branch }}"
+          git push origin HEAD:${{ github.event.inputs.target_branch || github.ref }}
