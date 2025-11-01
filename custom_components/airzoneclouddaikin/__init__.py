@@ -124,7 +124,11 @@ async def _async_update_data(
         raise UpdateFailed(
             f"Failed to update Airzone data: {type(err).__name__}"
         ) from err
-async def _async_prepare_notify_strings(hass: HomeAssistant) -> dict[str, dict[str, str]]:
+
+
+async def _async_prepare_notify_strings(
+    hass: HomeAssistant,
+) -> dict[str, dict[str, str]]:
     """Build notification templates from translations with English fallbacks."""
 
     result = {kind: dict(strings) for kind, strings in _DEFAULT_NOTIFY_STRINGS.items()}
@@ -304,7 +308,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     mins = int(
                         max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
                     )
-                    title, message = _fmt(strings, "offline", name, ts_local, last_iso, mins)
+                    title, message = _fmt(
+                        strings, "offline", name, ts_local, last_iso, mins
+                    )
                     hass.components.persistent_notification.async_create(
                         message=message, title=title, notification_id=nid
                     )
@@ -332,7 +338,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
+                    lambda _now,
+                    _nid=nid_online: hass.components.persistent_notification.async_dismiss(
                         _nid
                     ),
                 )
