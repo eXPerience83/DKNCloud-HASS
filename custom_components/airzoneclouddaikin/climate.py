@@ -463,9 +463,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 key = "cold_speed"
 
         await self._send_p_event(option, value_to_send)
-        optimistic_set(
-            self.hass, self._entry_id, self._device_id, key, value_to_send
-        )
+        optimistic_set(self.hass, self._entry_id, self._device_id, key, value_to_send)
 
         self.async_write_ha_state()
         schedule_post_write_refresh(self.hass, self.coordinator)
@@ -510,9 +508,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if hvac_mode == HVACMode.OFF:
             await self._send_p_event("P1", 0)
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
-            optimistic_invalidate(
-                self.hass, self._entry_id, self._device_id, "mode"
-            )
+            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "mode")
             self.async_write_ha_state()
             schedule_post_write_refresh(self.hass, self.coordinator)
             return
@@ -541,9 +537,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 optimistic_set(
                     self.hass, self._entry_id, self._device_id, "mode", mode_code
                 )
-                optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "power", "1"
-                )
+                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
         self.async_write_ha_state()
         schedule_post_write_refresh(self.hass, self.coordinator)

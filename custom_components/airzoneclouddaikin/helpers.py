@@ -178,4 +178,3 @@ def clamp_temperature(
     """Clamp a temperature value with semantics aligned to climate entities."""
 
     return clamp_number(value, minimum=min_temp, maximum=max_temp, step=step)
-

@@ -67,7 +67,11 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
     def _overlay_power(self) -> Any:
         """Return the power value applying the optimistic overlay."""
         return optimistic_get(
-            self.hass, self._entry_id, self._device_id, "power", self._device.get("power")
+            self.hass,
+            self._entry_id,
+            self._device_id,
+            "power",
+            self._device.get("power"),
         )
 
     def _backend_power_is_on(self) -> bool:
