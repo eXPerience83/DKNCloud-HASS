@@ -1,23 +1,23 @@
-# Tooling aligned to Home Assistant Python floor (>=3.13.2).
+# Tooling aligned to Home Assistant Python floor (>=3.14.0).
 # NOTE: We purposely DO NOT set [tool.black].required-version to avoid CI mismatch.
 # CI pins Black to 25.*; if you ever want an exact lock, set both:
 #   - pyproject: required-version = "25.9.0"
 #   - CI: pip install "black==25.9.0"
 
 [project]
-# Enforce the runtime floor required by HA 2025.5+.
-requires-python = ">=3.13.2"
+# Enforce the runtime floor aligned with upcoming HA Python 3.14 images.
+requires-python = ">=3.14.0"
 
 [tool.black]
 line-length = 88
-# Black supports py313; keep a single target since the project requires 3.13+.
-target-version = ["py313"]
+# Black supports py314; keep a single target since the project requires 3.14+.
+target-version = ["py314"]
 # Do NOT set required-version here to keep compatibility with CI's "black==25.*".
 
 [tool.ruff]
 line-length = 88
-# Match runtime: Python 3.13
-target-version = "py313"
+# Match runtime: Python 3.14
+target-version = "py314"
 # Default fix behavior when running plain `ruff`.
 fix = true
 
