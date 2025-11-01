@@ -338,8 +338,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now,
-                    _nid=nid_online: hass.components.persistent_notification.async_dismiss(
+                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
                         _nid
                     ),
                 )
