@@ -3,6 +3,8 @@
 ## [0.4.0 - RC2] - 2025-11-01
 ### Tooling
 - Bump **Python floor to 3.14** for development and CI (format/lint). Set `requires-python = ">=3.14.0"` and update Black/Ruff `target-version` to `py314`.
+### Refactor
+- Centralized optimistic overlay and numeric clamping in `helpers.py`, applying adaptive TTLs and shared refresh scheduling across climate, number, and switch entities for consistent UI behavior after writes.
 
 ## [0.4.0 - RC1] - 2025-10-29
 ### Changed
