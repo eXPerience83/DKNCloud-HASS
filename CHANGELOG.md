@@ -1,11 +1,6 @@
 # Changelog
 
 ## [0.4.0 - RC2] - 2025-11-01
-### Changed
-- Centralized optimistic write window and integer clamping in `helper.py`.
-  Platforms (`climate`, `number`, `switch`) now rely on shared helpers to:
-  - keep UI state stable until at least one coordinator refresh after a write,
-  - and drop optimistic values early on explicit backend mismatches.
 ### Tooling
 - Bump **Python floor to 3.14** for development and CI (format/lint). Set `requires-python = ">=3.14.0"` and update Black/Ruff `target-version` to `py314`.
 
