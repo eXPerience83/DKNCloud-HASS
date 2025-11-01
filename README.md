@@ -36,7 +36,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 - The integration exposes `sensor.<id>_last_connection` (timestamp, enabled by default) and `binary_sensor.<id>_wserver_online` (connectivity, enabled by default).
 - Online/offline is derived **passively** from the age of `connection_date` (no extra pings).
-- Option `stale_after_minutes` (default **10**) controls the threshold before considering the device offline.
+- Offline detection uses a fixed **10-minute** internal threshold with a **90 s** debounce shared between connectivity sensors and persistent notifications.
 - When a control request fails with HTTP **422**, Home Assistant shows: **“DKN WServer not connected (422)”**.
 
 ---
