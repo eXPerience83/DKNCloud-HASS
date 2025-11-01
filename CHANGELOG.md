@@ -5,6 +5,7 @@
 - Align the coordinator offline detection helper with `INTERNAL_STALE_AFTER_SEC` so binary sensors and notifications rely on the same 10-minute threshold.
 - Wrap number-entity writes in the expected `{"device": ...}` envelope to satisfy the `/devices/<id>` API contract.
 - Purge passwords from memory immediately after login/reauth via the new `AirzoneAPI.clear_password()` helper and config flow usage.
+- Sensors: avoid using the Python 3.11 `types.UnionType` syntax with `isinstance()` so `machine_errors` lists/tuples never raise `TypeError` and are rendered as CSV strings.
 
 ### Docs
 - README: document the fixed offline threshold/debounce used for connectivity checks and notifications.
