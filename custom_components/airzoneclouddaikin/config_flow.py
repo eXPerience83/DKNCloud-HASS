@@ -130,7 +130,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         finally:
             # Shorten lifetime of password in memory
             try:
-                api.password = None
+                api.clear_password()
             except Exception:  # noqa: BLE001
                 pass
 
@@ -211,7 +211,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
         finally:
             try:
-                api.password = None
+                api.clear_password()
             except Exception:  # noqa: BLE001
                 pass
 

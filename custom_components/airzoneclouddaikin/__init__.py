@@ -31,6 +31,7 @@ from homeassistant.util import dt as dt_util
 from .airzone_api import AirzoneAPI
 from .const import (
     DOMAIN,
+    INTERNAL_STALE_AFTER_SEC,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
     PN_KEY_PREFIX,
@@ -41,8 +42,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10
-# Fixed stale threshold for connectivity (minutes).
-OFFLINE_STALE_MINUTES = 10
+_OFFLINE_STALE_SECONDS = int(INTERNAL_STALE_AFTER_SEC)
 
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
 _EXTRA_PLATFORMS: list[str] = ["number"]  # keep number for now
@@ -156,7 +156,7 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
         return True
     dt = dt_util.as_utc(dt)
     age = (now - dt).total_seconds()
-    return age <= OFFLINE_STALE_MINUTES * 60
+    return age <= _OFFLINE_STALE_SECONDS
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
