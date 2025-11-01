@@ -7,6 +7,9 @@
 - Purge passwords from memory immediately after login/reauth via the new `AirzoneAPI.clear_password()` helper and config flow usage.
 - Sensors: avoid using the Python 3.11 `types.UnionType` syntax with `isinstance()` so `machine_errors` lists/tuples never raise `TypeError` and are rendered as CSV strings.
 
+### UX / i18n
+- Localize the 422 control error and connectivity notifications via EN/ES translation strings (reauth banners unchanged).
+
 ### Docs
 - README: document the fixed offline threshold/debounce used for connectivity checks and notifications.
 - info.md: clarify that device field updates (`sleep_time`, unoccupied limits) must be sent inside the `{"device": {...}}` payload.

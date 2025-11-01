@@ -45,6 +45,7 @@ from .const import (
     API_LOGIN,
     API_LOGOUT,
     BASE_URL,
+    DOMAIN,
     HEADERS_EVENTS,
     REQUEST_TIMEOUT,
     USER_AGENT,
@@ -338,8 +339,10 @@ class AirzoneAPI:
             )
         except ClientResponseError as cre:
             if cre.status == 422:
-                # Service call messages are not translated by HA, keep neutral English for now (i18n pending).
-                raise HomeAssistantError("DKN WServer not connected (422)") from cre
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="error_wserver_not_connected",
+                ) from cre
             raise
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:

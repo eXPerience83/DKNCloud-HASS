@@ -41,5 +41,18 @@
         }
       }
     }
+  },
+  "error": {
+    "wserver_not_connected": "DKN WServer not connected (422)"
+  },
+  "notification": {
+    "offline": {
+      "title": "DKN Cloud — {name} offline",
+      "message": "Connection lost at {ts_local}. Last contact: {last_iso} (about {mins} min ago)."
+    },
+    "online": {
+      "title": "DKN Cloud — {name} back online",
+      "message": "Connection restored at {ts_local}."
+    }
   }
 }
