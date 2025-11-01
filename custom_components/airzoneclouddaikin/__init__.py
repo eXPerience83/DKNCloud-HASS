@@ -200,6 +200,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bucket["api"] = api
     bucket["coordinator"] = coordinator
     bucket["reauth_requested"] = prev_flag
+    bucket["scan_interval"] = scan_interval
 
     # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
