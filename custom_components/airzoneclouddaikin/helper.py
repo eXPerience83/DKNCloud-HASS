@@ -10,7 +10,7 @@ Why this module?
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 
@@ -33,13 +33,13 @@ def compute_deadline(
     return hass.loop.time() + ttl
 
 
-def optimistic_active(hass: HomeAssistant, expires: Optional[float]) -> bool:
+def optimistic_active(hass: HomeAssistant, expires: float | None) -> bool:
     """True if optimistic state is still valid."""
     return expires is not None and hass.loop.time() < float(expires)
 
 
 def optimistic_set(
-    hass: HomeAssistant, store: Dict[str, Any], updates: Dict[str, Any]
+    hass: HomeAssistant, store: dict[str, Any], updates: dict[str, Any]
 ) -> float:
     """Update the local optimistic store and return a new expiry deadline."""
     store.update(updates)
@@ -48,7 +48,7 @@ def optimistic_set(
 
 def optimistic_take(
     hass: HomeAssistant,
-    expires: Optional[float],
+    expires: float | None,
     optimistic_value: Any,
     backend_value: Any,
 ) -> Any:
@@ -56,19 +56,19 @@ def optimistic_take(
     return optimistic_value if optimistic_active(hass, expires) else backend_value
 
 
-def optimistic_clear(store: Dict[str, Any]) -> None:
+def optimistic_clear(store: dict[str, Any]) -> None:
     """Drop all optimistic keys."""
     store.clear()
 
 
 def optimistic_drop_if_mismatch(
     hass: HomeAssistant,
-    expires: Optional[float],
-    store: Dict[str, Any],
+    expires: float | None,
+    store: dict[str, Any],
     *,
     key: str,
     backend_value: Any,
-) -> Optional[float]:
+) -> float | None:
     """If optimistic window is active and the backend disagrees on `key`, drop it.
 
     Returns the (possibly cleared) expiry timestamp to be stored by caller.
