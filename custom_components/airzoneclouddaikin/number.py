@@ -175,10 +175,10 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         if current is not None and current == ivalue:
             return
 
+        payload = {"device": {self._field_name: ivalue}}
+
         try:
-            await self._api.put_device_fields(
-                self._device_id, {self._field_name: ivalue}
-            )
+            await self._api.put_device_fields(self._device_id, payload)
         except asyncio.CancelledError:
             raise
         except Exception:

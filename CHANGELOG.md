@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0 - RC3] - 2025-11-01
+### Fixed
+- Align the coordinator offline detection helper with `INTERNAL_STALE_AFTER_SEC` so binary sensors and notifications rely on the same 10-minute threshold.
+- Wrap number-entity writes in the expected `{"device": ...}` envelope to satisfy the `/devices/<id>` API contract.
+- Purge passwords from memory immediately after login/reauth via the new `AirzoneAPI.clear_password()` helper and config flow usage.
+
+### Docs
+- README: document the fixed offline threshold/debounce used for connectivity checks and notifications.
+- info.md: clarify that device field updates (`sleep_time`, unoccupied limits) must be sent inside the `{"device": {...}}` payload.
+
 ## [0.4.0 - RC2] - 2025-11-01
 ### Tooling
 - Bump **Python floor to 3.14** for development and CI (format/lint). Set `requires-python = ">=3.14.0"` and update Black/Ruff `target-version` to `py314`.

@@ -97,6 +97,20 @@ class AirzoneAPI:
         """Update auth token for subsequent requests."""
         self._token = token
 
+    @property
+    def password(self) -> str | None:
+        """Expose the current password in memory (if any)."""
+        return self._password
+
+    @password.setter
+    def password(self, value: str | None) -> None:
+        """Update the stored password (used for hygiene in config flow)."""
+        self._password = value
+
+    def clear_password(self) -> None:
+        """Explicit helper to purge the password from memory."""
+        self._password = None
+
     # --------------------------
     # Helpers
     # --------------------------
