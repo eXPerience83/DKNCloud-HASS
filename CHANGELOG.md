@@ -9,6 +9,7 @@
 
 ### UX / i18n
 - Localize the 422 control error and connectivity notifications via EN/ES translation strings (reauth banners unchanged).
+- Adjust translation keys to Hassfest-supported buckets (`exceptions` / `issues`) so localization passes validation.
 
 ### Docs
 - README: document the fixed offline threshold/debounce used for connectivity checks and notifications.

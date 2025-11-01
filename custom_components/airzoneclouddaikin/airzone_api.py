@@ -341,7 +341,7 @@ class AirzoneAPI:
             if cre.status == 422:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
-                    translation_key="error_wserver_not_connected",
+                    translation_key="wserver_not_connected",
                 ) from cre
             raise
 

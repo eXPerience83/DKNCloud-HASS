@@ -159,12 +159,13 @@ async def _async_prepare_notify_strings(hass: HomeAssistant) -> dict[str, dict[s
             if len(parts) != 3:
                 continue
             category, kind, field = parts
-            if category != "notification":
+            if category != "issues":
                 continue
-            if kind not in result or field not in result[kind]:
+            target_field = "message" if field == "description" else field
+            if kind not in result or target_field not in result[kind]:
                 continue
             if value:
-                result[kind][field] = value
+                result[kind][target_field] = value
 
     return result
 
