@@ -1,16 +1,14 @@
-# Lint workflow (Ruff + Black) on Python >=3.13.2
-# Changes:
-# - Bump actions/checkout to v5 (Node 24; requires runner >= v2.327.1).
-# - Keep setup-python@v5 and assert >=3.13.2 to match HA runtime floor.
-# - actions/cache via setup-python (cache: pip).
-# Why: Align with current GitHub Actions ecosystem and HA Python floor.
-
 name: Lint
 
 on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch/commit to lint (optional)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -22,28 +20,25 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # If 'ref' is empty -> falls back to the event ref
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
-      - name: Setup Python 3.13 (latest patch)
+      - name: Setup Python 3.14 (latest patch)
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-          cache: pip
+          python-version: "3.14"
+          cache: "pip"
 
-      - name: Assert Python >= 3.13.2
-        run: |
-          python - <<'PY'
-          import sys
-          ver = sys.version_info
-          assert (ver.major, ver.minor, ver.micro) >= (3, 13, 2), sys.version
-          PY
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
 
       - name: Install linters
         run: |
-          python -m pip install --upgrade pip
           python -m pip install "ruff==0.6.*" "black==25.*"
 
       - name: Ruff (check only)
@@ -51,12 +46,3 @@ jobs:
 
       - name: Black (check only)
         run: black --check .
-
-    # If you want a temporary version matrix, uncomment below:
-    # strategy:
-    #   fail-fast: false
-    #   matrix:
-    #     python-version: ["3.11", "3.12", "3.13"]
-    # and replace setup step with:
-    # with:
-    #   python-version: ${{ matrix.python-version }}
