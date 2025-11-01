@@ -18,8 +18,7 @@ target-version = ["py314"]
 line-length = 88
 # Match runtime: Python 3.14
 target-version = "py314"
-# Default fix behavior when running plain `ruff`.
-fix = true
+# Do not set a default global 'fix' here; workflows control fixing with CLI flags.
 
 [tool.ruff.lint]
 # Core rule sets: pycodestyle/pyflakes/isort/pyupgrade/bugbear
