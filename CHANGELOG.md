@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0 - RC4] - 2025-11-02
+### Fixed
+- Sensors: avoid using the Python 3.11 `types.UnionType` syntax with `isinstance()` so `machine_errors` lists/tuples never raise `TypeError` and are rendered as CSV strings.
+
+### UX / i18n
+- Localize the 422 control error and connectivity notifications via EN/ES translation strings (reauth banners unchanged).
+- Adjust translation keys to Hassfest-supported buckets (`exceptions` / `issues`) so localization passes validation.
+
 ## [0.4.0 - RC3] - 2025-11-01
 ### Fixed
 - Align the coordinator offline detection helper with `INTERNAL_STALE_AFTER_SEC` so binary sensors and notifications rely on the same 10-minute threshold.
