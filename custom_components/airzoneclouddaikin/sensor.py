@@ -420,7 +420,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             val = self._device.get(self._attribute)
             if val in (None, "", [], 0, "0"):
                 return "No errors"
-            if isinstance(val, list | tuple):  # UP038-compliant
+            if isinstance(val, list) or isinstance(val, tuple):
                 return ", ".join(str(x) for x in val) if val else "No errors"
             return str(val)
 

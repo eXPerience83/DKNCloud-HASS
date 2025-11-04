@@ -162,14 +162,15 @@ Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
 
 - **Scene (`scenary`)**: `"occupied" | "vacant" | "sleep"`  
   - Update via: `PUT /devices/<id>` with body `{"device":{"scenary":"occupied"}}`
-- **Sleep (`sleep_time`)**: minutes in **[30..120]**, **step 10**.  
-  - Update via: `PUT /devices/<id>` with body `{"sleep_time":60}`
+- **Sleep (`sleep_time`)**: minutes in **[30..120]**, **step 10**.
+  - Update via: `PUT /devices/<id>` with body `{"device":{"sleep_time":60}}`
 
 ### Unoccupied limits (when provided by the backend)
 Two device fields may appear and can be updated via **root-level** PUT on `/devices/<id>`:
 
 - `min_temp_unoccupied` (**HEAT** minimum): **12..22 °C**, step **1**
 - `max_temp_unoccupied` (**COOL** maximum): **24..34 °C**, step **1**
+  - Send updates inside the device wrapper, e.g. `{"device":{"min_temp_unoccupied":18}}` (you may combine multiple fields).
 
 **Occupied switching note:** When sending control events (power/mode/speed/setpoint), the backend **often switches** a `vacant` device to `occupied`. The integration **does not force** `occupied` proactively. We **refresh** after commands; if a specific installation requires it, a **config option** may force `scenary="occupied"` (with a short cooldown).
 

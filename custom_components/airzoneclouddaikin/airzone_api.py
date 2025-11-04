@@ -45,6 +45,7 @@ from .const import (
     API_LOGIN,
     API_LOGOUT,
     BASE_URL,
+    DOMAIN,
     HEADERS_EVENTS,
     REQUEST_TIMEOUT,
     USER_AGENT,
@@ -96,6 +97,20 @@ class AirzoneAPI:
     def set_token(self, token: str | None) -> None:
         """Update auth token for subsequent requests."""
         self._token = token
+
+    @property
+    def password(self) -> str | None:
+        """Expose the current password in memory (if any)."""
+        return self._password
+
+    @password.setter
+    def password(self, value: str | None) -> None:
+        """Update the stored password (used for hygiene in config flow)."""
+        self._password = value
+
+    def clear_password(self) -> None:
+        """Explicit helper to purge the password from memory."""
+        self._password = None
 
     # --------------------------
     # Helpers
@@ -324,8 +339,10 @@ class AirzoneAPI:
             )
         except ClientResponseError as cre:
             if cre.status == 422:
-                # Service call messages are not translated by HA, keep neutral English for now (i18n pending).
-                raise HomeAssistantError("DKN WServer not connected (422)") from cre
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="wserver_not_connected",
+                ) from cre
             raise
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:

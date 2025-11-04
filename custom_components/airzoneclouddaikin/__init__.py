@@ -25,27 +25,40 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .airzone_api import AirzoneAPI
 from .const import (
     DOMAIN,
+    INTERNAL_STALE_AFTER_SEC,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
     PN_KEY_PREFIX,
-    PN_MESSAGES,
-    PN_TITLES,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10
-# Fixed stale threshold for connectivity (minutes).
-OFFLINE_STALE_MINUTES = 10
+_OFFLINE_STALE_SECONDS = int(INTERNAL_STALE_AFTER_SEC)
 
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
 _EXTRA_PLATFORMS: list[str] = ["number"]  # keep number for now
+
+_DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
+    "offline": {
+        "title": "DKN Cloud — {name} offline",
+        "message": (
+            "Connection lost at {ts_local}. "
+            "Last contact: {last_iso} (about {mins} min ago)."
+        ),
+    },
+    "online": {
+        "title": "DKN Cloud — {name} back online",
+        "message": "Connection restored at {ts_local}.",
+    },
+}
 
 
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -113,32 +126,77 @@ async def _async_update_data(
         ) from err
 
 
-def _choose_lang(hass: HomeAssistant) -> str:
-    """Choose language code. Prefer Spanish if HA is set to Spanish."""
-    lang = (getattr(hass.config, "language", None) or "").lower()
-    return "es" if lang.startswith("es") else "en"
+async def _async_prepare_notify_strings(
+    hass: HomeAssistant,
+) -> dict[str, dict[str, str]]:
+    """Build notification templates from translations with English fallbacks."""
+
+    result = {kind: dict(strings) for kind, strings in _DEFAULT_NOTIFY_STRINGS.items()}
+
+    lang_raw = (getattr(hass.config, "language", None) or "").strip()
+    preferred: list[str] = []
+    if lang_raw:
+        preferred.append(lang_raw.lower())
+        base = lang_raw.split("-")[0].lower()
+        if base and base not in preferred:
+            preferred.append(base)
+    if "en" not in preferred:
+        preferred.append("en")
+
+    prefix = f"component.{DOMAIN}."
+    for lang in preferred:
+        try:
+            translations = await async_get_translations(
+                hass,
+                lang,
+                category="component",
+                integration=DOMAIN,
+            )
+        except Exception:  # noqa: BLE001
+            continue
+
+        for key, value in translations.items():
+            if not key.startswith(prefix):
+                continue
+            path = key[len(prefix) :]
+            parts = path.split(".")
+            if len(parts) != 3:
+                continue
+            category, kind, field = parts
+            if category != "issues":
+                continue
+            target_field = "message" if field == "description" else field
+            if kind not in result or target_field not in result[kind]:
+                continue
+            if value:
+                result[kind][target_field] = value
+
+    return result
 
 
 def _fmt(
-    hass: HomeAssistant,
+    strings: dict[str, dict[str, str]],
     kind: str,  # "offline" | "online"
     name: str,
     ts_local: str,
     last_iso: str | None,
     mins: int | None,
 ) -> tuple[str, str]:
-    """Render title & message with minimal localization; no PII in these strings."""
-    lang = _choose_lang(hass)
-    titles = PN_TITLES.get(lang) or PN_TITLES["en"]
-    msgs = PN_MESSAGES.get(lang) or PN_MESSAGES["en"]
+    """Render title & message with localization; no PII in these strings."""
 
-    title = titles[kind].format(name=name)
+    templates = strings.get(kind) or _DEFAULT_NOTIFY_STRINGS[kind]
+    title_tpl = templates.get("title") or _DEFAULT_NOTIFY_STRINGS[kind]["title"]
+    msg_tpl = templates.get("message") or _DEFAULT_NOTIFY_STRINGS[kind]["message"]
+
+    title = title_tpl.format(name=name)
     if kind == "offline":
-        message = msgs[kind].format(
-            ts_local=ts_local, last_iso=last_iso or "—", mins=mins or 0
+        message = msg_tpl.format(
+            ts_local=ts_local,
+            last_iso=last_iso or "—",
+            mins=mins or 0,
         )
     else:
-        message = msgs[kind].format(ts_local=ts_local)
+        message = msg_tpl.format(ts_local=ts_local)
     return title, message
 
 
@@ -156,7 +214,7 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
         return True
     dt = dt_util.as_utc(dt)
     age = (now - dt).total_seconds()
-    return age <= OFFLINE_STALE_MINUTES * 60
+    return age <= _OFFLINE_STALE_SECONDS
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -200,6 +258,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bucket["api"] = api
     bucket["coordinator"] = coordinator
     bucket["reauth_requested"] = prev_flag
+    bucket["scan_interval"] = scan_interval
+    bucket["notify_strings"] = await _async_prepare_notify_strings(hass)
 
     # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
@@ -210,6 +270,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def _on_coordinator_update() -> None:
         now = dt_util.utcnow()
         data = coordinator.data or {}
+        strings = bucket.get("notify_strings") or _DEFAULT_NOTIFY_STRINGS
 
         for dev_id, dev in data.items():
             name = str(dev.get("name") or dev_id)
@@ -248,7 +309,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
                     )
                     title, message = _fmt(
-                        hass, "offline", name, ts_local, last_iso, mins
+                        strings, "offline", name, ts_local, last_iso, mins
                     )
                     hass.components.persistent_notification.async_create(
                         message=message, title=title, notification_id=nid
@@ -267,7 +328,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.components.persistent_notification.async_dismiss(nid)
 
                 ts_local = dt_util.as_local(now).strftime("%H:%M")
-                title, message = _fmt(hass, "online", name, ts_local, None, None)
+                title, message = _fmt(strings, "online", name, ts_local, None, None)
                 nid_online = f"{nid}:online"
                 hass.components.persistent_notification.async_create(
                     message=message, title=title, notification_id=nid_online

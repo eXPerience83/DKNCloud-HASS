@@ -57,37 +57,6 @@ ONLINE_BANNER_TTL_SEC = 20
 # Notification ID prefix (stable per device_id to avoid duplicates).
 PN_KEY_PREFIX = f"{DOMAIN}:wserver_offline:"
 
-# Minimal i18n templates (kept here to avoid runtime i18n complexity).
-# We prefer Spanish if hass.config.language starts with "es"; otherwise English.
-PN_TITLES = {
-    "en": {
-        "offline": "DKN Cloud — {name} offline",
-        "online": "DKN Cloud — {name} back online",
-    },
-    "es": {
-        "offline": "DKN Cloud — {name} sin conexión",
-        "online": "DKN Cloud — {name} en línea de nuevo",
-    },
-}
-
-PN_MESSAGES = {
-    "en": {
-        # Keep short and privacy-safe; do not include PII (email/token/MAC/GPS).
-        "offline": (
-            "Connection lost at {ts_local}. "
-            "Last contact: {last_iso} (about {mins} min ago)."
-        ),
-        "online": "Connection restored at {ts_local}.",
-    },
-    "es": {
-        "offline": (
-            "Conexión perdida a las {ts_local}. "
-            "Último contacto: {last_iso} (hace ~{mins} min)."
-        ),
-        "online": "Conexión restablecida a las {ts_local}.",
-    },
-}
-
 # ---------------- Connectivity / online sensors (fixed policy) ------------
 # Fixed internal threshold for passive connectivity sensors (e.g. wserver_online):
 # If last contact age <= 10 minutes, consider "online" (notifications add a 90s debounce).

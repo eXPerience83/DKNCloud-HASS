@@ -11,7 +11,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 [![CodeQL](https://img.shields.io/badge/CodeQL-Enabled-success?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/security/code-scanning)
 [![License](https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/blob/main/LICENSE)
 [![HACS Default](https://img.shields.io/badge/HACS-Default-orange.svg?style=flat)](https://hacs.xyz)
-[![Python](https://img.shields.io/badge/python-3.13.2%2B-blue)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.14.0%2B-blue)](https://www.python.org/)
 [![Ko-fi](https://img.shields.io/badge/Ko%E2%80%91fi-Support%20this%20project-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/experience83)
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/eXPerience83)
 
@@ -36,7 +36,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 - The integration exposes `sensor.<id>_last_connection` (timestamp, enabled by default) and `binary_sensor.<id>_wserver_online` (connectivity, enabled by default).
 - Online/offline is derived **passively** from the age of `connection_date` (no extra pings).
-- Option `stale_after_minutes` (default **10**) controls the threshold before considering the device offline.
+- Offline detection uses a fixed **10-minute** internal threshold with a **90 s** debounce shared between connectivity sensors and persistent notifications.
 - When a control request fails with HTTP **422**, Home Assistant shows: **“DKN WServer not connected (422)”**.
 
 ---
@@ -118,9 +118,12 @@ Enter your Airzone Cloud **username** and **password**.
 
 | Home Assistant | Python   | Daikin Model/Adapter         |
 |----------------|----------|------------------------------|
-| **2025.5+**    | **3.13.2+** | DAIKIN ES.DKNWSERVER (Cloud) |
+| **2025.5+**    | **3.14.0+** | DAIKIN ES.DKNWSERVER (Cloud) |
 
 *Other Airzone or Daikin adapters may not be supported.*
+
+> **Python runtime vs tooling**
+> Home Assistant provides the Python runtime. As of 2025.10, HA runs on Python 3.13.x in many installations while Docker/OS images and CI are rolling out **3.14**. This project targets **3.14** for development tooling (format/lint) to stay ahead; users don't need to change anything.
 
 ---
 

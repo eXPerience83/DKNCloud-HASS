@@ -1,29 +1,9 @@
-"""Home Assistant climate entity for DKN Cloud (Airzone Cloud).
-
-P4-B changes in this revision (0.4.0a3):
-- BREAKING: Use native `preset_modes` (home/away/sleep) instead of exposing a
-  separate select.scenary entity. Preset ↔ scenary mapping is handled internally.
-- FIX: Write presets via the canonical API method `put_device_fields(...)`
-  (helpers like put_device_scenary/set_device_scenary/update_device/put_device
-  have been removed from the API client).
-- REFACTOR: Return a `DeviceInfo` object from `device_info` for forward compatibility.
-- CONSISTENCY: Keep explicit TURN_ON/TURN_OFF advertised in supported_features.
-- METADATA: Pass MAC via constructor `connections` using CONNECTION_NETWORK_MAC (no post-mutation).
-
-Key behaviors (concise):
-- Coordinator-based: no I/O in properties; writes go via /events and short refresh.
-- Integer-only setpoints: precision = whole degrees, target_temperature_step = 1.0 °C.
-- Supported HVAC modes: COOL / HEAT / FAN_ONLY / DRY (no AUTO/HEAT_COOL for now).
-- API mapping: P1=power, P2=mode, P7/P8=setpoint (cool/heat), P3/P4=fan (cool/heat).
-- Ventilate policy: prefer P2=3 if supported; else P2=8; else do not expose FAN_ONLY.
-- Privacy: never log or expose secrets (email/token/MAC/PIN).
-"""
+"""Climate entity for DKN Cloud (Airzone Cloud)."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
@@ -31,15 +11,16 @@ from homeassistant.components.climate.const import ClimateEntityFeature, HVACMod
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
-from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator
-from .const import (
-    DOMAIN,
-    MANUFACTURER,
-    OPTIMISTIC_TTL_SEC,
-    POST_WRITE_REFRESH_DELAY_SEC,
+from .const import DOMAIN, MANUFACTURER
+from .helpers import (
+    clamp_temperature,
+    optimistic_get,
+    optimistic_invalidate,
+    optimistic_set,
+    schedule_post_write_refresh,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,7 +56,7 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> N
         return
 
     entities: list[AirzoneClimate] = [
-        AirzoneClimate(coordinator, device_id)
+        AirzoneClimate(coordinator, entry.entry_id, device_id)
         for device_id in list((coordinator.data or {}).keys())
     ]
     async_add_entities(entities)
@@ -89,12 +70,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     _attr_target_temperature_step = 1.0
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
 
-    def __init__(self, coordinator: AirzoneCoordinator, device_id: str) -> None:
+    def __init__(
+        self, coordinator: AirzoneCoordinator, entry_id: str, device_id: str
+    ) -> None:
         super().__init__(coordinator)
+        self._entry_id = entry_id
         self._device_id = device_id
-        self._optimistic_expires: float | None = None
-        self._optimistic: dict[str, Any] = {}
-        self._cancel_scheduled_refresh: Callable[[], None] | None = None
 
         device = self._device
         name = device.get("name") or "Airzone Device"
@@ -107,6 +88,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def _device(self) -> dict[str, Any]:
         """Latest device snapshot (no I/O)."""
         return (self.coordinator.data or {}).get(self._device_id, {})  # type: ignore[no-any-return]
+
+    def _overlay_value(self, key: str, backend_value: Any) -> Any:
+        """Return the optimistic value for the given key if still valid."""
+        return optimistic_get(
+            self.hass, self._entry_id, self._device_id, key, backend_value
+        )
 
     def _fan_speed_max(self) -> int:
         try:
@@ -134,7 +121,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     def _device_power_on(self) -> bool:
         """Normalize backend/optimistic power to bool."""
-        p = self._optimistic.get("power", self._device.get("power"))
+        p = self._overlay_value("power", self._device.get("power"))
         s = str(p).strip().lower()
         if s in ("1", "on", "true", "yes"):
             return True
@@ -148,10 +135,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return False
 
     def _backend_mode_code(self) -> str | None:
-        m = self._optimistic.get("mode")
-        if m is not None:
-            return str(m)
-        raw = self._device.get("mode")
+        raw = self._overlay_value("mode", self._device.get("mode"))
         return str(raw) if raw is not None else None
 
     def _modes_bitstring(self) -> str:
@@ -178,33 +162,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return HVACMode.OFF
         code = self._backend_mode_code()
         return MODE_TO_HVAC.get(code or "", HVACMode.OFF)
-
-    # ---- Optimistic helpers ---------------------------------------------
-
-    def _optimistic_active(self) -> bool:
-        return bool(
-            self._optimistic_expires
-            and self.coordinator.hass.loop.time() < self._optimistic_expires
-        )
-
-    def _expire_optimistic_if_needed(self) -> None:
-        if self._optimistic and not self._optimistic_active():
-            self._optimistic.clear()
-            self._optimistic_expires = None
-
-    def _optimistic_deadline(self) -> float:
-        """Compute an optimistic deadline that always covers at least one refresh window.
-
-        We keep the UX responsive while avoiding UI flicker where the very first
-        coordinator refresh still shows the pre-write snapshot.
-        """
-        try:
-            ttl = max(
-                float(OPTIMISTIC_TTL_SEC), float(POST_WRITE_REFRESH_DELAY_SEC) + 2.0
-            )
-        except Exception:
-            ttl = float(OPTIMISTIC_TTL_SEC)
-        return self.coordinator.hass.loop.time() + ttl
 
     # ---- Preset/scenary mapping -----------------------------------------
 
@@ -286,8 +243,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @property
     def preset_mode(self) -> str | None:
-        self._expire_optimistic_if_needed()
-        scen = self._optimistic.get("scenary", self._device.get("scenary"))
+        scen = self._overlay_value("scenary", self._device.get("scenary"))
         return self._scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
@@ -323,17 +279,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
             raise
 
-        # Optimistic state while we await the refresh.
-        self._optimistic["scenary"] = scenary
-        self._optimistic_expires = self._optimistic_deadline()
+        optimistic_set(self.hass, self._entry_id, self._device_id, "scenary", scenary)
         self.async_write_ha_state()
-        self._schedule_refresh()
+        schedule_post_write_refresh(self.hass, self.coordinator)
 
     # ---- Auto-exit AWAY on active commands -------------------------------
 
     async def _auto_exit_away_if_needed(self, reason: str) -> None:
         try:
-            self._expire_optimistic_if_needed()
             if self.preset_mode == "away":
                 await self.async_set_preset_mode("home")
         except Exception as err:
@@ -363,9 +316,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def target_temperature(self) -> float | None:
         mode = self.hvac_mode
         if mode == HVACMode.COOL:
-            val = self._optimistic.get("cold_consign", self._device.get("cold_consign"))
+            val = self._overlay_value("cold_consign", self._device.get("cold_consign"))
         elif mode == HVACMode.HEAT:
-            val = self._optimistic.get("heat_consign", self._device.get("heat_consign"))
+            val = self._overlay_value("heat_consign", self._device.get("heat_consign"))
         else:
             # DRY / FAN_ONLY / OFF: do not expose target temperature
             return None
@@ -414,20 +367,28 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         await self._auto_exit_away_if_needed("set_temperature")
 
-        min_allowed = int(self.min_temp)
-        max_allowed = int(self.max_temp)
-        temp = max(min_allowed, min(max_allowed, int(round(requested))))
+        temp = clamp_temperature(
+            requested,
+            min_temp=self.min_temp,
+            max_temp=self.max_temp,
+            step=1,
+        )
+
+        temp_int = int(round(float(temp)))
 
         if mode == HVACMode.COOL:
-            await self._send_p_event("P7", f"{temp}.0")
-            self._optimistic["cold_consign"] = temp
+            await self._send_p_event("P7", f"{temp_int}.0")
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, "cold_consign", temp_int
+            )
         else:
-            await self._send_p_event("P8", f"{temp}.0")
-            self._optimistic["heat_consign"] = temp
+            await self._send_p_event("P8", f"{temp_int}.0")
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, "heat_consign", temp_int
+            )
 
-        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
-        self._schedule_refresh()
+        schedule_post_write_refresh(self.hass, self.coordinator)
 
     # ---- Fan control -----------------------------------------------------
 
@@ -457,7 +418,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             code = self._backend_mode_code()
             key = "heat_speed" if code == "8" else "cold_speed"
 
-        val = self._optimistic.get(key, self._device.get(key))
+        val = self._overlay_value(key, self._device.get(key))
         if not val:
             return None
 
@@ -502,68 +463,54 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 key = "cold_speed"
 
         await self._send_p_event(option, value_to_send)
-        self._optimistic[key] = value_to_send
+        optimistic_set(self.hass, self._entry_id, self._device_id, key, value_to_send)
 
-        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
-        self._schedule_refresh()
+        schedule_post_write_refresh(self.hass, self.coordinator)
 
     # ---- Power / mode ----------------------------------------------------
 
     async def async_turn_on(self) -> None:
-        now = self.coordinator.hass.loop.time()
-        optimistic_active = bool(
-            self._optimistic_expires and now < self._optimistic_expires
-        )
-        if optimistic_active and str(self._optimistic.get("power", "")).strip() in (
-            "1",
-            "true",
-            "on",
-        ):
+        current = str(self._overlay_value("power", self._device.get("power")) or "")
+        if current.strip().lower() in {"1", "true", "on"}:
             return
-        if not optimistic_active:
-            backend_on = str(self._device.get("power", "0")).strip() == "1"
-            if backend_on:
-                return
+
+        backend_on = str(self._device.get("power", "0")).strip() == "1"
+        if backend_on:
+            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
+            self.async_write_ha_state()
+            return
 
         await self._auto_exit_away_if_needed("turn_on")
 
         await self._send_p_event("P1", 1)
-        self._optimistic.update({"power": "1"})
-        self._optimistic_expires = self._optimistic_deadline()
+        optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
         self.async_write_ha_state()
-        self._schedule_refresh()
+        schedule_post_write_refresh(self.hass, self.coordinator)
 
     async def async_turn_off(self) -> None:
-        now = self.coordinator.hass.loop.time()
-        optimistic_active = bool(
-            self._optimistic_expires and now < self._optimistic_expires
-        )
-        if optimistic_active and str(self._optimistic.get("power", "")).strip() in (
-            "0",
-            "false",
-            "off",
-            "",
-        ):
+        current = str(self._overlay_value("power", self._device.get("power")) or "")
+        if current.strip().lower() in {"0", "false", "off", ""}:
             return
-        if not optimistic_active:
-            backend_off = str(self._device.get("power", "0")).strip() != "1"
-            if backend_off:
-                return
+
+        backend_off = str(self._device.get("power", "0")).strip() != "1"
+        if backend_off:
+            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
+            self.async_write_ha_state()
+            return
 
         await self._send_p_event("P1", 0)
-        self._optimistic.update({"power": "0"})
-        self._optimistic_expires = self._optimistic_deadline()
+        optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
         self.async_write_ha_state()
-        self._schedule_refresh()
+        schedule_post_write_refresh(self.hass, self.coordinator)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         if hvac_mode == HVACMode.OFF:
             await self._send_p_event("P1", 0)
-            self._optimistic.update({"power": "0"})
-            self._optimistic_expires = self._optimistic_deadline()
+            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
+            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "mode")
             self.async_write_ha_state()
-            self._schedule_refresh()
+            schedule_post_write_refresh(self.hass, self.coordinator)
             return
 
         await self._auto_exit_away_if_needed("set_hvac_mode")
@@ -574,22 +521,26 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
             return
 
-        if not self._device_power_on():
+        if str(self._device.get("power", "0")).strip() != "1":
             await self._send_p_event("P1", 1)
+            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
         if hvac_mode == HVACMode.FAN_ONLY:
             code = self._preferred_ventilate_code() or "3"
             await self._send_p_event("P2", code)
-            self._optimistic.update({"power": "1", "mode": code})
+            optimistic_set(self.hass, self._entry_id, self._device_id, "mode", code)
+            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
         else:
             mode_code = HVAC_TO_MODE.get(hvac_mode)
             if mode_code:
                 await self._send_p_event("P2", mode_code)
-                self._optimistic.update({"power": "1", "mode": mode_code})
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "mode", mode_code
+                )
+                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
-        self._optimistic_expires = self._optimistic_deadline()
         self.async_write_ha_state()
-        self._schedule_refresh()
+        schedule_post_write_refresh(self.hass, self.coordinator)
 
     # ---- Features --------------------------------------------------------
 
@@ -640,45 +591,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.warning("Failed to send_event %s=%s: %s", option, value, err)
             raise
 
-    def _schedule_refresh(self) -> None:
-        if self._cancel_scheduled_refresh is not None:
-            try:
-                self._cancel_scheduled_refresh()
-            finally:
-                self._cancel_scheduled_refresh = None
-
-        async def _refresh_cb(_now):
-            try:
-                await self.coordinator.async_request_refresh()
-            except Exception as err:
-                _LOGGER.debug("Refresh after write failed: %s", err)
-
-        self._cancel_scheduled_refresh = async_call_later(
-            self.hass, POST_WRITE_REFRESH_DELAY_SEC, _refresh_cb
-        )
-
     # ---- Coordinator update hook ----------------------------------------
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        if self._optimistic:
-            now = self.coordinator.hass.loop.time()
-            if not self._optimistic_expires or now >= self._optimistic_expires:
-                self._optimistic.clear()
-                self._optimistic_expires = None
-            else:
-                # If backend scenary differs from our optimistic one, drop optimistic early.
-                try:
-                    if "scenary" in self._optimistic:
-                        scen_o = str(self._optimistic.get("scenary"))
-                        scen_b = str(self._device.get("scenary"))
-                        if scen_b and scen_b != scen_o:
-                            self._optimistic.clear()
-                            self._optimistic_expires = None
-                except Exception:
-                    self._optimistic.clear()
-                    self._optimistic_expires = None
-
+        device = self._device
+        name = device.get("name") or self._attr_name
+        if name:
+            self._attr_name = name
         super()._handle_coordinator_update()
 
     # ---- Availability / update ------------------------------------------
@@ -686,14 +606,3 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     @property
     def available(self) -> bool:
         return bool(self._device)
-
-    async def async_update(self) -> None:
-        self._expire_optimistic_if_needed()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._cancel_scheduled_refresh is not None:
-            try:
-                self._cancel_scheduled_refresh()
-            finally:
-                self._cancel_scheduled_refresh = None
-        await super().async_will_remove_from_hass()

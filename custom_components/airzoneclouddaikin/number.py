@@ -1,19 +1,9 @@
-"""Number platform for DKN Cloud for HASS: sleep_time and unoccupied limits.
-
-0.4.0 metadata consistency:
-- device_info now returns a DeviceInfo object (aligned with climate/sensor/switch).
-- Pass MAC via constructor 'connections' using CONNECTION_NETWORK_MAC (no post-mutation).
-- Keep optimistic/idempotent writes and clamping.
-
-Implements NumberEntity for:
-- 'sleep_time' (30..120 min, step 10) via AirzoneAPI.put_device_sleep_time() or fields API.
-- 'min_temp_unoccupied' (12..22 °C) and 'max_temp_unoccupied' (24..34 °C) via put_device_fields().
-"""
+"""Number entities for DKN Cloud (Airzone Cloud)."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
@@ -25,7 +15,13 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN, MANUFACTURER, OPTIMISTIC_TTL_SEC
+from .const import DOMAIN, MANUFACTURER
+from .helpers import (
+    clamp_number,
+    optimistic_get,
+    optimistic_set,
+    schedule_post_write_refresh,
+)
 
 # ------------------------
 # Sleep time constants
@@ -62,6 +58,7 @@ async def async_setup_entry(
                 DKNSleepTimeNumber(
                     coordinator=coordinator,
                     api=api,
+                    entry_id=entry.entry_id,
                     device_id=str(device_id),
                 )
             )
@@ -72,6 +69,7 @@ async def async_setup_entry(
                 DKNUnoccupiedHeatMinNumber(
                     coordinator=coordinator,
                     api=api,
+                    entry_id=entry.entry_id,
                     device_id=str(device_id),
                 )
             )
@@ -82,20 +80,13 @@ async def async_setup_entry(
                 DKNUnoccupiedCoolMaxNumber(
                     coordinator=coordinator,
                     api=api,
+                    entry_id=entry.entry_id,
                     device_id=str(device_id),
                 )
             )
 
     if entities:
         async_add_entities(entities)
-
-
-@dataclass(slots=True, kw_only=True)
-class _OptimisticState:
-    """Helper to keep short-lived optimistic state."""
-
-    value: int | None = None
-    valid_until_monotonic: float = 0.0
 
 
 class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
@@ -111,20 +102,24 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         *,
         coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
+        entry_id: str,
         device_id: str,
         unique_suffix: str,
     ) -> None:
         super().__init__(coordinator)
         self._api = api
+        self._entry_id = entry_id
         self._device_id = device_id
-        self._optimistic = _OptimisticState()
         self._attr_unique_id = f"{device_id}_{unique_suffix}"
         self._attr_mode = NumberMode.SLIDER
         self._attr_entity_category = EntityCategory.CONFIG
-        # Clamp bounds and set HA properties
         self._attr_native_min_value = self._native_min
         self._attr_native_max_value = self._native_max
         self._attr_native_step = self._native_step
+
+    @property
+    def _device(self) -> dict[str, Any]:
+        return (self.coordinator.data or {}).get(self._device_id, {})
 
     # ---------- Device registry ----------
     @property
@@ -134,7 +129,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         NOTE: Pass MAC via 'connections' at construction time using
         CONNECTION_NETWORK_MAC; avoid mutating the object after creation.
         """
-        device = (self.coordinator.data or {}).get(self._device_id, {})
+        device = self._device
         mac = (str(device.get("mac") or "").strip()) or None
         connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
 
@@ -150,21 +145,15 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
     # ---------- State ----------
     @property
     def available(self) -> bool:
-        device = (self.coordinator.data or {}).get(self._device_id)
+        device = self._device
         return bool(device and device.get("available", True))
 
     @property
     def native_value(self) -> int | None:
-        """Return current value (optimistic if still valid)."""
-        if (
-            self._optimistic.value is not None
-            and self.coordinator.hass.loop.time()
-            < self._optimistic.valid_until_monotonic
-        ):
-            return int(self._optimistic.value)
-
-        val = (
-            (self.coordinator.data or {}).get(self._device_id, {}).get(self._field_name)
+        """Return the current value using the optimistic overlay when available."""
+        backend = self._device.get(self._field_name)
+        val = optimistic_get(
+            self.hass, self._entry_id, self._device_id, self._field_name, backend
         )
         try:
             return int(val) if val is not None else None
@@ -172,54 +161,34 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             return None
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set new value using the API with idempotency and optimism."""
-        # Clamp and quantize
-        ivalue = int(round(value / self._native_step) * self._native_step)
-        ivalue = max(self._native_min, min(self._native_max, ivalue))
+        """Set new value using the API and central optimistic overlay."""
 
-        # Idempotency: compare against optimistic or coordinator value
-        effective: int | None
-        if (
-            self._optimistic.value is not None
-            and self.coordinator.hass.loop.time()
-            < self._optimistic.valid_until_monotonic
-        ):
-            effective = int(self._optimistic.value)
-        else:
-            raw = (
-                (self.coordinator.data or {})
-                .get(self._device_id, {})
-                .get(self._field_name)
-            )
-            try:
-                effective = int(raw) if raw is not None else None
-            except Exception:  # noqa: BLE001
-                effective = None
+        clamped = clamp_number(
+            value,
+            minimum=self._native_min,
+            maximum=self._native_max,
+            step=self._native_step,
+        )
+        ivalue = int(round(float(clamped)))
 
-        if effective is not None and effective == ivalue:
+        current = self.native_value
+        if current is not None and current == ivalue:
             return
 
-        # Optimistic window
-        self._optimistic.value = ivalue
-        self._optimistic.valid_until_monotonic = (
-            self.coordinator.hass.loop.time() + OPTIMISTIC_TTL_SEC
-        )
-        self.async_write_ha_state()
+        payload = {"device": {self._field_name: ivalue}}
 
         try:
-            await self._api.put_device_fields(
-                self._device_id, {self._field_name: ivalue}
-            )
+            await self._api.put_device_fields(self._device_id, payload)
         except asyncio.CancelledError:
             raise
         except Exception:
-            # Revert optimistic state on failure
-            self._optimistic.value = None
-            self._optimistic.valid_until_monotonic = 0.0
-            self.async_write_ha_state()
             raise
-        finally:
-            await self.coordinator.async_request_refresh()
+
+        optimistic_set(
+            self.hass, self._entry_id, self._device_id, self._field_name, ivalue
+        )
+        self.async_write_ha_state()
+        schedule_post_write_refresh(self.hass, self.coordinator)
 
 
 class DKNSleepTimeNumber(_BaseDKNNumber):
@@ -240,11 +209,13 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
         *,
         coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
+        entry_id: str,
         device_id: str,
     ) -> None:
         super().__init__(
             coordinator=coordinator,
             api=api,
+            entry_id=entry_id,
             device_id=device_id,
             unique_suffix="sleep_time",
         )
@@ -268,11 +239,13 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
         *,
         coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
+        entry_id: str,
         device_id: str,
     ) -> None:
         super().__init__(
             coordinator=coordinator,
             api=api,
+            entry_id=entry_id,
             device_id=device_id,
             unique_suffix="min_temp_unoccupied",
         )
@@ -296,11 +269,13 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
         *,
         coordinator: AirzoneCoordinator,
         api: AirzoneAPI,
+        entry_id: str,
         device_id: str,
     ) -> None:
         super().__init__(
             coordinator=coordinator,
             api=api,
+            entry_id=entry_id,
             device_id=device_id,
             unique_suffix="max_temp_unoccupied",
         )
