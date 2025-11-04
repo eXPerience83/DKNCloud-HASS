@@ -3,7 +3,6 @@
 ## [0.4.0 - RC4] - 2025-11-02
 ### Fixed
 - Sensors: avoid using the Python 3.11 `types.UnionType` syntax with `isinstance()` so `machine_errors` lists/tuples never raise `TypeError` and are rendered as CSV strings.
-
 ### UX / i18n
 - Localize the 422 control error and connectivity notifications via EN/ES translation strings (reauth banners unchanged).
 - Adjust translation keys to Hassfest-supported buckets (`exceptions` / `issues`) so localization passes validation.
@@ -13,7 +12,6 @@
 - Align the coordinator offline detection helper with `INTERNAL_STALE_AFTER_SEC` so binary sensors and notifications rely on the same 10-minute threshold.
 - Wrap number-entity writes in the expected `{"device": ...}` envelope to satisfy the `/devices/<id>` API contract.
 - Purge passwords from memory immediately after login/reauth via the new `AirzoneAPI.clear_password()` helper and config flow usage.
-
 ### Docs
 - README: document the fixed offline threshold/debounce used for connectivity checks and notifications.
 - info.md: clarify that device field updates (`sleep_time`, unoccupied limits) must be sent inside the `{"device": {...}}` payload.
