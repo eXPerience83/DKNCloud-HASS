@@ -122,6 +122,7 @@ heat_modes = {2,7,8}
 | 8  | ventilate        | **Yes** (fallback) | **N/A**          | **P4**      | Use only if 3 unsupported and 8 supported (see below). |
 
 \* For `P2=4 (heat-cold-auto)`, until broader validation: treat as **cold-type** for fan (**P3**) and setpoint (**P7**) by default. It remains **opt-in** and device-dependent.
+  * Options flow toggle: “Enable experimental HEAT_COOL mode (requires compatible installation)”. The checkbox is always available so users can opt in ahead of time, but the integration ignores the flag unless at least one device advertises `modes[3] == "1"`.
 
 **Ventilate selection policy (P2=3 vs P2=8)**
 - If **3** and **8** are both supported: expose **`fan_only`** using **P2=3** (default).

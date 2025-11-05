@@ -11,7 +11,8 @@ What this fixes
 Contract
 --------
 - `entry.data` keeps only the username (email).
-- `entry.options` contains `user_token`, `scan_interval`, and `expose_pii_identifiers`.
+- `entry.options` contains `user_token`, `scan_interval`, `expose_pii_identifiers`,
+  and `enable_heat_cool_mode` (experimental opt-in).
 """
 
 from __future__ import annotations
@@ -27,7 +28,8 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .const import CONF_ENABLE_HEAT_COOL, DOMAIN
+from .helpers import device_supports_heat_cool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,16 +59,20 @@ def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
 
 
 def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
-    return vol.Schema(
-        {
-            vol.Optional(
-                CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, 10)
-            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)),
-            vol.Optional(
-                CONF_EXPOSE_PII, default=defaults.get(CONF_EXPOSE_PII, False)
-            ): cv.boolean,
-        }
-    )
+    schema: dict[Any, Any] = {
+        vol.Optional(
+            CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, 10)
+        ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)),
+        vol.Optional(
+            CONF_EXPOSE_PII, default=defaults.get(CONF_EXPOSE_PII, False)
+        ): cv.boolean,
+        vol.Optional(
+            CONF_ENABLE_HEAT_COOL,
+            default=defaults.get(CONF_ENABLE_HEAT_COOL, False),
+        ): cv.boolean,
+    }
+
+    return vol.Schema(schema)
 
 
 class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -239,19 +245,46 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._entry = config_entry
 
+    def _any_device_supports_heat_cool(self) -> bool | None:
+        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry.entry_id, {})
+
+        if "heat_cool_supported" in bucket:
+            cached = bucket.get("heat_cool_supported")
+            if cached is True:
+                return True
+            if cached is False:
+                return False
+            return None
+
+        coordinator = bucket.get("coordinator")
+        data = getattr(coordinator, "data", None)
+        if not data:
+            return None
+
+        try:
+            return any(device_supports_heat_cool(dev) for dev in data.values())
+        except Exception:  # noqa: BLE001
+            return None
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         opts = self._entry.options
 
+        _supports_heat_cool = self._any_device_supports_heat_cool()
+        current_heat_cool = bool(opts.get(CONF_ENABLE_HEAT_COOL, False))
+
         defaults = {
             CONF_SCAN_INTERVAL: int(opts.get(CONF_SCAN_INTERVAL, 10)),
             CONF_EXPOSE_PII: bool(opts.get(CONF_EXPOSE_PII, False)),
+            CONF_ENABLE_HEAT_COOL: current_heat_cool,
         }
 
         if user_input is None:
             return self.async_show_form(
-                step_id="init", data_schema=_options_schema(defaults), errors={}
+                step_id="init",
+                data_schema=_options_schema(defaults),
+                errors={},
             )
 
         # Merge with existing options; never drop `user_token`
@@ -262,4 +295,8 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         next_opts[CONF_EXPOSE_PII] = bool(
             user_input.get(CONF_EXPOSE_PII, defaults[CONF_EXPOSE_PII])
         )
+        next_opts[CONF_ENABLE_HEAT_COOL] = bool(
+            user_input.get(CONF_ENABLE_HEAT_COOL, current_heat_cool)
+        )
+
         return self.async_create_entry(title="", data=next_opts)

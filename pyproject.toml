@@ -10,8 +10,9 @@ requires-python = ">=3.14.0"
 
 [tool.black]
 line-length = 88
-# Black supports py314; keep a single target since the project requires 3.14+.
-target-version = ["py314"]
+# Black 25.x does not yet accept "py314" as a target version; fall back to py313
+# until upstream releases a build that supports Python 3.14 syntax flags.
+target-version = ["py313"]
 # Do NOT set required-version here to keep compatibility with CI's "black==25.*".
 
 [tool.ruff]

@@ -14,12 +14,14 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, Device
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator
-from .const import DOMAIN, MANUFACTURER
+from .const import CONF_ENABLE_HEAT_COOL, DOMAIN, MANUFACTURER
 from .helpers import (
+    bitmask_supports_p2,
     clamp_temperature,
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
+    parse_modes_bitmask,
     schedule_post_write_refresh,
 )
 
@@ -31,6 +33,7 @@ MODE_TO_HVAC: dict[str, HVACMode] = {
     "1": HVACMode.COOL,
     "2": HVACMode.HEAT,
     "3": HVACMode.FAN_ONLY,
+    "4": HVACMode.AUTO,
     "5": HVACMode.DRY,
     "8": HVACMode.FAN_ONLY,
 }
@@ -39,6 +42,7 @@ HVAC_TO_MODE: dict[HVACMode, str] = {
     HVACMode.COOL: "1",
     HVACMode.HEAT: "2",
     HVACMode.FAN_ONLY: "3",  # default; real send uses _preferred_ventilate_code()
+    HVACMode.AUTO: "4",
     HVACMode.DRY: "5",
 }
 
@@ -139,16 +143,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         return str(raw) if raw is not None else None
 
     def _modes_bitstring(self) -> str:
-        raw = self._device.get("modes")
-        bitstr = str(raw) if raw is not None else ""
-        if bitstr and all(ch in "01" for ch in bitstr):
-            return bitstr
-        return ""
+        return parse_modes_bitmask(self._device.get("modes"))
 
     def _supports_p2_value(self, code: int) -> bool:
-        bitstr = self._modes_bitstring()
-        idx = code - 1
-        return bool(bitstr and idx >= 0 and len(bitstr) > idx and bitstr[idx] == "1")
+        return bitmask_supports_p2(self._modes_bitstring(), code)
 
     def _preferred_ventilate_code(self) -> str | None:
         if self._supports_p2_value(3):
@@ -156,6 +154,23 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if self._supports_p2_value(8):
             return "8"
         return None
+
+    def _heat_cool_opt_in(self) -> bool:
+        hass = getattr(self, "hass", None)
+        if hass is None:
+            return False
+
+        bucket = hass.data.get(DOMAIN, {}).get(self._entry_id, {})
+        if bucket:
+            return bool(bucket.get("heat_cool_opt_in"))
+
+        entry = hass.config_entries.async_get_entry(self._entry_id)
+        if entry:
+            return bool(entry.options.get(CONF_ENABLE_HEAT_COOL, False))
+        return False
+
+    def _heat_cool_enabled(self) -> bool:
+        return self._heat_cool_opt_in() and self._supports_p2_value(4)
 
     def _hvac_from_device(self) -> HVACMode:
         if not self._device_power_on():
@@ -219,20 +234,29 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def hvac_modes(self) -> list[HVACMode]:
         modes = [HVACMode.OFF]
         bitstr = self._modes_bitstring()
+        heat_cool_active = self._backend_mode_code() == "4"
+        heat_cool_opt_in = self._heat_cool_opt_in()
+        heat_cool_supported = self._supports_p2_value(4)
+
         if bitstr:
-            if len(bitstr) >= 1 and bitstr[0] == "1":
+            if self._supports_p2_value(1):
                 modes.append(HVACMode.COOL)
-            if len(bitstr) >= 2 and bitstr[1] == "1":
+            if self._supports_p2_value(2):
                 modes.append(HVACMode.HEAT)
-            fan_ok = (len(bitstr) >= 3 and bitstr[2] == "1") or (
-                len(bitstr) >= 8 and bitstr[7] == "1"
-            )
-            if fan_ok:
+            fan_supported = self._supports_p2_value(3) or self._supports_p2_value(8)
+            if fan_supported:
                 modes.append(HVACMode.FAN_ONLY)
-            if len(bitstr) >= 5 and bitstr[4] == "1":
+            if heat_cool_supported and (heat_cool_opt_in or heat_cool_active):
+                modes.append(HVACMode.AUTO)
+            if self._supports_p2_value(5):
                 modes.append(HVACMode.DRY)
             return modes
-        modes.extend([HVACMode.COOL, HVACMode.HEAT, HVACMode.FAN_ONLY, HVACMode.DRY])
+
+        modes.extend([HVACMode.COOL, HVACMode.HEAT])
+        modes.append(HVACMode.FAN_ONLY)
+        if heat_cool_opt_in or heat_cool_active:
+            modes.append(HVACMode.AUTO)
+        modes.append(HVACMode.DRY)
         return modes
 
     # ---- Presets (HA) ----------------------------------------------------
@@ -315,7 +339,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         mode = self.hvac_mode
-        if mode == HVACMode.COOL:
+        if mode in (HVACMode.COOL, HVACMode.AUTO):
             val = self._overlay_value("cold_consign", self._device.get("cold_consign"))
         elif mode == HVACMode.HEAT:
             val = self._overlay_value("heat_consign", self._device.get("heat_consign"))
@@ -331,7 +355,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         mode = self.hvac_mode
         cold = self._parse_float(dev.get("min_limit_cold"))
         heat = self._parse_float(dev.get("min_limit_heat"))
-        if mode == HVACMode.COOL and cold is not None:
+        if mode in (HVACMode.COOL, HVACMode.AUTO) and cold is not None:
             return cold
         if mode == HVACMode.HEAT and heat is not None:
             return heat
@@ -345,7 +369,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         mode = self.hvac_mode
         cold = self._parse_float(dev.get("max_limit_cold"))
         heat = self._parse_float(dev.get("max_limit_heat"))
-        if mode == HVACMode.COOL and cold is not None:
+        if mode in (HVACMode.COOL, HVACMode.AUTO) and cold is not None:
             return cold
         if mode == HVACMode.HEAT and heat is not None:
             return heat
@@ -361,7 +385,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         mode = self.hvac_mode
-        if mode not in (HVACMode.COOL, HVACMode.HEAT):
+        if mode not in (HVACMode.COOL, HVACMode.HEAT, HVACMode.AUTO):
             _LOGGER.debug("Ignoring set_temperature in mode %s", mode)
             return
 
@@ -376,7 +400,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         temp_int = int(round(float(temp)))
 
-        if mode == HVACMode.COOL:
+        if mode in (HVACMode.COOL, HVACMode.AUTO):
             await self._send_p_event("P7", f"{temp_int}.0")
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, "cold_consign", temp_int
@@ -412,7 +436,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         if mode == HVACMode.HEAT:
             key = "heat_speed"
-        elif mode == HVACMode.COOL:
+        elif mode in (HVACMode.COOL, HVACMode.AUTO):
             key = "cold_speed"
         else:  # FAN_ONLY
             code = self._backend_mode_code()
@@ -450,7 +474,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if mode == HVACMode.HEAT:
             option = "P4"
             key = "heat_speed"
-        elif mode == HVACMode.COOL:
+        elif mode in (HVACMode.COOL, HVACMode.AUTO):
             option = "P3"
             key = "cold_speed"
         else:
@@ -531,6 +555,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             optimistic_set(self.hass, self._entry_id, self._device_id, "mode", code)
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
         else:
+            if hvac_mode == HVACMode.AUTO and not self._heat_cool_enabled():
+                _LOGGER.debug(
+                    "Ignoring set_hvac_mode=auto: opt-in disabled or device unsupported"
+                )
+                return
             mode_code = HVAC_TO_MODE.get(hvac_mode)
             if mode_code:
                 await self._send_p_event("P2", mode_code)
@@ -549,7 +578,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         """Return IntFlag capabilities; NEVER return a plain int."""
         feats: ClimateEntityFeature = ClimateEntityFeature(0)
         mode = self.hvac_mode
-        if mode in (HVACMode.COOL, HVACMode.HEAT):
+        if mode in (HVACMode.COOL, HVACMode.HEAT, HVACMode.AUTO):
             feats |= ClimateEntityFeature.TARGET_TEMPERATURE
             feats |= ClimateEntityFeature.FAN_MODE
         elif mode == HVACMode.FAN_ONLY:

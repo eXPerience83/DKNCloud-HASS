@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration routes setpoints to P7 and fan speeds to P3 while in this experimental mode.
+- Diagnostic sensor `heat_cool_supported` derived from the modes bitstring so installers can verify HEAT_COOL compatibility from Home Assistant.
+### Changed
+- Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only becomes active once a compatible installation is detected.
+- Tooling: temporarily target Python 3.13 in Black configuration until upstream releases support for the `py314` flag.
+### Docs
+- Document the HEAT_COOL opt-in policy in `info.md` and surface the new options-flow toggle in EN/ES translations.
+
 ## [0.4.0 - RC4] - 2025-11-02
 ### Fixed
 - Sensors: avoid using the Python 3.11 `types.UnionType` syntax with `isinstance()` so `machine_errors` lists/tuples never raise `TypeError` and are rendered as CSV strings.

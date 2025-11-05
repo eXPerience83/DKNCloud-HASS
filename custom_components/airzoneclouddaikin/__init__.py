@@ -31,12 +31,14 @@ from homeassistant.util import dt as dt_util
 
 from .airzone_api import AirzoneAPI
 from .const import (
+    CONF_ENABLE_HEAT_COOL,
     DOMAIN,
     INTERNAL_STALE_AFTER_SEC,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
     PN_KEY_PREFIX,
 )
+from .helpers import device_supports_heat_cool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -253,6 +255,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_config_entry_first_refresh()
 
+    data_snapshot = coordinator.data or {}
+    supports_heat_cool: bool | None
+    if not data_snapshot:
+        supports_heat_cool = None
+    else:
+        try:
+            supports_heat_cool = any(
+                device_supports_heat_cool(dev) for dev in data_snapshot.values()
+            )
+        except Exception:  # noqa: BLE001
+            supports_heat_cool = None
+
     bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
     prev_flag = bool(bucket.get("reauth_requested", False))
     bucket["api"] = api
@@ -260,6 +274,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     bucket["reauth_requested"] = prev_flag
     bucket["scan_interval"] = scan_interval
     bucket["notify_strings"] = await _async_prepare_notify_strings(hass)
+    bucket["heat_cool_supported"] = supports_heat_cool
+    heat_cool_opt_in = bool(
+        opts.get(CONF_ENABLE_HEAT_COOL, False) and supports_heat_cool is not False
+    )
+    bucket["heat_cool_opt_in"] = heat_cool_opt_in
+
+    if opts.get(CONF_ENABLE_HEAT_COOL, False) and supports_heat_cool is False:
+        _LOGGER.warning(
+            "HEAT_COOL opt-in ignored: no devices expose bitmask index 3 (P2=4)."
+        )
 
     # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})

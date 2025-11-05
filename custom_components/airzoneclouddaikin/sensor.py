@@ -30,6 +30,7 @@ from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneCoordinator
 from .const import DOMAIN, MANUFACTURER
+from .helpers import device_supports_heat_cool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -154,6 +155,14 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
         "ventilate_variant",
         "Ventilate Variant (3/8/none)",
         "mdi:shuffle-variant",
+        True,
+        None,
+        None,
+    ),
+    (
+        "heat_cool_supported",
+        "HEAT_COOL Compatible",
+        "mdi:autorenew",
         True,
         None,
         None,
@@ -458,6 +467,9 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
                 if sup8:
                     return "8"
             return "none"
+
+        if self._attribute == "heat_cool_supported":
+            return device_supports_heat_cool(self._device)
 
         # Whether fan modes are normalized (low/medium/high) or numeric (1..N)
         if self._attribute == "fan_modes_normalized":
