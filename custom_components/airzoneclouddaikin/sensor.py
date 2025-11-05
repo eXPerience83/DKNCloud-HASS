@@ -448,7 +448,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
                 "1": "cool",
                 "2": "heat",
                 "3": "ventilate",
-                "4": "auto (heat_cool)",
+                "4": "heat_cool",
                 "5": "dry",
                 "6": "cool_air",
                 "7": "heat_air",

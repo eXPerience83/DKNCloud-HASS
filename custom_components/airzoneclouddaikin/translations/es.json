@@ -35,11 +35,11 @@
     "step": {
       "init": {
         "title": "Opciones",
-        "description": "El modo HEAT_COOL experimental es opt-in y solo tendrá efecto si alguna instalación informa que es compatible.",
+        "description": "El modo HEAT_COOL experimental es opt-in, usa P7 para la consigna y P3 para el ventilador, y solo tendrá efecto si alguna instalación informa que es compatible.",
         "data": {
           "scan_interval": "Intervalo de sondeo (segundos)",
           "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
-          "enable_heat_cool_mode": "Activar modo HEAT_COOL experimental (requiere instalación compatible)"
+          "enable_heat_cool_mode": "Activar modo HEAT_COOL experimental (requiere instalación compatible; usa ruteo P7/P3)"
         }
       }
     }

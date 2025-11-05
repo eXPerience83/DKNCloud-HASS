@@ -106,6 +106,8 @@ async def async_get_config_entry_diagnostics(
             "last_update_success": getattr(coordinator, "last_update_success", None),
             "update_interval_seconds": interval,
             "devices_count": len(getattr(coordinator, "data", {}) or {}),
+            "heat_cool_single_setpoint": True,
+            "heat_cool_routing": "cold(P7,P3)",
             "devices": getattr(coordinator, "data", {}),
         }
 

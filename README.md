@@ -50,7 +50,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 | `"3"`    | FAN_ONLY             | Ventilation only |
 | `"5"`    | DRY                  | Dehumidify       |
 
-> **About HEAT_COOL (dual setpoint / “auto”)**  
+> **About HEAT_COOL (API label “heat-cold-auto”)**
 > This is **planned/experimental**. Support likely depends on device firmware/bitmask and needs **field validation**. We will gate it as **opt-in** when released and seek testers before enabling by default.
 
 ---
@@ -141,7 +141,7 @@ Enter your Airzone Cloud **username** and **password**.
 **Q: How do I change scenes/presets?**  
 A: Use **climate presets** on the climate entity (`preset_modes`: `home`, `away`, `sleep`) and the service **`climate.set_preset_mode`**. This supersedes the legacy `select.scenary` entity.
 
-**Q: Will HEAT_COOL (dual setpoint / “auto”) be supported?**  
+**Q: Will HEAT_COOL (API label “heat-cold-auto”) be supported?**
 A: Planned as **opt-in** once validated on real hardware. Behavior may vary by device/bitmask/firmware.
 
 **Q: Will there be an automatic fan speed?**  

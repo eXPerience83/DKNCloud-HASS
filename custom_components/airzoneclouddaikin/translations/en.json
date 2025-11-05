@@ -35,11 +35,11 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Experimental HEAT_COOL mode is opt-in and only takes effect for installations whose devices report compatibility.",
+        "description": "Experimental HEAT_COOL mode is opt-in, routes setpoints via P7 and fan speeds via P3, and only takes effect for installations whose devices report compatibility.",
         "data": {
           "scan_interval": "Scan interval (seconds)",
           "expose_pii_identifiers": "Expose PII identifiers (advanced)",
-          "enable_heat_cool_mode": "Enable experimental HEAT_COOL mode (requires compatible installation)"
+          "enable_heat_cool_mode": "Enable experimental HEAT_COOL mode (requires compatible installation; uses P7/P3 routing)"
         }
       }
     }
