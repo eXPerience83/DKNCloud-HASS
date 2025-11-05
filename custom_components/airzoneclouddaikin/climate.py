@@ -29,16 +29,19 @@ _LOGGER = logging.getLogger(__name__)
 
 # Airzone mode codes observed in API:
 # 1: COOL, 2: HEAT, 3: FAN_ONLY (ventilate cold-type), 4: HEAT_COOL, 5: DRY,
-# 6: COOL_AIR (treated as COOL for state reporting), 7: HEAT_AIR (treated as HEAT),
+# 6: COOL_AIR (treated as UNKNOWN for state reporting),
+# 7: HEAT_AIR (treated as UNKNOWN for state reporting),
 # 8: FAN_ONLY (ventilate heat-type)
-MODE_TO_HVAC: dict[str, HVACMode] = {
+HVAC_MODE_UNKNOWN = "unknown"
+
+MODE_TO_HVAC: dict[str, HVACMode | str] = {
     "1": HVACMode.COOL,
     "2": HVACMode.HEAT,
     "3": HVACMode.FAN_ONLY,
     "4": HVACMode.HEAT_COOL,
     "5": HVACMode.DRY,
-    "6": HVACMode.COOL,
-    "7": HVACMode.HEAT,
+    "6": HVAC_MODE_UNKNOWN,
+    "7": HVAC_MODE_UNKNOWN,
     "8": HVACMode.FAN_ONLY,
 }
 # NOTE: For FAN_ONLY we pick P2=3 or P2=8 dynamically via _preferred_ventilate_code().
@@ -176,7 +179,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def _heat_cool_enabled(self) -> bool:
         return self._heat_cool_opt_in() and self._supports_p2_value(4)
 
-    def _hvac_from_device(self) -> HVACMode:
+    def _hvac_from_device(self) -> HVACMode | str:
         if not self._device_power_on():
             return HVACMode.OFF
         code = self._backend_mode_code()
@@ -231,7 +234,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Core state ------------------------------------------------------
 
     @property
-    def hvac_mode(self) -> HVACMode:
+    def hvac_mode(self) -> HVACMode | str:
         return self._hvac_from_device()
 
     @property
@@ -428,7 +431,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def fan_modes(self) -> list[str] | None:
         """Expose common labels when exactly 3 speeds exist; otherwise numeric."""
         mode = self.hvac_mode
-        if mode in (HVACMode.OFF, HVACMode.DRY):
+        if mode in (HVACMode.OFF, HVACMode.DRY) or mode == HVAC_MODE_UNKNOWN:
             return []
         n = self._fan_speed_max()
         if n == 3:
@@ -439,7 +442,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def fan_mode(self) -> str | None:
         """Return current fan mode; map 1/2/3 to low/medium/high when normalized."""
         mode = self.hvac_mode
-        if mode in (HVACMode.OFF, HVACMode.DRY):
+        if mode in (HVACMode.OFF, HVACMode.DRY) or mode == HVAC_MODE_UNKNOWN:
             return None
 
         if mode == HVACMode.HEAT:
@@ -462,7 +465,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Accept normalized labels (low/medium/high) or numeric strings."""
         mode = self.hvac_mode
-        if mode in (HVACMode.OFF, HVACMode.DRY):
+        if mode in (HVACMode.OFF, HVACMode.DRY) or mode == HVAC_MODE_UNKNOWN:
             _LOGGER.debug("Ignoring set_fan_mode in mode %s", mode)
             return
         allowed = self.fan_modes or []

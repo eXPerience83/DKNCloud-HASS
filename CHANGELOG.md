@@ -8,6 +8,7 @@
 - Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only becomes active once a compatible installation is detected.
 - Tooling: temporarily target Python 3.13 in Black configuration until upstream releases support for the `py314` flag.
 - Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and ensure fan/temperature writes always use the cold path (P7/P3). Historical changelog entries that mentioned “AUTO” refer to this same mode.
+- Climate: report backend P2 codes 6/7 as `unknown` instead of masquerading them as COOL/HEAT so automations can detect unsupported air variants.
 ### Docs
 - Document the HEAT_COOL opt-in policy in `info.md`, remove “AUTO” terminology, and surface the updated options-flow toggle copy (EN/ES) that calls out the P7/P3 routing.
 
