@@ -28,13 +28,17 @@ from .helpers import (
 _LOGGER = logging.getLogger(__name__)
 
 # Airzone mode codes observed in API:
-# 1: COOL, 2: HEAT, 3: FAN_ONLY (ventilate cold-type), 4: HEAT_COOL, 5: DRY, 8: FAN_ONLY (ventilate heat-type)
+# 1: COOL, 2: HEAT, 3: FAN_ONLY (ventilate cold-type), 4: HEAT_COOL, 5: DRY,
+# 6: COOL_AIR (treated as COOL for state reporting), 7: HEAT_AIR (treated as HEAT),
+# 8: FAN_ONLY (ventilate heat-type)
 MODE_TO_HVAC: dict[str, HVACMode] = {
     "1": HVACMode.COOL,
     "2": HVACMode.HEAT,
     "3": HVACMode.FAN_ONLY,
     "4": HVACMode.HEAT_COOL,
     "5": HVACMode.DRY,
+    "6": HVACMode.COOL,
+    "7": HVACMode.HEAT,
     "8": HVACMode.FAN_ONLY,
 }
 # NOTE: For FAN_ONLY we pick P2=3 or P2=8 dynamically via _preferred_ventilate_code().
@@ -238,6 +242,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         heat_cool_supported = self._supports_p2_value(4)
         heat_cool_enabled = heat_cool_supported and heat_cool_opt_in
 
+        current_mode = self.hvac_mode
+
         if bitstr:
             if self._supports_p2_value(1):
                 modes.append(HVACMode.COOL)
@@ -250,11 +256,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 modes.append(HVACMode.HEAT_COOL)
             if self._supports_p2_value(5):
                 modes.append(HVACMode.DRY)
+            if current_mode == HVACMode.HEAT_COOL and HVACMode.HEAT_COOL not in modes:
+                modes.append(HVACMode.HEAT_COOL)
             return modes
 
         modes.extend([HVACMode.COOL, HVACMode.HEAT])
         modes.append(HVACMode.FAN_ONLY)
         modes.append(HVACMode.DRY)
+        if current_mode == HVACMode.HEAT_COOL and HVACMode.HEAT_COOL not in modes:
+            modes.append(HVACMode.HEAT_COOL)
         return modes
 
     # ---- Presets (HA) ----------------------------------------------------
