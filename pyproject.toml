@@ -10,8 +10,8 @@ requires-python = ">=3.14.0"
 
 [tool.black]
 line-length = 88
-# Target Python 3.14 so formatting stays aligned with Home Assistant's minimum once
-# upstream Black builds accept the flag.
+# Target Python 3.14 to mirror Home Assistant's floor; Black 25.9 already
+# accepts this target flag even though upstream has not formally documented it.
 target-version = ["py314"]
 # Do NOT set required-version here to keep compatibility with CI's "black==25.*".
 
