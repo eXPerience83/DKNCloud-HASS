@@ -10,9 +10,9 @@ requires-python = ">=3.14.0"
 
 [tool.black]
 line-length = 88
-# Black 25.x does not yet accept "py314" as a target version; fall back to py313
-# until upstream releases a build that supports Python 3.14 syntax flags.
-target-version = ["py313"]
+# Target Python 3.14 so formatting stays aligned with Home Assistant's minimum once
+# upstream Black builds accept the flag.
+target-version = ["py314"]
 # Do NOT set required-version here to keep compatibility with CI's "black==25.*".
 
 [tool.ruff]

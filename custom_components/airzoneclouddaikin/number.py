@@ -7,7 +7,7 @@ from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTime
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
@@ -232,7 +232,7 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     _attr_has_entity_name = True
     _attr_name = "Unoccupied Heat Temp"
     _attr_icon = "mdi:home-thermometer-outline"
-    _attr_native_unit_of_measurement = "°C"
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
     def __init__(
         self,
@@ -262,7 +262,7 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     _attr_has_entity_name = True
     _attr_name = "Unoccupied Cool Temp"
     _attr_icon = "mdi:snowflake-thermometer"
-    _attr_native_unit_of_measurement = "°C"
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
     def __init__(
         self,

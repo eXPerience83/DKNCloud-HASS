@@ -1,4 +1,4 @@
-"""DKN Cloud for HASS integration setup (0.4.0a8, options guardrails; no migrations).
+"""DKN Cloud for HASS integration setup (0.4.1a0, options guardrails; no migrations).
 
 Key points in this revision:
 - Token and settings are read exclusively from entry.options (no data fallback).

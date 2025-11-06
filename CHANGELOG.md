@@ -1,12 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+- No changes yet.
+
+## [0.4.1a0] - 2025-11-03
 ### Added
 - Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration routes setpoints to P7 and fan speeds to P3 while in this experimental mode.
 - Diagnostic sensor `heat_cool_supported` derived from the modes bitstring so installers can verify HEAT_COOL compatibility from Home Assistant.
 ### Changed
 - Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only becomes active once a compatible installation is detected.
-- Tooling: temporarily target Python 3.13 in Black configuration until upstream releases support for the `py314` flag.
+- Tooling: retarget Black formatting to Python 3.14 now that upstream supports the `py314` flag, keeping Ruff aligned.
 - Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and ensure fan/temperature writes always use the cold path (P7/P3). Historical changelog entries that mentioned “AUTO” refer to this same mode.
 - Climate: report backend P2 codes 6/7 as `unknown` instead of masquerading them as COOL/HEAT so automations can detect unsupported air variants.
 ### Docs

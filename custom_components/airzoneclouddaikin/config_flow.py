@@ -1,4 +1,4 @@
-"""Config & Options flow for DKN Cloud for HASS (0.4.0a8 – options guardrails, no migrations).
+"""Config & Options flow for DKN Cloud for HASS (0.4.1a0 – options guardrails, no migrations).
 
 What this fixes
 ---------------
