@@ -9,9 +9,7 @@
 - Diagnostic sensor `heat_cool_supported` derived from the modes bitstring so installers can verify HEAT_COOL compatibility from Home Assistant.
 ### Changed
 - Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only becomes active once a compatible installation is detected.
-- Tooling: retarget Black formatting to Python 3.14 using Black 25.9's `py314` target
-  flag (currently accepted even if not yet officially documented) and keep Ruff
-  aligned.
+- Tooling: retarget Black formatting to Python 3.14 using Black 25.9's `py314` target flag (currently accepted even if not yet officially documented) and keep Ruff aligned.
 - Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and ensure fan/temperature writes always use the cold path (P7/P3). Historical changelog entries that mentioned “AUTO” refer to this same mode.
 - Climate: report backend P2 codes 6/7 as `unknown` instead of masquerading them as COOL/HEAT so automations can detect unsupported air variants.
 ### Docs
