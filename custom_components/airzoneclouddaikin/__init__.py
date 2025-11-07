@@ -1,13 +1,12 @@
-"""DKN Cloud for HASS integration setup (0.4.1a0, options guardrails; no migrations).
+"""DKN Cloud for HASS integration setup (0.4.1a1, proxy switch & serialized writes).
 
 Key points in this revision:
-- Token and settings are read exclusively from entry.options (no data fallback).
-- Removed the `stale_after_minutes` option. Offline detection now uses a fixed
-  internal threshold (10 minutes) plus a 90 s debounce for notifications.
-- Select platform remains removed (preset modes are native in climate).
-- Keep and cancel async_call_later handles via entry.async_on_unload(...) to avoid leaks.
-- On 401 in the coordinator, open a reauth flow; on missing token in setup, raise
-  ConfigEntryAuthFailed so HA triggers the reauth UI.
+- Power switch delegates to the climate entity, inheriting away auto-exit and
+  optimistic overlays while preserving a direct P1 fallback when needed.
+- Post-write refreshes are coalesced per entry to avoid redundant refresh bursts
+  after consecutive commands.
+- All write paths share a per-device asyncio.Lock so concurrent commands from the
+  UI and automations maintain deterministic ordering.
 """
 
 from __future__ import annotations

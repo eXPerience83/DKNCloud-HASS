@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -110,9 +111,26 @@ def schedule_post_write_refresh(
     hass: HomeAssistant,
     coordinator: DataUpdateCoordinator[Any],
     *,
+    entry_id: str,
     delay: float = POST_WRITE_REFRESH_DELAY_SEC,
 ) -> Callable[[], None] | None:
-    """Request a coordinator refresh after a short delay."""
+    """Request a coordinator refresh after a short delay (coalesced per entry)."""
+
+    bucket = _entry_bucket(hass, entry_id)
+    cancel_handles: list[Callable[[], None]] = bucket.setdefault("cancel_handles", [])
+
+    pending: Callable[[], None] | None = bucket.get("pending_refresh")
+    if callable(pending):
+        try:
+            pending()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            try:
+                cancel_handles.remove(pending)
+            except ValueError:
+                pass
+            bucket["pending_refresh"] = None
 
     if delay <= 0:
         hass.async_create_task(coordinator.async_request_refresh())
@@ -121,10 +139,32 @@ def schedule_post_write_refresh(
     async def _refresh(_now: Any) -> None:
         try:
             await coordinator.async_request_refresh()
-        except Exception:  # noqa: BLE001
-            return
+        finally:
+            if bucket.get("pending_refresh") is cancel:
+                bucket["pending_refresh"] = None
+            try:
+                cancel_handles.remove(cancel)
+            except ValueError:
+                pass
 
-    return async_call_later(hass, delay, _refresh)
+    cancel = async_call_later(hass, delay, _refresh)
+    bucket["pending_refresh"] = cancel
+    if cancel not in cancel_handles:
+        cancel_handles.append(cancel)
+    return cancel
+
+
+def acquire_device_lock(
+    hass: HomeAssistant, entry_id: str, device_id: str
+) -> asyncio.Lock:
+    """Return a shared asyncio.Lock for writes scoped to (entry, device)."""
+
+    bucket = _entry_bucket(hass, entry_id)
+    locks: dict[str, asyncio.Lock] = bucket.setdefault("device_locks", {})
+    lock = locks.get(device_id)
+    if lock is None:
+        lock = locks[device_id] = asyncio.Lock()
+    return lock
 
 
 def clamp_number(
