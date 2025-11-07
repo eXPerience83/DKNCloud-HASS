@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -82,7 +82,7 @@ def optimistic_get(
         return backend_value
 
     expires = overlay.get("expires")
-    if not isinstance(expires, (int, float)) or hass.loop.time() >= float(expires):
+    if not isinstance(expires, int | float) or hass.loop.time() >= float(expires):
         device_overlay.pop(key, None)
         if not device_overlay:
             optimistic.pop(device_id, None)
@@ -178,3 +178,49 @@ def clamp_temperature(
     """Clamp a temperature value with semantics aligned to climate entities."""
 
     return clamp_number(value, minimum=min_temp, maximum=max_temp, step=step)
+
+
+def parse_modes_bitmask(value: Any) -> str:
+    """Normalize the modes bitmask to a binary string or return an empty string."""
+
+    try:
+        bitmask = str(value or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+    bitmask = bitmask.strip()
+    if bitmask and all(ch in "01" for ch in bitmask):
+        return bitmask
+    return ""
+
+
+def bitmask_supports_p2(bitmask: str, code: int) -> bool:
+    """Return True if the sanitized bitmask exposes the given P2 code."""
+
+    if not bitmask:
+        return False
+
+    try:
+        idx = int(code) - 1
+    except (TypeError, ValueError):  # noqa: BLE001
+        return False
+
+    return idx >= 0 and len(bitmask) > idx and bitmask[idx] == "1"
+
+
+def device_supports_p2(device: Mapping[str, Any] | dict[str, Any], code: int) -> bool:
+    """Check whether a device reports support for a given P2 value in its bitmask."""
+
+    try:
+        raw = (device or {}).get("modes")
+    except Exception:  # noqa: BLE001
+        raw = ""
+
+    bitmask = parse_modes_bitmask(raw)
+    return bitmask_supports_p2(bitmask, code)
+
+
+def device_supports_heat_cool(device: Mapping[str, Any] | dict[str, Any]) -> bool:
+    """Return True when the device bitmask exposes the HEAT_COOL (P2=4) mode."""
+
+    return device_supports_p2(device, 4)

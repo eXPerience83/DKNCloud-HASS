@@ -8,6 +8,9 @@ from __future__ import annotations
 # Domain key (must match manifest.json and the integration folder name)
 DOMAIN = "airzoneclouddaikin"
 
+# Stable option keys shared across the integration (config flow, runtime buckets).
+CONF_ENABLE_HEAT_COOL = "enable_heat_cool_mode"
+
 # Public manufacturer label used across platforms (Device Registry consistency).
 MANUFACTURER = "Daikin / Airzone"
 

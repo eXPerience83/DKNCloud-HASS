@@ -96,7 +96,7 @@ Accept: application/json, text/plain, */*
 **Ordered list for P2 (value `"1"`..`"8"`):**
 ````
 
-["cool", "heat", "ventilate", "heat-cold-auto", "dehumidify", "cool-air", "heat-air", "ventilate"]
+["cool", "heat", "ventilate", "heat_cool", "dehumidify", "cool-air", "heat-air", "ventilate"]
 
 ```
 
@@ -115,13 +115,14 @@ heat_modes = {2,7,8}
 | 1  | cool             | **Yes**      | COOL → **P7**          | **P3**      | Default COOL. |
 | 2  | heat             | **Yes**      | HEAT → **P8**          | **P4**      | Default HEAT. |
 | 3  | ventilate        | **Yes**      | **N/A**                | **P3**      | `fan_only` default if supported. |
-| 4  | heat-cold-auto   | **Opt-in**   | Typically COOL → **P7*** | **P3***   | Device-dependent/untested; not enabled by default. |
+| 4  | HEAT_COOL (heat-cold-auto) | **Opt-in**   | Treat as COOL → **P7*** | **P3***   | Device-dependent/untested; not enabled by default. |
 | 5  | dehumidify       | **Yes**      | **N/A**                | **N/A**     | `dry`. No target temp and **no fan control**. |
 | 6  | cool-air         | **No**       | Unknown/tentative      | Unknown     | **Not exposed**; semantics unclear for our models. |
 | 7  | heat-air         | **No**       | Unknown/tentative      | Unknown     | **Not exposed**; semantics unclear for our models. |
 | 8  | ventilate        | **Yes** (fallback) | **N/A**          | **P4**      | Use only if 3 unsupported and 8 supported (see below). |
 
-\* For `P2=4 (heat-cold-auto)`, until broader validation: treat as **cold-type** for fan (**P3**) and setpoint (**P7**) by default. It remains **opt-in** and device-dependent.
+\* For `P2=4 (HEAT_COOL, heat-cold-auto)`, until broader validation: treat as **cold-type** for fan (**P3**) and setpoint (**P7**) by default. It remains **opt-in** and device-dependent.
+  * Options flow toggle: “Enable experimental HEAT_COOL mode (requires compatible installation; routes setpoint via P7 and fan via P3)”. The checkbox is always available so users can opt in ahead of time, but the integration ignores the flag unless at least one device advertises `modes[3] == "1"`.
 
 **Ventilate selection policy (P2=3 vs P2=8)**
 - If **3** and **8** are both supported: expose **`fan_only`** using **P2=3** (default).
@@ -148,7 +149,7 @@ Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
 | 0               | 1        | cool             |
 | 1               | 2        | heat             |
 | 2               | 3        | ventilate        |
-| 3               | 4        | heat-cold-auto   |
+| 3               | 4        | HEAT_COOL (heat-cold-auto) |
 | 4               | 5        | dehumidify       |
 | 5               | 6        | cool-air         |
 | 6               | 7        | heat-air         |
@@ -278,13 +279,17 @@ curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_to
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P2","value":"5"}}'
 
-# HEAT_COOL / AUTO (opt-in; device-dependent)
+# HEAT_COOL (opt-in; device-dependent)
 curl -X POST "https://dkn.airzonecloud.com/events/?user_email=YOUR_EMAIL&user_token=YOUR_TOKEN" \
   -H "Content-Type: application/json;charset=UTF-8" \
   -H "Accept: application/json, text/plain, */*" \
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"event":{"cgi":"modmaquina","device_id":"YOUR_DEVICE_ID","option":"P2","value":"4"}}'
+
 ```
+
+*Reminder:* While in **HEAT_COOL**, the integration always uses **P7** for setpoints and **P3** for fan control.
+
 
 ### 9.7 Setpoint (P7/P8)
 
@@ -398,5 +403,5 @@ curl -X PUT "https://dkn.airzonecloud.com/devices/YOUR_DEVICE_ID?user_email=YOUR
 
 ## 13) Open Questions / Next Validation
 
-* Clarify behavior of **P2=4 (auto)** and **“air” variants (6/7)** and **ventilate (8)** across models.
+* Clarify behavior of **P2=4 (HEAT_COOL / heat-cold-auto)** and **“air” variants (6/7)** and **ventilate (8)** across models.
 * Finalize scheduling payload + UI mapping if we implement schedules.

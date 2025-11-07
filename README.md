@@ -19,8 +19,8 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 ## 🚀 Features
 
-- **Fully integrated climate control:**  
-  Power, mode (heat/cool/fan/dry), target temperature, and fan speed for each unit.
+- **Fully integrated climate control:**
+  Power, mode (heat/cool/fan/dry, optional HEAT_COOL), target temperature, and fan speed for each unit.
 - **Native climate presets:**  
   Use Home Assistant **preset modes** (`home`, `away`, `sleep`) directly on the climate entity.  
   The integration maps these presets to backend fields internally — **no `select.scenary` entity**.
@@ -43,15 +43,19 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 ## 🧭 Mode Mapping
 
-| P2 Value | Home Assistant Mode | Description      |
-|----------|----------------------|------------------|
-| `"1"`    | COOL                 | Cooling          |
-| `"2"`    | HEAT                 | Heating          |
-| `"3"`    | FAN_ONLY             | Ventilation only |
-| `"5"`    | DRY                  | Dehumidify       |
+| P2 Value | Home Assistant Mode    | Description                                                     |
+|----------|------------------------|-----------------------------------------------------------------|
+| `"1"`    | COOL                   | Cooling (setpoint via **P7**, fan via **P3**).                  |
+| `"2"`    | HEAT                   | Heating (setpoint via **P8**, fan via **P4**).                  |
+| `"3"`    | FAN_ONLY               | Ventilation (cold-type fan, sent with **P3**).                  |
+| `"4"`    | HEAT_COOL *(opt-in)*   | Experimental dual logic; single setpoint (**P7**) + fan (**P3**). |
+| `"5"`    | DRY                    | Dehumidify (no temperature or fan controls).                    |
+| `"6"`    | — *(telemetry only)*   | "Cool air" variant; shown as **unknown** in Home Assistant.     |
+| `"7"`    | — *(telemetry only)*   | "Heat air" variant; shown as **unknown** in Home Assistant.     |
+| `"8"`    | FAN_ONLY (fallback)    | Heat-type ventilation fallback (fan commands routed to **P4**). |
 
-> **About HEAT_COOL (dual setpoint / “auto”)**  
-> This is **planned/experimental**. Support likely depends on device firmware/bitmask and needs **field validation**. We will gate it as **opt-in** when released and seek testers before enabling by default.
+> **About HEAT_COOL (API label “heat-cold-auto”)**
+> This mode is **opt-in and experimental**. It appears only when both the device bitmask exposes bit 3 and the new option **Enable experimental HEAT_COOL mode** is enabled. While active, the integration always uses **P7** for the setpoint and **P3** for fan speed.
 
 ---
 
@@ -86,14 +90,14 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🏷️ What You Get
 
-- **Climate entity:**  
-  - Modes: COOL, HEAT, FAN_ONLY, DRY  
-  - Dynamic fan speed control  
+- **Climate entity:**
+  - Modes: COOL, HEAT, FAN_ONLY, DRY (+ optional HEAT_COOL when enabled)
+  - Dynamic fan speed control
   - **Preset modes**: `home`, `away`, `sleep` (use `climate.set_preset_mode`)
-- **Sensor entities:**  
-  - Current temperature (`local_temp`)  
-  - Sleep timer (minutes)  
-  - Diagnostics: modes, program status, slats (opt-in)
+- **Sensor entities:**
+  - Current temperature (`local_temp`)
+  - Sleep timer (minutes)
+  - Diagnostics: modes, program status, slats, HEAT_COOL compatibility (opt-in)
 - **Switch entity:**  
   - Power ON/OFF per device
 - **Number entities (config):**  
@@ -129,9 +133,8 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🛣️ Roadmap
 
-- [ ] **Translations (i18n)** — translate 422 and connectivity banners; add locales (EN/ES/CA/DE/FR/IT/PL/RU/UK…)  
-- [ ] **Docs** — examples for automations using **preset modes**  
-- [ ] **HEAT_COOL (opt-in)** — validate across devices/firmwares before enabling  
+- [ ] **Translations (i18n)** — translate 422 and connectivity banners; add locales (EN/ES/CA/DE/FR/IT/PL/RU/UK…)
+- [ ] **HEAT_COOL (opt-in)** — validate across devices/firmwares before enabling by default
 - [ ] **Auto Fan Speed (opt-in, experimental)** — controller that selects fan speed (e.g., **P3/P4**) based on **ΔT** (discrete **1 °C** steps & hysteresis), active only in **HEAT/COOL**
 
 ---
@@ -141,8 +144,8 @@ Enter your Airzone Cloud **username** and **password**.
 **Q: How do I change scenes/presets?**  
 A: Use **climate presets** on the climate entity (`preset_modes`: `home`, `away`, `sleep`) and the service **`climate.set_preset_mode`**. This supersedes the legacy `select.scenary` entity.
 
-**Q: Will HEAT_COOL (dual setpoint / “auto”) be supported?**  
-A: Planned as **opt-in** once validated on real hardware. Behavior may vary by device/bitmask/firmware.
+**Q: Will HEAT_COOL (API label “heat-cold-auto”) be supported?**
+A: Yes — it is available as an **opt-in experimental** mode. When enabled, the integration uses **P7** for the single setpoint and **P3** for fan commands, mirroring the cold-channel behavior recommended by Daikin/Airzone. Compatibility still depends on the device bitmask and firmware.
 
 **Q: Will there be an automatic fan speed?**  
 A: Planned/experimental. It will adapt fan speed (e.g., **P3/P4**) to the **ΔT** with **1 °C** thresholds and **hysteresis**, only in **HEAT/COOL**.
