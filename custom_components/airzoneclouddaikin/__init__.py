@@ -46,7 +46,7 @@ DEFAULT_SCAN_INTERVAL_SEC = 10
 _OFFLINE_STALE_SECONDS = int(INTERNAL_STALE_AFTER_SEC)
 
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
-_EXTRA_PLATFORMS: list[str] = ["number"]  # keep number for now
+_EXTRA_PLATFORMS: list[str] = ["number"]
 
 _DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
     "offline": {
