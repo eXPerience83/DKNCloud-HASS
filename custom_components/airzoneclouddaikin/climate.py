@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .__init__ import AirzoneCoordinator
 from .const import CONF_ENABLE_HEAT_COOL, DOMAIN, MANUFACTURER
 from .helpers import (
+    acquire_device_lock,
     bitmask_supports_p2,
     clamp_temperature,
     optimistic_get,
@@ -305,20 +306,26 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.error("API handle missing in coordinator; cannot set scenary")
             return
 
-        try:
-            # Canonical write path (no legacy helpers).
-            await api.put_device_fields(
-                self._device_id, {"device": {"scenary": scenary}}
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
-            raise
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
+            try:
+                # Canonical write path (no legacy helpers).
+                await api.put_device_fields(
+                    self._device_id, {"device": {"scenary": scenary}}
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
+                raise
 
-        optimistic_set(self.hass, self._entry_id, self._device_id, "scenary", scenary)
-        self.async_write_ha_state()
-        schedule_post_write_refresh(self.hass, self.coordinator)
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, "scenary", scenary
+            )
+            self.async_write_ha_state()
+            schedule_post_write_refresh(
+                self.hass, self.coordinator, entry_id=self._entry_id
+            )
 
     # ---- Auto-exit AWAY on active commands -------------------------------
 
@@ -413,19 +420,31 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         temp_int = int(round(float(temp)))
 
-        if mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
-            await self._send_p_event("P7", f"{temp_int}.0")
-            optimistic_set(
-                self.hass, self._entry_id, self._device_id, "cold_consign", temp_int
-            )
-        else:
-            await self._send_p_event("P8", f"{temp_int}.0")
-            optimistic_set(
-                self.hass, self._entry_id, self._device_id, "heat_consign", temp_int
-            )
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
+            if mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+                await self._send_p_event("P7", f"{temp_int}.0")
+                optimistic_set(
+                    self.hass,
+                    self._entry_id,
+                    self._device_id,
+                    "cold_consign",
+                    temp_int,
+                )
+            else:
+                await self._send_p_event("P8", f"{temp_int}.0")
+                optimistic_set(
+                    self.hass,
+                    self._entry_id,
+                    self._device_id,
+                    "heat_consign",
+                    temp_int,
+                )
 
-        self.async_write_ha_state()
-        schedule_post_write_refresh(self.hass, self.coordinator)
+            self.async_write_ha_state()
+            schedule_post_write_refresh(
+                self.hass, self.coordinator, entry_id=self._entry_id
+            )
 
     # ---- Fan control -----------------------------------------------------
 
@@ -501,11 +520,17 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 option = "P3"
                 key = "cold_speed"
 
-        await self._send_p_event(option, value_to_send)
-        optimistic_set(self.hass, self._entry_id, self._device_id, key, value_to_send)
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
+            await self._send_p_event(option, value_to_send)
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, key, value_to_send
+            )
 
-        self.async_write_ha_state()
-        schedule_post_write_refresh(self.hass, self.coordinator)
+            self.async_write_ha_state()
+            schedule_post_write_refresh(
+                self.hass, self.coordinator, entry_id=self._entry_id
+            )
 
     # ---- Power / mode ----------------------------------------------------
 
@@ -522,10 +547,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         await self._auto_exit_away_if_needed("turn_on")
 
-        await self._send_p_event("P1", 1)
-        optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
-        self.async_write_ha_state()
-        schedule_post_write_refresh(self.hass, self.coordinator)
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
+            await self._send_p_event("P1", 1)
+            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
+            self.async_write_ha_state()
+            schedule_post_write_refresh(
+                self.hass, self.coordinator, entry_id=self._entry_id
+            )
 
     async def async_turn_off(self) -> None:
         current = str(self._overlay_value("power", self._device.get("power")) or "")
@@ -538,18 +567,31 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self.async_write_ha_state()
             return
 
-        await self._send_p_event("P1", 0)
-        optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
-        self.async_write_ha_state()
-        schedule_post_write_refresh(self.hass, self.coordinator)
-
-    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        if hvac_mode == HVACMode.OFF:
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
             await self._send_p_event("P1", 0)
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
-            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "mode")
             self.async_write_ha_state()
-            schedule_post_write_refresh(self.hass, self.coordinator)
+            schedule_post_write_refresh(
+                self.hass, self.coordinator, entry_id=self._entry_id
+            )
+
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+
+        if hvac_mode == HVACMode.OFF:
+            async with lock:
+                await self._send_p_event("P1", 0)
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "power", "0"
+                )
+                optimistic_invalidate(
+                    self.hass, self._entry_id, self._device_id, "mode"
+                )
+                self.async_write_ha_state()
+                schedule_post_write_refresh(
+                    self.hass, self.coordinator, entry_id=self._entry_id
+                )
             return
 
         await self._auto_exit_away_if_needed("set_hvac_mode")
@@ -560,36 +602,47 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
             return
 
-        if str(self._device.get("power", "0")).strip() != "1":
-            await self._send_p_event("P1", 1)
-            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
-
-        if hvac_mode == HVACMode.FAN_ONLY:
-            code = self._preferred_ventilate_code()
-            if code is None:
-                _LOGGER.debug(
-                    "Ignoring set_hvac_mode=fan_only: device bitmask lacks P2=3/8"
-                )
-                return
-            await self._send_p_event("P2", code)
-            optimistic_set(self.hass, self._entry_id, self._device_id, "mode", code)
-            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
-        else:
-            if hvac_mode == HVACMode.HEAT_COOL and not self._heat_cool_enabled():
-                _LOGGER.debug(
-                    "Ignoring set_hvac_mode=heat_cool: opt-in disabled or device unsupported"
-                )
-                return
-            mode_code = HVAC_TO_MODE.get(hvac_mode)
-            if mode_code:
-                await self._send_p_event("P2", mode_code)
+        async with lock:
+            if str(self._device.get("power", "0")).strip() != "1":
+                await self._send_p_event("P1", 1)
                 optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "mode", mode_code
+                    self.hass, self._entry_id, self._device_id, "power", "1"
                 )
-                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
-        self.async_write_ha_state()
-        schedule_post_write_refresh(self.hass, self.coordinator)
+            if hvac_mode == HVACMode.FAN_ONLY:
+                code = self._preferred_ventilate_code()
+                if code is None:
+                    _LOGGER.debug(
+                        "Ignoring set_hvac_mode=fan_only: device bitmask lacks P2=3/8"
+                    )
+                    return
+                await self._send_p_event("P2", code)
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "mode", code
+                )
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "power", "1"
+                )
+            else:
+                if hvac_mode == HVACMode.HEAT_COOL and not self._heat_cool_enabled():
+                    _LOGGER.debug(
+                        "Ignoring set_hvac_mode=heat_cool: opt-in disabled or device unsupported"
+                    )
+                    return
+                mode_code = HVAC_TO_MODE.get(hvac_mode)
+                if mode_code:
+                    await self._send_p_event("P2", mode_code)
+                    optimistic_set(
+                        self.hass, self._entry_id, self._device_id, "mode", mode_code
+                    )
+                    optimistic_set(
+                        self.hass, self._entry_id, self._device_id, "power", "1"
+                    )
+
+            self.async_write_ha_state()
+            schedule_post_write_refresh(
+                self.hass, self.coordinator, entry_id=self._entry_id
+            )
 
     # ---- Features --------------------------------------------------------
 

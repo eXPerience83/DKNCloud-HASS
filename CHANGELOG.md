@@ -3,6 +3,12 @@
 ## [Unreleased]
 - No changes yet.
 
+## [0.4.1a1] - 2025-11-04
+### Changed
+- Power switch service now proxies the sibling climate entity for consistent away handling, optimistic overlays, and refresh semantics while retaining a direct P1 fallback when the climate entity is disabled or missing.
+- Post-write refresh scheduling is coalesced per config entry to avoid redundant refresh bursts after consecutive commands.
+- All write paths (climate, switch fallback, numbers) share a per-device asyncio.Lock to serialize command ordering when UI and automations issue concurrent updates.
+
 ## [0.4.1a0] - 2025-11-03
 ### Added
 - Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration routes setpoints to P7 and fan speeds to P3 while in this experimental mode.
