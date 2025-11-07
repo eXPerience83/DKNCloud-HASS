@@ -1,12 +1,11 @@
-"""Config & Options flow for DKN Cloud for HASS (0.4.1a0 – options guardrails, no migrations).
+"""Config & Options flow for DKN Cloud for HASS (0.4.1a1 – proxy switch & locks).
 
-What this fixes
----------------
-- Simplify options: drop `stale_after_minutes` from UI and storage to avoid confusion.
-  Offline detection now uses a fixed internal threshold (10 min) plus a 90 s debounce.
-- Tighten `scan_interval` guardrails to 10–30 s in UI and preserve hidden options on save.
-- Reauth prompts only for password, refreshes the token in options, then aborts with success.
-- First-setup stores token ONLY in `entry.options['user_token']`; password is never persisted.
+What this delivers
+------------------
+- Keeps the power-switch proxy transparent to the options storage; climate services
+  still rely on the token saved in `entry.options`.
+- Maintains the 10–30 s `scan_interval` guardrails and hidden option preservation.
+- Reauth continues to refresh the token in options without persisting passwords.
 
 Contract
 --------

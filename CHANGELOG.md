@@ -1,8 +1,5 @@
 # Changelog
 
-## [Unreleased]
-- No changes yet.
-
 ## [0.4.1a1] - 2025-11-04
 ### Changed
 - Power switch service now proxies the sibling climate entity for consistent away handling, optimistic overlays, and refresh semantics while retaining a direct P1 fallback when the climate entity is disabled or missing.
