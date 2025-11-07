@@ -582,9 +582,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if hvac_mode == HVACMode.OFF:
             async with lock:
                 await self._send_p_event("P1", 0)
-                optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "power", "0"
-                )
+                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
                 optimistic_invalidate(
                     self.hass, self._entry_id, self._device_id, "mode"
                 )
@@ -605,9 +603,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         async with lock:
             if str(self._device.get("power", "0")).strip() != "1":
                 await self._send_p_event("P1", 1)
-                optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "power", "1"
-                )
+                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
             if hvac_mode == HVACMode.FAN_ONLY:
                 code = self._preferred_ventilate_code()
@@ -617,12 +613,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     )
                     return
                 await self._send_p_event("P2", code)
-                optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "mode", code
-                )
-                optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "power", "1"
-                )
+                optimistic_set(self.hass, self._entry_id, self._device_id, "mode", code)
+                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
             else:
                 if hvac_mode == HVACMode.HEAT_COOL and not self._heat_cool_enabled():
                     _LOGGER.debug(
