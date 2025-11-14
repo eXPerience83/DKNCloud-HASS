@@ -1,4 +1,4 @@
-"""Config & Options flow for DKN Cloud for HASS (0.4.1a2 – notification scheduling fix).
+"""Config & Options flow for DKN Cloud for HASS.
 
 What this delivers
 ------------------
@@ -77,7 +77,7 @@ def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
 class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Primary config flow for the integration."""
 
-    VERSION = 1
+    VERSION = 2
 
     @staticmethod
     def async_get_options_flow(
@@ -97,6 +97,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         email = str(user_input[CONF_USERNAME]).strip()
+        normalized_email = email.casefold()
+        await self.async_set_unique_id(normalized_email)
+        self._abort_if_unique_id_configured()
         password = str(user_input[CONF_PASSWORD])
         scan = int(user_input.get(CONF_SCAN_INTERVAL, 10))
         pii = bool(user_input.get(CONF_EXPOSE_PII, False))

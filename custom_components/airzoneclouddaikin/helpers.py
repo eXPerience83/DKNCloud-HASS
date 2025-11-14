@@ -83,7 +83,7 @@ def optimistic_get(
         return backend_value
 
     expires = overlay.get("expires")
-    if not isinstance(expires, int | float) or hass.loop.time() >= float(expires):
+    if not isinstance(expires, (int, float)) or hass.loop.time() >= float(expires):
         device_overlay.pop(key, None)
         if not device_overlay:
             optimistic.pop(device_id, None)

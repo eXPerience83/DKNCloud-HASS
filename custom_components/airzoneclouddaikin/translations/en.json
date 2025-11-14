@@ -28,7 +28,8 @@
     },
     "abort": {
       "reauth_successful": "Reauthentication successful.",
-      "reauth_failed": "Reauthentication failed."
+      "reauth_failed": "Reauthentication failed.",
+      "already_configured": "This account is already configured."
     }
   },
   "options": {
