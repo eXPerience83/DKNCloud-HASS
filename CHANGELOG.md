@@ -4,6 +4,7 @@
 ### Fixed
 - Prevent optimistic overlay expiration guard from raising `TypeError` on Python 3.11+ by replacing the union-based `isinstance` check with a tuple-based guard.
 - Ensure config entries store normalized unique IDs, abort duplicates in the config flow, and migrate existing installs to the new identifier scheme.
+- Fix the config entry migration to bump versions via Home Assistant's update helper, preventing startup crashes from direct assignment.
 ### Testing
 - Added helper-focused unit coverage to ensure optimistic overlays persist within the TTL, expire afterwards, and never raise during retrieval.
 
