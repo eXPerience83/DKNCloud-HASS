@@ -1,4 +1,4 @@
-"""Config & Options flow for DKN Cloud for HASS (0.4.1a1 – proxy switch & locks).
+"""Config & Options flow for DKN Cloud for HASS (0.4.1a2 – notification scheduling fix).
 
 What this delivers
 ------------------

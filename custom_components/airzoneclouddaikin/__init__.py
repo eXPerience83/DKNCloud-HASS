@@ -1,4 +1,4 @@
-"""DKN Cloud for HASS integration setup (0.4.1a1, proxy switch & serialized writes).
+"""DKN Cloud for HASS integration setup (0.4.1a2, notification scheduling fix).
 
 Key points in this revision:
 - Power switch delegates to the climate entity, inheriting away auto-exit and
@@ -334,8 +334,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     title, message = _fmt(
                         strings, "offline", name, ts_local, last_iso, mins
                     )
-                    hass.components.persistent_notification.async_create(
-                        message=message, title=title, notification_id=nid
+                    hass.async_create_task(
+                        hass.components.persistent_notification.async_create(
+                            message=message, title=title, notification_id=nid
+                        )
                     )
                     st["notified"] = True
                     _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
@@ -348,21 +350,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 st["notified"] = False
 
                 nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                hass.components.persistent_notification.async_dismiss(nid)
+                hass.async_create_task(
+                    hass.components.persistent_notification.async_dismiss(nid)
+                )
 
                 ts_local = dt_util.as_local(now).strftime("%H:%M")
                 title, message = _fmt(strings, "online", name, ts_local, None, None)
                 nid_online = f"{nid}:online"
-                hass.components.persistent_notification.async_create(
-                    message=message, title=title, notification_id=nid_online
+                hass.async_create_task(
+                    hass.components.persistent_notification.async_create(
+                        message=message, title=title, notification_id=nid_online
+                    )
                 )
                 _LOGGER.info("[%s] WServer back online.", dev_id)
 
                 cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
-                        _nid
+                    lambda _now, _nid=nid_online: hass.async_create_task(
+                        hass.components.persistent_notification.async_dismiss(_nid)
                     ),
                 )
                 cancel_handles.append(cancel)
