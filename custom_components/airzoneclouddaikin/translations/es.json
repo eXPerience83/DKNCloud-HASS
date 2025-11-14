@@ -28,7 +28,8 @@
     },
     "abort": {
       "reauth_successful": "Reautenticación completada.",
-      "reauth_failed": "La reautenticación ha fallado."
+      "reauth_failed": "La reautenticación ha fallado.",
+      "already_configured": "Esta cuenta ya está configurada."
     }
   },
   "options": {

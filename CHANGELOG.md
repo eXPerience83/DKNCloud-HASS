@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1a3] - 2025-11-14
+### Fixed
+- Prevent optimistic overlay expiration guard from raising `TypeError` on Python 3.11+ by replacing the union-based `isinstance` check with a tuple-based guard.
+- Ensure config entries store normalized unique IDs, abort duplicates in the config flow, and migrate existing installs to the new identifier scheme.
+### Testing
+- Added helper-focused unit coverage to ensure optimistic overlays persist within the TTL, expire afterwards, and never raise during retrieval.
+
 ## [0.4.1a2] - 2025-11-14
 ### Fixed
 - Schedule persistent notification create/dismiss coroutines from the coordinator listener so offline/online banners appear reliably in Home Assistant.

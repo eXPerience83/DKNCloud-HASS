@@ -1,4 +1,4 @@
-"""DKN Cloud for HASS integration setup (0.4.1a2, notification scheduling fix).
+"""DKN Cloud for HASS integration setup.
 
 Key points in this revision:
 - Power switch delegates to the climate entity, inheriting away auto-exit and
@@ -66,6 +66,54 @@ class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Typed coordinator that also carries the API handle."""
 
     api: AirzoneAPI
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate legacy config entries to the latest schema."""
+
+    target_version = 2
+
+    needs_unique_id = (
+        config_entry.version < target_version or not config_entry.unique_id
+    )
+
+    if needs_unique_id:
+        username = str(config_entry.data.get(CONF_USERNAME, "")).strip()
+        normalized = username.casefold()
+
+        if not normalized:
+            _LOGGER.warning(
+                "Config entry %s lacks a username; skipping unique_id migration.",
+                config_entry.entry_id,
+            )
+        elif config_entry.unique_id != normalized:
+            duplicates = [
+                entry
+                for entry in hass.config_entries.async_entries(DOMAIN)
+                if entry.entry_id != config_entry.entry_id
+                and entry.unique_id == normalized
+            ]
+
+            if duplicates:
+                _LOGGER.warning(
+                    "Config entry %s skipped unique_id migration because %s is already in use.",
+                    config_entry.entry_id,
+                    normalized,
+                )
+            else:
+                hass.config_entries.async_update_entry(
+                    config_entry, unique_id=normalized
+                )
+                _LOGGER.info(
+                    "Migrated config entry %s to unique_id %s.",
+                    config_entry.entry_id,
+                    normalized,
+                )
+
+    if config_entry.version != target_version:
+        config_entry.version = target_version
+
+    return True
 
 
 async def _async_update_data(
