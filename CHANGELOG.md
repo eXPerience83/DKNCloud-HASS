@@ -5,6 +5,7 @@
 - Ensure config entry unload preserves integration state when any platform raises.
 - Warn when a platform unload reports failure and leave scheduled callbacks untouched so partial teardowns stay visible.
 - Document the fallback offline/online notification copy so translations remain the single source of truth.
+- Log cancel-handle failures at debug level during unload so resilient cleanup still leaves a trace for debugging.
 
 ### Testing
 - Added climate unit tests that lock HEAT_COOL exposure behind device capability and the experimental opt-in flag.

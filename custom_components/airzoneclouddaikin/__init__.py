@@ -473,7 +473,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for cancel in bucket.get("cancel_handles", []):
             try:
                 cancel()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Cancel handle failed during unload for config entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
 
     return unload_ok
