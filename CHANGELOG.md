@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.1a4] - 2025-11-15
+### Fixed
+- Ensure config entry unload preserves integration state when any platform raises.
+- Warn when a platform unload reports failure and leave scheduled callbacks untouched so partial teardowns stay visible.
+- Document the fallback offline/online notification copy so translations remain the single source of truth.
+- Log cancel-handle failures at debug level during unload so resilient cleanup still leaves a trace for debugging.
+
+### Testing
+- Added climate unit tests that lock HEAT_COOL exposure behind device capability and the experimental opt-in flag.
+- Added diagnostics regression coverage to ensure tokens, MAC addresses, and GPS coordinates remain redacted.
+
 ## [0.4.1a3] - 2025-11-14
 ### Fixed
 - Prevent optimistic overlay expiration guard from raising `TypeError` on Python 3.11+ by replacing the union-based `isinstance` check with a tuple-based guard.

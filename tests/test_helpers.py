@@ -145,3 +145,23 @@ def test_optimistic_overlay_invalidate_removes_value(hass_stub: DummyHass) -> No
 
     result = optimistic_get(hass_stub, "entry", "device", "mode", backend_value="auto")
     assert result == "auto"
+
+
+def test_optimistic_overlay_malformed_expiration(hass_stub: DummyHass) -> None:
+    """Malformed overlay metadata should fall back to the backend and self-heal."""
+
+    optimistic_set(hass_stub, "entry", "device", "temp", 21, ttl=5)
+
+    optimistic_bucket = hass_stub.data["airzoneclouddaikin"]["entry"].setdefault(
+        "optimistic", {}
+    )
+    overlay = optimistic_bucket.setdefault("device", {}).setdefault("temp", {})
+    overlay["expires"] = "bad"
+
+    result = optimistic_get(hass_stub, "entry", "device", "temp", backend_value=19)
+    assert result == 19
+
+    optimistic_bucket = hass_stub.data["airzoneclouddaikin"]["entry"].get(
+        "optimistic", {}
+    )
+    assert "device" not in optimistic_bucket

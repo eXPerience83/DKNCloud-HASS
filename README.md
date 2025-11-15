@@ -179,8 +179,8 @@ If you find this integration useful, you can support development via:
 
 ### Networking & Reliability
 
-This integration uses a per-request timeout of **30 s** and **exponential backoff with jitter** for `429/5xx`.  
-If the backend is temporarily unavailable, Home Assistant retries the config entry (**ConfigEntryNotReady**).  
+This integration uses a per-request timeout of **30 s** and **exponential backoff with jitter** for `429/5xx`.
+If the backend is temporarily unavailable, Home Assistant retries the config entry (**ConfigEntryNotReady**).
 For privacy, logs **never** print your email or token.
 
 ---

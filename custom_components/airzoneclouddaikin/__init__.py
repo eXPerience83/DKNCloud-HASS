@@ -47,17 +47,16 @@ _OFFLINE_STALE_SECONDS = int(INTERNAL_STALE_AFTER_SEC)
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
 _EXTRA_PLATFORMS: list[str] = ["number"]
 
+# NOTE: These templates act only as a last-resort fallback; the localized
+# translations under translations/*.json provide the polished copy at runtime.
 _DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
     "offline": {
-        "title": "DKN Cloud — {name} offline",
-        "message": (
-            "Connection lost at {ts_local}. "
-            "Last contact: {last_iso} (about {mins} min ago)."
-        ),
+        "title": "DKN Cloud offline notification",
+        "message": "{name} lost the connection at {ts_local}.",
     },
     "online": {
-        "title": "DKN Cloud — {name} back online",
-        "message": "Connection restored at {ts_local}.",
+        "title": "DKN Cloud connection restored",
+        "message": "{name} reconnected at {ts_local}.",
     },
 }
 
@@ -420,7 +419,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ),
                 )
                 cancel_handles.append(cancel)
-                entry.async_on_unload(cancel)
                 continue
 
             # No transition
@@ -453,15 +451,33 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for platform in _BASE_PLATFORMS + _EXTRA_PLATFORMS:
         try:
             ok = await hass.config_entries.async_forward_entry_unload(entry, platform)
-            unload_ok = unload_ok and ok
         except Exception:  # noqa: BLE001
+            unload_ok = False
+            _LOGGER.exception(
+                "Unexpected error unloading platform %s for config entry %s.",
+                platform,
+                entry.entry_id,
+            )
             continue
 
-    bucket = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {}) if unload_ok else {}
-    for cancel in bucket.get("cancel_handles", []):
-        try:
-            cancel()
-        except Exception:  # noqa: BLE001
-            pass
+        if not ok:
+            unload_ok = False
+            _LOGGER.warning(
+                "Platform %s did not unload cleanly for config entry %s.",
+                platform,
+                entry.entry_id,
+            )
+
+    if unload_ok:
+        bucket = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
+        for cancel in bucket.get("cancel_handles", []):
+            try:
+                cancel()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Cancel handle failed during unload for config entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
 
     return unload_ok
