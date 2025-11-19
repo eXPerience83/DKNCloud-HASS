@@ -4,6 +4,7 @@
 ### Fixed
 - Elevate `ServiceNotFound` logs in the power switch to warning level so removed or renamed climate proxies remain visible while the entity falls back to direct P1 control.
 - Guard `_send_event` with climate-style warning logs and exception propagation to distinguish P1 API failures from proxy failures.
+- Always cancel per-entry scheduled callbacks and clear transient locks during config entry unload, even when some platforms fail to unload, to avoid dangling timers while still preserving partial teardown state.
 
 ### Testing
 - Added switch regression coverage for timeout resilience, `HomeAssistantError` fallbacks, missing climate proxies, unexpected exceptions, and `_send_event` warning propagation.
