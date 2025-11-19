@@ -469,8 +469,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
 
     domain_bucket = hass.data.get(DOMAIN)
-    if domain_bucket is not None:
-        bucket = domain_bucket.get(entry.entry_id, {})
+    if domain_bucket is not None and entry.entry_id in domain_bucket:
+        bucket = domain_bucket[entry.entry_id]
         for cancel in bucket.get("cancel_handles", []):
             try:
                 cancel()
@@ -490,3 +490,4 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             domain_bucket.pop(entry.entry_id, None)
 
     return unload_ok
+
