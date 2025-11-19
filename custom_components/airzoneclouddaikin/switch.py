@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -115,7 +117,19 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             }
         }
         _LOGGER.debug("Sending event %s=%s for %s", option, value, self._device_id)
-        await api.send_event(payload)
+        try:
+            await api.send_event(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Failed to send_event %s=%s for %s: %s",
+                option,
+                value,
+                self._device_id,
+                err,
+            )
+            raise
 
     # -----------------------------
     # Coordinator hook
@@ -192,9 +206,28 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     context=self.context,
                 )
                 return
-            except Exception as err:  # noqa: BLE001
+            except TimeoutError:
                 _LOGGER.debug(
-                    "Climate proxy turn_on failed for %s (%s); falling back to P1",
+                    "Climate proxy turn_on timed out for %s; falling back to P1",
+                    climate_eid,
+                )
+            except ServiceNotFound:
+                _LOGGER.warning(
+                    "Climate entity %s not found; decoupling and falling back to P1",
+                    climate_eid,
+                )
+                self._climate_entity_id = None
+            except HomeAssistantError as err:
+                _LOGGER.debug(
+                    "Climate proxy turn_on failed transiently for %s (%s); "
+                    "falling back to P1",
+                    climate_eid,
+                    err,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Unexpected error in climate proxy turn_on for %s: %s; "
+                    "falling back to P1",
                     climate_eid,
                     err,
                 )
@@ -239,9 +272,28 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     context=self.context,
                 )
                 return
-            except Exception as err:  # noqa: BLE001
+            except TimeoutError:
                 _LOGGER.debug(
-                    "Climate proxy turn_off failed for %s (%s); falling back to P1",
+                    "Climate proxy turn_off timed out for %s; falling back to P1",
+                    climate_eid,
+                )
+            except ServiceNotFound:
+                _LOGGER.warning(
+                    "Climate entity %s not found; decoupling and falling back to P1",
+                    climate_eid,
+                )
+                self._climate_entity_id = None
+            except HomeAssistantError as err:
+                _LOGGER.debug(
+                    "Climate proxy turn_off failed transiently for %s (%s); "
+                    "falling back to P1",
+                    climate_eid,
+                    err,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Unexpected error in climate proxy turn_off for %s: %s; "
+                    "falling back to P1",
                     climate_eid,
                     err,
                 )
