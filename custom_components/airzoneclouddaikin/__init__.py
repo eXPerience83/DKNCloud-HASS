@@ -468,8 +468,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry.entry_id,
             )
 
-    if unload_ok:
-        bucket = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {})
+    domain_bucket = hass.data.get(DOMAIN)
+    if domain_bucket is not None:
+        bucket = domain_bucket.get(entry.entry_id, {})
         for cancel in bucket.get("cancel_handles", []):
             try:
                 cancel()
@@ -479,5 +480,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     entry.entry_id,
                     err,
                 )
+
+        # Clear transient state while preserving the bucket on partial unloads.
+        bucket["cancel_handles"] = []
+        bucket.pop("pending_refresh", None)
+        bucket.pop("device_locks", None)
+
+        if unload_ok:
+            domain_bucket.pop(entry.entry_id, None)
 
     return unload_ok
