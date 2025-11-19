@@ -490,4 +490,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             domain_bucket.pop(entry.entry_id, None)
 
     return unload_ok
-
