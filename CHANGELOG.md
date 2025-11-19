@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.1a6] - 2025-11-20
+### Fixed
+- Guard config entry unload cleanup behind bucket existence checks so missing buckets no longer raise, ensuring cleanup only runs when the entry data is present.
+
 ## [0.4.1a5] - 2025-11-16
 ### Fixed
 - Elevate `ServiceNotFound` logs in the power switch to warning level so removed or renamed climate proxies remain visible while the entity falls back to direct P1 control.
