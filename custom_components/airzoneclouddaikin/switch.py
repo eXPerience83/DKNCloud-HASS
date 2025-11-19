@@ -212,7 +212,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     climate_eid,
                 )
             except ServiceNotFound:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "Climate entity %s not found; decoupling and falling back to P1",
                     climate_eid,
                 )
@@ -278,7 +278,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     climate_eid,
                 )
             except ServiceNotFound:
-                _LOGGER.debug(
+                _LOGGER.warning(
                     "Climate entity %s not found; decoupling and falling back to P1",
                     climate_eid,
                 )

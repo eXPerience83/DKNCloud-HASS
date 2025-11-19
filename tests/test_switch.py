@@ -353,6 +353,74 @@ def test_turn_on_service_not_found_drops_proxy() -> None:
     assert called["fallback"] is True
 
 
+def test_turn_on_homeassistant_error_keeps_proxy_and_calls_fallback() -> None:
+    """HomeAssistantError in the climate proxy should not clear the cached entity id."""
+
+    device = {"id": "dev1", "name": "Zone", "power": "0"}
+    entity, hass = _make_switch(device)
+
+    from homeassistant.exceptions import HomeAssistantError
+
+    async def failing_call(
+        domain: str,
+        service: str,
+        service_data: dict[str, Any],
+        blocking: bool = False,
+        context: Any | None = None,
+    ) -> None:
+        raise HomeAssistantError("transient failure")
+
+    hass.services.async_call = failing_call  # type: ignore[assignment]
+
+    called: dict[str, bool] = {"fallback": False}
+
+    async def fake_fallback(self: AirzonePowerSwitch) -> None:
+        called["fallback"] = True
+
+    entity._fallback_turn_on = fake_fallback.__get__(  # type: ignore[assignment]
+        entity,
+        AirzonePowerSwitch,
+    )
+
+    asyncio.run(entity.async_turn_on())
+
+    assert entity._climate_entity_id == "climate.device"
+    assert called["fallback"] is True
+
+
+def test_turn_off_unexpected_error_drops_proxy_and_calls_fallback() -> None:
+    """Unexpected exceptions in the climate proxy should drop the cached entity id."""
+
+    device = {"id": "dev1", "name": "Zone", "power": "1"}
+    entity, hass = _make_switch(device)
+
+    async def failing_call(
+        domain: str,
+        service: str,
+        service_data: dict[str, Any],
+        blocking: bool = False,
+        context: Any | None = None,
+    ) -> None:
+        raise RuntimeError("unexpected boom")
+
+    hass.services.async_call = failing_call  # type: ignore[assignment]
+
+    called: dict[str, bool] = {"fallback": False}
+
+    async def fake_fallback(self: AirzonePowerSwitch) -> None:
+        called["fallback"] = True
+
+    entity._fallback_turn_off = fake_fallback.__get__(  # type: ignore[assignment]
+        entity,
+        AirzonePowerSwitch,
+    )
+
+    asyncio.run(entity.async_turn_off())
+
+    assert entity._climate_entity_id is None
+    assert called["fallback"] is True
+
+
 def test_send_event_logs_and_reraises_on_failure() -> None:
     """_send_event should log and re-raise errors from the API client."""
 
