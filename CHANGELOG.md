@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.1a8] - 2025-11-21
+### Fixed
+- Reject empty or whitespace-only emails in the config flow before assigning unique IDs or attempting login, preventing invalid identifiers and unnecessary API calls.
+
 ## [0.4.1a7] - 2025-11-20
 ### Added
 - Added diagnostic sensor `preset_mode` to expose the current scenary as a history-friendly preset value (`home/away/sleep`).

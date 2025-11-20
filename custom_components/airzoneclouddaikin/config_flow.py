@@ -96,7 +96,14 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user", data_schema=_user_schema({}), errors={}
             )
 
-        email = str(user_input[CONF_USERNAME]).strip()
+        email = str(user_input.get(CONF_USERNAME, "")).strip()
+        if not email:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=_user_schema(user_input),
+                errors={"base": "invalid_auth"},
+            )
+
         normalized_email = email.casefold()
         await self.async_set_unique_id(normalized_email)
         self._abort_if_unique_id_configured()

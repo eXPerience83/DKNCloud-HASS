@@ -477,6 +477,8 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
             if not scen:
                 return None
 
+            # NOTE: For unknown scenary values we return the raw backend string on purpose,
+            # since this is a diagnostic sensor and we want full visibility for debugging.
             mapping = {
                 "occupied": "home",
                 "vacant": "away",
