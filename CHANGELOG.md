@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.1a7] - 2025-11-20
+### Added
+- Added diagnostic sensor `preset_mode` to expose the current scenary as a history-friendly preset value (`home/away/sleep`).
+
 ## [0.4.1a6] - 2025-11-20
 ### Fixed
 - Guard config entry unload cleanup behind bucket existence checks so missing buckets no longer raise, ensuring cleanup only runs when the entry data is present.
