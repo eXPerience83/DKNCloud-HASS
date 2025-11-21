@@ -317,6 +317,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            # NOTE: If _send_event raises, we bail out before applying any optimistic overlay
             await self._send_event("P1", 0)
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
             self.async_write_ha_state()
