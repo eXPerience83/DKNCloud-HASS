@@ -96,8 +96,20 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user", data_schema=_user_schema({}), errors={}
             )
 
+        # Work on a shallow copy so we can normalize fields used as form defaults
+        user_input = dict(user_input)
+
         email = str(user_input.get(CONF_USERNAME, "")).strip()
+        user_input[CONF_USERNAME] = email
         if not email:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=_user_schema(user_input),
+                errors={"base": "invalid_auth"},
+            )
+
+        password = str(user_input.get(CONF_PASSWORD, ""))
+        if not password:
             return self.async_show_form(
                 step_id="user",
                 data_schema=_user_schema(user_input),
@@ -107,7 +119,6 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         normalized_email = email.casefold()
         await self.async_set_unique_id(normalized_email)
         self._abort_if_unique_id_configured()
-        password = str(user_input[CONF_PASSWORD])
         scan = int(user_input.get(CONF_SCAN_INTERVAL, 10))
         pii = bool(user_input.get(CONF_EXPOSE_PII, False))
 
