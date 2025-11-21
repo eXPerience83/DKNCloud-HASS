@@ -101,6 +101,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         email = str(user_input.get(CONF_USERNAME, "")).strip()
         user_input[CONF_USERNAME] = email
+        # NOTE: We deliberately use the generic "invalid_auth" error here so that
+        # empty credentials and bad credentials share the same translated message,
+        # without introducing additional per-field error keys in translations.
         if not email:
             return self.async_show_form(
                 step_id="user",
@@ -118,7 +121,8 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         normalized_email = email.casefold()
         await self.async_set_unique_id(normalized_email)
-        # NOTE: This will abort with the translated "already_configured" reason if an entry for this account already exists.
+        # NOTE: This will abort with the translated "already_configured"
+        # reason if an entry for this account already exists.
         self._abort_if_unique_id_configured()
         scan = int(user_input.get(CONF_SCAN_INTERVAL, 10))
         pii = bool(user_input.get(CONF_EXPOSE_PII, False))
