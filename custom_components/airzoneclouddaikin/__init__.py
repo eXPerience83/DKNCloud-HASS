@@ -79,6 +79,10 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
     if needs_unique_id:
         username = str(config_entry.data.get(CONF_USERNAME, "")).strip()
         normalized = username.casefold()
+        # NOTE: We normalize the username only to compute the unique_id and detect
+        # duplicates. We intentionally avoid rewriting entry.data[CONF_USERNAME]
+        # during migration to preserve the original user-facing casing and to not
+        # change any backend login semantics for existing entries.
 
         if not normalized:
             _LOGGER.warning(
