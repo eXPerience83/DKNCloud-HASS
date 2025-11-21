@@ -138,6 +138,9 @@ def schedule_post_write_refresh(
 
     async def _refresh(_now: Any) -> None:
         try:
+            # NOTE: If this task is cancelled (e.g. during HA shutdown),
+            # asyncio.CancelledError will propagate, but the cleanup in the
+            # finally block below will still run.
             await coordinator.async_request_refresh()
         finally:
             if bucket.get("pending_refresh") is cancel:
