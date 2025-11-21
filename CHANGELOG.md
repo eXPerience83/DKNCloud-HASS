@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.4.1 - RC1] - 2025-11-24
+### Changed
+- Promote the 0.4.1 series to Release Candidate status with no functional changes since 0.4.1a10.
+
 ## [0.4.1a10] - 2025-11-23
 ### Changed
 - Clarify the config entry setup docstring now that migrations are handled separately.
