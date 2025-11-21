@@ -1,15 +1,15 @@
 # Changelog
 
-## [0.4.1 - RC1] - 2025-11-24
+## [0.4.1 - RC1] - 2025-11-21
 ### Changed
 - Promote the 0.4.1 series to Release Candidate status with no functional changes since 0.4.1a10.
 
-## [0.4.1a10] - 2025-11-23
+## [0.4.1a10] - 2025-11-21
 ### Changed
 - Clarify the config entry setup docstring now that migrations are handled separately.
 - Bump integration version metadata to keep documentation and manifest aligned.
 
-## [0.4.1a9] - 2025-11-22
+## [0.4.1a9] - 2025-11-21
 ### Fixed
 - Normalize the username for every redisplayed config form to remove whitespace-only input and keep defaults consistent across all error cases.
 - Validate missing or empty passwords defensively before attempting login to avoid unnecessary API calls and potential KeyErrors during tests.
