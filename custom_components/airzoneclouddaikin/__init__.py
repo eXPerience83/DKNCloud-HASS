@@ -266,7 +266,7 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up DKN Cloud for HASS from a config entry (no migrations)."""
+    """Set up DKN Cloud for HASS from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     cfg = entry.data
     opts = entry.options
