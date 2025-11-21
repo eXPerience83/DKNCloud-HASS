@@ -102,6 +102,7 @@ CORE_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
 DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True, None, None),
     ("power", "Power State (Raw)", "mdi:power", True, None, None),
+    ("preset_mode", "Preset Mode", "mdi:home-switch", True, None, None),
     ("units", "Units", "mdi:ruler", False, None, None),
     (
         "min_temp_unoccupied",
@@ -470,6 +471,20 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
 
         if self._attribute == "heat_cool_supported":
             return device_supports_heat_cool(self._device)
+
+        if self._attribute == "preset_mode":
+            scen = str(self._device.get("scenary") or "").strip().lower()
+            if not scen:
+                return None
+
+            # NOTE: For unknown scenary values we return the raw backend string on purpose,
+            # since this is a diagnostic sensor and we want full visibility for debugging.
+            mapping = {
+                "occupied": "home",
+                "vacant": "away",
+                "sleep": "sleep",
+            }
+            return mapping.get(scen, scen)
 
         # Whether fan modes are normalized (low/medium/high) or numeric (1..N)
         if self._attribute == "fan_modes_normalized":

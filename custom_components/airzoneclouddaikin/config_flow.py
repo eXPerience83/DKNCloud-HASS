@@ -1,12 +1,11 @@
-"""Config & Options flow for DKN Cloud for HASS (0.4.1a0 – options guardrails, no migrations).
+"""Config & Options flow for DKN Cloud for HASS.
 
-What this fixes
----------------
-- Simplify options: drop `stale_after_minutes` from UI and storage to avoid confusion.
-  Offline detection now uses a fixed internal threshold (10 min) plus a 90 s debounce.
-- Tighten `scan_interval` guardrails to 10–30 s in UI and preserve hidden options on save.
-- Reauth prompts only for password, refreshes the token in options, then aborts with success.
-- First-setup stores token ONLY in `entry.options['user_token']`; password is never persisted.
+What this delivers
+------------------
+- Keeps the power-switch proxy transparent to the options storage; climate services
+  still rely on the token saved in `entry.options`.
+- Maintains the 10–30 s `scan_interval` guardrails and hidden option preservation.
+- Reauth continues to refresh the token in options without persisting passwords.
 
 Contract
 --------
@@ -78,7 +77,7 @@ def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
 class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Primary config flow for the integration."""
 
-    VERSION = 1
+    VERSION = 2
 
     @staticmethod
     def async_get_options_flow(
@@ -97,8 +96,34 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user", data_schema=_user_schema({}), errors={}
             )
 
-        email = str(user_input[CONF_USERNAME]).strip()
-        password = str(user_input[CONF_PASSWORD])
+        # Work on a shallow copy so we can normalize fields used as form defaults
+        user_input = dict(user_input)
+
+        email = str(user_input.get(CONF_USERNAME, "")).strip()
+        user_input[CONF_USERNAME] = email
+        # NOTE: We deliberately use the generic "invalid_auth" error here so that
+        # empty credentials and bad credentials share the same translated message,
+        # without introducing additional per-field error keys in translations.
+        if not email:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=_user_schema(user_input),
+                errors={"base": "invalid_auth"},
+            )
+
+        password = str(user_input.get(CONF_PASSWORD, ""))
+        if not password:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=_user_schema(user_input),
+                errors={"base": "invalid_auth"},
+            )
+
+        normalized_email = email.casefold()
+        await self.async_set_unique_id(normalized_email)
+        # NOTE: This will abort with the translated "already_configured"
+        # reason if an entry for this account already exists.
+        self._abort_if_unique_id_configured()
         scan = int(user_input.get(CONF_SCAN_INTERVAL, 10))
         pii = bool(user_input.get(CONF_EXPOSE_PII, False))
 

@@ -1,7 +1,69 @@
 # Changelog
 
-## [Unreleased]
-- No changes yet.
+## [0.4.1 - RC1] - 2025-11-21
+### Changed
+- Promote the 0.4.1 series to Release Candidate status with no functional changes since 0.4.1a10.
+
+## [0.4.1a10] - 2025-11-21
+### Changed
+- Clarify the config entry setup docstring now that migrations are handled separately.
+- Bump integration version metadata to keep documentation and manifest aligned.
+
+## [0.4.1a9] - 2025-11-21
+### Fixed
+- Normalize the username for every redisplayed config form to remove whitespace-only input and keep defaults consistent across all error cases.
+- Validate missing or empty passwords defensively before attempting login to avoid unnecessary API calls and potential KeyErrors during tests.
+- Keep the config flow input handling aligned with Home Assistant naming conventions and document the shallow copy used to normalize form defaults.
+
+## [0.4.1a8] - 2025-11-21
+### Fixed
+- Reject empty or whitespace-only emails in the config flow before assigning unique IDs or attempting login, preventing invalid identifiers and unnecessary API calls.
+
+## [0.4.1a7] - 2025-11-20
+### Added
+- Added diagnostic sensor `preset_mode` to expose the current scenary as a history-friendly preset value (`home/away/sleep`).
+
+## [0.4.1a6] - 2025-11-20
+### Fixed
+- Guard config entry unload cleanup behind bucket existence checks so missing buckets no longer raise, ensuring cleanup only runs when the entry data is present.
+
+## [0.4.1a5] - 2025-11-16
+### Fixed
+- Elevate `ServiceNotFound` logs in the power switch to warning level so removed or renamed climate proxies remain visible while the entity falls back to direct P1 control.
+- Guard `_send_event` with climate-style warning logs and exception propagation to distinguish P1 API failures from proxy failures.
+- Always cancel per-entry scheduled callbacks and clear transient locks during config entry unload, even when some platforms fail to unload, to avoid dangling timers while still preserving partial teardown state.
+
+### Testing
+- Added switch regression coverage for timeout resilience, `HomeAssistantError` fallbacks, missing climate proxies, unexpected exceptions, and `_send_event` warning propagation.
+
+## [0.4.1a4] - 2025-11-15
+### Fixed
+- Ensure config entry unload preserves integration state when any platform raises.
+- Warn when a platform unload reports failure and leave scheduled callbacks untouched so partial teardowns stay visible.
+- Document the fallback offline/online notification copy so translations remain the single source of truth.
+- Log cancel-handle failures at debug level during unload so resilient cleanup still leaves a trace for debugging.
+
+### Testing
+- Added climate unit tests that lock HEAT_COOL exposure behind device capability and the experimental opt-in flag.
+- Added diagnostics regression coverage to ensure tokens, MAC addresses, and GPS coordinates remain redacted.
+
+## [0.4.1a3] - 2025-11-14
+### Fixed
+- Prevent optimistic overlay expiration guard from raising `TypeError` on Python 3.11+ by replacing the union-based `isinstance` check with a tuple-based guard.
+- Ensure config entries store normalized unique IDs, abort duplicates in the config flow, and migrate existing installs to the new identifier scheme.
+- Fix the config entry migration to bump versions via Home Assistant's update helper, preventing startup crashes from direct assignment.
+### Testing
+- Added helper-focused unit coverage to ensure optimistic overlays persist within the TTL, expire afterwards, and never raise during retrieval.
+
+## [0.4.1a2] - 2025-11-14
+### Fixed
+- Schedule persistent notification create/dismiss coroutines from the coordinator listener so offline/online banners appear reliably in Home Assistant.
+
+## [0.4.1a1] - 2025-11-04
+### Changed
+- Power switch service now proxies the sibling climate entity for consistent away handling, optimistic overlays, and refresh semantics while retaining a direct P1 fallback when the climate entity is disabled or missing.
+- Post-write refresh scheduling is coalesced per config entry to avoid redundant refresh bursts after consecutive commands.
+- All write paths (climate, switch fallback, numbers) share a per-device asyncio.Lock to serialize command ordering when UI and automations issue concurrent updates.
 
 ## [0.4.1a0] - 2025-11-03
 ### Added

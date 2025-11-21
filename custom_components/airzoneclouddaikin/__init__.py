@@ -1,13 +1,12 @@
-"""DKN Cloud for HASS integration setup (0.4.1a0, options guardrails; no migrations).
+"""DKN Cloud for HASS integration setup.
 
 Key points in this revision:
-- Token and settings are read exclusively from entry.options (no data fallback).
-- Removed the `stale_after_minutes` option. Offline detection now uses a fixed
-  internal threshold (10 minutes) plus a 90 s debounce for notifications.
-- Select platform remains removed (preset modes are native in climate).
-- Keep and cancel async_call_later handles via entry.async_on_unload(...) to avoid leaks.
-- On 401 in the coordinator, open a reauth flow; on missing token in setup, raise
-  ConfigEntryAuthFailed so HA triggers the reauth UI.
+- Power switch delegates to the climate entity, inheriting away auto-exit and
+  optimistic overlays while preserving a direct P1 fallback when needed.
+- Post-write refreshes are coalesced per entry to avoid redundant refresh bursts
+  after consecutive commands.
+- All write paths share a per-device asyncio.Lock so concurrent commands from the
+  UI and automations maintain deterministic ordering.
 """
 
 from __future__ import annotations
@@ -48,17 +47,16 @@ _OFFLINE_STALE_SECONDS = int(INTERNAL_STALE_AFTER_SEC)
 _BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
 _EXTRA_PLATFORMS: list[str] = ["number"]
 
+# NOTE: These templates act only as a last-resort fallback; the localized
+# translations under translations/*.json provide the polished copy at runtime.
 _DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
     "offline": {
-        "title": "DKN Cloud — {name} offline",
-        "message": (
-            "Connection lost at {ts_local}. "
-            "Last contact: {last_iso} (about {mins} min ago)."
-        ),
+        "title": "DKN Cloud offline notification",
+        "message": "{name} lost the connection at {ts_local}.",
     },
     "online": {
-        "title": "DKN Cloud — {name} back online",
-        "message": "Connection restored at {ts_local}.",
+        "title": "DKN Cloud connection restored",
+        "message": "{name} reconnected at {ts_local}.",
     },
 }
 
@@ -67,6 +65,58 @@ class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Typed coordinator that also carries the API handle."""
 
     api: AirzoneAPI
+
+
+async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+    """Migrate legacy config entries to the latest schema."""
+
+    target_version = 2
+
+    needs_unique_id = (
+        config_entry.version < target_version or not config_entry.unique_id
+    )
+
+    if needs_unique_id:
+        username = str(config_entry.data.get(CONF_USERNAME, "")).strip()
+        normalized = username.casefold()
+        # NOTE: We normalize the username only to compute the unique_id and detect
+        # duplicates. We intentionally avoid rewriting entry.data[CONF_USERNAME]
+        # during migration to preserve the original user-facing casing and to not
+        # change any backend login semantics for existing entries.
+
+        if not normalized:
+            _LOGGER.warning(
+                "Config entry %s lacks a username; skipping unique_id migration.",
+                config_entry.entry_id,
+            )
+        elif config_entry.unique_id != normalized:
+            duplicates = [
+                entry
+                for entry in hass.config_entries.async_entries(DOMAIN)
+                if entry.entry_id != config_entry.entry_id
+                and entry.unique_id == normalized
+            ]
+
+            if duplicates:
+                _LOGGER.warning(
+                    "Config entry %s skipped unique_id migration because %s is already in use.",
+                    config_entry.entry_id,
+                    normalized,
+                )
+            else:
+                hass.config_entries.async_update_entry(
+                    config_entry, unique_id=normalized
+                )
+                _LOGGER.info(
+                    "Migrated config entry %s to unique_id %s.",
+                    config_entry.entry_id,
+                    normalized,
+                )
+
+    if config_entry.version != target_version:
+        hass.config_entries.async_update_entry(config_entry, version=target_version)
+
+    return True
 
 
 async def _async_update_data(
@@ -220,7 +270,7 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up DKN Cloud for HASS from a config entry (no migrations)."""
+    """Set up DKN Cloud for HASS from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     cfg = entry.data
     opts = entry.options
@@ -335,8 +385,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     title, message = _fmt(
                         strings, "offline", name, ts_local, last_iso, mins
                     )
-                    hass.components.persistent_notification.async_create(
-                        message=message, title=title, notification_id=nid
+                    hass.async_create_task(
+                        hass.components.persistent_notification.async_create(
+                            message=message, title=title, notification_id=nid
+                        )
                     )
                     st["notified"] = True
                     _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
@@ -349,25 +401,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 st["notified"] = False
 
                 nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                hass.components.persistent_notification.async_dismiss(nid)
+                hass.async_create_task(
+                    hass.components.persistent_notification.async_dismiss(nid)
+                )
 
                 ts_local = dt_util.as_local(now).strftime("%H:%M")
                 title, message = _fmt(strings, "online", name, ts_local, None, None)
                 nid_online = f"{nid}:online"
-                hass.components.persistent_notification.async_create(
-                    message=message, title=title, notification_id=nid_online
+                hass.async_create_task(
+                    hass.components.persistent_notification.async_create(
+                        message=message, title=title, notification_id=nid_online
+                    )
                 )
                 _LOGGER.info("[%s] WServer back online.", dev_id)
 
                 cancel = async_call_later(
                     hass,
                     ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.components.persistent_notification.async_dismiss(
-                        _nid
+                    lambda _now, _nid=nid_online: hass.async_create_task(
+                        hass.components.persistent_notification.async_dismiss(_nid)
                     ),
                 )
                 cancel_handles.append(cancel)
-                entry.async_on_unload(cancel)
                 continue
 
             # No transition
@@ -400,15 +455,42 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     for platform in _BASE_PLATFORMS + _EXTRA_PLATFORMS:
         try:
             ok = await hass.config_entries.async_forward_entry_unload(entry, platform)
-            unload_ok = unload_ok and ok
         except Exception:  # noqa: BLE001
+            unload_ok = False
+            _LOGGER.exception(
+                "Unexpected error unloading platform %s for config entry %s.",
+                platform,
+                entry.entry_id,
+            )
             continue
 
-    bucket = hass.data.get(DOMAIN, {}).pop(entry.entry_id, {}) if unload_ok else {}
-    for cancel in bucket.get("cancel_handles", []):
-        try:
-            cancel()
-        except Exception:  # noqa: BLE001
-            pass
+        if not ok:
+            unload_ok = False
+            _LOGGER.warning(
+                "Platform %s did not unload cleanly for config entry %s.",
+                platform,
+                entry.entry_id,
+            )
+
+    domain_bucket = hass.data.get(DOMAIN)
+    if domain_bucket is not None and entry.entry_id in domain_bucket:
+        bucket = domain_bucket[entry.entry_id]
+        for cancel in bucket.get("cancel_handles", []):
+            try:
+                cancel()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Cancel handle failed during unload for config entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
+
+        # Clear transient state while preserving the bucket on partial unloads.
+        bucket["cancel_handles"] = []
+        bucket.pop("pending_refresh", None)
+        bucket.pop("device_locks", None)
+
+        if unload_ok:
+            domain_bucket.pop(entry.entry_id, None)
 
     return unload_ok

@@ -17,6 +17,7 @@ from .__init__ import AirzoneCoordinator
 from .airzone_api import AirzoneAPI
 from .const import DOMAIN, MANUFACTURER
 from .helpers import (
+    acquire_device_lock,
     clamp_number,
     optimistic_get,
     optimistic_set,
@@ -177,18 +178,22 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
 
         payload = {"device": {self._field_name: ivalue}}
 
-        try:
-            await self._api.put_device_fields(self._device_id, payload)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            raise
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
+            try:
+                await self._api.put_device_fields(self._device_id, payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                raise
 
-        optimistic_set(
-            self.hass, self._entry_id, self._device_id, self._field_name, ivalue
-        )
-        self.async_write_ha_state()
-        schedule_post_write_refresh(self.hass, self.coordinator)
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, self._field_name, ivalue
+            )
+            self.async_write_ha_state()
+            schedule_post_write_refresh(
+                self.hass, self.coordinator, entry_id=self._entry_id
+            )
 
 
 class DKNSleepTimeNumber(_BaseDKNNumber):
