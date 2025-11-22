@@ -27,7 +27,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.1a7] - 2025-11-20
 ### Added
-- Added diagnostic sensor `preset_mode` to expose the current scenary as a history-friendly preset value (`home/away/sleep`).
+- Added diagnostic sensor `preset_mode` to expose the current scenary as a history-friendly
+  preset value (`home/away/sleep`).
 
 ## [0.4.1a6] - 2025-11-20
 ### Fixed
@@ -73,15 +74,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.1a0] - 2025-11-03
 ### Added
-- Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration routes setpoints to P7 and fan speeds to P3 while in this experimental mode.
-- Diagnostic sensor `heat_cool_supported` derived from the modes bitstring so installers can verify HEAT_COOL compatibility from Home Assistant.
+- Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises
+  index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration
+  routes setpoints to P7 and fan speeds to P3 while in this experimental mode.
+- Diagnostic sensor `heat_cool_supported` derived from the modes bitstring so installers can
+  verify HEAT_COOL compatibility from Home Assistant.
 ### Changed
-- Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only becomes active once a compatible installation is detected.
-- Tooling: retarget Black formatting to Python 3.14 using Black 25.9's `py314` target flag (currently accepted even if not yet officially documented) and keep Ruff aligned.
-- Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and ensure fan/temperature writes always use the cold path (P7/P3). Historical changelog entries that mentioned “AUTO” refer to this same mode.
-- Climate: report backend P2 codes 6/7 as `unknown` instead of masquerading them as COOL/HEAT so automations can detect unsupported air variants.
+- Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only
+  becomes active once a compatible installation is detected.
+- Tooling: retarget Black formatting to Python 3.14 using Black 25.9's `py314` target flag
+  (currently accepted even if not yet officially documented) and keep Ruff aligned.
+- Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and
+  ensure fan/temperature writes always use the cold path (P7/P3). Historical changelog entries
+  that mentioned “AUTO” refer to this same mode.
+- Climate: report backend P2 codes 6/7 as `unknown` instead of masquerading them as COOL/HEAT
+  so automations can detect unsupported air variants.
 ### Changed
-- Document the HEAT_COOL opt-in policy in `info.md`, remove “AUTO” terminology, and surface the updated options-flow toggle copy (EN/ES) that calls out the P7/P3 routing.
+- Document the HEAT_COOL opt-in policy in `info.md`, remove “AUTO” terminology, and surface the
+  updated options-flow toggle copy (EN/ES) that calls out the P7/P3 routing.
 
 ## [0.4.0-rc4] - 2025-11-02
 ### Fixed
@@ -101,35 +111,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.0-rc2] - 2025-11-01
 ### Changed
-- Bump **Python floor to 3.14** for development and CI (format/lint). Set `requires-python = ">=3.14.0"` and update Black/Ruff `target-version` to `py314`.
+- Bump **Python floor to 3.14** for development and CI (format/lint). Set `requires-python =
+  ">=3.14.0"` and update Black/Ruff `target-version` to `py314`.
 ### Changed
-- Centralized optimistic overlay and numeric clamping in `helpers.py`, applying adaptive TTLs and shared refresh scheduling across climate, number, and switch entities for consistent UI behavior after writes.
+- Centralized optimistic overlay and numeric clamping in `helpers.py`, applying adaptive TTLs and
+  shared refresh scheduling across climate, number, and switch entities for consistent UI behavior
+  after writes.
 
 ## [0.4.0-rc1] - 2025-10-29
 ### Changed
 - Options guardrails: `scan_interval` now constrained to 10–30 s (default 10).
-- Remove `stale_after_minutes` from Options/UI; connectivity uses a fixed 10-minute staleness threshold plus a 90 s debounce for notifications.
+- Remove `stale_after_minutes` from Options/UI; connectivity uses a fixed 10-minute staleness threshold
+  plus a 90 s debounce for notifications.
 - Runtime clamps `scan_interval` to 10–30 s even if Options are bypassed.
 ### Changed
-- Device Registry: pass `connections` via the `DeviceInfo` constructor using `CONNECTION_NETWORK_MAC` across all platforms (climate, binary_sensor, sensor, switch, number). Avoid post-construction mutation of `DeviceInfo`.
+- Device Registry: pass `connections` via the `DeviceInfo` constructor using `CONNECTION_NETWORK_MAC`
+  across all platforms (climate, binary_sensor, sensor, switch, number). Avoid post-construction
+  mutation of `DeviceInfo`.
 - `device_info` now returns a `DeviceInfo` object for HA’s device registry.
 ### Changed
-- Remove all migration paths. From now on, the integration stores the token at rest in `entry.options['user_token']` from day one; `entry.data` contains only the username. No fallback to `entry.data` remains.
+- Remove all migration paths. From now on, the integration stores the token at rest in
+  `entry.options['user_token']` from day one; `entry.data` contains only the username. No fallback to
+  `entry.data` remains.
 ### Fixed
-- Options flow always merges with existing options, preserving hidden keys (notably `user_token`) and avoiding accidental credential loss.
-- config_flow: preserve hidden options (`user_token`) when saving Options to avoid post-restart auth failures.
-- config_flow: reauth flow robustly resolves the target entry even if `entry_id` is missing from the context, ensuring the password UI appears.
-- config_flow: avoid hard imports of optional locals at import time to prevent rare 500 errors when modules aren’t ready.
-- climate: write preset modes (`home`, `away`, `sleep`) via the canonical `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path. Removed legacy fallbacks to deprecated scenary helpers. Optimistic scenary state is kept and invalidated on backend mismatch.
+- Options flow always merges with existing options, preserving hidden keys (notably `user_token`) and
+  avoiding accidental credential loss.
+- config_flow: preserve hidden options (`user_token`) when saving Options to avoid post-restart auth
+  failures.
+- config_flow: reauth flow robustly resolves the target entry even if `entry_id` is missing from the
+  context, ensuring the password UI appears.
+- config_flow: avoid hard imports of optional locals at import time to prevent rare 500 errors when
+  modules aren’t ready.
+- climate: write preset modes (`home`, `away`, `sleep`) via the canonical
+  `api.put_device_fields(device_id, {"device": {"scenary": <value>}})` path. Removed legacy
+  fallbacks to deprecated scenary helpers. Optimistic scenary state is kept and invalidated on backend
+  mismatch.
 - Cancel `async_call_later` handles on unload to avoid potential leaks.
 - Clean imports/consts after removing `stale_after_minutes`.
 ### Changed
-- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary` entity is removed. Update automations to use `climate.set_preset_mode`.
+- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary`
+  entity is removed. Update automations to use `climate.set_preset_mode`.
 ### Security
-- Password is never persisted; it is used transiently for login/reauth and wiped from memory as soon as possible.
-- Clarification: we **do not rely on or promise encryption at rest** for `config_entries` (`data` or `options`). We keep the token in `entry.options` for structural reasons (separation from identity data) and to reduce churn when editing options.
+- Password is never persisted; it is used transiently for login/reauth and wiped from memory as soon
+  as possible.
+- Clarification: we **do not rely on or promise encryption at rest** for `config_entries` (`data` or
+  `options`). We keep the token in `entry.options` for structural reasons (separation from identity
+  data) and to reduce churn when editing options.
 ### Changed
-- README: remove all mentions of `select.scenary`, highlight native preset modes, and keep the **Acknowledgments** section intact.
+- README: remove all mentions of `select.scenary`, highlight native preset modes, and keep the
+  **Acknowledgments** section intact.
 
 ## [0.3.16a1] - 2025-10-28
 ### Added
