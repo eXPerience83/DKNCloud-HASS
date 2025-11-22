@@ -13,13 +13,12 @@
 
 ## Changelog / `CHANGELOG.md`
 - Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-- Keep the opening text exactly as: `# Changelog` followed by the standard two-line preamble and an `## [Unreleased]` section before dated releases.
-- Version headings use `## [x.y.z] - YYYY-MM-DD` (pre-releases like `1.2.3-rc1` or `1.2.3-alpha1` stay in the brackets). Newer versions go above older ones.
-- Allowed categories per release are only `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, and `### Security`. Re-map other themes (Docs, Testing, Tooling, Notes, etc.) into these headings.
-- Bullets start with `- `, and continuation lines are indented; keep manual wrapping near 80–100 characters without breaking words. Avoid inserting blank lines inside a bullet.
-- Do not reflow or rename existing bullets unless editing their content. Prefer minimal diffs and leave historical notes intact.
-- When a final release replaces a pre-release (e.g., `1.2.3` after `1.2.3-rc1`), merge the applicable bullets into the final section and drop the pre-release section unless intentionally preserved.
-- Optional comparison links (if present) should match this repo: `[Unreleased]: https://github.com/eXPerience83/DKNCloud-HASS/compare/v<latest>...HEAD` and `[x.y.z]: https://github.com/eXPerience83/DKNCloud-HASS/compare/v<previous>...v<x.y.z>`.
+- Keep the existing top matter as-is; do **not** add new boilerplate or automatically insert a new `## [Unreleased]` section.
+- Use version headings in the form `## [x.y.z] - YYYY-MM-DD` (pre-releases like `1.2.3-rc1` or `1.2.3-alpha1` stay in brackets). Keep releases in reverse chronological order.
+- Allowed categories per release are only `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, and `### Security`. Map other themes (Docs, Testing, Tooling, Notes, etc.) into these headings when editing.
+- Bullets start with `- `; continuation lines must be indented if wrapping is needed, and long bullets should be wrapped around 80–100 characters without breaking words. Avoid blank lines inside a bullet.
+- Prefer minimal diffs: do not reflow or rename existing bullets/headings unless fixing a rule violation. Merge pre-release notes into the final release only if that pattern already exists here.
+- If comparison links exist at the bottom, keep them consistent with `https://github.com/eXPerience83/DKNCloud-HASS` and update only when adding new versions.
 
 ## Integration Architecture
 - This repository hosts the custom integration **DKN Cloud for Home Assistant**, distributed through **HACS**.
