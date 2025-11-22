@@ -11,6 +11,12 @@
 - All code comments, README entries, and changelog notes **must be written in English**.
 - Keep imports tidy—remove unused symbols and respect the Ruff isort grouping so the Home Assistant package stays first-party under `custom_components/airzoneclouddaikin`.
 
+## Changelog
+- Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html) when editing `CHANGELOG.md`.
+- The file must begin with the standard heading and preamble and include an `Unreleased` section before dated releases.
+- Add new entries under the appropriate section headings (`Added`, `Changed`, `Fixed`, etc.) and do not remove historical notes.
+- Do not bump versions or alter release tagging in `CHANGELOG.md` unless explicitly requested.
+
 ## Integration Architecture
 - This repository hosts the custom integration **DKN Cloud for Home Assistant**, distributed through **HACS**.
 - Preserve the current coordinator-driven architecture under `custom_components/airzoneclouddaikin` when extending functionality. Study the existing setup (`__init__.py`, platform files, and helpers) and mirror their async patterns, error handling, and notification logic.
