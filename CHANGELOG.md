@@ -1,4 +1,8 @@
 # Changelog
+## [0.4.1-rc2] - 2025-11-22
+### Changed
+- Capture the changelog formatting updates and align metadata for the next release candidate.
+
 ## [0.4.1-rc1] - 2025-11-21
 ### Changed
 - Promote the 0.4.1 series to Release Candidate status with no functional changes since 0.4.1a10.
