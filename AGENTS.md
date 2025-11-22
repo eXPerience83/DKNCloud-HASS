@@ -11,11 +11,15 @@
 - All code comments, README entries, and changelog notes **must be written in English**.
 - Keep imports tidy—remove unused symbols and respect the Ruff isort grouping so the Home Assistant package stays first-party under `custom_components/airzoneclouddaikin`.
 
-## Changelog
-- Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html) when editing `CHANGELOG.md`.
-- The file must begin with the standard heading and preamble and include an `Unreleased` section before dated releases.
-- Add new entries under the appropriate section headings (`Added`, `Changed`, `Fixed`, etc.) and do not remove historical notes.
-- Do not bump versions or alter release tagging in `CHANGELOG.md` unless explicitly requested.
+## Changelog / `CHANGELOG.md`
+- Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+- Keep the opening text exactly as: `# Changelog` followed by the standard two-line preamble and an `## [Unreleased]` section before dated releases.
+- Version headings use `## [x.y.z] - YYYY-MM-DD` (pre-releases like `1.2.3-rc1` or `1.2.3-alpha1` stay in the brackets). Newer versions go above older ones.
+- Allowed categories per release are only `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, and `### Security`. Re-map other themes (Docs, Testing, Tooling, Notes, etc.) into these headings.
+- Bullets start with `- `, and continuation lines are indented; keep manual wrapping near 80–100 characters without breaking words. Avoid inserting blank lines inside a bullet.
+- Do not reflow or rename existing bullets unless editing their content. Prefer minimal diffs and leave historical notes intact.
+- When a final release replaces a pre-release (e.g., `1.2.3` after `1.2.3-rc1`), merge the applicable bullets into the final section and drop the pre-release section unless intentionally preserved.
+- Optional comparison links (if present) should match this repo: `[Unreleased]: https://github.com/eXPerience83/DKNCloud-HASS/compare/v<latest>...HEAD` and `[x.y.z]: https://github.com/eXPerience83/DKNCloud-HASS/compare/v<previous>...v<x.y.z>`.
 
 ## Integration Architecture
 - This repository hosts the custom integration **DKN Cloud for Home Assistant**, distributed through **HACS**.
