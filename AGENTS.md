@@ -12,13 +12,13 @@
 - Keep imports tidy—remove unused symbols and respect the Ruff isort grouping so the Home Assistant package stays first-party under `custom_components/airzoneclouddaikin`.
 
 ## Changelog / `CHANGELOG.md`
-- Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-- Keep the existing top matter as-is; do **not** add new boilerplate or automatically insert a new `## [Unreleased]` section.
-- Use version headings in the form `## [x.y.z] - YYYY-MM-DD` (pre-releases like `1.2.3-rc1` or `1.2.3-alpha1` stay in brackets). Keep releases in reverse chronological order.
-- Allowed categories per release are only `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, and `### Security`. Map other themes (Docs, Testing, Tooling, Notes, etc.) into these headings when editing.
-- Bullets start with `- `; continuation lines must be indented if wrapping is needed, and long bullets should be wrapped around 80–100 characters without breaking words. Avoid blank lines inside a bullet.
-- Prefer minimal diffs: do not reflow or rename existing bullets/headings unless fixing a rule violation. Merge pre-release notes into the final release only if that pattern already exists here.
-- If comparison links exist at the bottom, keep them consistent with `https://github.com/eXPerience83/DKNCloud-HASS` and update only when adding new versions.
+- This section is the single source of truth for the changelog style. Ignore external style guides when they conflict with these rules.
+- Do **not** add any new boilerplate, intro text or `## [Unreleased]` section automatically. If such sections already exist, leave them and only edit their content when explicitly requested.
+- Version headings must use the pattern `## [version] - YYYY-MM-DD` (ASCII hyphen) and releases must stay in reverse chronological order. Use SemVer identifiers such as `1.8.2`, `1.8.2-rc1`, `1.8.1-alpha1`.
+- Inside each version, use only these headings: `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, `### Security`. Prefer `Changed` for documentation-only updates.
+- Each change must be a `- ` bullet. Wrap long bullets around 80–100 characters with indented continuation lines; do **not** insert blank lines inside a bullet and avoid `<br>` or trailing double spaces.
+- Keep diffs minimal: never reflow or rewrap unrelated text, and never rename existing headings unless they clearly violate these rules.
+- If comparison links exist at the bottom of the changelog, keep the existing style and only extend it for new versions of this repository.
 
 ## Integration Architecture
 - This repository hosts the custom integration **DKN Cloud for Home Assistant**, distributed through **HACS**.
