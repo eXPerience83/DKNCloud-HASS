@@ -347,7 +347,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - README/info: updated networking section to reflect the 30s timeout.
 - Pre-release version formatted as `0.3.8a2` to ensure proper ordering in HACS.
 
-## [0.3.8a1] - Unreleased
+## [0.3.8a1] - 2025-09-30
 ### Changed
 - HTTP: Centralized browser-like User-Agent and endpoint-specific minimal headers. - GET `/devices`: only `User-Agent` (matches cURL usage). - POST `/events`: `User-Agent`, `X-Requested-With`, `Content-Type`, `Accept`.
 - Internals: Default request headers are now minimal; endpoint-specific headers are injected where required.
@@ -356,7 +356,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - switch: ensure stable device identifier even when coordinator snapshot is empty at startup (fallback to `self._device_id`).
 - climate: do not swallow API errors; `_send_p_event()` now re-raises (except `CancelledError`). Callers only apply optimistic state and schedule refresh after a successful send, preventing “phantom success” in the UI.
-- - Moved `import time` to module level in `select.py` and `number.py` to avoid per-read imports in entity properties and improve async hygiene.
+- Moved `import time` to module level in `select.py` and `number.py` to avoid per-read imports in entity properties and improve async hygiene.
 ### Changed
 - `P2=4 (AUTO)` remains unsupported for now; docs toggle will be added when implemented.
 
@@ -403,7 +403,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sensors: new `status`, `mode` (raw), and derived `mode_text` (maps 1→cool, 2→heat, 3→fan_only, 4→auto/heat_cool, 5→dry; unknown otherwise), all enabled by default.
 - Sensors: `min_limit_cold/max_limit_cold/min_limit_heat/max_limit_heat` and `min/max_temp_unoccupied` are now enabled by default; all temperature-like sensors display **1 decimal** for consistency.
 - Sensors: `update_date` and `connection_date` added as `timestamp` (disabled by default).
-- - Privacy/PII: sensors for `mac`, `pin`, `installation_id`, `spot_name`, `complete_name`, `latitude`, `longitude`, and `time_zone` are created **only when** the new `expose_pii_identifiers` option is enabled; when enabled they are **on by default** and are **not** marked as diagnostic.
+- Privacy/PII: sensors for `mac`, `pin`, `installation_id`, `spot_name`, `complete_name`, `latitude`, `longitude`, and `time_zone` are created **only when** the new `expose_pii_identifiers` option is enabled; when enabled they are **on by default** and are **not** marked as diagnostic.
 - Sensor: `ventilate_variant` (diagnostic, enabled by default) derived from the `modes` bitmask; values: `"3"` (preferred), `"8"` (fallback), or `"none"`.
 ### Changed
 - Sensors: `progs_enabled` is enabled by default.
