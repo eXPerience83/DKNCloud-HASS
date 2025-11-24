@@ -133,8 +133,8 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🛣️ Roadmap
 
-- [ ] **Translations (i18n)** — translate 422 and connectivity banners; add locales (EN/ES/CA/DE/FR/IT/PL/RU/UK…)
-- [ ] **HEAT_COOL (opt-in)** — validate across devices/firmwares before enabling by default
+- [ ] **Translations (i18n)** — translate 422 and connectivity banners; add locales beyond **EN/ES** (CA/DE/FR/IT/PL/RU/UK…)
+- [ ] **HEAT_COOL (opt-in)** — ongoing validation across devices/firmwares before enabling by default
 - [ ] **Auto Fan Speed (opt-in, experimental)** — controller that selects fan speed (e.g., **P3/P4**) based on **ΔT** (discrete **1 °C** steps & hysteresis), active only in **HEAT/COOL**
 
 ---
