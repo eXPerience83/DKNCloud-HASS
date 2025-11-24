@@ -16,7 +16,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 # 🔧 Adjust this per repository
 INTEGRATION_DOMAIN = "airzoneclouddaikin"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
