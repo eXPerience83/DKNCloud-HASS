@@ -1,5 +1,5 @@
 # Changelog
-## [0.4.1] - 2025-11-22
+## [0.4.1] - 2025-11-24
 ### Added
 - Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises
   index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration
