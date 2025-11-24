@@ -110,6 +110,11 @@ Enter your Airzone Cloud **username** and **password**.
 
 > Full API/command mapping and advanced usage in [info.md](./info.md).
 
+## 🌐 Localizations
+
+- UI strings are localized for **English, Spanish, French, German, Italian, and Portuguese**.
+- Translation coverage tests ensure new strings stay in sync across locales.
+
 ---
 
 ## 📷 Screenshots
@@ -133,7 +138,6 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🛣️ Roadmap
 
-- [ ] **Translations (i18n)** — translate 422 and connectivity banners; add locales beyond **EN/ES** (CA/DE/FR/IT/PL/RU/UK…)
 - [ ] **HEAT_COOL (opt-in)** — ongoing validation across devices/firmwares before enabling by default
 - [ ] **Auto Fan Speed (opt-in, experimental)** — controller that selects fan speed (e.g., **P3/P4**) based on **ΔT** (discrete **1 °C** steps & hysteresis), active only in **HEAT/COOL**
 

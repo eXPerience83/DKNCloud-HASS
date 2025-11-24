@@ -1,4 +1,14 @@
 # Changelog
+## [0.4.2] - 2025-11-24
+### Added
+- Added French, Portuguese, Italian, and German locale files covering configuration flows,
+  options, exceptions, and connectivity notifications.
+- Added a regression test to ensure every translation file mirrors the English keyset so new
+  strings are not left untranslated.
+
+### Changed
+- Updated integration metadata to version 0.4.2.
+
 ## [0.4.1] - 2025-11-24
 ### Added
 - Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises
