@@ -61,7 +61,14 @@ data_entry_flow_module.FlowResult = FlowResult
 
 
 class ConfigEntryStub:
-    def __init__(self, *, entry_id: str, domain: str, data: dict[str, Any], options: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        *,
+        entry_id: str,
+        domain: str,
+        data: dict[str, Any],
+        options: dict[str, Any],
+    ) -> None:
         self.entry_id = entry_id
         self.domain = domain
         self.data = data
@@ -115,17 +122,34 @@ class ConfigFlow:
     def _abort_if_unique_id_configured(self) -> None:
         if not self.hass:
             return
-        if any(entry.unique_id == self._unique_id for entry in self.hass.config_entries.async_entries()):
+        if any(
+            entry.unique_id == self._unique_id
+            for entry in self.hass.config_entries.async_entries()
+        ):
             raise AbortFlow(self.async_abort(reason="already_configured"))
 
-    def async_show_form(self, *, step_id: str, data_schema: Any, errors: dict[str, str]) -> FlowResult:
-        return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors}
+    def async_show_form(
+        self, *, step_id: str, data_schema: Any, errors: dict[str, str]
+    ) -> FlowResult:
+        return {
+            "type": "form",
+            "step_id": step_id,
+            "data_schema": data_schema,
+            "errors": errors,
+        }
 
     def async_abort(self, *, reason: str) -> FlowResult:
         return {"type": "abort", "reason": reason}
 
-    def async_create_entry(self, *, title: str, data: dict[str, Any], options: dict[str, Any] | None = None) -> FlowResult:
-        return {"type": "create_entry", "title": title, "data": data, "options": options or {}}
+    def async_create_entry(
+        self, *, title: str, data: dict[str, Any], options: dict[str, Any] | None = None
+    ) -> FlowResult:
+        return {
+            "type": "create_entry",
+            "title": title,
+            "data": data,
+            "options": options or {},
+        }
 
 
 config_entries_module.ConfigFlow = ConfigFlow
@@ -136,8 +160,15 @@ class OptionsFlow:
         self.hass: HassStub | None = None
         self._entry = entry
 
-    def async_show_form(self, *, step_id: str, data_schema: Any, errors: dict[str, str]) -> FlowResult:
-        return {"type": "form", "step_id": step_id, "data_schema": data_schema, "errors": errors}
+    def async_show_form(
+        self, *, step_id: str, data_schema: Any, errors: dict[str, str]
+    ) -> FlowResult:
+        return {
+            "type": "form",
+            "step_id": step_id,
+            "data_schema": data_schema,
+            "errors": errors,
+        }
 
     def async_create_entry(self, *, title: str, data: dict[str, Any]) -> FlowResult:
         return {"type": "create_entry", "title": title, "data": data}
@@ -155,7 +186,8 @@ class HassStub:
 
 # aiohttp client session stub
 aiohttp_client_module = sys.modules.setdefault(
-    "homeassistant.helpers.aiohttp_client", types.ModuleType("homeassistant.helpers.aiohttp_client")
+    "homeassistant.helpers.aiohttp_client",
+    types.ModuleType("homeassistant.helpers.aiohttp_client"),
 )
 
 
@@ -165,7 +197,9 @@ def async_get_clientsession(_hass: HassStub) -> object:  # pragma: no cover - tr
 
 aiohttp_client_module.async_get_clientsession = async_get_clientsession
 
-helpers_module = sys.modules.setdefault("homeassistant.helpers", types.ModuleType("homeassistant.helpers"))
+helpers_module = sys.modules.setdefault(
+    "homeassistant.helpers", types.ModuleType("homeassistant.helpers")
+)
 helpers_cv_module = sys.modules.setdefault(
     "homeassistant.helpers.config_validation",
     types.ModuleType("homeassistant.helpers.config_validation"),
@@ -199,7 +233,9 @@ helpers_cv_module.template_complex = lambda value: value
 helpers_module.event = helpers_event_module
 helpers_module.update_coordinator = helpers_update_module
 sys.modules.setdefault("homeassistant.helpers.event", helpers_event_module)
-sys.modules.setdefault("homeassistant.helpers.update_coordinator", helpers_update_module)
+sys.modules.setdefault(
+    "homeassistant.helpers.update_coordinator", helpers_update_module
+)
 
 ha_module.helpers = helpers_module
 ha_module.config_entries = config_entries_module
@@ -224,7 +260,10 @@ class _Marker:
         return hash((self.key, self.default))
 
     def __eq__(self, other: object) -> bool:  # pragma: no cover - mapping support only
-        return isinstance(other, _Marker) and (self.key, self.default) == (other.key, other.default)
+        return isinstance(other, _Marker) and (self.key, self.default) == (
+            other.key,
+            other.default,
+        )
 
 
 class Schema:
@@ -246,11 +285,20 @@ sys.modules["voluptuous"] = vol_module
 
 
 # ------------------------------- API stub -------------------------------
-airzone_api_module = types.ModuleType("custom_components.airzoneclouddaikin.airzone_api")
+airzone_api_module = types.ModuleType(
+    "custom_components.airzoneclouddaikin.airzone_api"
+)
 
 
 class AirzoneAPIMock:
-    def __init__(self, username: str, _session: object, *, password: str | None, token: str | None) -> None:
+    def __init__(
+        self,
+        username: str,
+        _session: object,
+        *,
+        password: str | None,
+        token: str | None,
+    ) -> None:
         self.username = username
         self.password = password
         self.token = token
@@ -276,7 +324,9 @@ def _maybe_await(value: Any) -> Any:
 _AIRZONE_BEHAVIOR: dict[str, Any] = {"login": "token-from-api"}
 airzone_api_module.AirzoneAPI = AirzoneAPIMock
 
-custom_components_pkg = sys.modules.setdefault("custom_components", types.ModuleType("custom_components"))
+custom_components_pkg = sys.modules.setdefault(
+    "custom_components", types.ModuleType("custom_components")
+)
 custom_components_pkg.__path__ = [str(ROOT / "custom_components")]
 
 integration_pkg = sys.modules.setdefault(
@@ -373,7 +423,9 @@ def test_user_step_cannot_connect_error(config_flow: types.ModuleType) -> None:
     assert result["errors"] == {"base": "cannot_connect"}
 
 
-def test_user_step_invalid_auth_when_token_missing(config_flow: types.ModuleType) -> None:
+def test_user_step_invalid_auth_when_token_missing(
+    config_flow: types.ModuleType,
+) -> None:
     _AIRZONE_BEHAVIOR["login"] = ""
 
     flow = config_flow.AirzoneConfigFlow()
@@ -399,7 +451,11 @@ def test_reauth_success_updates_token(config_flow: types.ModuleType) -> None:
         entry_id="entry-1",
         domain=config_flow.DOMAIN,
         data={config_flow.CONF_USERNAME: "user@example.com"},
-        options={"user_token": "old", config_flow.CONF_SCAN_INTERVAL: 10, config_flow.CONF_EXPOSE_PII: False},
+        options={
+            "user_token": "old",
+            config_flow.CONF_SCAN_INTERVAL: 10,
+            config_flow.CONF_EXPOSE_PII: False,
+        },
     )
     hass.config_entries.add_entry(entry)
     flow.context["entry_id"] = "entry-1"
@@ -428,7 +484,9 @@ def test_reauth_without_entry_aborts(config_flow: types.ModuleType) -> None:
     assert result == {"type": "abort", "reason": "reauth_failed"}
 
 
-def test_options_flow_preserves_token_and_updates_fields(config_flow: types.ModuleType) -> None:
+def test_options_flow_preserves_token_and_updates_fields(
+    config_flow: types.ModuleType,
+) -> None:
     entry = ConfigEntryStub(
         entry_id="entry-1",
         domain=config_flow.DOMAIN,
@@ -461,4 +519,3 @@ def test_options_flow_preserves_token_and_updates_fields(config_flow: types.Modu
     assert result["data"][config_flow.CONF_SCAN_INTERVAL] == 20
     assert result["data"][config_flow.CONF_EXPOSE_PII] is True
     assert result["data"][config_flow.CONF_ENABLE_HEAT_COOL] is True
-
