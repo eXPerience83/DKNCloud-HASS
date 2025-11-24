@@ -1,90 +1,24 @@
 # Changelog
-## [0.4.1-rc2] - 2025-11-22
-### Changed
-- Capture the changelog formatting updates and align metadata for the next release candidate.
-
-## [0.4.1-rc1] - 2025-11-21
-### Changed
-- Promote the 0.4.1 series to Release Candidate status with no functional changes since 0.4.1a10.
-
-## [0.4.1a10] - 2025-11-21
-### Changed
-- Clarify the config entry setup docstring now that migrations are handled separately.
-- Bump integration version metadata to keep documentation and manifest aligned.
-
-## [0.4.1a9] - 2025-11-21
-### Fixed
-- Normalize the username for every redisplayed config form to remove whitespace-only input and keep
-  defaults consistent across all error cases.
-- Validate missing or empty passwords defensively before attempting login to avoid unnecessary API
-  calls and potential KeyErrors during tests.
-- Keep the config flow input handling aligned with Home Assistant naming conventions and document
-  the shallow copy used to normalize form defaults.
-
-## [0.4.1a8] - 2025-11-21
-### Fixed
-- Reject empty or whitespace-only emails in the config flow before assigning unique IDs or
-  attempting login, preventing invalid identifiers and unnecessary API calls.
-
-## [0.4.1a7] - 2025-11-20
+## [0.4.1] - 2025-11-22
 ### Added
+- Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises
+  index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration
+  routes setpoints to P7 and fan speeds to P3 while in this experimental mode.
+- Diagnostic sensor `heat_cool_supported` derived from the modes bitstring so installers can
+  verify HEAT_COOL compatibility from Home Assistant.
 - Added diagnostic sensor `preset_mode` to expose the current scenary as a history-friendly
   preset value (`home/away/sleep`).
 
-## [0.4.1a6] - 2025-11-20
-### Fixed
-- Guard config entry unload cleanup behind bucket existence checks so missing buckets no longer
-  raise, ensuring cleanup only runs when the entry data is present.
-
-## [0.4.1a5] - 2025-11-16
-### Fixed
-- Elevate `ServiceNotFound` logs in the power switch to warning level so removed or renamed climate
-  proxies remain visible while the entity falls back to direct P1 control.
-- Guard `_send_event` with climate-style warning logs and exception propagation to distinguish P1
-  API failures from proxy failures.
-- Always cancel per-entry scheduled callbacks and clear transient locks during config entry unload,
-  even when some platforms fail to unload, to avoid dangling timers while still preserving partial
-  teardown state.
-
 ### Changed
-- Added switch regression coverage for timeout resilience, `HomeAssistantError` fallbacks, missing
-  climate proxies, unexpected exceptions, and `_send_event` warning propagation.
-
-## [0.4.1a4] - 2025-11-15
-### Fixed
-- Ensure config entry unload preserves integration state when any platform raises.
-- Warn when a platform unload reports failure and leave scheduled callbacks untouched so partial
-  teardowns stay visible.
-- Document the fallback offline/online notification copy so translations remain the single source of
-  truth.
-- Log cancel-handle failures at debug level during unload so resilient cleanup still leaves a trace
-  for debugging.
-
-### Changed
-- Added climate unit tests that lock HEAT_COOL exposure behind device capability and the
-  experimental opt-in flag.
-- Added diagnostics regression coverage to ensure tokens, MAC addresses, and GPS coordinates remain
-  redacted.
-
-## [0.4.1a3] - 2025-11-14
-### Fixed
-- Prevent optimistic overlay expiration guard from raising `TypeError` on Python 3.11+ by replacing
-  the union-based `isinstance` check with a tuple-based guard.
-- Ensure config entries store normalized unique IDs, abort duplicates in the config flow, and
-  migrate existing installs to the new identifier scheme.
-- Fix the config entry migration to bump versions via Home Assistant's update helper, preventing
-  startup crashes from direct assignment.
-### Changed
-- Added helper-focused unit coverage to ensure optimistic overlays persist within the TTL, expire
-  afterwards, and never raise during retrieval.
-
-## [0.4.1a2] - 2025-11-14
-### Fixed
-- Schedule persistent notification create/dismiss coroutines from the coordinator listener so
-  offline/online banners appear reliably in Home Assistant.
-
-## [0.4.1a1] - 2025-11-04
-### Changed
+- Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only
+  becomes active once a compatible installation is detected.
+- Tooling: retarget Black formatting to Python 3.14 using Black 25.9's `py314` target flag
+  (currently accepted even if not yet officially documented) and keep Ruff aligned.
+- Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and ensure
+  fan/temperature writes always use the cold path (P7/P3). Historical changelog entries that
+  mentioned “AUTO” refer to this same mode.
+- Document the HEAT_COOL opt-in policy in `info.md`, remove “AUTO” terminology, and surface the
+  updated options-flow toggle copy (EN/ES) that calls out the P7/P3 routing.
 - Power switch service now proxies the sibling climate entity for consistent away handling,
   optimistic overlays, and refresh semantics while retaining a direct P1 fallback when the climate
   entity is disabled or missing.
@@ -92,39 +26,80 @@
   after consecutive commands.
 - All write paths (climate, switch fallback, numbers) share a per-device asyncio.Lock to serialize
   command ordering when UI and automations issue concurrent updates.
+- Added climate unit tests that lock HEAT_COOL exposure behind device capability and the
+  experimental opt-in flag.
+- Added diagnostics regression coverage to ensure tokens, MAC addresses, and GPS coordinates remain
+  redacted.
+- Added switch regression coverage for timeout resilience, `HomeAssistantError` fallbacks, missing
+  climate proxies, unexpected exceptions, and `_send_event` warning propagation.
+- Clarify the config entry setup docstring now that migrations are handled separately.
+- Bump integration version metadata to keep documentation and manifest aligned.
+- Promote the 0.4.1 series to Release Candidate status with no functional changes since 0.4.1a10.
+- Capture the changelog formatting updates and align metadata for the next release candidate.
 
-## [0.4.1a0] - 2025-11-03
-### Added
-- Optional HEAT_COOL (P2=4) exposure in climate entities when the modes bitmask advertises
-  index 3 and the new “Enable experimental HEAT_COOL mode” toggle is enabled. The integration
-  routes setpoints to P7 and fan speeds to P3 while in this experimental mode.
-- Diagnostic sensor `heat_cool_supported` derived from the modes bitstring so installers can
-  verify HEAT_COOL compatibility from Home Assistant.
-### Changed
-- Options UI keeps the HEAT_COOL toggle visible at all times and clarifies that the opt-in only
-  becomes active once a compatible installation is detected.
-- Tooling: retarget Black formatting to Python 3.14 using Black 25.9's `py314` target flag
-  (currently accepted even if not yet officially documented) and keep Ruff aligned.
-- Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and
-  ensure fan/temperature writes always use the cold path (P7/P3). Historical changelog entries
-  that mentioned “AUTO” refer to this same mode.
-- Climate: report backend P2 codes 6/7 as `unknown` instead of masquerading them as COOL/HEAT
-  so automations can detect unsupported air variants.
-### Changed
-- Document the HEAT_COOL opt-in policy in `info.md`, remove “AUTO” terminology, and surface the
-  updated options-flow toggle copy (EN/ES) that calls out the P7/P3 routing.
-
-## [0.4.0-rc4] - 2025-11-02
 ### Fixed
-- Sensors: avoid using the Python 3.11 `types.UnionType` syntax with `isinstance()` so
-  `machine_errors` lists/tuples never raise `TypeError` and are rendered as CSV strings.
+- Schedule persistent notification create/dismiss coroutines from the coordinator listener so
+  offline/online banners appear reliably in Home Assistant.
+- Prevent optimistic overlay expiration guard from raising `TypeError` on Python 3.11+ by replacing
+  the union-based `isinstance` check with a tuple-based guard.
+- Ensure config entries store normalized unique IDs, abort duplicates in the config flow, and
+  migrate existing installs to the new identifier scheme.
+- Fix the config entry migration to bump versions via Home Assistant's update helper, preventing
+  startup crashes from direct assignment.
+- Ensure config entry unload preserves integration state when any platform raises.
+- Warn when a platform unload reports failure and leave scheduled callbacks untouched so partial
+  teardowns stay visible.
+- Document the fallback offline/online notification copy so translations remain the single source of
+  truth.
+- Log cancel-handle failures at debug level during unload so resilient cleanup still leaves a trace
+  for debugging.
+- Elevate `ServiceNotFound` logs in the power switch to warning level so removed or renamed climate
+  proxies remain visible while the entity falls back to direct P1 control.
+- Guard `_send_event` with climate-style warning logs and exception propagation to distinguish P1 API
+  failures from proxy failures.
+- Always cancel per-entry scheduled callbacks and clear transient locks during config entry unload,
+  even when some platforms fail to unload, to avoid dangling timers while still preserving partial
+  teardown state.
+- Guard config entry unload cleanup behind bucket existence checks so missing buckets no longer
+  raise, ensuring cleanup only runs when the entry data is present.
+- Reject empty or whitespace-only emails in the config flow before assigning unique IDs or attempting
+  login, preventing invalid identifiers and unnecessary API calls.
+- Normalize the username for every redisplayed config form to remove whitespace-only input and keep
+  defaults consistent across all error cases.
+- Validate missing or empty passwords defensively before attempting login to avoid unnecessary API
+  calls and potential KeyErrors during tests.
+- Keep the config flow input handling aligned with Home Assistant naming conventions and document
+  the shallow copy used to normalize form defaults.
+
+## [0.4.0] - 2025-11-02
 ### Changed
+- Options guardrails: `scan_interval` now constrained to 10–30 s (default 10).
+- Remove `stale_after_minutes` from Options/UI; connectivity uses a fixed 10-minute staleness
+  threshold plus a 90 s debounce for notifications.
+- Runtime clamps `scan_interval` to 10–30 s even if Options are bypassed.
+- Device Registry: pass `connections` via the `DeviceInfo` constructor using
+  `CONNECTION_NETWORK_MAC` across all platforms (climate, binary_sensor, sensor, switch, number).
+  Avoid post-construction mutation of `DeviceInfo`.
+- `device_info` now returns a `DeviceInfo` object for HA’s device registry.
+- Remove all migration paths. From now on, the integration stores the token at rest in
+  `entry.options['user_token']` from day one; `entry.data` contains only the username. No fallback to
+  `entry.data` remains.
+- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary`
+  entity is removed. Update automations to use `climate.set_preset_mode`.
+- README: document the fixed offline threshold/debounce used for connectivity checks and
+  notifications.
+- info.md: clarify that device field updates (`sleep_time`, unoccupied limits) must be sent inside
+  the `{"device": {...}}` payload.
+- Bump **Python floor to 3.14** for development and CI (format/lint). Set `requires-python =
+  ">=3.14.0"` and update Black/Ruff `target-version` to `py314`.
+- Centralized optimistic overlay and numeric clamping in `helpers.py`, applying adaptive TTLs and
+  shared refresh scheduling across climate, number, and switch entities for consistent UI behavior
+  after writes.
 - Localize the 422 control error and connectivity notifications via EN/ES translation strings
   (reauth banners unchanged).
 - Adjust translation keys to Hassfest-supported buckets (`exceptions` / `issues`) so localization
   passes validation.
 
-## [0.4.0-rc3] - 2025-11-01
 ### Fixed
 - Align the coordinator offline detection helper with `INTERNAL_STALE_AFTER_SEC` so binary sensors
   and notifications rely on the same 10-minute threshold.
@@ -132,41 +107,7 @@
   `/devices/<id>` API contract.
 - Purge passwords from memory immediately after login/reauth via the new
   `AirzoneAPI.clear_password()` helper and config flow usage.
-### Changed
-- README: document the fixed offline threshold/debounce used for connectivity checks and
-  notifications.
-- info.md: clarify that device field updates (`sleep_time`, unoccupied limits) must be sent inside
-  the `{"device": {...}}` payload.
-
-## [0.4.0-rc2] - 2025-11-01
-### Changed
-- Bump **Python floor to 3.14** for development and CI (format/lint). Set `requires-python =
-  ">=3.14.0"` and update Black/Ruff `target-version` to `py314`.
-### Changed
-- Centralized optimistic overlay and numeric clamping in `helpers.py`, applying adaptive TTLs and
-  shared refresh scheduling across climate, number, and switch entities for consistent UI behavior
-  after writes.
-
-## [0.4.0-rc1] - 2025-10-29
-### Changed
-- Options guardrails: `scan_interval` now constrained to 10–30 s (default 10).
-- Remove `stale_after_minutes` from Options/UI; connectivity uses a fixed 10-minute staleness
-  threshold
-  plus a 90 s debounce for notifications.
-- Runtime clamps `scan_interval` to 10–30 s even if Options are bypassed.
-### Changed
-- Device Registry: pass `connections` via the `DeviceInfo` constructor using
-  `CONNECTION_NETWORK_MAC`
-  across all platforms (climate, binary_sensor, sensor, switch, number). Avoid post-construction
-  mutation of `DeviceInfo`.
-- `device_info` now returns a `DeviceInfo` object for HA’s device registry.
-### Changed
-- Remove all migration paths. From now on, the integration stores the token at rest in
-  `entry.options['user_token']` from day one; `entry.data` contains only the username. No fallback to
-  `entry.data` remains.
-### Fixed
-- Options flow always merges with existing options, preserving hidden keys (notably `user_token`)
-  and
+- Options flow always merges with existing options, preserving hidden keys (notably `user_token`) and
   avoiding accidental credential loss.
 - config_flow: preserve hidden options (`user_token`) when saving Options to avoid post-restart auth
   failures.
@@ -180,18 +121,15 @@
   mismatch.
 - Cancel `async_call_later` handles on unload to avoid potential leaks.
 - Clean imports/consts after removing `stale_after_minutes`.
-### Changed
-- Climate now exposes native `preset_modes` (`home`, `away`, `sleep`); the legacy `select.scenary`
-  entity is removed. Update automations to use `climate.set_preset_mode`.
+- Sensors: avoid using the Python 3.11 `types.UnionType` syntax with `isinstance()` so
+  `machine_errors` lists/tuples never raise `TypeError` and are rendered as CSV strings.
+
 ### Security
 - Password is never persisted; it is used transiently for login/reauth and wiped from memory as soon
   as possible.
 - Clarification: we **do not rely on or promise encryption at rest** for `config_entries` (`data` or
   `options`). We keep the token in `entry.options` for structural reasons (separation from identity
   data) and to reduce churn when editing options.
-### Changed
-- README: remove all mentions of `select.scenary`, highlight native preset modes, and keep the
-  **Acknowledgments** section intact.
 
 ## [0.3.16a1] - 2025-10-28
 ### Added
@@ -270,136 +208,90 @@
   future-sensitive keys.
 
 ## [0.3.10] - 2025-10-21
+### Removed
+- Duplicate sensors `sleep_time` and `scenary` to avoid `unique_id` collisions with
+  `number.sleep_time` and `select.scenary`. Values remain available via Number/Select entities.
+
+### Added
+- `binary_sensor.<id>_wserver_online` (connectivity), enabled by default.
+- `sensor.<id>_last_connection` now enabled by default (timestamp).
+- Options: `stale_after_minutes` (default 10, range 6–30).
+
+### Changed
+- If you had `sensor.*_sleep_time` or `sensor.*_scenary` previously, they may appear as
+  restored/unavailable entries in the registry. You can safely remove them from the UI.
+- Clearer UX on write failures: POST `/events` returning **422** now raises
+  `HomeAssistantError("DKN WServer sin conexión (422)")` for better visibility in HA UI.
+- This release does not change any runtime behavior or API calls; it only improves logging hygiene
+  to protect secrets.
+
 ### Security
 - Avoid logging `ClientResponseError` objects which may embed full request URLs with sensitive query
   parameters (user_token/user_email). Now logs only method, masked path, and HTTP status code in
   `airzone_api.py`.
 - In `config_flow.py`, stop interpolating the exception object on login failures to prevent
   accidental leakage of request URLs in logs.
-### Changed
-- This release does not change any runtime behavior or API calls; it only improves logging hygiene
-  to protect secrets
-
-## [0.3.10a1] - 2025-10-19
-### Removed
-- Duplicate sensors `sleep_time` and `scenary` to avoid `unique_id` collisions with
-  `number.sleep_time` and `select.scenary`. Values remain available via Number/Select entities.
-### Changed
-- If you had `sensor.*_sleep_time` or `sensor.*_scenary` previously, they may appear as
-  restored/unavailable entries in the registry. You can safely remove them from the UI.
-### Added
-- `binary_sensor.<id>_wserver_online` (connectivity), enabled by default.
-- `sensor.<id>_last_connection` now enabled by default (timestamp).
-- Options: `stale_after_minutes` (default 10, range 6–30).
-### Changed
-- Clearer UX on write failures: POST `/events` returning **422** now raises `HomeAssistantError("DKN
-  WServer sin conexión (422)")` for better visibility in HA UI.
 
 ## [0.3.9] - 2025-10-16
-### Fixed
-- number/select: correct DeviceInfo usage (return dict / assign `connections` properly) to prevent
-  runtime TypeError.
-### Changed
-- Bump from 0.3.9a11 to 0.3.9 (stable).
-
-## [0.3.9a11] - 2025-10-16
-### Changed
-- Device Registry metadata unified across all platforms: - `manufacturer` from constant
-  `MANUFACTURER`. - `model` from device `brand` (fallback `"Airzone DKN"`). - `sw_version` from
-  device `firmware` (fallback `""`). - `name` from device `name` (fallback `"Airzone Device"`). -
-  Added `connections` with MAC when available to ensure entities group under the same Device.
-  Affected files: `climate.py`, `sensor.py`, `switch.py`, `number.py`, `select.py`,
-  `binary_sensor.py`. *No runtime changes.*
-
-## [0.3.9a10] - 2025-10-14
-### Changed
-- Binary sensor: use `const.MANUFACTURER` for Device Registry consistency (metadata only).
-
-## [0.3.9a9] - 2025-10-14
-### Changed
-- **types:** Parameterized `CoordinatorEntity` with `AirzoneCoordinator` across all platforms to
-  improve IDE/linters hints (`coordinator.api`, typed `coordinator.data`). Applies to: -
-  `climate.py` - `switch.py` - `sensor.py` - `select.py` - `number.py` (including the
-  `_BaseDKNNumber` base class) - `binary_sensor.py` *No runtime changes.*
-### Changed
-- Added local type annotations for `coordinator` in `async_setup_entry` where applicable to
-  strengthen typing without altering behavior.
-
-## [0.3.9a8] - 2025-10-14
-### Changed
-- Device registry: unified manufacturer label to `Daikin / Airzone` across switch/number/select.
-- Numbers: `sleep_time` now uses `UnitOfTime.MINUTES` for UI consistency (sensor already used
-  minutes).
-### Security
-- Sensors: stricter PII cleanup — remove entities only by exact `unique_id` match; legacy suffix
-  fallback removed to prevent overmatching.
-
-## [0.3.9a7] - 2025-10-14
-### Changed
-- Switch: use `hass.loop.time()` directly for optimistic TTLs (removed local `_now()` wrapper) to
-  stay consistent with climate/select/number. No behavior change.
-
-## [0.3.9a6] - 2025-10-14
-### Fixed
-- API: 401 re-login no longer retries with the stale token. After refreshing the token we rebuild
-  auth params, so the retry uses the new token.
-- Setup: wrap `login()` with `ConfigEntryNotReady` for network/server errors (clean recovery on
-  startup).
-### Changed
-- Logging: mask HTTP paths in debug logs (no query string and only the first path segment).
-- Binary sensor: defensive guards when iterating the coordinator snapshot and reading the device.
-- Sensors: `sleep_time` now uses `device_class=duration` with unit `min` for better UI consistency
-  (the `number` entity remains unchanged).
-
-## [0.3.9a5] - 2025-10-13
-### Changed
-- Centralized optimistic timings in `const.py`: - `OPTIMISTIC_TTL_SEC = 2.5` -
-  `POST_WRITE_REFRESH_DELAY_SEC = 1.0`
-- `climate` and `switch` now use these shared constants for optimistic TTL and post-write delayed
-  refresh.
-- `number` and `select` now use the shared `OPTIMISTIC_TTL_SEC` while keeping their immediate
-  refresh flow (only TTL changed).
 ### Added
+- `climate`: support for Home Assistant `preset_modes` (`home`, `away`, `sleep`) mapped to backend
+  `scenary` (occupied, vacant, sleep). Idempotent writes with optimistic TTL.
 - `climate`: exposes `current_temperature` (°C) from coordinator `local_temp` for better UI parity
   (read-only, no optimistic cache).
 
-## [0.3.9a4] - 2025-10-12
 ### Changed
-- Kept the `select.scenary` entity to avoid breaking changes. The entity is now categorized under
-  **Configuration** so it appears next to `number.*` settings (e.g., `sleep_time`, unoccupied
-  min/max limits).
-- Scene control remains available both via `climate.preset_modes` (`home`, `away`, `sleep`) and
-  `select.scenary` (`occupied`, `vacant`, `sleep`).
-### Changed
-- For new automations, we recommend using `climate.set_preset_mode` for consistency with Home
-  Assistant's climate presets. The legacy select remains available for convenience.
-
-## [0.3.9a3] - 2025-10-12
-### Changed
+- `climate`: always include `PRESET_MODE` in `supported_features`. No auto-forcing scenary after
+  other writes (reflect backend truth on refresh).
+- Configuration values like `sleep_time` and unoccupied min/max limits remain exposed via `number.*`
+  entities for now.
 - `climate`: when the user triggers an active command (turn_on, set_hvac_mode!=OFF, set_temperature,
   set_fan_mode) while `preset_mode` is `away`, the entity now automatically switches scenary to
   `occupied` (`preset_mode` → `home`) before sending the command. This avoids backend auto-shutdowns
   that can occur in `vacant`.
-### Fixed
-- `climate`: continue to reflect backend scenary changes promptly by expiring the optimistic cache
-  on coordinator updates and when TTL elapses.
+- Kept the `select.scenary` entity to avoid breaking changes. The entity is now categorized under
+  **Configuration** so it appears next to `number.*` settings (e.g., `sleep_time`, unoccupied
+  min/max limits). Scene control remains available both via `climate.preset_modes` and
+  `select.scenary`. For new automations, we recommend using `climate.set_preset_mode` for consistency
+  with Home Assistant's climate presets.
+- Centralized optimistic timings in `const.py` (`OPTIMISTIC_TTL_SEC = 2.5`,
+  `POST_WRITE_REFRESH_DELAY_SEC = 1.0`). `climate` and `switch` now use these shared constants for
+  optimistic TTL and post-write delayed refresh. `number` and `select` use the shared
+  `OPTIMISTIC_TTL_SEC` while keeping their immediate refresh flow (only TTL changed).
+- Switch: use `hass.loop.time()` directly for optimistic TTLs (removed local `_now()` wrapper) to stay
+  consistent with climate/select/number. No behavior change.
+- Device registry: unified manufacturer label to `Daikin / Airzone` across switch/number/select.
+- Numbers: `sleep_time` now uses `UnitOfTime.MINUTES` for UI consistency (sensor already used
+  minutes).
+- **types:** Parameterized `CoordinatorEntity` with `AirzoneCoordinator` across all platforms to
+  improve IDE/linters hints (`coordinator.api`, typed `coordinator.data`). Added local type
+  annotations for `coordinator` in `async_setup_entry` where applicable to strengthen typing without
+  altering behavior.
+- Binary sensor: use `const.MANUFACTURER` for Device Registry consistency (metadata only).
+- Device Registry metadata unified across all platforms: `manufacturer` from constant `MANUFACTURER`;
+  `model` from device `brand` (fallback `"Airzone DKN"`); `sw_version` from device `firmware`
+  (fallback `""`); `name` from device `name` (fallback `"Airzone Device"`). Added `connections` with
+  MAC when available to ensure entities group under the same Device. Affected files:
+  `climate.py`, `sensor.py`, `switch.py`, `number.py`, `select.py`, `binary_sensor.py`. *No runtime
+  changes.*
+- Logging: mask HTTP paths in debug logs (no query string and only the first path segment).
+- Sensors: `sleep_time` now uses `device_class=duration` with unit `min` for better UI consistency
+  (the `number` entity remains unchanged).
+- Bump from 0.3.9a11 to 0.3.9 (stable).
 
-## [0.3.9a2] - 2025-10-12
 ### Fixed
-- `climate`: reflect backend scenary changes promptly by expiring the optimistic cache on
-  coordinator updates and when TTL elapses. Prevents stale `preset_mode` when the state is changed
-  from the web/app or when the backend transitions (e.g., vacant→occupied).
+- `climate`: reflect backend scenary changes promptly by expiring the optimistic cache on coordinator
+  updates and when TTL elapses.
+- API: 401 re-login no longer retries with the stale token. After refreshing the token we rebuild
+  auth params, so the retry uses the new token.
+- Setup: wrap `login()` with `ConfigEntryNotReady` for network/server errors (clean recovery on
+  startup).
+- number/select: correct DeviceInfo usage (return dict / assign `connections` properly) to prevent
+  runtime TypeError.
+- Binary sensor: defensive guards when iterating the coordinator snapshot and reading the device.
 
-## [0.3.9a1] - 2025-10-12
-### Added
-- `climate`: support for Home Assistant `preset_modes` (`home`, `away`, `sleep`) mapped to backend
-  `scenary` (occupied, vacant, sleep). Idempotent writes with optimistic TTL.
-### Changed
-- `climate`: always include `PRESET_MODE` in `supported_features`. No auto-forcing scenary after
-  other writes (reflect backend truth on refresh).
-### Changed
-- Configuration values like `sleep_time` and unoccupied min/max limits remain exposed via `number.*`
-  entities for now.
+### Security
+- Sensors: stricter PII cleanup — remove entities only by exact `unique_id` match; legacy suffix
+  fallback removed to prevent overmatching.
 
 ## [0.3.8] - 2025-10-11
 ### Changed
