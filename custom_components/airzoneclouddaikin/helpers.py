@@ -1,4 +1,15 @@
-"""Shared helpers for optimistic overlays and numeric clamps."""
+"""Helpers for optimistic overlays and numeric clamps.
+
+This module keeps temporary "optimistic" values in
+``hass.data[DOMAIN][entry_id]["optimistic"]`` to bridge the gap between a
+user action and the next coordinator refresh. `optimistic_set` stores a value
+with an adaptive TTL derived from `_adaptive_ttl` (falls back to
+``OPTIMISTIC_TTL_SEC`` but stretches to ``scan_interval + 0.5`` when known).
+`optimistic_get` returns the overlay while it is still valid and cleans up
+expired entries; `optimistic_invalidate` removes overlays explicitly when the
+backend has caught up or a write failed. All helpers rely on `hass.loop.time()`
+for expiry and keep per-entry buckets keyed by config entry ID and device ID.
+"""
 
 from __future__ import annotations
 
