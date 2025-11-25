@@ -26,8 +26,8 @@
   (currently accepted even if not yet officially documented) and keep Ruff aligned.
 - Rename the experimental P2=4 mode to `HVACMode.HEAT_COOL` throughout the integration and ensure
   fan/temperature writes always use the cold path (P7/P3). Historical changelog entries that
-  mentioned “AUTO” refer to this same mode.
-- Document the HEAT_COOL opt-in policy in `info.md`, remove “AUTO” terminology, and surface the
+  referenced the former automatic label refer to this same experimental mode.
+- Document the HEAT_COOL opt-in policy in `info.md`, remove the previous automatic terminology, and surface the
   updated options-flow toggle copy (EN/ES) that calls out the P7/P3 routing.
 - Power switch service now proxies the sibling climate entity for consistent away handling,
   optimistic overlays, and refresh semantics while retaining a direct P1 fallback when the climate
@@ -383,7 +383,8 @@
 - Moved `import time` to module level in `select.py` and `number.py` to avoid per-read imports in
   entity properties and improve async hygiene.
 ### Changed
-- `P2=4 (AUTO)` remains unsupported for now; docs toggle will be added when implemented.
+- `P2=4 (HEAT_COOL)` remains an experimental opt-in; documentation for the toggle will be added
+  when implemented.
 
 ## [0.3.7a11] - 2025-09-27
 ### Changed
@@ -705,8 +706,9 @@
   device was off did not turn it on automatically. - Now, if the HVAC mode is OFF and a new mode is
   set, the system first turns on the device before applying the selected mode.
 ### Changed
-- **Code Refactoring & Consistency**:   - Renamed `HVAC_MODE_AUTO` to `HVACMode.AUTO` for
-  consistency across all files. - Removed unused `set_preset_mode()` function from `climate.py`
+- **Code Refactoring & Consistency**:   - Renamed the legacy automatic mode constant to
+  `HVACMode.HEAT_COOL` for consistency across all files and to reflect the experimental nature of
+  the mode. - Removed unused `set_preset_mode()` function from `climate.py`
   since preset modes are not yet implemented. - Ensured all comments and logs are in English for
   consistency and readability. - Improved error handling and logging for better debugging and
   traceability.
@@ -744,13 +746,14 @@
   of "brand" (e.g. "ADEQ125B2VEB") and is labeled as “Model”.
 - Extended info.md to include details about the “modes” field (binary mapping for P2) and how it
   correlates with standard HVAC modes: - Mapping: P2 "1" → COOL, "2" → HEAT, "3" → FAN ONLY, "4" →
-  AUTO, "5" → DRY; states 6–8 are considered Unavailable.
+  HEAT_COOL (experimental), "5" → DRY; states 6–8 are considered Unavailable.
 - Updated device_info in climate.py to remove unsupported keywords and correctly display device
   attributes.
 - Minor improvements to logging and error handling.
 ### Changed
 - Revised handling of device data updates in climate.py.
-- Adjusted fan speed commands: now using P3 for COOL/FAN_ONLY modes and P4 for HEAT/AUTO modes.
+- Adjusted fan speed commands: now using P3 for COOL/FAN_ONLY modes and P4 for HEAT/HEAT_COOL
+  modes.
 - Removed any references to a forced scan interval; the integration now relies on Home Assistant’s
   built-in polling mechanism.
 - Cleaned up comments and updated documentation to reflect all changes in English.
@@ -768,7 +771,8 @@
   using the device id.
 - Sensor Platform (sensor.py): - Added async_setup_entry so that sensor entities are loaded from the
   config entry.
-- Renamed "heat-cold-auto" to HVACMode.AUTO (module-level constant HVAC_MODE_AUTO) in the code.
+- Renamed "heat-cold-auto" to `HVACMode.HEAT_COOL` (module-level constant
+  `HVAC_MODE_HEAT_COOL`) in the code.
 
 ## [0.2.3] - 2025-03-19
 ### Added
@@ -776,7 +780,8 @@
 - Fixed unique_id for both climate and sensor entities so they are properly registered and managed
   in the Home Assistant UI.
 - Added asynchronous method `send_event` to the AirzoneAPI class in airzone_api.py.
-- Updated config_flow.py to include the "force_hvac_mode_auto" option.
+- Updated config_flow.py to include the "force_heat_cool_mode" option for experimental
+  heat-cold behavior.
 - Updated set_temperature in climate.py to constrain values based on device limits
   (min_limit_cold/max_limit_cold for cool modes; min_limit_heat/max_limit_heat for heat modes) and
   format the value as an integer with ".0".
@@ -786,12 +791,12 @@
 - Replaced deprecated async_forward_entry_setup with async_forward_entry_setups in __init__.py.
 - Updated imports in climate.py and sensor.py to use HVACMode, ClimateEntityFeature, and
   UnitOfTemperature.
-- Renamed "heat-cold-auto" to HVACMode.AUTO in the code.
+- Renamed "heat-cold-auto" to `HVACMode.HEAT_COOL` in the code.
 - Updated README.md with full integration details in English.
 - Updated all text and comments to English.
 ### Changed
 - Further verification of fan speed control in different modes.
-- Additional testing of HVACMode.AUTO behavior on various machine models.
+- Additional testing of `HVACMode.HEAT_COOL` behavior on various machine models.
 
 ## [0.2.2] - 2025-03-19
 ### Added
@@ -799,26 +804,26 @@
 - In the API calls for installations, now includes "user_email" and "user_token" in query
   parameters.
 - Added support for controlling fan speed: - P3 for fan speed in cool (ventilate) mode. - P4 for fan
-  speed in heat/auto mode.
-- Renamed "heat-cold-auto" to HVACMode.AUTO in all code.
+  speed in heat/HEAT_COOL mode.
+- Renamed "heat-cold-auto" to `HVACMode.HEAT_COOL` in all code.
 - In set_temperature, the temperature is now constrained to the limits
   (min_limit_cold/max_limit_cold or min_limit_heat/max_limit_heat) from the API; the value is sent
   as an integer with ".0" appended.
-- Added the configuration option "force_hvac_mode_auto" (in config_flow) to enable the forced auto
-  mode.
+- Added the configuration option "force_heat_cool_mode" (in config_flow) to enable the experimental
+  HEAT_COOL mode.
 - Updated info.md with the original MODES_CONVERTER mapping from max13fr, with a note that only
   modes 1–5 produced effect in our tests (model ADEQ125B2VEB).
 ### Changed
 - Minor adjustments in config_flow.py, climate.py, and README.md.
-- Pending: Verify additional fan speed adjustments for FAN_ONLY and HVACMode.AUTO modes.
+- Pending: Verify additional fan speed adjustments for FAN_ONLY and `HVACMode.HEAT_COOL` modes.
 
 ## [0.2.1] - 2025-03-19
 ### Added
 - Integration updated to version 0.2.1.
-- Added configuration option "force_heat_cold_auto" in config_flow (allows forcing the
-  "heat-cold-auto" mode).
+- Added configuration option "force_heat_cold_auto" in config_flow (allows forcing the experimental
+  HEAT_COOL mode).
 - Updated async_setup_entry in climate.py to pass configuration to each climate entity.
-- In AirzoneClimate (climate.py), the property hvac_modes now includes "heat-cold-auto" if
+- In AirzoneClimate (climate.py), the property hvac_modes now includes HEAT_COOL if
   force_heat_cold_auto is enabled.
 - Added property fan_speed_range in climate.py to dynamically generate the list of valid fan speeds
   from the API field "availables_speeds".
@@ -830,7 +835,7 @@
 ### Changed
 - Version updated in manifest.json to 0.2.1.
 - Minor adjustments in config_flow.py, __init__.py, and README.md.
-- Pending: Verify fan speed adjustment in FAN_ONLY and HVACMode.AUTO modes.
+- Pending: Verify fan speed adjustment in FAN_ONLY and `HVACMode.HEAT_COOL` modes.
 
 ## [0.2.0] - 2025-03-19
 ### Added

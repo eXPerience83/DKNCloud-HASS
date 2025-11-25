@@ -55,7 +55,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 | `"8"`    | FAN_ONLY (fallback)    | Heat-type ventilation fallback (fan commands routed to **P4**). |
 
 > **About HEAT_COOL (API label “heat-cold-auto”)**
-> This mode is **opt-in and experimental**. It appears only when both the device bitmask exposes bit 3 and the new option **Enable experimental HEAT_COOL mode** is enabled. While active, the integration always uses **P7** for the setpoint and **P3** for fan speed.
+> This mode is **opt-in and experimental/beta**. It appears only when both the device bitmask exposes bit 3 and the new option **Enable experimental HEAT_COOL mode** is enabled. While active, the integration always uses **P7** for the setpoint and **P3** for fan speed.
 
 ---
 
