@@ -62,7 +62,15 @@ _DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
 
 
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
-    """Typed coordinator that also carries the API handle."""
+    """Coordinator that aggregates installations and exposes device data.
+
+    ``data`` is a mapping of device IDs (Airzone or MAC) to device dicts as
+    returned by the API, refreshed on the coordinator interval. The coordinator
+    owns the ``AirzoneAPI`` instance used across platforms, triggers reauth if a
+    401 is encountered, and drives notification refresh scheduling. Per-entry
+    buckets under ``hass.data[DOMAIN][entry_id]`` hold auxiliary state such as
+    reauth flags and notification templates.
+    """
 
     api: AirzoneAPI
 

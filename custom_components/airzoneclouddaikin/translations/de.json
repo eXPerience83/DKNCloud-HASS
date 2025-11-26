@@ -1,0 +1,63 @@
+{
+  "title": "DKN Cloud for HASS",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anmelden",
+        "description": "Geben Sie die E-Mail-Adresse und das Passwort Ihres Airzone-Cloud-Kontos ein.",
+        "data": {
+          "username": "E-Mail-Adresse",
+          "password": "Passwort",
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Erneut authentifizieren",
+        "description": "Ihr Token ist für {username} nicht mehr gültig. Geben Sie das Kontopasswort ein, um ein neues Token zu erstellen.",
+        "data": {
+          "password": "Passwort"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Ungültige E-Mail-Adresse oder ungültiges Passwort.",
+      "cannot_connect": "Verbindung zu Airzone Cloud nicht möglich.",
+      "timeout": "Die Anfrage hat das Zeitlimit überschritten. Bitte versuchen Sie es erneut.",
+      "unknown": "Unerwarteter Fehler. Weitere Details finden Sie in den Protokollen."
+    },
+    "abort": {
+      "reauth_successful": "Erneute Authentifizierung erfolgreich.",
+      "reauth_failed": "Erneute Authentifizierung fehlgeschlagen.",
+      "already_configured": "Dieses Konto ist bereits konfiguriert."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Optionen",
+        "description": "Der experimentelle HEAT_COOL-Modus ist optional, leitet Sollwerte über P7 und Lüftergeschwindigkeiten über P3 und gilt nur für Installationen, deren Geräte Kompatibilität melden.",
+        "data": {
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)",
+          "enable_heat_cool_mode": "Experimentellen HEAT_COOL-Modus aktivieren (erfordert kompatible Installation; nutzt P7/P3-Routing)"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "wserver_not_connected": {
+      "message": "DKN-WServer nicht verbunden (422)"
+    }
+  },
+  "issues": {
+    "offline": {
+      "title": "DKN Cloud — {name} offline",
+      "description": "Verbindung um {ts_local} verloren. Letzter Kontakt: {last_iso} (vor etwa {mins} Min.)."
+    },
+    "online": {
+      "title": "DKN Cloud — {name} wieder online",
+      "description": "Verbindung um {ts_local} wiederhergestellt."
+    }
+  }
+}

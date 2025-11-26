@@ -1,0 +1,63 @@
+{
+  "title": "DKN Cloud for HASS",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Accesso",
+        "description": "Inserisci l'indirizzo email e la password del tuo account Airzone Cloud.",
+        "data": {
+          "username": "Email",
+          "password": "Password",
+          "scan_interval": "Intervallo di scansione (secondi)",
+          "expose_pii_identifiers": "Esporre identificatori PII (avanzato)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Riautenticazione",
+        "description": "Il tuo token non è più valido per {username}. Inserisci la password dell'account per generare un nuovo token.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Email o password non validi.",
+      "cannot_connect": "Impossibile connettersi ad Airzone Cloud.",
+      "timeout": "La richiesta è scaduta. Riprova.",
+      "unknown": "Errore imprevisto. Controlla i registri per maggiori dettagli."
+    },
+    "abort": {
+      "reauth_successful": "Riautenticazione riuscita.",
+      "reauth_failed": "Riautenticazione non riuscita.",
+      "already_configured": "Questo account è già configurato."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni",
+        "description": "La modalità sperimentale HEAT_COOL è facoltativa, instrada i setpoint tramite P7 e le velocità della ventola tramite P3 e si applica solo alle installazioni i cui dispositivi dichiarano compatibilità.",
+        "data": {
+          "scan_interval": "Intervallo di scansione (secondi)",
+          "expose_pii_identifiers": "Esporre identificatori PII (avanzato)",
+          "enable_heat_cool_mode": "Abilita modalità sperimentale HEAT_COOL (richiede installazione compatibile; utilizza instradamento P7/P3)"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "wserver_not_connected": {
+      "message": "Server DKN non connesso (422)"
+    }
+  },
+  "issues": {
+    "offline": {
+      "title": "DKN Cloud — {name} offline",
+      "description": "Connessione persa alle {ts_local}. Ultimo contatto: {last_iso} (circa {mins} min fa)."
+    },
+    "online": {
+      "title": "DKN Cloud — {name} di nuovo online",
+      "description": "Connessione ripristinata alle {ts_local}."
+    }
+  }
+}
