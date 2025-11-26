@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,7 +15,19 @@ from aiohttp.client_reqrep import RequestInfo
 from multidict import CIMultiDict
 from yarl import URL
 
-from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
+ha_module = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
+exceptions_module = types.ModuleType("homeassistant.exceptions")
+
+
+class HomeAssistantError(Exception):
+    """Minimal Home Assistant error placeholder."""
+
+
+exceptions_module.HomeAssistantError = HomeAssistantError
+ha_module.exceptions = exceptions_module
+sys.modules.setdefault("homeassistant.exceptions", exceptions_module)
+
+from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI  # noqa: E402
 
 
 def _client_response_error(

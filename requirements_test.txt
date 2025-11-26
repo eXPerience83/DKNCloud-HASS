@@ -1,8 +1,0 @@
-# Test dependencies for DKN Cloud for HASS.
-# These are only installed in CI or local dev when running pytest.
-# pytest-asyncio 1.2.x requires pytest < 9; keep these pins in sync with CI
-# pre-pin step to avoid resolver backtracking.
-pytest==8.4.*
-pytest-asyncio==1.2.*
-pytest-homeassistant-custom-component==0.13.*
-aiohttp
