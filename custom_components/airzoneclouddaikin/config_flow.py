@@ -101,18 +101,11 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         email = str(user_input.get(CONF_USERNAME, "")).strip()
         user_input[CONF_USERNAME] = email
+        password = str(user_input.get(CONF_PASSWORD, ""))
         # NOTE: We deliberately use the generic "invalid_auth" error here so that
         # empty credentials and bad credentials share the same translated message,
         # without introducing additional per-field error keys in translations.
-        if not email:
-            return self.async_show_form(
-                step_id="user",
-                data_schema=_user_schema(user_input),
-                errors={"base": "invalid_auth"},
-            )
-
-        password = str(user_input.get(CONF_PASSWORD, ""))
-        if not password:
+        if not email or not password:
             return self.async_show_form(
                 step_id="user",
                 data_schema=_user_schema(user_input),

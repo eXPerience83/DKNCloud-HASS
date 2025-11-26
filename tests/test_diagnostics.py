@@ -164,3 +164,65 @@ def test_diagnostics_redacts_sensitive_fields() -> None:
     assert "-3.7038" not in flattened
     assert '"mac"' not in flattened
     assert '"latitude"' not in flattened
+
+
+def test_diagnostics_redacts_extended_pii_fields() -> None:
+    """Redaction should cover additional sensitive fields in entries and devices."""
+
+    hass = DummyHass()
+    entry = DummyConfigEntry()
+    entry.data.update(
+        {
+            "installation_id": "install-123",
+            "spot_name": "My Home",
+            "complete_name": "John Doe",
+            "time_zone": "Europe/Madrid",
+        }
+    )
+    entry.options.update(
+        {
+            "installation_id": "install-123",
+            "time_zone": "Europe/Madrid",
+            "spot_name": "My Home",
+            "complete_name": "John Doe",
+        }
+    )
+
+    coordinator = DummyCoordinator()
+    coordinator.data["device-1"].update(
+        {
+            "installation_id": "install-123",
+            "spot_name": "My Home",
+            "complete_name": "John Doe",
+            "time_zone": "Europe/Madrid",
+            "device_ids": ["dev-1", "dev-2"],
+            "metadata": {"owner_id": "owner-123"},
+        }
+    )
+
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+
+    result = asyncio.run(async_get_config_entry_diagnostics(hass, entry))
+
+    options = result["entry"]["options"]
+    assert options["installation_id"] == "***"
+    assert options["time_zone"] == "***"
+    assert options["spot_name"] == "***"
+    assert options["complete_name"] == "***"
+
+    coordinator_result = result["coordinator"]
+    if isinstance(coordinator_result, dict):
+        device_data = coordinator_result["devices"]["device-1"]
+        assert device_data["installation_id"] == "***"
+        assert device_data["spot_name"] == "***"
+        assert device_data["complete_name"] == "***"
+        assert device_data["time_zone"] == "***"
+        assert device_data["metadata"]["owner_id"] == "***"
+    else:
+        assert coordinator_result == "***"
+
+    flattened = str(result)
+    assert "install-123" not in flattened
+    assert "Europe/Madrid" not in flattened
+    assert "My Home" not in flattened
+    assert "owner-123" not in flattened
