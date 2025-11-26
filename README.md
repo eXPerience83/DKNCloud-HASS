@@ -55,7 +55,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 | `"8"`    | FAN_ONLY (fallback)    | Heat-type ventilation fallback (fan commands routed to **P4**). |
 
 > **About HEAT_COOL (API label “heat-cold-auto”)**
-> This mode is **opt-in and experimental**. It appears only when both the device bitmask exposes bit 3 and the new option **Enable experimental HEAT_COOL mode** is enabled. While active, the integration always uses **P7** for the setpoint and **P3** for fan speed.
+> This mode is **opt-in and experimental/beta**. It appears only when both the device bitmask exposes bit 3 and the new option **Enable experimental HEAT_COOL mode** is enabled. While active, the integration always uses **P7** for the setpoint and **P3** for fan speed.
 
 ---
 
@@ -110,6 +110,11 @@ Enter your Airzone Cloud **username** and **password**.
 
 > Full API/command mapping and advanced usage in [info.md](./info.md).
 
+## 🌐 Localizations
+
+- UI strings are localized for **English, Spanish, French, German, Italian, and Portuguese**.
+- Translation coverage tests ensure new strings stay in sync across locales.
+
 ---
 
 ## 📷 Screenshots
@@ -133,7 +138,6 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🛣️ Roadmap
 
-- [ ] **Translations (i18n)** — translate 422 and connectivity banners; add locales beyond **EN/ES** (CA/DE/FR/IT/PL/RU/UK…)
 - [ ] **HEAT_COOL (opt-in)** — ongoing validation across devices/firmwares before enabling by default
 - [ ] **Auto Fan Speed (opt-in, experimental)** — controller that selects fan speed (e.g., **P3/P4**) based on **ΔT** (discrete **1 °C** steps & hysteresis), active only in **HEAT/COOL**
 

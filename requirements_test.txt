@@ -1,0 +1,4 @@
+# Test dependencies for DKN Cloud for HASS
+pytest>=8,<9
+pytest-asyncio>=0.23,<0.24
+aiohttp>=3.10,<4
