@@ -36,35 +36,24 @@ def _client_response_error(
     )
 
 
-class AirzoneAPITestStub(AirzoneAPI):
-    """Override timing and HTTP entrypoints for deterministic testing."""
+def _make_api(
+    monkeypatch: pytest.MonkeyPatch, responses: list[object]
+) -> tuple[AirzoneAPI, list[float]]:
+    """Create an API with deterministic time and response sequencing."""
 
-    def __init__(self, responses: list[object]):
-        super().__init__(
-            username="user@example.com", session=AsyncMock(spec=ClientSession)
-        )
-        self._time = 0.0
-        self._sleeps: list[float] = []
-        self._responses = list(responses)
+    api = AirzoneAPI(username="user@example.com", session=AsyncMock(spec=ClientSession))
+    sleeps: list[float] = []
+    clock = {"now": 0.0}
 
-    @property
-    def sleeps(self) -> list[float]:
-        return self._sleeps
+    monkeypatch.setattr(api, "_now", lambda: clock["now"])
 
-    def _now(self) -> float:  # type: ignore[override]
-        return self._time
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock["now"] += seconds
 
-    async def _sleep(self, seconds: float) -> None:  # type: ignore[override]
-        self._sleeps.append(seconds)
-        self._time += seconds
-
-    async def _request(self, *_args: object, **_kwargs: object) -> object:  # type: ignore[override]
-        if not self._responses:
-            raise AssertionError("Unexpected extra request")
-        resp = self._responses.pop(0)
-        if isinstance(resp, Exception):
-            raise resp
-        return resp
+    monkeypatch.setattr(api, "_sleep", fake_sleep)
+    monkeypatch.setattr(api, "_request", AsyncMock(side_effect=responses))
+    return api, sleeps
 
 
 @pytest.mark.asyncio
@@ -111,12 +100,12 @@ async def test_authed_request_retries_429_with_retry_after(
         lambda *_: 0.0,
     )
     retry_error = _client_response_error(status=429, headers={"Retry-After": "2"})
-    api = AirzoneAPITestStub([retry_error, {"ok": True}])
+    api, sleeps = _make_api(monkeypatch, [retry_error, {"ok": True}])
 
     result = await api._authed_request_with_retries("GET", "/foo")
 
     assert result == {"ok": True}
-    assert api.sleeps == [2.0]
+    assert sleeps == [2.0]
     assert api._cooldown_until == pytest.approx(2.0)
 
 
@@ -127,12 +116,12 @@ async def test_authed_request_5xx_backoff(monkeypatch: pytest.MonkeyPatch) -> No
         lambda *_: 0.0,
     )
     errors = [_client_response_error(status=500) for _ in range(4)]
-    api = AirzoneAPITestStub(errors)
+    api, sleeps = _make_api(monkeypatch, errors)
 
     with pytest.raises(ClientResponseError):
         await api._authed_request_with_retries("GET", "/bar")
 
-    assert api.sleeps == pytest.approx([0.6, 1.2, 2.4])
+    assert sleeps == pytest.approx([0.6, 1.2, 2.4])
     assert api._cooldown_until == 0.0
 
 
@@ -142,12 +131,12 @@ async def test_timeout_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
         "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
         lambda *_: 0.0,
     )
-    api = AirzoneAPITestStub([TimeoutError(), {"ok": True}])
+    api, sleeps = _make_api(monkeypatch, [TimeoutError(), {"ok": True}])
 
     result = await api._authed_request_with_retries("GET", "/baz")
 
     assert result == {"ok": True}
-    assert api.sleeps == pytest.approx([0.4])
+    assert sleeps == pytest.approx([0.4])
 
 
 @pytest.mark.asyncio
