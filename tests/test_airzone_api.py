@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-pytest.importorskip("aiohttp")
+try:
+    from aiohttp import ClientResponseError, ClientSession
+    from aiohttp.client_reqrep import RequestInfo
+    from multidict import CIMultiDict
+    from yarl import URL
+except ModuleNotFoundError:  # pragma: no cover - handled by CI deps
+    pytest.skip("aiohttp is required for API retry tests", allow_module_level=True)
 
-from aiohttp import ClientResponseError, ClientSession
-from aiohttp.client_reqrep import RequestInfo
-from multidict import CIMultiDict
-from yarl import URL
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 ha_module = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
 exceptions_module = types.ModuleType("homeassistant.exceptions")
