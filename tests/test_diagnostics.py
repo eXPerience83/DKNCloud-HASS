@@ -205,6 +205,7 @@ def test_diagnostics_redacts_extended_pii_fields() -> None:
             "time_zone": "Europe/Madrid",
             "device_ids": ["dev-1", "dev-2"],
             "metadata": {"owner_id": "owner-123"},
+            "ws_id": "ws-456",
         }
     )
 
@@ -217,8 +218,11 @@ def test_diagnostics_redacts_extended_pii_fields() -> None:
     assert options["time_zone"] == "***"
     assert options["spot_name"] == "***"
     assert options["complete_name"] == "***"
+    assert options["user_token"] == "***"
 
     coordinator_result = result["coordinator"]
+    flattened = str(result)
+
     if isinstance(coordinator_result, dict):
         device_data = coordinator_result["devices"]["device-1"]
         assert device_data["installation_id"] == "***"
@@ -226,10 +230,12 @@ def test_diagnostics_redacts_extended_pii_fields() -> None:
         assert device_data["complete_name"] == "***"
         assert device_data["time_zone"] == "***"
         assert device_data["metadata"]["owner_id"] == "***"
+        assert device_data["ws_id"] == "ws-456"
+        assert "ws-456" in flattened
     else:
         assert coordinator_result == "***"
+        assert "ws-456" not in flattened
 
-    flattened = str(result)
     assert "install-123" not in flattened
     assert "Europe/Madrid" not in flattened
     assert "My Home" not in flattened
