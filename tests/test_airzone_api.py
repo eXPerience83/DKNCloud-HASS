@@ -122,6 +122,10 @@ class DataUpdateCoordinator:  # pragma: no cover - not exercised in tests
     def __init__(self, *args: object, **kwargs: object) -> None:
         self.data = {}
 
+    # Allow generics like DataUpdateCoordinator[dict[str, Any]] in annotations.
+    def __class_getitem__(cls, item: object) -> type:
+        return cls
+
 
 update_coordinator_module.UpdateFailed = UpdateFailed
 update_coordinator_module.DataUpdateCoordinator = DataUpdateCoordinator
