@@ -29,6 +29,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
+      - name: Pin pytest deps for Home Assistant
+        run: |
+          echo "pytest==9.0.*" > requirements_test.txt
+          echo "pytest-asyncio==1.2.*" >> requirements_test.txt
+          echo "pytest-homeassistant-custom-component==0.13.*" >> requirements_test.txt
+          echo "aiohttp" >> requirements_test.txt
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
