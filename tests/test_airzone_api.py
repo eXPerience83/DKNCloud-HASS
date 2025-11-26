@@ -15,6 +15,9 @@ try:
     from multidict import CIMultiDict
     from yarl import URL
 except ModuleNotFoundError:  # pragma: no cover - handled by CI deps
+    # NOTE: This module-level skip is expected in lightweight environments
+    # (e.g., Codex/Qodo) where aiohttp is not installed. CI installs aiohttp
+    # via requirements_test.txt so these tests run in automation.
     pytest.skip("aiohttp is required for API retry tests", allow_module_level=True)
 
 ROOT = Path(__file__).resolve().parents[1]
