@@ -1,94 +1,48 @@
-"""Retry behavior tests for the Airzone API HTTP client."""
+"""HTTP client retry behavior tests without Home Assistant dependencies."""
 
 from __future__ import annotations
 
-import asyncio
-import importlib.util
-import sys
-import types
-from pathlib import Path
-from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+pytest.importorskip("aiohttp")
+
+from aiohttp import ClientResponseError, ClientSession
+from aiohttp.client_reqrep import RequestInfo
+from multidict import CIMultiDict
+from yarl import URL
+
+from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
 
 
-# ------------------------------ aiohttp stubs ------------------------------
-aiohttp_stub = types.ModuleType("aiohttp")
+def _client_response_error(
+    status: int, headers: dict[str, str] | None = None
+) -> ClientResponseError:
+    """Create a ClientResponseError with minimal request context."""
 
-
-class _ClientResponseError(Exception):
-    def __init__(
-        self, status: int | None = None, headers: dict[str, str] | None = None
-    ):
-        super().__init__(status)
-        self.status = status
-        self.headers = headers or {}
-
-
-class _ClientConnectorError(Exception): ...
-
-
-class _ClientSession:
-    def __init__(self) -> None:  # pragma: no cover - not used directly
-        ...
-
-
-class _ClientTimeout:
-    def __init__(self, total: float | None = None) -> None:  # pragma: no cover
-        self.total = total
-
-
-aiohttp_stub.ClientResponseError = _ClientResponseError
-aiohttp_stub.ClientConnectorError = _ClientConnectorError
-aiohttp_stub.ClientSession = _ClientSession
-aiohttp_stub.ClientTimeout = _ClientTimeout
-sys.modules.setdefault("aiohttp", aiohttp_stub)
-
-
-# --------------------- Home Assistant exceptions stub ----------------------
-ha_exceptions = types.ModuleType("homeassistant.exceptions")
-
-
-class _HomeAssistantError(Exception): ...
-
-
-y_stub = types.ModuleType("homeassistant")
-sys.modules.setdefault("homeassistant", y_stub)
-ha_exceptions.HomeAssistantError = _HomeAssistantError
-sys.modules.setdefault("homeassistant.exceptions", ha_exceptions)
-
-
-# --------------------- Custom components package hook ----------------------
-custom_components_module = types.ModuleType("custom_components")
-custom_components_module.__path__ = [str(ROOT / "custom_components")]
-sys.modules.setdefault("custom_components", custom_components_module)
-
-airzone_package = types.ModuleType("custom_components.airzoneclouddaikin")
-airzone_package.__path__ = [str(ROOT / "custom_components" / "airzoneclouddaikin")]
-sys.modules.setdefault("custom_components.airzoneclouddaikin", airzone_package)
-
-
-spec = importlib.util.spec_from_file_location(
-    "custom_components.airzoneclouddaikin.airzone_api",
-    ROOT / "custom_components" / "airzoneclouddaikin" / "airzone_api.py",
-)
-airzone_api = importlib.util.module_from_spec(spec)
-assert spec is not None and spec.loader is not None
-sys.modules[spec.name] = airzone_api
-spec.loader.exec_module(airzone_api)
-AirzoneAPI = airzone_api.AirzoneAPI
-_ClientResponseError = airzone_api.ClientResponseError
+    request_info = RequestInfo(
+        URL("https://example.com"),
+        "GET",
+        CIMultiDict(),
+        URL("https://example.com"),
+    )
+    return ClientResponseError(
+        request_info,
+        history=(),
+        status=status,
+        message="",
+        headers=headers,
+    )
 
 
 class AirzoneAPITestStub(AirzoneAPI):
     """Override timing and HTTP entrypoints for deterministic testing."""
 
-    def __init__(self, responses: list[Any]):
-        super().__init__(username="user@example.com", session=_ClientSession())
+    def __init__(self, responses: list[object]):
+        super().__init__(
+            username="user@example.com", session=AsyncMock(spec=ClientSession)
+        )
         self._time = 0.0
         self._sleeps: list[float] = []
         self._responses = list(responses)
@@ -104,7 +58,7 @@ class AirzoneAPITestStub(AirzoneAPI):
         self._sleeps.append(seconds)
         self._time += seconds
 
-    async def _request(self, *_args: Any, **_kwargs: Any) -> Any:  # type: ignore[override]
+    async def _request(self, *_args: object, **_kwargs: object) -> object:  # type: ignore[override]
         if not self._responses:
             raise AssertionError("Unexpected extra request")
         resp = self._responses.pop(0)
@@ -113,33 +67,106 @@ class AirzoneAPITestStub(AirzoneAPI):
         return resp
 
 
-def test_retry_after_sets_cooldown_and_retries(
+@pytest.mark.asyncio
+async def test_login_success_sets_token_and_preserves_password() -> None:
+    api = AirzoneAPI(
+        username="user@example.com",
+        password="secret",
+        session=AsyncMock(spec=ClientSession),
+    )
+    with patch.object(
+        api,
+        "_request",
+        AsyncMock(return_value={"user": {"authentication_token": "tok"}}),
+    ):
+        assert await api.login() is True
+
+    assert api.token == "tok"
+    assert api.password == "secret"
+
+
+@pytest.mark.asyncio
+async def test_login_handles_unauthorized() -> None:
+    api = AirzoneAPI(
+        username="user@example.com",
+        password="secret",
+        session=AsyncMock(spec=ClientSession),
+    )
+    with patch.object(
+        api,
+        "_request",
+        AsyncMock(side_effect=_client_response_error(status=401)),
+    ):
+        assert await api.login() is False
+
+    assert api.token is None
+
+
+@pytest.mark.asyncio
+async def test_authed_request_retries_429_with_retry_after(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """429 with Retry-After should honor the header and set cooldown."""
-
-    monkeypatch.setattr(airzone_api.random, "uniform", lambda *_args: 0.0)
-    retry_error = _ClientResponseError(status=429, headers={"Retry-After": "2"})
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
+        lambda *_: 0.0,
+    )
+    retry_error = _client_response_error(status=429, headers={"Retry-After": "2"})
     api = AirzoneAPITestStub([retry_error, {"ok": True}])
 
-    result = asyncio.run(api._authed_request_with_retries("GET", "/foo"))
+    result = await api._authed_request_with_retries("GET", "/foo")
 
     assert result == {"ok": True}
     assert api.sleeps == [2.0]
     assert api._cooldown_until == pytest.approx(2.0)
 
 
-def test_500_retries_use_exponential_backoff(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """5xx responses without Retry-After should back off exponentially then raise."""
-
-    monkeypatch.setattr(airzone_api.random, "uniform", lambda *_args: 0.0)
-    errors = [_ClientResponseError(status=500) for _ in range(4)]
+@pytest.mark.asyncio
+async def test_authed_request_5xx_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
+        lambda *_: 0.0,
+    )
+    errors = [_client_response_error(status=500) for _ in range(4)]
     api = AirzoneAPITestStub(errors)
 
-    with pytest.raises(_ClientResponseError):
-        asyncio.run(api._authed_request_with_retries("GET", "/bar"))
+    with pytest.raises(ClientResponseError):
+        await api._authed_request_with_retries("GET", "/bar")
 
     assert api.sleeps == pytest.approx([0.6, 1.2, 2.4])
     assert api._cooldown_until == 0.0
+
+
+@pytest.mark.asyncio
+async def test_timeout_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
+        lambda *_: 0.0,
+    )
+    api = AirzoneAPITestStub([TimeoutError(), {"ok": True}])
+
+    result = await api._authed_request_with_retries("GET", "/baz")
+
+    assert result == {"ok": True}
+    assert api.sleeps == pytest.approx([0.4])
+
+
+@pytest.mark.asyncio
+async def test_error_logs_do_not_leak_password(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    api = AirzoneAPI(
+        username="user@example.com",
+        password="topsecret",
+        session=AsyncMock(spec=ClientSession),
+    )
+    with patch.object(
+        api,
+        "_request",
+        AsyncMock(side_effect=_client_response_error(status=503)),
+    ):
+        caplog.set_level("DEBUG")
+        with pytest.raises(ClientResponseError):
+            await api._authed_request_with_retries("GET", "/api/secure?pw=topsecret")
+
+    assert "topsecret" not in caplog.text
+    assert "user@example.com" not in caplog.text

@@ -1,0 +1,3 @@
+# Test dependencies for DKN Cloud for HASS.
+# These are only installed in CI or local dev when running pytest.
+pytest-homeassistant-custom-component==0.13.*
