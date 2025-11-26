@@ -29,6 +29,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
+      # Pin pytest below 9 to satisfy pytest-asyncio 1.2.x as required by the
+      # Home Assistant testing plugin.
       - name: Pin pytest deps for Home Assistant
         run: |
           echo "pytest==8.3.*" > requirements_test.txt
