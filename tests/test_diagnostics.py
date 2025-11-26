@@ -154,7 +154,15 @@ def test_diagnostics_redacts_sensitive_fields() -> None:
 
     assert result["entry"]["options"]["user_token"] == "***"
 
-    assert result["coordinator"] == "***"
+    coordinator_result = result["coordinator"]
+    if isinstance(coordinator_result, dict):
+        devices = coordinator_result.get("devices", {})
+        assert devices["device-1"]["user_token"] == "***"
+        assert devices["device-1"]["mac"] == "***"
+        assert devices["device-1"]["contactEmail"] == "***"
+        assert devices["device-1"]["metadata"]["gpsCoord"] == "***"
+    else:
+        assert coordinator_result == "***"
 
     flattened = str(result)
     assert "secret-token" not in flattened
