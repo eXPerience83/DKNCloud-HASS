@@ -32,6 +32,21 @@ else:
     # Register the plugin with pytest when available.
     pytest_plugins = ("pytest_homeassistant_custom_component",)
 
+# Provide a defensive fallback if the plugin is present but fails to expose
+# the helper fixture (seen when upstream changes its return type).
+try:
+    from pytest_homeassistant_custom_component.common import (
+        enable_custom_integrations,
+    )
+except Exception:
+
+    @pytest.fixture
+    def enable_custom_integrations() -> None:
+        """No-op fallback when the HA plugin fixture is unavailable."""
+
+        yield
+
+
 if HAS_PYTEST_HA:
 
     @pytest.fixture(autouse=True)

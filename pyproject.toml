@@ -34,6 +34,10 @@ ignore = [
 known-first-party = ["custom_components.airzoneclouddaikin"]
 combine-as-imports = true
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
 # --- Optional hardening (uncomment if needed) ---
 # [tool.ruff]
 # force-exclude = true
