@@ -407,7 +407,7 @@ def test_user_step_timeout_returns_error(config_flow: types.ModuleType) -> None:
 
 
 def test_user_step_cannot_connect_error(config_flow: types.ModuleType) -> None:
-    _AIRZONE_BEHAVIOR["login"] = RuntimeError("net down")
+    _AIRZONE_BEHAVIOR["login"] = Exception("net down")
 
     flow = config_flow.AirzoneConfigFlow()
     flow.hass = HassStub()

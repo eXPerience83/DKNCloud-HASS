@@ -194,11 +194,15 @@ def _extract_schema_fields(
     return fields
 
 
-def _is_options_flow_class(name: str) -> bool:
+def _is_options_flow_class(node: ast.ClassDef) -> bool:
     """Heuristic to decide if a class represents an options flow."""
 
-    lower = name.lower()
-    return "optionsflow" in lower or "options_flow" in lower
+    for base in node.bases:
+        if isinstance(base, ast.Name) and "OptionsFlow" in base.id:
+            return True
+        if isinstance(base, ast.Attribute) and base.attr == "OptionsFlow":
+            return True
+    return False
 
 
 def _extract_config_flow_keys() -> set[str]:
@@ -236,11 +240,11 @@ def _extract_config_flow_keys() -> set[str]:
 
     class FlowVisitor(ast.NodeVisitor):
         def __init__(self) -> None:
-            self.class_stack: list[str] = []
+            self.class_stack: list[ast.ClassDef] = []
             self.local_schema_vars: dict[str, set[str]] = dict(schema_fields)
 
         def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
-            self.class_stack.append(node.name)
+            self.class_stack.append(node)
             self.generic_visit(node)
             self.class_stack.pop()
 
