@@ -31,7 +31,7 @@ jobs:
 
       - name: Pin pytest deps for Home Assistant
         run: |
-          echo "pytest==9.0.*" > requirements_test.txt
+          echo "pytest==8.3.*" > requirements_test.txt
           echo "pytest-asyncio==1.2.*" >> requirements_test.txt
           echo "pytest-homeassistant-custom-component==0.13.*" >> requirements_test.txt
           echo "aiohttp" >> requirements_test.txt
