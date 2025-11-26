@@ -21,7 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# ---------------------------------------------------------------------------
+# Minimal Home Assistant shims so the package import works without HA
+# ---------------------------------------------------------------------------
 ha_module = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
+
 exceptions_module = types.ModuleType("homeassistant.exceptions")
 
 
@@ -32,6 +36,109 @@ class HomeAssistantError(Exception):
 exceptions_module.HomeAssistantError = HomeAssistantError
 ha_module.exceptions = exceptions_module
 sys.modules.setdefault("homeassistant.exceptions", exceptions_module)
+
+config_entries_module = types.ModuleType("homeassistant.config_entries")
+config_entries_module.SOURCE_REAUTH = "reauth"
+
+
+class ConfigEntry:  # pragma: no cover - used only for import wiring
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.entry_id = "dummy"
+        self.data = {}
+        self.options = {}
+        self.unique_id = None
+        self.version = 1
+
+
+config_entries_module.ConfigEntry = ConfigEntry
+sys.modules.setdefault("homeassistant.config_entries", config_entries_module)
+ha_module.config_entries = config_entries_module
+
+const_module = types.ModuleType("homeassistant.const")
+const_module.CONF_USERNAME = "username"
+sys.modules.setdefault("homeassistant.const", const_module)
+ha_module.const = const_module
+
+core_module = types.ModuleType("homeassistant.core")
+
+
+class HomeAssistant:  # pragma: no cover - signature irrelevant for tests
+    pass
+
+
+core_module.HomeAssistant = HomeAssistant
+sys.modules.setdefault("homeassistant.core", core_module)
+ha_module.core = core_module
+
+
+class ConfigEntryAuthFailed(HomeAssistantError):
+    """Minimal auth failure placeholder."""
+
+
+exceptions_module.ConfigEntryAuthFailed = ConfigEntryAuthFailed
+
+helpers_module = types.ModuleType("homeassistant.helpers")
+aiohttp_client_module = types.ModuleType("homeassistant.helpers.aiohttp_client")
+
+
+async def async_get_clientsession(*_: object, **__: object) -> None:
+    return None
+
+
+aiohttp_client_module.async_get_clientsession = async_get_clientsession
+helpers_module.aiohttp_client = aiohttp_client_module
+sys.modules.setdefault("homeassistant.helpers.aiohttp_client", aiohttp_client_module)
+
+event_module = types.ModuleType("homeassistant.helpers.event")
+
+
+async def async_call_later(*_: object, **__: object) -> None:
+    return None
+
+
+event_module.async_call_later = async_call_later
+helpers_module.event = event_module
+sys.modules.setdefault("homeassistant.helpers.event", event_module)
+
+translation_module = types.ModuleType("homeassistant.helpers.translation")
+
+
+async def async_get_translations(*_: object, **__: object) -> dict[str, str]:
+    return {}
+
+
+translation_module.async_get_translations = async_get_translations
+helpers_module.translation = translation_module
+sys.modules.setdefault("homeassistant.helpers.translation", translation_module)
+
+update_coordinator_module = types.ModuleType("homeassistant.helpers.update_coordinator")
+
+
+class UpdateFailed(Exception):
+    """Placeholder for coordinator update failures."""
+
+
+class DataUpdateCoordinator:  # pragma: no cover - not exercised in tests
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.data = {}
+
+
+update_coordinator_module.UpdateFailed = UpdateFailed
+update_coordinator_module.DataUpdateCoordinator = DataUpdateCoordinator
+helpers_module.update_coordinator = update_coordinator_module
+sys.modules.setdefault(
+    "homeassistant.helpers.update_coordinator", update_coordinator_module
+)
+
+util_module = types.ModuleType("homeassistant.util")
+dt_module = types.ModuleType("homeassistant.util.dt")
+util_module.dt = dt_module
+helpers_module.util = util_module
+sys.modules.setdefault("homeassistant.util", util_module)
+sys.modules.setdefault("homeassistant.util.dt", dt_module)
+
+ha_module.helpers = helpers_module
+
 
 from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI  # noqa: E402
 
