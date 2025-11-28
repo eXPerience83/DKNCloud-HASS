@@ -34,6 +34,13 @@ ignore = [
 known-first-party = ["custom_components.airzoneclouddaikin"]
 combine-as-imports = true
 
+[tool.pytest.ini_options]
+# Silence upstream pytest-asyncio deprecation warnings on Python 3.14 while
+# keeping all other warnings visible during test runs.
+filterwarnings = [
+  "ignore::DeprecationWarning:pytest_asyncio.plugin",
+]
+
 # --- Optional hardening (uncomment if needed) ---
 # [tool.ruff]
 # force-exclude = true
