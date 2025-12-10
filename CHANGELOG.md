@@ -9,6 +9,8 @@
 ### Changed
 - Documented sleep scenary semantics and timeout cleanup behavior alongside the new release
   version.
+- Refined expired sleep scenary cleanup logging to distinguish HTTP errors, timeouts, and
+  unexpected failures.
 
 ## [0.4.2] - 2025-11-24
 ### Added

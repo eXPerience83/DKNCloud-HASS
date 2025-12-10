@@ -449,9 +449,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await api.async_set_scenary(dev_id, SCENARY_HOME)
             except asyncio.CancelledError:
                 raise
+            except ClientResponseError as cre:
+                _LOGGER.warning(
+                    "Failed to clean up expired sleep scenary on %s (HTTP %s): %s",
+                    dev_id,
+                    cre.status,
+                    cre,
+                )
+                continue
+            except TimeoutError:
+                _LOGGER.warning(
+                    "Failed to clean up expired sleep scenary on %s (timeout)",
+                    dev_id,
+                )
+                continue
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning(
-                    "Failed to clean up expired sleep scenary on %s: %s", dev_id, err
+                    "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
+                    dev_id,
+                    err,
                 )
                 continue
 
