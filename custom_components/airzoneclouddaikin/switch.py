@@ -14,7 +14,13 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, Device
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator  # typed coordinator
-from .const import DOMAIN, MANUFACTURER
+from .const import (
+    DOMAIN,
+    MANUFACTURER,
+    SCENARY_HOME,
+    SCENARY_SLEEP,
+    SCENARY_VACANT,
+)
 from .helpers import (
     acquire_device_lock,
     optimistic_get,
@@ -101,6 +107,46 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         )
         self._climate_entity_id = entity_id
         return entity_id
+
+    async def _ensure_occupied_before_active_action(self, reason: str) -> None:
+        raw_scenary = str(self._device.get("scenary") or "").strip().lower()
+
+        if raw_scenary == SCENARY_VACANT:
+            return
+
+        if raw_scenary != SCENARY_SLEEP:
+            return
+
+        if not self._device.get("sleep_expired") and self._backend_power_is_on():
+            return
+
+        api = getattr(self.coordinator, "api", None)
+        if api is None:
+            _LOGGER.debug("API handle missing; skipping auto-exit sleep for %s", reason)
+            return
+
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
+            try:
+                await api.async_set_scenary(self._device_id, SCENARY_HOME)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Failed to auto-exit sleep before %s on %s: %s",
+                    reason,
+                    self._device_id,
+                    err,
+                )
+                return
+
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, "scenary", SCENARY_HOME
+            )
+
+        schedule_post_write_refresh(
+            self.hass, self.coordinator, entry_id=self._entry_id
+        )
 
     async def _send_event(self, option: str, value: Any) -> None:
         """Send a command to the device using the events endpoint."""
@@ -242,6 +288,8 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         if current in {"1", "true", "on"}:
             _LOGGER.debug("Power already optimistic ON; skipping redundant P1=1")
             return
+
+        await self._ensure_occupied_before_active_action("switch.turn_on")
 
         if self._backend_power_is_on():
             optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")

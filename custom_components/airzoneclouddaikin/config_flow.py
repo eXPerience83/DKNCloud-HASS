@@ -27,7 +27,11 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_ENABLE_HEAT_COOL, DOMAIN
+from .const import (
+    CONF_ENABLE_HEAT_COOL,
+    CONF_SLEEP_TIMEOUT_ENABLED,
+    DOMAIN,
+)
 from .helpers import device_supports_heat_cool
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,6 +72,10 @@ def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
         vol.Optional(
             CONF_ENABLE_HEAT_COOL,
             default=defaults.get(CONF_ENABLE_HEAT_COOL, False),
+        ): cv.boolean,
+        vol.Optional(
+            CONF_SLEEP_TIMEOUT_ENABLED,
+            default=defaults.get(CONF_SLEEP_TIMEOUT_ENABLED, False),
         ): cv.boolean,
     }
 

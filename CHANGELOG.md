@@ -1,4 +1,15 @@
 # Changelog
+## [0.4.3] - 2025-12-10
+### Added
+- Auto-exit stale sleep scenary before Home Assistant wake actions and expose sleep sessions
+  as Home after the configured timeout when the new opt-in option is enabled.
+- Backend cleanup attempt for expired sleep sessions to clear the scenary label once per
+  session.
+
+### Changed
+- Documented sleep scenary semantics and timeout cleanup behavior alongside the new release
+  version.
+
 ## [0.4.2] - 2025-11-24
 ### Added
 - Added French, Portuguese, Italian, and German locale files covering configuration flows,

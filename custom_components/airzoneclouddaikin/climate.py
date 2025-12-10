@@ -14,7 +14,14 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, Device
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator
-from .const import CONF_ENABLE_HEAT_COOL, DOMAIN, MANUFACTURER
+from .const import (
+    CONF_ENABLE_HEAT_COOL,
+    DOMAIN,
+    MANUFACTURER,
+    SCENARY_HOME,
+    SCENARY_SLEEP,
+    SCENARY_VACANT,
+)
 from .helpers import (
     acquire_device_lock,
     bitmask_supports_p2,
@@ -281,7 +288,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @property
     def preset_mode(self) -> str | None:
-        scen = self._overlay_value("scenary", self._device.get("scenary"))
+        scenary_base = self._device.get("effective_scenary") or self._device.get(
+            "scenary"
+        )
+        scen = self._overlay_value("scenary", scenary_base)
         return self._scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
@@ -335,6 +345,48 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 await self.async_set_preset_mode("home")
         except Exception as err:
             _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
+
+    async def _ensure_occupied_before_active_action(self, reason: str) -> None:
+        raw_scenary = str(self._device.get("scenary") or "").strip().lower()
+
+        if raw_scenary == SCENARY_VACANT:
+            await self._auto_exit_away_if_needed(reason)
+            return
+
+        if raw_scenary != SCENARY_SLEEP:
+            return
+
+        if not self._device.get("sleep_expired") and self._device_power_on():
+            return
+
+        api = getattr(self.coordinator, "api", None)
+        if api is None:
+            _LOGGER.debug("API handle missing; skipping auto-exit sleep for %s", reason)
+            return
+
+        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
+        async with lock:
+            try:
+                await api.async_set_scenary(self._device_id, SCENARY_HOME)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Failed to auto-exit sleep before %s on %s: %s",
+                    reason,
+                    self._device_id,
+                    err,
+                )
+                return
+
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, "scenary", SCENARY_HOME
+            )
+            self.async_write_ha_state()
+
+        schedule_post_write_refresh(
+            self.hass, self.coordinator, entry_id=self._entry_id
+        )
 
     # ---- Temperature control --------------------------------------------
 
@@ -539,13 +591,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if current.strip().lower() in {"1", "true", "on"}:
             return
 
+        await self._ensure_occupied_before_active_action("turn_on")
+
         backend_on = str(self._device.get("power", "0")).strip() == "1"
         if backend_on:
             optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
             self.async_write_ha_state()
             return
-
-        await self._auto_exit_away_if_needed("turn_on")
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
@@ -592,7 +644,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             return
 
-        await self._auto_exit_away_if_needed("set_hvac_mode")
+        await self._ensure_occupied_before_active_action("set_hvac_mode")
 
         if self._device_power_on() and self._hvac_from_device() == hvac_mode:
             _LOGGER.debug(

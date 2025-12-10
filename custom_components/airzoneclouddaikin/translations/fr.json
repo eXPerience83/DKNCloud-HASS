@@ -36,11 +36,12 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Le mode HEAT_COOL expérimental est optionnel, il envoie les consignes via P7 et les vitesses de ventilation via P3, et ne s’applique qu’aux installations dont les appareils déclarent être compatibles.",
+        "description": "Le mode HEAT_COOL expérimental est optionnel, il envoie les consignes via P7 et les vitesses de ventilation via P3, et ne s’applique qu’aux installations dont les appareils déclarent être compatibles. Le traitement de l'expiration Sleep est facultatif et considère les sessions expirées comme Home tout en tentant de nettoyer le scénario une fois.",
         "data": {
           "scan_interval": "Intervalle d'interrogation (secondes)",
           "expose_pii_identifiers": "Exposer les identifiants PII (avancé)",
-          "enable_heat_cool_mode": "Activer le mode HEAT_COOL expérimental (requiert une installation compatible ; utilise le routage P7/P3)"
+          "enable_heat_cool_mode": "Activer le mode HEAT_COOL expérimental (requiert une installation compatible ; utilise le routage P7/P3)",
+          "sleep_timeout_enabled": "Traiter un Sleep expiré comme 'Home' et nettoyer le scénario backend"
         }
       }
     }

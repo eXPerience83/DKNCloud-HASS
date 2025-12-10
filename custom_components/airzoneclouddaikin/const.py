@@ -10,6 +10,12 @@ DOMAIN = "airzoneclouddaikin"
 
 # Stable option keys shared across the integration (config flow, runtime buckets).
 CONF_ENABLE_HEAT_COOL = "enable_heat_cool_mode"
+CONF_SLEEP_TIMEOUT_ENABLED = "sleep_timeout_enabled"
+
+# Backend scenary values
+SCENARY_HOME = "occupied"
+SCENARY_VACANT = "vacant"
+SCENARY_SLEEP = "sleep"
 
 # Public manufacturer label used across platforms (Device Registry consistency).
 MANUFACTURER = "Daikin / Airzone"
@@ -48,6 +54,9 @@ HEADERS_EVENTS = {
 # --- Shared optimistic timings (used by climate/switch/number) ----
 OPTIMISTIC_TTL_SEC: float = 2.5
 POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
+
+# Additional slack beyond the configured sleep_time before treating sleep as expired
+SLEEP_TIMEOUT_GRACE_MINUTES = 10
 
 # -------------------- UX: Persistent notifications (PR A) -----------------
 # Debounce to avoid flapping (seconds the device must remain offline
