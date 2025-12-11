@@ -12,6 +12,12 @@
 - Refined expired sleep scenary cleanup logging to distinguish HTTP errors, timeouts, and
   unexpected failures.
 
+### Fixed
+- Persist the Sleep timeout handling option from the options flow so the opt-in feature is stored
+  on the config entry.
+- Retry expired-sleep backend cleanup after transient failures by marking the session as cleaned
+  only when the scenary update succeeds.
+
 ## [0.4.2] - 2025-11-24
 ### Added
 - Added French, Portuguese, Italian, and German locale files covering configuration flows,

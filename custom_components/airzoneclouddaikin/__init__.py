@@ -444,7 +444,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
                 continue
 
-            tracking.force_exit_requested = True
+            if api is None:
+                _LOGGER.debug(
+                    "API handle missing; skipping sleep expiry cleanup for %s",
+                    dev_id,
+                )
+                continue
+
             try:
                 await api.async_set_scenary(dev_id, SCENARY_HOME)
             except asyncio.CancelledError:
@@ -471,6 +477,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
                 continue
 
+            tracking.force_exit_requested = True
             coordinator.async_request_refresh()
 
     def _on_sleep_candidate() -> None:

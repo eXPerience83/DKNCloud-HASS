@@ -275,6 +275,7 @@ from custom_components.airzoneclouddaikin.config_flow import (  # noqa: E402
 )
 from custom_components.airzoneclouddaikin.const import (  # noqa: E402
     CONF_ENABLE_HEAT_COOL,
+    CONF_SLEEP_TIMEOUT_ENABLED,
     DOMAIN,
 )
 
@@ -439,6 +440,7 @@ def test_options_flow_updates_options_and_preserves_hidden_keys(hass: HassStub) 
             CONF_SCAN_INTERVAL: 10,
             CONF_EXPOSE_PII: False,
             CONF_ENABLE_HEAT_COOL: False,
+            CONF_SLEEP_TIMEOUT_ENABLED: False,
         },
         unique_id="user@example.com",
     )
@@ -459,6 +461,7 @@ def test_options_flow_updates_options_and_preserves_hidden_keys(hass: HassStub) 
                 CONF_SCAN_INTERVAL: 20,
                 CONF_EXPOSE_PII: True,
                 CONF_ENABLE_HEAT_COOL: True,
+                CONF_SLEEP_TIMEOUT_ENABLED: True,
             }
         )
     )
@@ -468,5 +471,33 @@ def test_options_flow_updates_options_and_preserves_hidden_keys(hass: HassStub) 
     assert new_options[CONF_SCAN_INTERVAL] == 20
     assert new_options[CONF_EXPOSE_PII] is True
     assert new_options[CONF_ENABLE_HEAT_COOL] is True
+    assert new_options[CONF_SLEEP_TIMEOUT_ENABLED] is True
     assert new_options["user_token"] == "tok-123"
     assert new_options["hidden_key"] == "keep-me"
+
+
+def test_options_flow_defaults_sleep_timeout_when_missing(hass: HassStub) -> None:
+    entry = ConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com"},
+        options={"user_token": "tok-abc", CONF_SCAN_INTERVAL: 10},
+        unique_id="user@example.com",
+    )
+    entry.add_to_hass(hass)
+
+    flow = AirzoneOptionsFlow(entry)
+    flow.hass = hass
+
+    result = _run(
+        flow.async_step_init(
+            user_input={
+                CONF_SCAN_INTERVAL: 12,
+                CONF_EXPOSE_PII: False,
+                CONF_ENABLE_HEAT_COOL: False,
+            }
+        )
+    )
+
+    assert result["type"] is HAFlowResultType.CREATE_ENTRY
+    options = result["data"]
+    assert options[CONF_SLEEP_TIMEOUT_ENABLED] is False

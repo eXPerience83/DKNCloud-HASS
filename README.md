@@ -40,6 +40,9 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 - An **opt-in timeout** treats long-running Sleep sessions as **Home** in the UI and also
   sends a one-off scenary cleanup to the backend (best effort) once the configured sleep time
   plus a grace period has elapsed. Leave it disabled to mirror raw backend state.
+- Timeout handling only applies when the device exposes a valid `sleep_time` (via
+  `number.*_sleep_time`) greater than zero; otherwise the backend’s native state remains the
+  source of truth and no local expiry is applied.
 
 ### Passive connectivity monitor
 

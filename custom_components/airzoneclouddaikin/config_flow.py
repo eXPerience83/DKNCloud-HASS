@@ -304,6 +304,9 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
             CONF_SCAN_INTERVAL: int(opts.get(CONF_SCAN_INTERVAL, 10)),
             CONF_EXPOSE_PII: bool(opts.get(CONF_EXPOSE_PII, False)),
             CONF_ENABLE_HEAT_COOL: current_heat_cool,
+            CONF_SLEEP_TIMEOUT_ENABLED: bool(
+                opts.get(CONF_SLEEP_TIMEOUT_ENABLED, False)
+            ),
         }
 
         if user_input is None:
@@ -323,6 +326,11 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         )
         next_opts[CONF_ENABLE_HEAT_COOL] = bool(
             user_input.get(CONF_ENABLE_HEAT_COOL, current_heat_cool)
+        )
+        next_opts[CONF_SLEEP_TIMEOUT_ENABLED] = bool(
+            user_input.get(
+                CONF_SLEEP_TIMEOUT_ENABLED, defaults[CONF_SLEEP_TIMEOUT_ENABLED]
+            )
         )
 
         return self.async_create_entry(title="", data=next_opts)

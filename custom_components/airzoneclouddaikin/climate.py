@@ -349,6 +349,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     async def _ensure_occupied_before_active_action(self, reason: str) -> None:
         raw_scenary = str(self._device.get("scenary") or "").strip().lower()
 
+        # NOTE: There is a small window where this helper and the coordinator-level
+        # sleep expiry cleanup may both call async_set_scenary(..., SCENARY_HOME)
+        # for the same device. The backend should handle this idempotently, and we
+        # prefer a redundant write over leaving the device stuck in ``sleep``.
+
         if raw_scenary == SCENARY_VACANT:
             await self._auto_exit_away_if_needed(reason)
             return
