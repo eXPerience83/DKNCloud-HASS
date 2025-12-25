@@ -18,12 +18,10 @@ from .const import (
     CONF_ENABLE_HEAT_COOL,
     DOMAIN,
     MANUFACTURER,
-    SCENARY_HOME,
-    SCENARY_SLEEP,
-    SCENARY_VACANT,
 )
 from .helpers import (
     acquire_device_lock,
+    async_auto_exit_sleep_if_needed,
     bitmask_supports_p2,
     clamp_temperature,
     optimistic_get,
@@ -347,50 +345,17 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
 
     async def _ensure_occupied_before_active_action(self, reason: str) -> None:
-        raw_scenary = str(self._device.get("scenary") or "").strip().lower()
-
-        # NOTE: There is a small window where this helper and the coordinator-level
-        # sleep expiry cleanup may both call async_set_scenary(..., SCENARY_HOME)
-        # for the same device. The backend should handle this idempotently, and we
-        # prefer a redundant write over leaving the device stuck in ``sleep``.
-
-        if raw_scenary == SCENARY_VACANT:
-            await self._auto_exit_away_if_needed(reason)
-            return
-
-        if raw_scenary != SCENARY_SLEEP:
-            return
-
-        if not self._device.get("sleep_expired") and self._device_power_on():
-            return
-
-        api = getattr(self.coordinator, "api", None)
-        if api is None:
-            _LOGGER.debug("API handle missing; skipping auto-exit sleep for %s", reason)
-            return
-
-        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
-        async with lock:
-            try:
-                await api.async_set_scenary(self._device_id, SCENARY_HOME)
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Failed to auto-exit sleep before %s on %s: %s",
-                    reason,
-                    self._device_id,
-                    err,
-                )
-                return
-
-            optimistic_set(
-                self.hass, self._entry_id, self._device_id, "scenary", SCENARY_HOME
-            )
-            self.async_write_ha_state()
-
-        schedule_post_write_refresh(
-            self.hass, self.coordinator, entry_id=self._entry_id
+        await async_auto_exit_sleep_if_needed(
+            self.hass,
+            entry_id=self._entry_id,
+            device_id=self._device_id,
+            device=self._device,
+            coordinator=self.coordinator,
+            reason=reason,
+            is_device_on=self._device_power_on,
+            allow_away_handling=True,
+            auto_exit_away=self._auto_exit_away_if_needed,
+            on_success=self.async_write_ha_state,
         )
 
     # ---- Temperature control --------------------------------------------
