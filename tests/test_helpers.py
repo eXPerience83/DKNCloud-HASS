@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import sys
 import types
@@ -86,6 +87,8 @@ helpers_spec.loader.exec_module(helpers_module)
 optimistic_get = helpers_module.optimistic_get
 optimistic_set = helpers_module.optimistic_set
 optimistic_invalidate = helpers_module.optimistic_invalidate
+async_auto_exit_sleep_if_needed = helpers_module.async_auto_exit_sleep_if_needed
+DOMAIN = helpers_module.DOMAIN
 
 
 class _LoopStub:
@@ -165,3 +168,106 @@ def test_optimistic_overlay_malformed_expiration(hass_stub: DummyHass) -> None:
         "optimistic", {}
     )
     assert "device" not in optimistic_bucket
+
+
+class DummyApi:
+    """Stub API to capture scenary writes."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    async def async_set_scenary(self, device_id: str, scenary: str) -> None:
+        self.calls.append((device_id, scenary))
+
+
+class DummyCoordinator:
+    """Minimal coordinator stub with an API handle."""
+
+    def __init__(self, api: DummyApi) -> None:
+        self.api = api
+
+    async def async_request_refresh(self) -> None:
+        return None
+
+
+def test_auto_exit_sleep_when_expired(
+    hass_stub: DummyHass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scheduled: list[Callable[[], None]] = []
+
+    def _schedule_stub(_hass: Any, _delay: float, _callback: Any) -> Callable[[], None]:
+        def _cancel() -> None:
+            return None
+
+        scheduled.append(_cancel)
+        return _cancel
+
+    monkeypatch.setattr(helpers_module, "async_call_later", _schedule_stub)
+
+    api = DummyApi()
+    coordinator = DummyCoordinator(api)
+    device_id = "device-1"
+    entry_id = "entry-1"
+    device = {"scenary": "sleep", "sleep_expired": True}
+
+    asyncio.run(
+        async_auto_exit_sleep_if_needed(
+            hass_stub,
+            entry_id=entry_id,
+            device_id=device_id,
+            device=device,
+            coordinator=coordinator,
+            reason="test",
+            is_device_on=lambda: False,
+            allow_away_handling=False,
+        )
+    )
+
+    assert api.calls == [(device_id, "occupied")]
+    optimistic_bucket = hass_stub.data[DOMAIN][entry_id]["optimistic"]
+    overlay = optimistic_bucket[device_id]["scenary"]["value"]
+    assert overlay == "occupied"
+    assert callable(hass_stub.data[DOMAIN][entry_id]["pending_refresh"])
+    assert scheduled
+
+
+def test_auto_exit_sleep_skips_active_session(
+    hass_stub: DummyHass, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scheduled: list[Callable[[], None]] = []
+
+    def _schedule_stub(_hass: Any, _delay: float, _callback: Any) -> Callable[[], None]:
+        def _cancel() -> None:
+            return None
+
+        scheduled.append(_cancel)
+        return _cancel
+
+    monkeypatch.setattr(helpers_module, "async_call_later", _schedule_stub)
+
+    api = DummyApi()
+    coordinator = DummyCoordinator(api)
+    device_id = "device-2"
+    entry_id = "entry-2"
+    device = {"scenary": "sleep", "sleep_expired": False}
+
+    asyncio.run(
+        async_auto_exit_sleep_if_needed(
+            hass_stub,
+            entry_id=entry_id,
+            device_id=device_id,
+            device=device,
+            coordinator=coordinator,
+            reason="test",
+            is_device_on=lambda: True,
+            allow_away_handling=False,
+        )
+    )
+
+    assert api.calls == []
+    optimistic_bucket = (
+        hass_stub.data.get(DOMAIN, {}).get(entry_id, {}).get("optimistic", {})
+    )
+    assert device_id not in optimistic_bucket
+    assert "pending_refresh" not in hass_stub.data.get(DOMAIN, {}).get(entry_id, {})
+    assert not scheduled
