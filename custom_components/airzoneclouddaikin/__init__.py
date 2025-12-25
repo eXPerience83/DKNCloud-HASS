@@ -474,6 +474,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
                     dev_id,
                     err,
+                    exc_info=True,
                 )
                 continue
 
