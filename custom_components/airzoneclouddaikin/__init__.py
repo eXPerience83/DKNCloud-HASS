@@ -102,7 +102,7 @@ def _parse_sleep_time_minutes(device: dict[str, Any]) -> int | None:
 
     try:
         minutes = int(raw)
-    except (TypeError, ValueError):  # noqa: BLE001
+    except (TypeError, ValueError):
         return None
 
     return minutes if minutes >= 0 else None
