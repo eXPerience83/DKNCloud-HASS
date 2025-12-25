@@ -1,5 +1,5 @@
 # Changelog
-## [0.4.3] - 2025-12-10
+## [0.4.3] - 2025-12-25
 ### Added
 - Auto-exit stale sleep scenary before Home Assistant wake actions and expose sleep sessions
   as Home after the configured timeout when the new opt-in option is enabled.
@@ -11,6 +11,7 @@
   version.
 - Refined expired sleep scenary cleanup logging to distinguish HTTP errors, timeouts, and
   unexpected failures.
+- Centralized auto-exit sleep handling across climate and power switch entities.
 
 ### Fixed
 - Persist the Sleep timeout handling option from the options flow so the opt-in feature is stored
