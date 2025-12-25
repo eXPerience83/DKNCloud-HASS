@@ -116,7 +116,7 @@ def _backend_power_is_off(device: dict[str, Any]) -> bool:
         return False
     try:
         return int(str(raw).strip()) == 0
-    except (TypeError, ValueError):  # noqa: BLE001
+    except (TypeError, ValueError):
         return False
 
 
