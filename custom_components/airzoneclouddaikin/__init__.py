@@ -108,6 +108,18 @@ def _parse_sleep_time_minutes(device: dict[str, Any]) -> int | None:
     return minutes if minutes >= 0 else None
 
 
+def _backend_power_is_off(device: dict[str, Any]) -> bool:
+    """Return True if backend power (P1) indicates the unit is OFF."""
+
+    raw = device.get("power")
+    if raw is None:
+        return False
+    try:
+        return int(str(raw).strip()) == 0
+    except (TypeError, ValueError):  # noqa: BLE001
+        return False
+
+
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Coordinator that aggregates installations and exposes device data.
 
@@ -224,6 +236,7 @@ async def _async_update_data(
             _update_sleep_tracking_for_device(tracking, raw_scenary)
 
             sleep_expired = False
+            backend_power_off = False
             sleep_time_minutes = _parse_sleep_time_minutes(dev)
 
             if (
@@ -235,7 +248,8 @@ async def _async_update_data(
                 timeout_at = tracking.sleep_started_at_utc + timedelta(
                     minutes=sleep_time_minutes + SLEEP_TIMEOUT_GRACE_MINUTES
                 )
-                sleep_expired = now >= timeout_at
+                backend_power_off = _backend_power_is_off(dev)
+                sleep_expired = now >= timeout_at and backend_power_off
 
             dev["sleep_expired"] = sleep_expired
 
@@ -442,6 +456,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
             if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
+                continue
+            if not _backend_power_is_off(dev):
                 continue
 
             if api is None:

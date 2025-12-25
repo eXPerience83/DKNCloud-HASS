@@ -176,6 +176,8 @@ Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
   effort and disabled by default to preserve raw backend reporting. Timeout handling applies only
   when the device exposes a non-zero `sleep_time` (mirrored by `number.*_sleep_time`); when the
   timer is unavailable the backend’s raw scenary remains authoritative.
+- Sleep timeout expiry and backend cleanup only apply once the backend reports the unit is
+  powered off (P1 = 0), avoiding an early exit while sleep is still active.
 - Wake commands and timeout cleanup may both issue a `sleep → home` scenary update for the same
   session. The backend should treat these writes as idempotent, preferring slight redundancy over
   leaving a unit stuck in `sleep`.

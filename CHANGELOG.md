@@ -14,6 +14,7 @@
 - Centralized auto-exit sleep handling across climate and power switch entities.
 - Improved warning logs for unexpected errors by including full tracebacks (exc_info=True).
 - Added unit tests covering the sleep auto-exit helper to prevent regressions.
+- Apply sleep timeout expiry only after backend power reports the unit is off.
 
 ### Fixed
 - Persist the Sleep timeout handling option from the options flow so the opt-in feature is stored
