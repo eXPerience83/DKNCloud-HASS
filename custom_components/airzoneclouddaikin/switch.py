@@ -141,6 +141,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                 value,
                 self._device_id,
                 err,
+                exc_info=True,
             )
             raise
 
@@ -243,6 +244,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     "falling back to P1",
                     climate_eid,
                     err,
+                    exc_info=True,
                 )
                 self._climate_entity_id = None
 
@@ -311,6 +313,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     "falling back to P1",
                     climate_eid,
                     err,
+                    exc_info=True,
                 )
                 self._climate_entity_id = None
 

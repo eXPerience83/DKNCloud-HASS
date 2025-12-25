@@ -324,7 +324,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
+                _LOGGER.warning(
+                    "Failed to set preset/scenary=%s: %s",
+                    scenary,
+                    err,
+                    exc_info=True,
+                )
                 raise
 
             optimistic_set(
@@ -704,7 +709,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            _LOGGER.warning("Failed to send_event %s=%s: %s", option, value, err)
+            _LOGGER.warning(
+                "Failed to send_event %s=%s: %s",
+                option,
+                value,
+                err,
+                exc_info=True,
+            )
             raise
 
     # ---- Coordinator update hook ----------------------------------------

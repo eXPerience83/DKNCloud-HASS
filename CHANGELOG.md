@@ -12,6 +12,7 @@
 - Refined expired sleep scenary cleanup logging to distinguish HTTP errors, timeouts, and
   unexpected failures.
 - Centralized auto-exit sleep handling across climate and power switch entities.
+- Improved warning logs for unexpected errors by including full tracebacks (exc_info=True).
 
 ### Fixed
 - Persist the Sleep timeout handling option from the options flow so the opt-in feature is stored

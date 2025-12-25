@@ -153,7 +153,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors={"base": "timeout"},
             )
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Login failed (network/other): %s", type(exc).__name__)
+            _LOGGER.warning(
+                "Login failed (network/other): %s", type(exc).__name__, exc_info=True
+            )
             return self.async_show_form(
                 step_id="user",
                 data_schema=_user_schema(user_input),
