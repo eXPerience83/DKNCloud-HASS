@@ -17,6 +17,7 @@ from .__init__ import AirzoneCoordinator  # typed coordinator
 from .const import DOMAIN, MANUFACTURER
 from .helpers import (
     acquire_device_lock,
+    async_auto_exit_sleep_if_needed,
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
@@ -102,6 +103,18 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         self._climate_entity_id = entity_id
         return entity_id
 
+    async def _ensure_occupied_before_active_action(self, reason: str) -> None:
+        await async_auto_exit_sleep_if_needed(
+            self.hass,
+            entry_id=self._entry_id,
+            device_id=self._device_id,
+            device=self._device,
+            coordinator=self.coordinator,
+            reason=reason,
+            is_device_on=self._backend_power_is_on,
+            allow_away_handling=False,
+        )
+
     async def _send_event(self, option: str, value: Any) -> None:
         """Send a command to the device using the events endpoint."""
         api = getattr(self.coordinator, "api", None)
@@ -128,6 +141,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                 value,
                 self._device_id,
                 err,
+                exc_info=True,
             )
             raise
 
@@ -230,6 +244,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     "falling back to P1",
                     climate_eid,
                     err,
+                    exc_info=True,
                 )
                 self._climate_entity_id = None
 
@@ -242,6 +257,8 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         if current in {"1", "true", "on"}:
             _LOGGER.debug("Power already optimistic ON; skipping redundant P1=1")
             return
+
+        await self._ensure_occupied_before_active_action("switch.turn_on")
 
         if self._backend_power_is_on():
             optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
@@ -296,6 +313,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     "falling back to P1",
                     climate_eid,
                     err,
+                    exc_info=True,
                 )
                 self._climate_entity_id = None
 

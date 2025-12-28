@@ -14,9 +14,14 @@ from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, Device
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator
-from .const import CONF_ENABLE_HEAT_COOL, DOMAIN, MANUFACTURER
+from .const import (
+    CONF_ENABLE_HEAT_COOL,
+    DOMAIN,
+    MANUFACTURER,
+)
 from .helpers import (
     acquire_device_lock,
+    async_auto_exit_sleep_if_needed,
     bitmask_supports_p2,
     clamp_temperature,
     optimistic_get,
@@ -281,7 +286,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @property
     def preset_mode(self) -> str | None:
-        scen = self._overlay_value("scenary", self._device.get("scenary"))
+        scenary_base = self._device.get("effective_scenary") or self._device.get(
+            "scenary"
+        )
+        scen = self._overlay_value("scenary", scenary_base)
         return self._scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
@@ -316,7 +324,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                _LOGGER.warning("Failed to set preset/scenary=%s: %s", scenary, err)
+                _LOGGER.warning(
+                    "Failed to set preset/scenary=%s: %s",
+                    scenary,
+                    err,
+                    exc_info=True,
+                )
                 raise
 
             optimistic_set(
@@ -335,6 +348,20 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 await self.async_set_preset_mode("home")
         except Exception as err:
             _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
+
+    async def _ensure_occupied_before_active_action(self, reason: str) -> None:
+        await async_auto_exit_sleep_if_needed(
+            self.hass,
+            entry_id=self._entry_id,
+            device_id=self._device_id,
+            device=self._device,
+            coordinator=self.coordinator,
+            reason=reason,
+            is_device_on=self._device_power_on,
+            allow_away_handling=True,
+            auto_exit_away=self._auto_exit_away_if_needed,
+            on_success=self.async_write_ha_state,
+        )
 
     # ---- Temperature control --------------------------------------------
 
@@ -539,13 +566,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if current.strip().lower() in {"1", "true", "on"}:
             return
 
+        await self._ensure_occupied_before_active_action("turn_on")
+
         backend_on = str(self._device.get("power", "0")).strip() == "1"
         if backend_on:
             optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
             self.async_write_ha_state()
             return
-
-        await self._auto_exit_away_if_needed("turn_on")
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
@@ -592,7 +619,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             return
 
-        await self._auto_exit_away_if_needed("set_hvac_mode")
+        await self._ensure_occupied_before_active_action("set_hvac_mode")
 
         if self._device_power_on() and self._hvac_from_device() == hvac_mode:
             _LOGGER.debug(
@@ -682,7 +709,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         except asyncio.CancelledError:
             raise
         except Exception as err:
-            _LOGGER.warning("Failed to send_event %s=%s: %s", option, value, err)
+            _LOGGER.warning(
+                "Failed to send_event %s=%s: %s",
+                option,
+                value,
+                err,
+                exc_info=True,
+            )
             raise
 
     # ---- Coordinator update hook ----------------------------------------

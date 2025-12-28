@@ -36,11 +36,12 @@
     "step": {
       "init": {
         "title": "Opciones",
-        "description": "El modo HEAT_COOL experimental/beta es opt-in, usa P7 para la consigna y P3 para el ventilador, y solo tendrá efecto si alguna instalación informa que es compatible.",
+        "description": "El modo HEAT_COOL experimental/beta es opt-in, usa P7 para la consigna y P3 para el ventilador, y solo tendrá efecto si alguna instalación informa que es compatible. El manejo de expiración de Sleep es opcional y trata las sesiones expiradas como Home intentando limpiar el escenario una vez.",
         "data": {
           "scan_interval": "Intervalo de sondeo (segundos)",
           "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
-          "enable_heat_cool_mode": "Activar modo HEAT_COOL experimental/beta (requiere instalación compatible; usa ruteo P7/P3)"
+          "enable_heat_cool_mode": "Activar modo HEAT_COOL experimental/beta (requiere instalación compatible; usa ruteo P7/P3)",
+          "sleep_timeout_enabled": "Tratar sleep expirado como 'Home' y limpiar el escenario en el backend"
         }
       }
     }

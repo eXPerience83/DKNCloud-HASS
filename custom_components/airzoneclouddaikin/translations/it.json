@@ -36,11 +36,12 @@
     "step": {
       "init": {
         "title": "Opzioni",
-        "description": "La modalità sperimentale HEAT_COOL è facoltativa, instrada i setpoint tramite P7 e le velocità della ventola tramite P3 e si applica solo alle installazioni i cui dispositivi dichiarano compatibilità.",
+        "description": "La modalità sperimentale HEAT_COOL è facoltativa, instrada i setpoint tramite P7 e le velocità della ventola tramite P3 e si applica solo alle installazioni i cui dispositivi dichiarano compatibilità. La gestione della scadenza Sleep è opzionale e tratta le sessioni scadute come Home tentando di ripulire lo scenario una volta.",
         "data": {
           "scan_interval": "Intervallo di scansione (secondi)",
           "expose_pii_identifiers": "Esporre identificatori PII (avanzato)",
-          "enable_heat_cool_mode": "Abilita modalità sperimentale HEAT_COOL (richiede installazione compatibile; utilizza instradamento P7/P3)"
+          "enable_heat_cool_mode": "Abilita modalità sperimentale HEAT_COOL (richiede installazione compatibile; utilizza instradamento P7/P3)",
+          "sleep_timeout_enabled": "Tratta lo Sleep scaduto come 'Home' e pulisci lo scenario backend"
         }
       }
     }

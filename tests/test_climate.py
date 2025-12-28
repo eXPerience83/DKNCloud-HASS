@@ -94,7 +94,8 @@ aiohttp_module = sys.modules.setdefault("aiohttp", types.ModuleType("aiohttp"))
 
 if not hasattr(aiohttp_module, "ClientResponseError"):
 
-    class _ClientResponseError(Exception): ...
+    class _ClientResponseError(Exception):
+        pass
 
     aiohttp_module.ClientResponseError = _ClientResponseError
 
@@ -108,7 +109,8 @@ if not hasattr(core_module, "callback"):
 
 if not hasattr(exceptions_module, "ConfigEntryAuthFailed"):
 
-    class ConfigEntryAuthFailed(Exception): ...
+    class ConfigEntryAuthFailed(Exception):
+        pass
 
     exceptions_module.ConfigEntryAuthFailed = ConfigEntryAuthFailed
 

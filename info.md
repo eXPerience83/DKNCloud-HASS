@@ -166,6 +166,22 @@ Devices expose a **string** bitmask for 8 modes, **index-aligned with P2**:
 - **Sleep (`sleep_time`)**: minutes in **[30..120]**, **step 10**.
   - Update via: `PUT /devices/<id>` with body `{"device":{"sleep_time":60}}`
 
+**Sleep session behavior and cleanup**
+- After `sleep_time` elapses, devices typically **power off but keep reporting** `scenary="sleep"`.
+  The next power-on behaves like **occupied/home** unless the scenary is explicitly changed.
+- The integration **auto-exits Sleep** before HA-driven wake commands so backend state matches
+  the real behavior when turning the unit on from Home Assistant.
+- An **optional timeout** (sleep_time + grace) treats long-running Sleep sessions as **home** in
+  the UI and triggers a **one-off scenary update** to clear the stale backend value. This is best
+  effort and disabled by default to preserve raw backend reporting. Timeout handling applies only
+  when the device exposes a non-zero `sleep_time` (mirrored by `number.*_sleep_time`); when the
+  timer is unavailable the backend’s raw scenary remains authoritative.
+- Sleep timeout expiry and backend cleanup only apply once the backend reports the unit is
+  powered off (P1 = 0), avoiding an early exit while sleep is still active.
+- Wake commands and timeout cleanup may both issue a `sleep → home` scenary update for the same
+  session. The backend should treat these writes as idempotent, preferring slight redundancy over
+  leaving a unit stuck in `sleep`.
+
 ### Unoccupied limits (when provided by the backend)
 Two device fields may appear and can be updated via **root-level** PUT on `/devices/<id>`:
 

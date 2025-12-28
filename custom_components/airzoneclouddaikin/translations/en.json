@@ -36,11 +36,12 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Experimental/beta HEAT_COOL mode is opt-in, routes setpoints via P7 and fan speeds via P3, and only takes effect for installations whose devices report compatibility.",
+        "description": "Experimental/beta HEAT_COOL mode is opt-in, routes setpoints via P7 and fan speeds via P3, and only takes effect for installations whose devices report compatibility. Sleep expiry handling is optional and treats expired sleep sessions as Home while attempting to clean up the scenary once.",
         "data": {
           "scan_interval": "Scan interval (seconds)",
           "expose_pii_identifiers": "Expose PII identifiers (advanced)",
-          "enable_heat_cool_mode": "Enable experimental/beta HEAT_COOL mode (requires compatible installation; uses P7/P3 routing)"
+          "enable_heat_cool_mode": "Enable experimental/beta HEAT_COOL mode (requires compatible installation; uses P7/P3 routing)",
+          "sleep_timeout_enabled": "Treat expired sleep as 'Home' and clean backend scenary"
         }
       }
     }

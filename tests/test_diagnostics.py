@@ -51,7 +51,7 @@ config_entries_module = sys.modules.setdefault(
 if not hasattr(config_entries_module, "ConfigEntry"):
 
     class ConfigEntry:  # pragma: no cover - stub only
-        ...
+        pass
 
     config_entries_module.ConfigEntry = ConfigEntry
 

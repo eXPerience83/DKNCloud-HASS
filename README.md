@@ -26,11 +26,23 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
   The integration maps these presets to backend fields internally — **no `select.scenary` entity**.
 - **Automatic device/sensor creation:**  
   Creates climate, temperature, diagnostic, and connectivity entities for each device.
-- **Sleep timer & unoccupied limits:**  
+- **Sleep timer & unoccupied limits:**
   Tune **Sleep time** via `number.sleep_time`, **unoccupied min/max** via `number.min_temp_unoccupied` / `number.max_temp_unoccupied`.
-- **Privacy-sensitive sensors (opt-in):**  
-  **MAC**, **PIN**, **installation/location** and related fields are available **only** when the **Expose PII identifiers** option is enabled.  
+- **Privacy-sensitive sensors (opt-in):**
+  **MAC**, **PIN**, **installation/location** and related fields are available **only** when the **Expose PII identifiers** option is enabled.
   These sensors are **not diagnostic**, remain **disabled by default**, and should be used with care.
+
+### Sleep scenary handling
+
+- The backend keeps reporting **Sleep** even after the timer finishes and the unit powers off.
+  The integration now **auto-exits Sleep** before any HA-driven wake action (turn on, mode
+  changes from off, main power switch).
+- An **opt-in timeout** treats long-running Sleep sessions as **Home** in the UI and also
+  sends a one-off scenary cleanup to the backend (best effort) once the configured sleep time
+  plus a grace period has elapsed. Leave it disabled to mirror raw backend state.
+- Timeout handling only applies when the device exposes a valid `sleep_time` (via
+  `number.*_sleep_time`) greater than zero; otherwise the backend’s native state remains the
+  source of truth and no local expiry is applied.
 
 ### Passive connectivity monitor
 

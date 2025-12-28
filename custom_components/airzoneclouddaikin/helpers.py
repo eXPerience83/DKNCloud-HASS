@@ -19,7 +19,8 @@ write to avoid redundant work.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+import logging
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -30,9 +31,14 @@ from .const import (
     DOMAIN,
     OPTIMISTIC_TTL_SEC,
     POST_WRITE_REFRESH_DELAY_SEC,
+    SCENARY_HOME,
+    SCENARY_SLEEP,
+    SCENARY_VACANT,
 )
 
 OptimisticEntry = dict[str, dict[str, dict[str, Any]]]
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _entry_bucket(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
@@ -283,3 +289,69 @@ def device_supports_heat_cool(device: Mapping[str, Any] | dict[str, Any]) -> boo
     """Return True when the device bitmask exposes the HEAT_COOL (P2=4) mode."""
 
     return device_supports_p2(device, 4)
+
+
+async def async_auto_exit_sleep_if_needed(
+    hass: HomeAssistant,
+    *,
+    entry_id: str,
+    device_id: str,
+    device: Mapping[str, Any] | dict[str, Any],
+    coordinator: DataUpdateCoordinator[Any],
+    reason: str,
+    is_device_on: Callable[[], bool],
+    allow_away_handling: bool,
+    auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
+    on_success: Callable[[], None] | None = None,
+) -> None:
+    """Best-effort auto-exit of sleep (and optionally vacant) scenary.
+
+    NOTE: There is a small window where this helper and the coordinator-level
+    sleep expiry cleanup may both call async_set_scenary(..., SCENARY_HOME) for
+    the same device. The backend should handle this idempotently, and we prefer
+    a redundant write over leaving the device stuck in ``sleep``.
+    """
+
+    raw_scenary = str((device or {}).get("scenary") or "").strip().lower()
+
+    if raw_scenary == SCENARY_VACANT:
+        if allow_away_handling and auto_exit_away is not None:
+            await auto_exit_away(reason)
+        return
+
+    if raw_scenary != SCENARY_SLEEP:
+        return
+
+    if not (device or {}).get("sleep_expired") and is_device_on():
+        return
+
+    api = getattr(coordinator, "api", None)
+    if api is None:
+        _LOGGER.debug(
+            "API handle missing; skipping auto-exit sleep before %s on %s",
+            reason,
+            device_id,
+        )
+        return
+
+    lock = acquire_device_lock(hass, entry_id, device_id)
+    async with lock:
+        try:
+            await api.async_set_scenary(device_id, SCENARY_HOME)
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Failed to auto-exit sleep before %s on %s: %s",
+                reason,
+                device_id,
+                err,
+                exc_info=True,
+            )
+            return
+
+        optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
+        if on_success is not None:
+            on_success()
+
+    schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)

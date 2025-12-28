@@ -36,11 +36,12 @@
     "step": {
       "init": {
         "title": "Optionen",
-        "description": "Der experimentelle HEAT_COOL-Modus ist optional, leitet Sollwerte über P7 und Lüftergeschwindigkeiten über P3 und gilt nur für Installationen, deren Geräte Kompatibilität melden.",
+        "description": "Der experimentelle HEAT_COOL-Modus ist optional, leitet Sollwerte über P7 und Lüftergeschwindigkeiten über P3 und gilt nur für Installationen, deren Geräte Kompatibilität melden. Die Sleep-Ablaufbehandlung ist optional und behandelt abgelaufene Sleep-Sitzungen als Home und versucht, das Szenario einmal zu bereinigen.",
         "data": {
           "scan_interval": "Abfrageintervall (Sekunden)",
           "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)",
-          "enable_heat_cool_mode": "Experimentellen HEAT_COOL-Modus aktivieren (erfordert kompatible Installation; nutzt P7/P3-Routing)"
+          "enable_heat_cool_mode": "Experimentellen HEAT_COOL-Modus aktivieren (erfordert kompatible Installation; nutzt P7/P3-Routing)",
+          "sleep_timeout_enabled": "Abgelaufenen Sleep als 'Home' behandeln und Backend-Szenario bereinigen"
         }
       }
     }
