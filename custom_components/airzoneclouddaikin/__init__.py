@@ -458,8 +458,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
             if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
                 continue
-            if not _backend_power_is_off(dev):
-                continue
 
             if api is None:
                 _LOGGER.debug(
