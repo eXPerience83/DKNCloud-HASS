@@ -57,6 +57,10 @@ def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_EXPOSE_PII, default=defaults.get(CONF_EXPOSE_PII, False)
             ): cv.boolean,
+            vol.Optional(
+                CONF_SLEEP_TIMEOUT_ENABLED,
+                default=defaults.get(CONF_SLEEP_TIMEOUT_ENABLED, False),
+            ): cv.boolean,
         }
     )
 
@@ -127,6 +131,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         scan = int(user_input.get(CONF_SCAN_INTERVAL, 10))
         pii = bool(user_input.get(CONF_EXPOSE_PII, False))
+        sleep_timeout_enabled = bool(user_input.get(CONF_SLEEP_TIMEOUT_ENABLED, False))
 
         # Local import to avoid circulars at HA import time
         try:
@@ -187,6 +192,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "user_token": token,
                 CONF_SCAN_INTERVAL: scan,
                 CONF_EXPOSE_PII: pii,
+                CONF_SLEEP_TIMEOUT_ENABLED: sleep_timeout_enabled,
             },
         )
 

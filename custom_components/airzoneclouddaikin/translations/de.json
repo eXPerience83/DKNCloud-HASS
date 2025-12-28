@@ -9,7 +9,8 @@
           "username": "E-Mail-Adresse",
           "password": "Passwort",
           "scan_interval": "Abfrageintervall (Sekunden)",
-          "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)"
+          "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)",
+          "sleep_timeout_enabled": "Abgelaufenen Sleep als 'Home' behandeln und Backend-Szenario bereinigen"
         }
       },
       "reauth_confirm": {

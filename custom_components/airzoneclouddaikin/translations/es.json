@@ -9,7 +9,8 @@
           "username": "Email",
           "password": "Contraseña",
           "scan_interval": "Intervalo de sondeo (segundos)",
-          "expose_pii_identifiers": "Exponer identificadores PII (avanzado)"
+          "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
+          "sleep_timeout_enabled": "Tratar sleep expirado como 'Home' y limpiar el escenario en el backend"
         }
       },
       "reauth_confirm": {
