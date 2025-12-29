@@ -6,6 +6,10 @@
 ### Changed
 - Prevent concurrent sleep-expiry cleanup tasks from overlapping.
 
+### Fixed
+- Cancel sleep expiry cleanup tasks on unload/reload.
+- Await post-cleanup coordinator refreshes so UI updates immediately.
+
 ## [0.4.3-alpha1] - 2025-12-25
 ### Added
 - Auto-exit stale sleep scenary before Home Assistant wake actions and expose sleep sessions

@@ -499,7 +499,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 refresh_needed = True
 
             if refresh_needed:
-                coordinator.async_request_refresh()
+                await coordinator.async_request_refresh()
 
     def _on_sleep_candidate() -> None:
         existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
@@ -508,6 +508,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         bucket["sleep_expiry_task"] = hass.async_create_task(
             _async_handle_sleep_expiry()
         )
+
+    def _cancel_sleep_expiry_task() -> None:
+        task: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
+        if task is not None and not task.done():
+            task.cancel()
 
     unsub_sleep = coordinator.async_add_listener(_on_sleep_candidate)
 
@@ -607,6 +612,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unsub = coordinator.async_add_listener(_on_coordinator_update)
     entry.async_on_unload(unsub_sleep)
     entry.async_on_unload(unsub)
+    entry.async_on_unload(_cancel_sleep_expiry_task)
 
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
     if _EXTRA_PLATFORMS:
@@ -652,6 +658,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_bucket = hass.data.get(DOMAIN)
     if domain_bucket is not None and entry.entry_id in domain_bucket:
         bucket = domain_bucket[entry.entry_id]
+        cancel_sleep_expiry = bucket.get("sleep_expiry_task")
+        if cancel_sleep_expiry is not None and not cancel_sleep_expiry.done():
+            cancel_sleep_expiry.cancel()
         for cancel in bucket.get("cancel_handles", []):
             try:
                 cancel()
