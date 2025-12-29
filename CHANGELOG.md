@@ -11,6 +11,7 @@
 ### Fixed
 - Cancel sleep expiry cleanup tasks on unload/reload.
 - Await post-cleanup coordinator refreshes so UI updates immediately.
+- Fix coordinator refresh scheduling (async_request_refresh is a callback, not awaited).
 
 ## [0.4.3-alpha1] - 2025-12-25
 ### Added

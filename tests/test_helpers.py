@@ -186,7 +186,7 @@ class DummyCoordinator:
     def __init__(self, api: DummyApi) -> None:
         self.api = api
 
-    async def async_request_refresh(self) -> None:
+    def async_request_refresh(self) -> None:
         return None
 
 
