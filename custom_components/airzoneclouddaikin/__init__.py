@@ -229,6 +229,10 @@ async def _async_update_data(
                 data[str(dev_id)] = dev
 
         now = dt_util.utcnow()
+        tracked_ids = set(sleep_tracking)
+        active_ids = set(data)
+        for stale_id in tracked_ids - active_ids:
+            sleep_tracking.pop(stale_id, None)
         for dev_id, dev in data.items():
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
 
