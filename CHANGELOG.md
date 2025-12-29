@@ -6,6 +6,7 @@
 ### Changed
 - Prevent concurrent sleep-expiry cleanup tasks from overlapping.
 - Prune stale sleep session tracking entries for removed devices.
+- Harden backend parsing for scenary/power edge cases.
 
 ### Fixed
 - Cancel sleep expiry cleanup tasks on unload/reload.

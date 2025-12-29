@@ -40,6 +40,7 @@ from .const import (
     PN_KEY_PREFIX,
     SCENARY_HOME,
     SCENARY_SLEEP,
+    SCENARY_VACANT,
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
 from .helpers import device_supports_heat_cool
@@ -114,6 +115,14 @@ def _backend_power_is_off(device: dict[str, Any]) -> bool:
     raw = device.get("power")
     if raw is None:
         return False
+    if isinstance(raw, bool):
+        return not raw
+    if isinstance(raw, str):
+        sval = raw.strip().lower()
+        if sval in {"off", "false", "0"}:
+            return True
+        if sval in {"on", "true", "1"}:
+            return False
     try:
         return int(str(raw).strip()) == 0
     except (TypeError, ValueError):  # noqa: BLE001
@@ -237,7 +246,8 @@ async def _async_update_data(
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
 
             tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
-            _update_sleep_tracking_for_device(tracking, raw_scenary)
+            if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
+                _update_sleep_tracking_for_device(tracking, raw_scenary)
 
             sleep_expired = False
             backend_power_off = False
