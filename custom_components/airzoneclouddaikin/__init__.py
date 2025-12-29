@@ -509,6 +509,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
         if existing is not None and not existing.done():
             return
+        data = coordinator.data or {}
+        if not data:
+            return
+        sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
+        has_candidate = False
+        for dev_id, dev in data.items():
+            tracking = sleep_tracking.get(dev_id)
+            if tracking is None or tracking.force_exit_requested:
+                continue
+            raw_scenary = str(dev.get("scenary") or "").strip().lower()
+            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_expired"):
+                has_candidate = True
+                break
+        if not has_candidate:
+            return
         bucket["sleep_expiry_task"] = hass.async_create_task(
             _async_handle_sleep_expiry()
         )
