@@ -443,64 +443,71 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     async def _async_handle_sleep_expiry() -> None:
-        data = coordinator.data or {}
-        sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
+        sleep_expiry_lock = bucket.setdefault("sleep_expiry_lock", asyncio.Lock())
+        async with sleep_expiry_lock:
+            data = coordinator.data or {}
+            sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
 
-        if not data:
-            return
+            if not data:
+                return
 
-        refresh_needed = False
-        for dev_id, dev in data.items():
-            tracking = sleep_tracking.get(dev_id)
-            if tracking is None or tracking.force_exit_requested:
-                continue
+            refresh_needed = False
+            for dev_id, dev in data.items():
+                tracking = sleep_tracking.get(dev_id)
+                if tracking is None or tracking.force_exit_requested:
+                    continue
 
-            raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
-                continue
+                raw_scenary = str(dev.get("scenary") or "").strip().lower()
+                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
+                    continue
 
-            if api is None:
-                _LOGGER.debug(
-                    "API handle missing; skipping sleep expiry cleanup for %s",
-                    dev_id,
-                )
-                continue
+                if api is None:
+                    _LOGGER.debug(
+                        "API handle missing; skipping sleep expiry cleanup for %s",
+                        dev_id,
+                    )
+                    continue
 
-            try:
-                await api.async_set_scenary(dev_id, SCENARY_HOME)
-            except asyncio.CancelledError:
-                raise
-            except ClientResponseError as cre:
-                _LOGGER.warning(
-                    "Failed to clean up expired sleep scenary on %s (HTTP %s): %s",
-                    dev_id,
-                    cre.status,
-                    cre,
-                )
-                continue
-            except TimeoutError:
-                _LOGGER.warning(
-                    "Failed to clean up expired sleep scenary on %s (timeout)",
-                    dev_id,
-                )
-                continue
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
-                    dev_id,
-                    err,
-                    exc_info=True,
-                )
-                continue
+                try:
+                    await api.async_set_scenary(dev_id, SCENARY_HOME)
+                except asyncio.CancelledError:
+                    raise
+                except ClientResponseError as cre:
+                    _LOGGER.warning(
+                        "Failed to clean up expired sleep scenary on %s (HTTP %s): %s",
+                        dev_id,
+                        cre.status,
+                        cre,
+                    )
+                    continue
+                except TimeoutError:
+                    _LOGGER.warning(
+                        "Failed to clean up expired sleep scenary on %s (timeout)",
+                        dev_id,
+                    )
+                    continue
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
+                        dev_id,
+                        err,
+                        exc_info=True,
+                    )
+                    continue
 
-            tracking.force_exit_requested = True
-            refresh_needed = True
+                tracking.force_exit_requested = True
+                refresh_needed = True
 
-        if refresh_needed:
-            coordinator.async_request_refresh()
+            if refresh_needed:
+                coordinator.async_request_refresh()
 
     def _on_sleep_candidate() -> None:
-        hass.async_create_task(_async_handle_sleep_expiry())
+        existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
+        if existing is not None and not existing.done():
+            return
+        bucket["sleep_expiry_task"] = hass.async_create_task(
+            _async_handle_sleep_expiry()
+        )
 
     unsub_sleep = coordinator.async_add_listener(_on_sleep_candidate)
 

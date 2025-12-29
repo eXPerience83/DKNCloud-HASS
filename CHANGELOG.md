@@ -3,6 +3,9 @@
 ### Added
 - Expose the optional sleep timeout auto-clean setting during initial setup (Config Flow).
 
+### Changed
+- Prevent concurrent sleep-expiry cleanup tasks from overlapping.
+
 ## [0.4.3-alpha1] - 2025-12-25
 ### Added
 - Auto-exit stale sleep scenary before Home Assistant wake actions and expose sleep sessions
