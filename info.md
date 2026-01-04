@@ -45,7 +45,7 @@
 - `GET /devices?format=json&installation_id=<installation_id>&user_email=...&user_token=...`
 - This is the most reliable way to poll state during tests and for integration “refresh”.
 
-> Note: `GET /devices/<id>` has been observed to be less stable in some environments (intermittent 5xx). Prefer the snapshot list endpoint when possible.
+> Note: In some environments, GET /devices/<id> has been observed to be less stable (intermittent 5xx). Prefer the snapshot list endpoint when possible.
 
 ### Updating device fields — `PUT /devices/<id>`
 
@@ -204,7 +204,7 @@ Practical guidance for the integration:
 - **Fan speed writes:**  
   - If `mode ∈ cold_modes` → write via **P3** and read `cold_speed` (when fan control is applicable).  
   - If `mode ∈ heat_modes` → write via **P4** and read `heat_speed` (when fan control is applicable).
-- **Applicability caveat:** even if a mode belongs to a routing set, the official UI may not expose **all** controls in that mode:
+- **Applicability caveat:** even if a mode belongs to a routing set, the official UI may not expose **fan or setpoint** controls in that mode:
   - **FAN_ONLY / VENTILATE (P2=3 or alias 8):** no setpoints; **fan control is exposed** (speed/auto depending on device support).
   - **DRY / DEHUMIDIFY (P2=5):** no setpoints; **fan control is typically not exposed** in the official UI.
 - To stay conservative, the integration should actively write fan speeds in modes where fan control is exposed and known to be effective (**COOL, HEAT, and FAN_ONLY/VENTILATE**), and avoid forcing fan writes in **DRY/DEHUMIDIFY**. For **HEAT_COOL**, only allow fan writes when explicitly enabled and validated for the installation.
@@ -267,9 +267,12 @@ This means integrations should be prepared for `vacant → occupied` writes in t
 - Field: `sleep_time` (minutes)
 - Canonical write uses **root-level** `PUT /devices/<id>`.
 
-**UI constraints vs backend contract**
+**UI constraints**
 - UI typically offers **30..120** minutes in steps of **10** (device UI constraint).
+
+**Contract note**
 - The backend can accept values outside those constraints (observed examples include 12, 35, 183).
+- Do not rely on out-of-range acceptance; if the backend accepts out-of-range in some environments, treat that as non-contractual.
 
 ### 6.3 Unoccupied limits (device-level)
 
@@ -305,7 +308,7 @@ Fields:
 ### 7.2 Setpoints (P7/P8) and ranges
 
 - **UI range:** 16.0..32.0 °C (commonly displayed in the official UI).
-- **Observed backend acceptance:** the backend may accept out-of-range values (observed examples include **15.0** and **33.0**) but the physical unit and/or local controller may clamp or reject them.
+- **Out-of-range note:** some environments may accept out-of-range writes via the API, but the physical unit and/or backend may clamp or reject them. Treat out-of-range acceptance as **non-contractual**.
 
 ### 7.3 Setpoint availability by mode
 
