@@ -188,10 +188,10 @@ This ordered list is useful as a stable, index-based mapping of the `mode` integ
 ```
 
 Notes:
-- Entries **6/7/8** are commonly observed as *backend/telemetry aliases* (see §4.3). Do not assume they are user-selectable.
+- Entries **6/7/8** are commonly observed as *backend/telemetry aliases* (see §4.4). Do not assume they are user-selectable.
 - `ventilate` appears twice (P2=3 and P2=8) because some installations report **8** as an alias for fan/ventilation.
 
-### 4.2 Mode classification (drives fan routing)
+### 4.3 Mode classification (drives fan routing)
 
 Some backend fields and writes are effectively split into “cold-side” vs “heat-side” fan channels:
 
@@ -204,12 +204,12 @@ Practical guidance for the integration:
 - **Fan speed writes:**  
   - If `mode ∈ cold_modes` → write via **P3** and read `cold_speed` (when fan control is applicable).  
   - If `mode ∈ heat_modes` → write via **P4** and read `heat_speed` (when fan control is applicable).
-- **Applicability caveat:** even if a mode belongs to a routing set, the official UI may not expose fan or setpoint controls in that mode:
-  - FAN_ONLY / VENTILATE (P2=3 or alias 8): no setpoints; fan control is typically not exposed.
-  - DRY / DEHUMIDIFY (P2=5): no setpoints; fan control is typically not exposed.
-- To stay conservative, the integration should only *actively write* fan speeds in modes where fan is clearly supported/exposed (COOL/HEAT, and optionally HEAT_COOL when explicitly enabled).
+- **Applicability caveat:** even if a mode belongs to a routing set, the official UI may not expose **all** controls in that mode:
+  - **FAN_ONLY / VENTILATE (P2=3 or alias 8):** no setpoints; **fan control is exposed** (speed/auto depending on device support).
+  - **DRY / DEHUMIDIFY (P2=5):** no setpoints; **fan control is typically not exposed** in the official UI.
+- To stay conservative, the integration should actively write fan speeds in modes where fan control is exposed and known to be effective (**COOL, HEAT, and FAN_ONLY/VENTILATE**), and avoid forcing fan writes in **DRY/DEHUMIDIFY**. For **HEAT_COOL**, only allow fan writes when explicitly enabled and validated for the installation.
 
-### 4.3 Observed “alias” / stabilization behavior (important)
+### 4.4 Observed “alias” / stabilization behavior (important)
 
 - **P2=3 vs P2=8:** In some installations, after writing **P2=3** the backend can **temporarily report `mode=8`**, then later stabilize back to `mode=3`.  
   **Guidance:** treat **8 as FAN_ONLY-equivalent for display/state**, and avoid writing P2=8 in normal operation.
@@ -218,7 +218,7 @@ Practical guidance for the integration:
 
 - **P2=6/7:** Some devices can report 6/7 in telemetry; these are best treated as **HEAT_COOL-equivalent for display/state** unless explicitly validated for control.
 
-### 4.4 Exposure policy (Home Assistant)
+### 4.5 Exposure policy (Home Assistant)
 
 Conservative default policy:
 - Expose only confirmed modes: **COOL, HEAT, FAN_ONLY, DRY**.
@@ -268,7 +268,7 @@ This means integrations should be prepared for `vacant → occupied` writes in t
 - Canonical write uses **root-level** `PUT /devices/<id>`.
 
 **UI constraints vs backend contract**
-- UI typically offers **30..180** minutes in steps of **10** (device UI constraint).
+- UI typically offers **30..120** minutes in steps of **10** (device UI constraint).
 - The backend can accept values outside those constraints (observed examples include 12, 35, 183).
 
 ### 6.3 Unoccupied limits (device-level)
