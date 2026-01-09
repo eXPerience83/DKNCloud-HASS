@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -31,11 +32,16 @@ from homeassistant.util import dt as dt_util
 from .airzone_api import AirzoneAPI
 from .const import (
     CONF_ENABLE_HEAT_COOL,
+    CONF_SLEEP_TIMEOUT_ENABLED,
     DOMAIN,
     INTERNAL_STALE_AFTER_SEC,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
     PN_KEY_PREFIX,
+    SCENARY_HOME,
+    SCENARY_SLEEP,
+    SCENARY_VACANT,
+    SLEEP_TIMEOUT_GRACE_MINUTES,
 )
 from .helpers import device_supports_heat_cool
 
@@ -59,6 +65,68 @@ _DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
         "message": "{name} reconnected at {ts_local}.",
     },
 }
+
+
+@dataclass(slots=True)
+class SleepTracking:
+    """Track sleep scenary sessions per device."""
+
+    last_scenary: str | None = None
+    sleep_started_at_utc: datetime | None = None
+    force_exit_requested: bool = False
+
+
+def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
+    """Update sleep tracking state for the provided scenary."""
+
+    now = dt_util.utcnow()
+
+    if scenary == SCENARY_SLEEP:
+        if (
+            tracking.sleep_started_at_utc is None
+            or tracking.last_scenary != SCENARY_SLEEP
+        ):
+            tracking.sleep_started_at_utc = now
+            tracking.force_exit_requested = False
+    else:
+        tracking.sleep_started_at_utc = None
+
+    tracking.last_scenary = scenary
+
+
+def _parse_sleep_time_minutes(device: dict[str, Any]) -> int | None:
+    """Parse sleep_time minutes from a device snapshot."""
+
+    raw = device.get("sleep_time")
+    if raw is None:
+        return None
+
+    try:
+        minutes = int(raw)
+    except (TypeError, ValueError):  # noqa: BLE001
+        return None
+
+    return minutes if minutes >= 0 else None
+
+
+def _backend_power_is_off(device: dict[str, Any]) -> bool:
+    """Return True if backend power (P1) indicates the unit is OFF."""
+
+    raw = device.get("power")
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return not raw
+    if isinstance(raw, str):
+        sval = raw.strip().lower()
+        if sval in {"off", "false", "0"}:
+            return True
+        if sval in {"on", "true", "1"}:
+            return False
+    try:
+        return int(str(raw).strip()) == 0
+    except (TypeError, ValueError):  # noqa: BLE001
+        return False
 
 
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -135,6 +203,14 @@ async def _async_update_data(
     - On 401, open a reauth flow (once) and raise UpdateFailed (entities unavailable).
     """
     try:
+        domain_bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+        sleep_tracking: dict[str, SleepTracking] = domain_bucket.setdefault(
+            "sleep_tracking", {}
+        )
+        sleep_timeout_enabled = bool(
+            entry.options.get(CONF_SLEEP_TIMEOUT_ENABLED, False)
+        )
+
         data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
 
@@ -160,6 +236,41 @@ async def _async_update_data(
                     else:
                         continue
                 data[str(dev_id)] = dev
+
+        now = dt_util.utcnow()
+        tracked_ids = set(sleep_tracking)
+        active_ids = set(data)
+        for stale_id in tracked_ids - active_ids:
+            sleep_tracking.pop(stale_id, None)
+        for dev_id, dev in data.items():
+            raw_scenary = str(dev.get("scenary") or "").strip().lower()
+
+            tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
+            if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
+                _update_sleep_tracking_for_device(tracking, raw_scenary)
+
+            sleep_expired = False
+            backend_power_off = False
+            sleep_time_minutes = _parse_sleep_time_minutes(dev)
+
+            if (
+                sleep_timeout_enabled
+                and tracking.sleep_started_at_utc is not None
+                and sleep_time_minutes is not None
+                and sleep_time_minutes > 0
+            ):
+                timeout_at = tracking.sleep_started_at_utc + timedelta(
+                    minutes=sleep_time_minutes + SLEEP_TIMEOUT_GRACE_MINUTES
+                )
+                backend_power_off = _backend_power_is_off(dev)
+                sleep_expired = now >= timeout_at and backend_power_off
+
+            dev["sleep_expired"] = sleep_expired
+
+            effective_scenary = raw_scenary
+            if sleep_timeout_enabled and raw_scenary == SCENARY_SLEEP and sleep_expired:
+                effective_scenary = SCENARY_HOME
+            dev["effective_scenary"] = effective_scenary
 
         return data
 
@@ -280,6 +391,8 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up DKN Cloud for HASS from a config entry."""
     hass.data.setdefault(DOMAIN, {})
+    bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    bucket.setdefault("sleep_tracking", {})
     cfg = entry.data
     opts = entry.options
 
@@ -342,6 +455,95 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.warning(
             "HEAT_COOL opt-in ignored: no devices expose bitmask index 3 (P2=4)."
         )
+
+    async def _async_handle_sleep_expiry() -> None:
+        sleep_expiry_lock = bucket.setdefault("sleep_expiry_lock", asyncio.Lock())
+        async with sleep_expiry_lock:
+            data = coordinator.data or {}
+            sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
+
+            if not data:
+                return
+
+            refresh_needed = False
+            for dev_id, dev in data.items():
+                tracking = sleep_tracking.get(dev_id)
+                if tracking is None or tracking.force_exit_requested:
+                    continue
+
+                raw_scenary = str(dev.get("scenary") or "").strip().lower()
+                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
+                    continue
+
+                if api is None:
+                    _LOGGER.debug(
+                        "API handle missing; skipping sleep expiry cleanup for %s",
+                        dev_id,
+                    )
+                    continue
+
+                try:
+                    await api.async_set_scenary(dev_id, SCENARY_HOME)
+                except asyncio.CancelledError:
+                    raise
+                except ClientResponseError as cre:
+                    _LOGGER.warning(
+                        "Failed to clean up expired sleep scenary on %s (HTTP %s): %s",
+                        dev_id,
+                        cre.status,
+                        cre,
+                    )
+                    continue
+                except TimeoutError:
+                    _LOGGER.warning(
+                        "Failed to clean up expired sleep scenary on %s (timeout)",
+                        dev_id,
+                    )
+                    continue
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning(
+                        "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
+                        dev_id,
+                        err,
+                        exc_info=True,
+                    )
+                    continue
+
+                tracking.force_exit_requested = True
+                refresh_needed = True
+
+            if refresh_needed:
+                coordinator.async_request_refresh()
+
+    def _on_sleep_candidate() -> None:
+        existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
+        if existing is not None and not existing.done():
+            return
+        data = coordinator.data or {}
+        if not data:
+            return
+        sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
+        has_candidate = False
+        for dev_id, dev in data.items():
+            tracking = sleep_tracking.get(dev_id)
+            if tracking is None or tracking.force_exit_requested:
+                continue
+            raw_scenary = str(dev.get("scenary") or "").strip().lower()
+            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_expired"):
+                has_candidate = True
+                break
+        if not has_candidate:
+            return
+        bucket["sleep_expiry_task"] = hass.async_create_task(
+            _async_handle_sleep_expiry()
+        )
+
+    def _cancel_sleep_expiry_task() -> None:
+        task: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
+        if task is not None and not task.done():
+            task.cancel()
+
+    unsub_sleep = coordinator.async_add_listener(_on_sleep_candidate)
 
     # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
@@ -437,7 +639,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             st["last"] = online
 
     unsub = coordinator.async_add_listener(_on_coordinator_update)
+    entry.async_on_unload(unsub_sleep)
     entry.async_on_unload(unsub)
+    entry.async_on_unload(_cancel_sleep_expiry_task)
 
     await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
     if _EXTRA_PLATFORMS:
@@ -483,6 +687,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_bucket = hass.data.get(DOMAIN)
     if domain_bucket is not None and entry.entry_id in domain_bucket:
         bucket = domain_bucket[entry.entry_id]
+        cancel_sleep_expiry = bucket.get("sleep_expiry_task")
+        if cancel_sleep_expiry is not None and not cancel_sleep_expiry.done():
+            cancel_sleep_expiry.cancel()
         for cancel in bucket.get("cancel_handles", []):
             try:
                 cancel()

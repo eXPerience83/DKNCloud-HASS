@@ -357,3 +357,8 @@ class AirzoneAPI:
         return await self._authed_request_with_retries(
             "PUT", path, params=params, json=payload
         )
+
+    async def async_set_scenary(self, device_id: str, scenary: str) -> Any:
+        """Set device scenary using the canonical device fields endpoint."""
+
+        return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})

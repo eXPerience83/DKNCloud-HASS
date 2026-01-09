@@ -11,6 +11,11 @@
 - All code comments, README entries, and changelog notes **must be written in English**.
 - Keep imports tidy—remove unused symbols and respect the Ruff isort grouping so the Home Assistant package stays first-party under `custom_components/airzoneclouddaikin`.
 
+## Backend Contract (`info.md`)
+- The backend contract and observed behavior that this integration relies on is documented in `info.md`.
+- Treat `info.md` as the single source of truth for request shapes, accepted value ranges, mode mappings/aliases, and sleep/scene semantics.
+- Any code change that affects API I/O or entity behavior must be reflected in `info.md` (and in user-facing docs when applicable).
+
 ## Changelog / `CHANGELOG.md`
 - This section is the single source of truth for the changelog style. Ignore external style guides when they conflict with these rules.
 - Do **not** add any new boilerplate, intro text or `## [Unreleased]` section automatically. If such sections already exist, leave them and only edit their content when explicitly requested.

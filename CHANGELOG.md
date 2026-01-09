@@ -1,4 +1,48 @@
 # Changelog
+## [0.4.3-alpha2] - 2025-12-28
+### Added
+- Expose the optional sleep timeout auto-clean setting during initial setup (Config Flow).
+
+### Changed
+- Prevent concurrent sleep-expiry cleanup tasks from overlapping.
+- Prune stale sleep session tracking entries for removed devices.
+- Harden backend parsing for scenary/power edge cases.
+
+### Fixed
+- Cancel sleep expiry cleanup tasks on unload/reload.
+- Await post-cleanup coordinator refreshes so UI updates immediately.
+- Fix coordinator refresh scheduling (async_request_refresh is a callback, not awaited).
+
+## [0.4.3-alpha1] - 2025-12-25
+### Added
+- Auto-exit stale sleep scenary before Home Assistant wake actions and expose sleep sessions
+  as Home after the configured timeout when the new opt-in option is enabled.
+- Backend cleanup attempt for expired sleep sessions to clear the scenary label once per
+  session.
+
+### Changed
+- Documented sleep scenary semantics and timeout cleanup behavior alongside the new release
+  version.
+- Refined expired sleep scenary cleanup logging to distinguish HTTP errors, timeouts, and
+  unexpected failures.
+- Centralized auto-exit sleep handling across climate and power switch entities.
+- Improved warning logs for unexpected errors by including full tracebacks (exc_info=True).
+- Added unit tests covering the sleep auto-exit helper to prevent regressions.
+- Apply sleep timeout expiry only after backend power reports the unit is off.
+- Replace Ellipsis placeholders in test stubs with pass for consistency.
+- Improve debug logging when auto-exit sleep is skipped due to missing API handle.
+- Deduplicate coordinator refresh requests after expired-sleep cleanup.
+- Added CONTRIBUTING notes clarifying Python 3.14 tooling requirements and the Home
+  Assistant runtime baseline (Python >= 3.13.2).
+- Improved sleep session tracking to avoid resetting the cleanup guard flag outside of new
+  sleep sessions.
+
+### Fixed
+- Persist the Sleep timeout handling option from the options flow so the opt-in feature is stored
+  on the config entry.
+- Retry expired-sleep backend cleanup after transient failures by marking the session as cleaned
+  only when the scenary update succeeds.
+
 ## [0.4.2] - 2025-11-24
 ### Added
 - Added French, Portuguese, Italian, and German locale files covering configuration flows,
