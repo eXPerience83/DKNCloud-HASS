@@ -8,7 +8,7 @@ import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -18,50 +18,55 @@ if str(ROOT) not in sys.path:
 
 UTC = getattr(datetime, "UTC", timezone.utc)  # noqa: UP017
 
-aiohttp_module = sys.modules.setdefault("aiohttp", types.ModuleType("aiohttp"))
+try:
+    from aiohttp import (  # type: ignore[import-untyped]
+        ClientConnectorError,
+        ClientResponseError,
+        ClientSession,
+        ClientTimeout,
+    )
+except ModuleNotFoundError:  # pragma: no cover - handled by CI deps
+    aiohttp_module = types.ModuleType("aiohttp")
+    sys.modules["aiohttp"] = aiohttp_module
 
+    class ClientResponseError(Exception):
+        """Minimal aiohttp ClientResponseError placeholder."""
 
-class ClientResponseError(Exception):
-    """Minimal aiohttp ClientResponseError placeholder."""
+    class ClientConnectorError(Exception):
+        """Minimal aiohttp ClientConnectorError placeholder."""
 
+    class ClientSession:  # pragma: no cover - placeholder
+        pass
 
-class ClientConnectorError(Exception):
-    """Minimal aiohttp ClientConnectorError placeholder."""
+    class ClientTimeout:
+        """Minimal aiohttp ClientTimeout placeholder."""
 
+        def __init__(self, *_: Any, **__: Any) -> None:
+            return None
 
-class ClientSession:  # pragma: no cover - placeholder
-    pass
-
-
-class ClientTimeout:
-    """Minimal aiohttp ClientTimeout placeholder."""
-
-    def __init__(self, *_: Any, **__: Any) -> None:
-        return None
-
-
-aiohttp_module.ClientResponseError = ClientResponseError
-aiohttp_module.ClientConnectorError = ClientConnectorError
-aiohttp_module.ClientSession = ClientSession
-aiohttp_module.ClientTimeout = ClientTimeout
+    aiohttp_module.ClientResponseError = ClientResponseError
+    aiohttp_module.ClientConnectorError = ClientConnectorError
+    aiohttp_module.ClientSession = ClientSession
+    aiohttp_module.ClientTimeout = ClientTimeout
 
 # ---------------------------------------------------------------------------
 # Minimal Home Assistant shims so the package import works without HA
 # ---------------------------------------------------------------------------
-ha_module = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
+ha_module = types.ModuleType("homeassistant")
+sys.modules["homeassistant"] = ha_module
 
-components_module = sys.modules.setdefault(
-    "homeassistant.components", types.ModuleType("homeassistant.components")
-)
-persistent_notification_module = sys.modules.setdefault(
-    "homeassistant.components.persistent_notification",
-    types.ModuleType("homeassistant.components.persistent_notification"),
+components_module = types.ModuleType("homeassistant.components")
+persistent_notification_module = types.ModuleType(
+    "homeassistant.components.persistent_notification"
 )
 components_module.persistent_notification = persistent_notification_module
-
-config_entries_module = sys.modules.setdefault(
-    "homeassistant.config_entries", types.ModuleType("homeassistant.config_entries")
+sys.modules["homeassistant.components"] = components_module
+sys.modules["homeassistant.components.persistent_notification"] = (
+    persistent_notification_module
 )
+ha_module.components = components_module
+
+config_entries_module = types.ModuleType("homeassistant.config_entries")
 config_entries_module.SOURCE_REAUTH = "reauth"
 
 
@@ -82,17 +87,15 @@ class ConfigEntry:  # pragma: no cover - used for import wiring
 
 
 config_entries_module.ConfigEntry = ConfigEntry
+sys.modules["homeassistant.config_entries"] = config_entries_module
 ha_module.config_entries = config_entries_module
 
-const_module = sys.modules.setdefault(
-    "homeassistant.const", types.ModuleType("homeassistant.const")
-)
+const_module = types.ModuleType("homeassistant.const")
 const_module.CONF_USERNAME = "username"
+sys.modules["homeassistant.const"] = const_module
 ha_module.const = const_module
 
-core_module = sys.modules.setdefault(
-    "homeassistant.core", types.ModuleType("homeassistant.core")
-)
+core_module = types.ModuleType("homeassistant.core")
 
 
 class HomeAssistant:  # pragma: no cover - placeholder
@@ -100,11 +103,10 @@ class HomeAssistant:  # pragma: no cover - placeholder
 
 
 core_module.HomeAssistant = HomeAssistant
+sys.modules["homeassistant.core"] = core_module
 ha_module.core = core_module
 
-exceptions_module = sys.modules.setdefault(
-    "homeassistant.exceptions", types.ModuleType("homeassistant.exceptions")
-)
+exceptions_module = types.ModuleType("homeassistant.exceptions")
 
 
 class HomeAssistantError(Exception):
@@ -117,16 +119,13 @@ class ConfigEntryAuthFailed(HomeAssistantError):
 
 exceptions_module.HomeAssistantError = HomeAssistantError
 exceptions_module.ConfigEntryAuthFailed = ConfigEntryAuthFailed
+sys.modules["homeassistant.exceptions"] = exceptions_module
 ha_module.exceptions = exceptions_module
 
-helpers_module = sys.modules.setdefault(
-    "homeassistant.helpers", types.ModuleType("homeassistant.helpers")
-)
+helpers_module = types.ModuleType("homeassistant.helpers")
+sys.modules["homeassistant.helpers"] = helpers_module
 
-aiohttp_client_module = sys.modules.setdefault(
-    "homeassistant.helpers.aiohttp_client",
-    types.ModuleType("homeassistant.helpers.aiohttp_client"),
-)
+aiohttp_client_module = types.ModuleType("homeassistant.helpers.aiohttp_client")
 
 
 def async_get_clientsession(*_: Any, **__: Any) -> None:
@@ -135,10 +134,9 @@ def async_get_clientsession(*_: Any, **__: Any) -> None:
 
 aiohttp_client_module.async_get_clientsession = async_get_clientsession
 helpers_module.aiohttp_client = aiohttp_client_module
+sys.modules["homeassistant.helpers.aiohttp_client"] = aiohttp_client_module
 
-event_module = sys.modules.setdefault(
-    "homeassistant.helpers.event", types.ModuleType("homeassistant.helpers.event")
-)
+event_module = types.ModuleType("homeassistant.helpers.event")
 
 
 async def async_call_later(*_: Any, **__: Any) -> None:
@@ -147,11 +145,9 @@ async def async_call_later(*_: Any, **__: Any) -> None:
 
 event_module.async_call_later = async_call_later
 helpers_module.event = event_module
+sys.modules["homeassistant.helpers.event"] = event_module
 
-translation_module = sys.modules.setdefault(
-    "homeassistant.helpers.translation",
-    types.ModuleType("homeassistant.helpers.translation"),
-)
+translation_module = types.ModuleType("homeassistant.helpers.translation")
 
 
 async def async_get_translations(*_: Any, **__: Any) -> dict[str, str]:
@@ -160,11 +156,9 @@ async def async_get_translations(*_: Any, **__: Any) -> dict[str, str]:
 
 translation_module.async_get_translations = async_get_translations
 helpers_module.translation = translation_module
+sys.modules["homeassistant.helpers.translation"] = translation_module
 
-update_coordinator_module = sys.modules.setdefault(
-    "homeassistant.helpers.update_coordinator",
-    types.ModuleType("homeassistant.helpers.update_coordinator"),
-)
+update_coordinator_module = types.ModuleType("homeassistant.helpers.update_coordinator")
 
 
 class UpdateFailed(Exception):
@@ -205,16 +199,14 @@ class DataUpdateCoordinator:
 update_coordinator_module.UpdateFailed = UpdateFailed
 update_coordinator_module.DataUpdateCoordinator = DataUpdateCoordinator
 helpers_module.update_coordinator = update_coordinator_module
+sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator_module
 
-util_module = sys.modules.setdefault(
-    "homeassistant.util", types.ModuleType("homeassistant.util")
-)
-dt_module = sys.modules.setdefault(
-    "homeassistant.util.dt", types.ModuleType("homeassistant.util.dt")
-)
+util_module = types.ModuleType("homeassistant.util")
+dt_module = types.ModuleType("homeassistant.util.dt")
 util_module.dt = dt_module
 helpers_module.util = util_module
-sys.modules.setdefault("homeassistant.util.dt", dt_module)
+sys.modules["homeassistant.util"] = util_module
+sys.modules["homeassistant.util.dt"] = dt_module
 
 
 def utcnow() -> datetime:
@@ -278,18 +270,6 @@ class DummyHass:
         self.data: dict[str, Any] = {}
         self.config = types.SimpleNamespace(language="en")
         self.config_entries = DummyConfigEntries()
-        self._tasks: list[asyncio.Task[Any]] = []
-
-    def async_create_task(self, coro: Any) -> asyncio.Task[Any]:
-        task = asyncio.create_task(coro)
-        self._tasks.append(task)
-        return task
-
-
-async def _drain_tasks(hass: DummyHass) -> None:
-    if hass._tasks:
-        await asyncio.gather(*hass._tasks)
-        hass._tasks.clear()
 
 
 def _make_entry() -> ConfigEntry:
@@ -342,8 +322,8 @@ def test_offline_notification_after_debounce(
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
         listener = coordinator._listeners[-1]
 
-        persistent_notification_module.async_create = AsyncMock()
-        persistent_notification_module.async_dismiss = AsyncMock()
+        persistent_notification_module.async_create = Mock()
+        persistent_notification_module.async_dismiss = Mock()
 
         base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
@@ -353,13 +333,11 @@ def test_offline_notification_after_debounce(
 
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
         listener()
-        await _drain_tasks(hass)
         persistent_notification_module.async_create.assert_not_called()
 
         later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
         listener()
-        await _drain_tasks(hass)
 
         expected_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-1"
         persistent_notification_module.async_create.assert_called_once()
@@ -388,8 +366,8 @@ def test_online_notification_dismisses_offline_and_schedules_banner(
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
         listener = coordinator._listeners[-1]
 
-        persistent_notification_module.async_create = AsyncMock()
-        persistent_notification_module.async_dismiss = AsyncMock()
+        persistent_notification_module.async_create = Mock()
+        persistent_notification_module.async_dismiss = Mock()
 
         scheduled: list[tuple[float, Any]] = []
 
@@ -414,7 +392,6 @@ def test_online_notification_dismisses_offline_and_schedules_banner(
         later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
         listener()
-        await _drain_tasks(hass)
 
         online_time = later + timedelta(seconds=10)
         coordinator.data = {
@@ -422,7 +399,6 @@ def test_online_notification_dismisses_offline_and_schedules_banner(
         }
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: online_time)
         listener()
-        await _drain_tasks(hass)
 
         offline_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-2"
         online_nid = f"{offline_nid}:online"
@@ -445,7 +421,6 @@ def test_online_notification_dismisses_offline_and_schedules_banner(
         assert scheduled[0][0] == ONLINE_BANNER_TTL_SEC
 
         scheduled[0][1](None)
-        await _drain_tasks(hass)
         persistent_notification_module.async_dismiss.assert_any_call(hass, online_nid)
 
     asyncio.run(_run())
@@ -466,8 +441,8 @@ def test_listener_never_raises_on_unknown_placeholders(
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
         listener = coordinator._listeners[-1]
 
-        persistent_notification_module.async_create = AsyncMock()
-        persistent_notification_module.async_dismiss = AsyncMock()
+        persistent_notification_module.async_create = Mock()
+        persistent_notification_module.async_dismiss = Mock()
 
         hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
             "offline": {
@@ -491,6 +466,51 @@ def test_listener_never_raises_on_unknown_placeholders(
         later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
         listener()
-        await _drain_tasks(hass)
+
+    asyncio.run(_run())
+
+
+def test_offline_notification_includes_datetime_connection_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _run() -> None:
+        hass = DummyHass()
+        entry = _make_entry()
+
+        monkeypatch.setattr(
+            integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+        )
+
+        await integration.async_setup_entry(hass, entry)
+        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+        listener = coordinator._listeners[-1]
+
+        persistent_notification_module.async_create = Mock()
+        persistent_notification_module.async_dismiss = Mock()
+
+        hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
+            "offline": {
+                "title": "{name} offline",
+                "message": "Last {last_iso} ({mins} minutes ago).",
+            }
+        }
+
+        base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+        old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 300)
+        coordinator.data = {"dev-4": {"name": "Unit 4", "connection_date": old}}
+
+        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
+        listener()
+
+        later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
+        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
+        listener()
+
+        assert persistent_notification_module.async_create.called
+        message = persistent_notification_module.async_create.call_args.kwargs[
+            "message"
+        ]
+        assert old.isoformat() in message
+        assert "minutes ago" in message
 
     asyncio.run(_run())

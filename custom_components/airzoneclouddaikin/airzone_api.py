@@ -343,7 +343,7 @@ class AirzoneAPI:
                     translation_domain=DOMAIN,
                     translation_key="wserver_not_connected",
                 ) from None
-            raise
+            raise HomeAssistantError(f"DKN event failed (HTTP {cre.status})") from None
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
         """PUT /devices/{id} with provided payload (retries for 429/5xx).
