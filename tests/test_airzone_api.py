@@ -29,6 +29,18 @@ if str(ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 ha_module = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
 
+components_module = types.ModuleType("homeassistant.components")
+persistent_notification_module = types.ModuleType(
+    "homeassistant.components.persistent_notification"
+)
+components_module.persistent_notification = persistent_notification_module
+sys.modules.setdefault("homeassistant.components", components_module)
+sys.modules.setdefault(
+    "homeassistant.components.persistent_notification",
+    persistent_notification_module,
+)
+ha_module.components = components_module
+
 exceptions_module = types.ModuleType("homeassistant.exceptions")
 
 
