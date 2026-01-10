@@ -593,11 +593,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ):
                         nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
                         ts_local = dt_util.as_local(now).strftime("%H:%M")
-                        last_iso = str(dev.get("connection_date") or "—")
+                        connection_date = dev.get("connection_date")
+                        last_iso = str(connection_date or "—")
                         dt_last = (
-                            dt_util.parse_datetime(
-                                str(dev.get("connection_date") or "")
-                            )
+                            dt_util.parse_datetime(str(connection_date or ""))
                             or now
                         )
                         mins = int(
