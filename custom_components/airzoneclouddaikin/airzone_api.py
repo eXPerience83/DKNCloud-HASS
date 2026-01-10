@@ -36,7 +36,7 @@ from aiohttp import (
     ClientSession,
     ClientTimeout,
 )
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 
 from .const import (
     API_DEVICES,
@@ -338,6 +338,8 @@ class AirzoneAPI:
                 extra_headers=HEADERS_EVENTS,
             )
         except ClientResponseError as cre:
+            if cre.status == 401:
+                raise ConfigEntryAuthFailed("Authentication failed") from None
             if cre.status == 422:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
