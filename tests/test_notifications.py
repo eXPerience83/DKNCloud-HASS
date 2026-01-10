@@ -414,7 +414,19 @@ def test_online_notification_dismisses_offline_and_schedules_banner(
         online_nid = f"{offline_nid}:online"
 
         persistent_notification_module.async_dismiss.assert_any_call(hass, offline_nid)
-        assert persistent_notification_module.async_create.call_count >= 2
+        assert persistent_notification_module.async_create.call_count == 2
+        persistent_notification_module.async_create.assert_any_call(
+            hass,
+            message=pytest.ANY,
+            title=pytest.ANY,
+            notification_id=offline_nid,
+        )
+        persistent_notification_module.async_create.assert_any_call(
+            hass,
+            message=pytest.ANY,
+            title=pytest.ANY,
+            notification_id=online_nid,
+        )
         assert scheduled
         assert scheduled[0][0] == ONLINE_BANNER_TTL_SEC
 
