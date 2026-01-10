@@ -342,7 +342,7 @@ class AirzoneAPI:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
                     translation_key="wserver_not_connected",
-                ) from cre
+                ) from None
             raise
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
