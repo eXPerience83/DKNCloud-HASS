@@ -8,13 +8,17 @@ import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+for key in list(sys.modules):
+    if key.startswith("custom_components.airzoneclouddaikin"):
+        sys.modules.pop(key, None)
 
 UTC = getattr(datetime, "UTC", timezone.utc)  # noqa: UP017
 
@@ -322,8 +326,8 @@ def test_offline_notification_after_debounce(
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
         listener = coordinator._listeners[-1]
 
-        persistent_notification_module.async_create = Mock()
-        persistent_notification_module.async_dismiss = Mock()
+        integration.persistent_notification.async_create = Mock()
+        integration.persistent_notification.async_dismiss = Mock()
 
         base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
         old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
@@ -333,16 +337,16 @@ def test_offline_notification_after_debounce(
 
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
         listener()
-        persistent_notification_module.async_create.assert_not_called()
+        integration.persistent_notification.async_create.assert_not_called()
 
         later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
         listener()
 
         expected_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-1"
-        persistent_notification_module.async_create.assert_called_once()
+        integration.persistent_notification.async_create.assert_called_once()
         assert (
-            persistent_notification_module.async_create.call_args.kwargs[
+            integration.persistent_notification.async_create.call_args.kwargs[
                 "notification_id"
             ]
             == expected_nid
@@ -366,8 +370,8 @@ def test_online_notification_dismisses_offline_and_schedules_banner(
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
         listener = coordinator._listeners[-1]
 
-        persistent_notification_module.async_create = Mock()
-        persistent_notification_module.async_dismiss = Mock()
+        integration.persistent_notification.async_create = Mock()
+        integration.persistent_notification.async_dismiss = Mock()
 
         scheduled: list[tuple[float, Any]] = []
 
@@ -403,25 +407,29 @@ def test_online_notification_dismisses_offline_and_schedules_banner(
         offline_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-2"
         online_nid = f"{offline_nid}:online"
 
-        persistent_notification_module.async_dismiss.assert_any_call(hass, offline_nid)
-        assert persistent_notification_module.async_create.call_count == 2
-        persistent_notification_module.async_create.assert_any_call(
+        integration.persistent_notification.async_dismiss.assert_any_call(
+            hass, offline_nid
+        )
+        assert integration.persistent_notification.async_create.call_count == 2
+        integration.persistent_notification.async_create.assert_any_call(
             hass,
-            message=pytest.ANY,
-            title=pytest.ANY,
+            message=ANY,
+            title=ANY,
             notification_id=offline_nid,
         )
-        persistent_notification_module.async_create.assert_any_call(
+        integration.persistent_notification.async_create.assert_any_call(
             hass,
-            message=pytest.ANY,
-            title=pytest.ANY,
+            message=ANY,
+            title=ANY,
             notification_id=online_nid,
         )
         assert scheduled
         assert scheduled[0][0] == ONLINE_BANNER_TTL_SEC
 
         scheduled[0][1](None)
-        persistent_notification_module.async_dismiss.assert_any_call(hass, online_nid)
+        integration.persistent_notification.async_dismiss.assert_any_call(
+            hass, online_nid
+        )
 
     asyncio.run(_run())
 
@@ -441,8 +449,8 @@ def test_listener_never_raises_on_unknown_placeholders(
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
         listener = coordinator._listeners[-1]
 
-        persistent_notification_module.async_create = Mock()
-        persistent_notification_module.async_dismiss = Mock()
+        integration.persistent_notification.async_create = Mock()
+        integration.persistent_notification.async_dismiss = Mock()
 
         hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
             "offline": {
@@ -485,8 +493,8 @@ def test_offline_notification_includes_datetime_connection_date(
         coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
         listener = coordinator._listeners[-1]
 
-        persistent_notification_module.async_create = Mock()
-        persistent_notification_module.async_dismiss = Mock()
+        integration.persistent_notification.async_create = Mock()
+        integration.persistent_notification.async_dismiss = Mock()
 
         hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
             "offline": {
@@ -506,8 +514,8 @@ def test_offline_notification_includes_datetime_connection_date(
         monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
         listener()
 
-        assert persistent_notification_module.async_create.called
-        message = persistent_notification_module.async_create.call_args.kwargs[
+        assert integration.persistent_notification.async_create.called
+        message = integration.persistent_notification.async_create.call_args.kwargs[
             "message"
         ]
         assert old.isoformat() in message
