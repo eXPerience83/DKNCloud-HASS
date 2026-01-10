@@ -291,7 +291,9 @@ async def _async_update_data(
                     )
                 )
             raise UpdateFailed("Authentication required (401)") from None
-        raise UpdateFailed(f"Failed to update Airzone data: HTTP {cre.status}") from None
+        raise UpdateFailed(
+            f"Failed to update Airzone data: HTTP {cre.status}"
+        ) from None
     except Exception as err:  # noqa: BLE001
         raise UpdateFailed(
             f"Failed to update Airzone data: {type(err).__name__}"
@@ -595,8 +597,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         connection_date = dev.get("connection_date")
                         last_iso = str(connection_date or "—")
                         dt_last = (
-                            dt_util.parse_datetime(str(connection_date or ""))
-                            or now
+                            dt_util.parse_datetime(str(connection_date or "")) or now
                         )
                         mins = int(
                             max(
