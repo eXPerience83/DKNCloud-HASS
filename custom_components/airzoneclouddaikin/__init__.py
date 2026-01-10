@@ -290,8 +290,8 @@ async def _async_update_data(
                         data=dict(entry.data),
                     )
                 )
-            raise UpdateFailed("Authentication required (401)") from cre
-        raise UpdateFailed(f"Failed to update Airzone data: HTTP {cre.status}") from cre
+            raise UpdateFailed("Authentication required (401)") from None
+        raise UpdateFailed(f"Failed to update Airzone data: HTTP {cre.status}") from None
     except Exception as err:  # noqa: BLE001
         raise UpdateFailed(
             f"Failed to update Airzone data: {type(err).__name__}"
@@ -496,10 +496,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     raise
                 except ClientResponseError as cre:
                     _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (HTTP %s): %s",
+                        "Failed to clean up expired sleep scenary on %s (HTTP %s).",
                         dev_id,
                         cre.status,
-                        cre,
                     )
                     continue
                 except TimeoutError:
