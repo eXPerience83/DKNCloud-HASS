@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from aiohttp import ClientResponseError
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -277,6 +278,7 @@ async def _async_update_data(
     except asyncio.CancelledError:
         raise
     except ClientResponseError as cre:
+        status = cre.status
         if cre.status == 401:
             bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
             if not bucket.get("reauth_requested"):
@@ -289,8 +291,8 @@ async def _async_update_data(
                         data=dict(entry.data),
                     )
                 )
-            raise UpdateFailed("Authentication required (401)") from cre
-        raise UpdateFailed(f"Failed to update Airzone data: HTTP {cre.status}") from cre
+            raise UpdateFailed("Authentication required (401)") from None
+        raise UpdateFailed(f"Failed to update Airzone data: HTTP {status}") from None
     except Exception as err:  # noqa: BLE001
         raise UpdateFailed(
             f"Failed to update Airzone data: {type(err).__name__}"
@@ -345,6 +347,26 @@ async def _async_prepare_notify_strings(
     return result
 
 
+class _SafeMissing:
+    """Placeholder for missing values that formats safely."""
+
+    def __repr__(self) -> str:
+        return "—"
+
+    def __str__(self) -> str:
+        return "—"
+
+    def __format__(self, _spec: str) -> str:
+        return "—"
+
+
+class _SafeFormatDict(dict[str, Any]):
+    """Format mapping that substitutes missing keys with a neutral fallback."""
+
+    def __missing__(self, key: str) -> _SafeMissing:
+        return _SafeMissing()
+
+
 def _fmt(
     strings: dict[str, dict[str, str]],
     kind: str,  # "offline" | "online"
@@ -359,15 +381,15 @@ def _fmt(
     title_tpl = templates.get("title") or _DEFAULT_NOTIFY_STRINGS[kind]["title"]
     msg_tpl = templates.get("message") or _DEFAULT_NOTIFY_STRINGS[kind]["message"]
 
-    title = title_tpl.format(name=name)
-    if kind == "offline":
-        message = msg_tpl.format(
-            ts_local=ts_local,
-            last_iso=last_iso or "—",
-            mins=mins or 0,
-        )
-    else:
-        message = msg_tpl.format(ts_local=ts_local)
+    values = _SafeFormatDict(
+        name=name,
+        ts_local=ts_local,
+        last_iso=last_iso if last_iso is not None else _SafeMissing(),
+        mins=mins if mins is not None else _SafeMissing(),
+    )
+
+    title = title_tpl.format_map(values)
+    message = msg_tpl.format_map(values)
     return title, message
 
 
@@ -380,7 +402,10 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
     s = dev.get("connection_date")
     if not s:
         return False
-    dt = dt_util.parse_datetime(str(s))
+    if isinstance(s, datetime):
+        dt = dt_util.as_utc(s)
+    else:
+        dt = dt_util.parse_datetime(str(s))
     if dt is None:
         return True
     dt = dt_util.as_utc(dt)
@@ -487,11 +512,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except asyncio.CancelledError:
                     raise
                 except ClientResponseError as cre:
+                    status = cre.status
                     _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (HTTP %s): %s",
+                        "Failed to clean up expired sleep scenary on %s (HTTP %s).",
                         dev_id,
-                        cre.status,
-                        cre,
+                        status,
                     )
                     continue
                 except TimeoutError:
@@ -557,86 +582,111 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         strings = bucket.get("notify_strings") or _DEFAULT_NOTIFY_STRINGS
 
         for dev_id, dev in data.items():
-            name = str(dev.get("name") or dev_id)
-            online = _is_online(dev, now)
-            st = notify_state.setdefault(
-                dev_id, {"last": True, "since_offline": None, "notified": False}
-            )
-            last = bool(st["last"])
+            try:
+                name = str(dev.get("name") or dev_id)
+                online = _is_online(dev, now)
+                st = notify_state.setdefault(
+                    dev_id, {"last": True, "since_offline": None, "notified": False}
+                )
+                last = bool(st["last"])
 
-            # Transition: ONLINE -> OFFLINE
-            if last and not online:
-                st["last"] = False
-                st["since_offline"] = now
-                st["notified"] = False
-                _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
-                continue
-
-            # While OFFLINE: check debounce and notify once
-            if not last and not online:
-                since = st.get("since_offline")
-                if since is None:
+                # Transition: ONLINE -> OFFLINE
+                if last and not online:
+                    st["last"] = False
                     st["since_offline"] = now
+                    st["notified"] = False
+                    _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
                     continue
-                if (
-                    not st.get("notified")
-                    and (now - since).total_seconds() >= OFFLINE_DEBOUNCE_SEC
-                ):
-                    nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                    ts_local = dt_util.as_local(now).strftime("%H:%M")
-                    last_iso = str(dev.get("connection_date") or "—")
-                    dt_last = (
-                        dt_util.parse_datetime(str(dev.get("connection_date") or ""))
-                        or now
-                    )
-                    mins = int(
-                        max(0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60)
-                    )
-                    title, message = _fmt(
-                        strings, "offline", name, ts_local, last_iso, mins
-                    )
-                    hass.async_create_task(
-                        hass.components.persistent_notification.async_create(
-                            message=message, title=title, notification_id=nid
+
+                # While OFFLINE: check debounce and notify once
+                if not last and not online:
+                    since = st.get("since_offline")
+                    if since is None:
+                        st["since_offline"] = now
+                        continue
+                    if (
+                        not st.get("notified")
+                        and (now - since).total_seconds() >= OFFLINE_DEBOUNCE_SEC
+                    ):
+                        nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
+                        ts_local = dt_util.as_local(now).strftime("%H:%M")
+                        connection_date_raw = dev.get("connection_date")
+                        if isinstance(connection_date_raw, datetime):
+                            dt_last = dt_util.as_utc(connection_date_raw)
+                            last_iso = dt_last.isoformat()
+                        else:
+                            connection_date_str = (
+                                connection_date_raw
+                                if isinstance(connection_date_raw, str)
+                                else None
+                            )
+                            dt_last = dt_util.parse_datetime(connection_date_str or "")
+                            last_iso = (
+                                connection_date_str if dt_last is not None else None
+                            )
+                        mins = (
+                            int(
+                                max(
+                                    0,
+                                    (now - dt_util.as_utc(dt_last)).total_seconds()
+                                    // 60,
+                                )
+                            )
+                            if dt_last is not None
+                            else None
                         )
+                        title, message = _fmt(
+                            strings, "offline", name, ts_local, last_iso, mins
+                        )
+                        persistent_notification.async_create(
+                            hass,
+                            message=message,
+                            title=title,
+                            notification_id=nid,
+                        )
+                        st["notified"] = True
+                        _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
+                    continue
+
+                # Transition: OFFLINE -> ONLINE
+                if not last and online:
+                    st["last"] = True
+                    st["since_offline"] = None
+                    st["notified"] = False
+
+                    nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
+                    persistent_notification.async_dismiss(hass, nid)
+
+                    ts_local = dt_util.as_local(now).strftime("%H:%M")
+                    title, message = _fmt(strings, "online", name, ts_local, None, None)
+                    nid_online = f"{nid}:online"
+                    persistent_notification.async_create(
+                        hass,
+                        message=message,
+                        title=title,
+                        notification_id=nid_online,
                     )
-                    st["notified"] = True
-                    _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
-                continue
+                    _LOGGER.info("[%s] WServer back online.", dev_id)
 
-            # Transition: OFFLINE -> ONLINE
-            if not last and online:
-                st["last"] = True
-                st["since_offline"] = None
-                st["notified"] = False
-
-                nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                hass.async_create_task(
-                    hass.components.persistent_notification.async_dismiss(nid)
-                )
-
-                ts_local = dt_util.as_local(now).strftime("%H:%M")
-                title, message = _fmt(strings, "online", name, ts_local, None, None)
-                nid_online = f"{nid}:online"
-                hass.async_create_task(
-                    hass.components.persistent_notification.async_create(
-                        message=message, title=title, notification_id=nid_online
+                    cancel = async_call_later(
+                        hass,
+                        ONLINE_BANNER_TTL_SEC,
+                        lambda _now, _nid=nid_online: persistent_notification.async_dismiss(
+                            hass, _nid
+                        ),
                     )
-                )
-                _LOGGER.info("[%s] WServer back online.", dev_id)
+                    if callable(cancel):
+                        cancel_handles.append(cancel)
+                    continue
 
-                cancel = async_call_later(
-                    hass,
-                    ONLINE_BANNER_TTL_SEC,
-                    lambda _now, _nid=nid_online: hass.async_create_task(
-                        hass.components.persistent_notification.async_dismiss(_nid)
-                    ),
+                # No transition
+                st["last"] = online
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Notification update failed for %s (%s).",
+                    dev_id,
+                    type(err).__name__,
                 )
-                cancel_handles.append(cancel)
-                continue
-
-            # No transition
-            st["last"] = online
 
     unsub = coordinator.async_add_listener(_on_coordinator_update)
     entry.async_on_unload(unsub_sleep)
