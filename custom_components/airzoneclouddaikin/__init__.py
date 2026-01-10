@@ -350,6 +350,12 @@ async def _async_prepare_notify_strings(
 class _SafeMissing:
     """Placeholder for missing values that formats safely."""
 
+    def __repr__(self) -> str:
+        return "—"
+
+    def __str__(self) -> str:
+        return "—"
+
     def __format__(self, _spec: str) -> str:
         return "—"
 
@@ -396,7 +402,10 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
     s = dev.get("connection_date")
     if not s:
         return False
-    dt = dt_util.parse_datetime(str(s))
+    if isinstance(s, datetime):
+        dt = dt_util.as_utc(s)
+    else:
+        dt = dt_util.parse_datetime(str(s))
     if dt is None:
         return True
     dt = dt_util.as_utc(dt)
@@ -602,13 +611,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
                         ts_local = dt_util.as_local(now).strftime("%H:%M")
                         connection_date_raw = dev.get("connection_date")
-                        connection_date_str = (
-                            connection_date_raw
-                            if isinstance(connection_date_raw, str)
-                            else None
-                        )
-                        dt_last = dt_util.parse_datetime(connection_date_str or "")
-                        last_iso = connection_date_str if dt_last is not None else None
+                        if isinstance(connection_date_raw, datetime):
+                            dt_last = dt_util.as_utc(connection_date_raw)
+                            last_iso = dt_last.isoformat()
+                        else:
+                            connection_date_str = (
+                                connection_date_raw
+                                if isinstance(connection_date_raw, str)
+                                else None
+                            )
+                            dt_last = dt_util.parse_datetime(connection_date_str or "")
+                            last_iso = (
+                                connection_date_str if dt_last is not None else None
+                            )
                         mins = (
                             int(
                                 max(
@@ -623,13 +638,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         title, message = _fmt(
                             strings, "offline", name, ts_local, last_iso, mins
                         )
-                        hass.async_create_task(
-                            persistent_notification.async_create(
-                                hass,
-                                message=message,
-                                title=title,
-                                notification_id=nid,
-                            )
+                        persistent_notification.async_create(
+                            hass,
+                            message=message,
+                            title=title,
+                            notification_id=nid,
                         )
                         st["notified"] = True
                         _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
@@ -642,28 +655,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     st["notified"] = False
 
                     nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                    hass.async_create_task(
-                        persistent_notification.async_dismiss(hass, nid)
-                    )
+                    persistent_notification.async_dismiss(hass, nid)
 
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     title, message = _fmt(strings, "online", name, ts_local, None, None)
                     nid_online = f"{nid}:online"
-                    hass.async_create_task(
-                        persistent_notification.async_create(
-                            hass,
-                            message=message,
-                            title=title,
-                            notification_id=nid_online,
-                        )
+                    persistent_notification.async_create(
+                        hass,
+                        message=message,
+                        title=title,
+                        notification_id=nid_online,
                     )
                     _LOGGER.info("[%s] WServer back online.", dev_id)
 
                     cancel = async_call_later(
                         hass,
                         ONLINE_BANNER_TTL_SEC,
-                        lambda _now, _nid=nid_online: hass.async_create_task(
-                            persistent_notification.async_dismiss(hass, _nid)
+                        lambda _now, _nid=nid_online: persistent_notification.async_dismiss(
+                            hass, _nid
                         ),
                     )
                     if callable(cancel):

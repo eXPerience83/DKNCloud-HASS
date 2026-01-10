@@ -1,4 +1,12 @@
 # Changelog
+## [0.4.4] - 2026-01-10
+### Fixed
+- Fix offline/online persistent notifications (no crashes in coordinator listener).
+- Safe template formatting for translated notification strings (missing placeholders never
+  crash).
+- Use Home Assistant persistent_notification API correctly.
+- Avoid leaking credentials in event error chains/logging.
+
 ## [0.4.3-alpha2] - 2025-12-28
 ### Added
 - Expose the optional sleep timeout auto-clean setting during initial setup (Config Flow).

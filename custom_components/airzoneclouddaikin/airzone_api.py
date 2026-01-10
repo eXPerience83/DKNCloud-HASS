@@ -36,7 +36,7 @@ from aiohttp import (
     ClientSession,
     ClientTimeout,
 )
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 
 from .const import (
     API_DEVICES,
@@ -338,12 +338,14 @@ class AirzoneAPI:
                 extra_headers=HEADERS_EVENTS,
             )
         except ClientResponseError as cre:
+            if cre.status == 401:
+                raise ConfigEntryAuthFailed("Authentication failed") from None
             if cre.status == 422:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
                     translation_key="wserver_not_connected",
                 ) from None
-            raise
+            raise HomeAssistantError(f"DKN event failed (HTTP {cre.status})") from None
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
         """PUT /devices/{id} with provided payload (retries for 429/5xx).
