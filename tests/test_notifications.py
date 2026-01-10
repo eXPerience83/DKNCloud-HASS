@@ -313,6 +313,20 @@ def test_fmt_includes_name_in_message() -> None:
     assert message == "Living Room lost connection at 10:01."
 
 
+def test_fmt_missing_values_with_format_specifier() -> None:
+    strings = {
+        "offline": {
+            "title": "{name} offline",
+            "message": "Last seen {last_iso} ({mins:d} minutes ago).",
+        }
+    }
+    title, message = integration._fmt(
+        strings, "offline", "Living Room", "10:01", None, None
+    )
+    assert title == "Living Room offline"
+    assert message == "Last seen — (— minutes ago)."
+
+
 def test_offline_notification_after_debounce(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

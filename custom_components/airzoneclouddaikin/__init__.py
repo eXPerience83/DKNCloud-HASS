@@ -278,6 +278,7 @@ async def _async_update_data(
     except asyncio.CancelledError:
         raise
     except ClientResponseError as cre:
+        status = cre.status
         if cre.status == 401:
             bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
             if not bucket.get("reauth_requested"):
@@ -292,7 +293,7 @@ async def _async_update_data(
                 )
             raise UpdateFailed("Authentication required (401)") from None
         raise UpdateFailed(
-            f"Failed to update Airzone data: HTTP {cre.status}"
+            f"Failed to update Airzone data: HTTP {status}"
         ) from None
     except Exception as err:  # noqa: BLE001
         raise UpdateFailed(
@@ -348,11 +349,18 @@ async def _async_prepare_notify_strings(
     return result
 
 
+class _SafeMissing:
+    """Placeholder for missing values that formats safely."""
+
+    def __format__(self, _spec: str) -> str:
+        return "—"
+
+
 class _SafeFormatDict(dict[str, Any]):
     """Format mapping that substitutes missing keys with a neutral fallback."""
 
-    def __missing__(self, key: str) -> str:
-        return "—"
+    def __missing__(self, key: str) -> _SafeMissing:
+        return _SafeMissing()
 
 
 def _fmt(
@@ -372,8 +380,8 @@ def _fmt(
     values = _SafeFormatDict(
         name=name,
         ts_local=ts_local,
-        last_iso=last_iso or "—",
-        mins=mins if mins is not None else 0,
+        last_iso=last_iso if last_iso is not None else _SafeMissing(),
+        mins=mins if mins is not None else _SafeMissing(),
     )
 
     title = title_tpl.format_map(values)
@@ -497,10 +505,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 except asyncio.CancelledError:
                     raise
                 except ClientResponseError as cre:
+                    status = cre.status
                     _LOGGER.warning(
                         "Failed to clean up expired sleep scenary on %s (HTTP %s).",
                         dev_id,
-                        cre.status,
+                        status,
                     )
                     continue
                 except TimeoutError:
@@ -594,15 +603,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     ):
                         nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
                         ts_local = dt_util.as_local(now).strftime("%H:%M")
-                        connection_date = dev.get("connection_date")
-                        last_iso = str(connection_date or "—")
-                        dt_last = (
-                            dt_util.parse_datetime(str(connection_date or "")) or now
+                        connection_date_raw = dev.get("connection_date")
+                        connection_date_str = (
+                            connection_date_raw
+                            if isinstance(connection_date_raw, str)
+                            else None
                         )
-                        mins = int(
-                            max(
-                                0, (now - dt_util.as_utc(dt_last)).total_seconds() // 60
+                        dt_last = dt_util.parse_datetime(connection_date_str or "")
+                        last_iso = connection_date_str if dt_last is not None else None
+                        mins = (
+                            int(
+                                max(
+                                    0,
+                                    (
+                                        now - dt_util.as_utc(dt_last)
+                                    ).total_seconds()
+                                    // 60,
+                                )
                             )
+                            if dt_last is not None
+                            else None
                         )
                         title, message = _fmt(
                             strings, "offline", name, ts_local, last_iso, mins
@@ -650,7 +670,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             persistent_notification.async_dismiss(hass, _nid)
                         ),
                     )
-                    cancel_handles.append(cancel)
+                    if callable(cancel):
+                        cancel_handles.append(cancel)
                     continue
 
                 # No transition
