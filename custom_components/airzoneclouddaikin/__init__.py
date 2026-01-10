@@ -292,9 +292,7 @@ async def _async_update_data(
                     )
                 )
             raise UpdateFailed("Authentication required (401)") from None
-        raise UpdateFailed(
-            f"Failed to update Airzone data: HTTP {status}"
-        ) from None
+        raise UpdateFailed(f"Failed to update Airzone data: HTTP {status}") from None
     except Exception as err:  # noqa: BLE001
         raise UpdateFailed(
             f"Failed to update Airzone data: {type(err).__name__}"
@@ -615,9 +613,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             int(
                                 max(
                                     0,
-                                    (
-                                        now - dt_util.as_utc(dt_last)
-                                    ).total_seconds()
+                                    (now - dt_util.as_utc(dt_last)).total_seconds()
                                     // 60,
                                 )
                             )
