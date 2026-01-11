@@ -586,7 +586,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 name = str(dev.get("name") or dev_id)
                 online = _is_online(dev, now)
                 st = notify_state.setdefault(
-                    dev_id, {"last": True, "since_offline": None, "notified": False}
+                    dev_id,
+                    {
+                        "last": True,
+                        "since_offline": None,
+                        "notified": False,
+                        "online_cancel": None,
+                    },
                 )
                 last = bool(st["last"])
 
@@ -595,6 +601,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     st["last"] = False
                     st["since_offline"] = now
                     st["notified"] = False
+                    prev_cancel = st.get("online_cancel")
+                    if callable(prev_cancel):
+                        prev_cancel()
+                    st["online_cancel"] = None
                     _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
                     continue
 
@@ -643,6 +653,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 hass,
                                 message=message,
                                 title=title,
+                    prev_cancel = st.get("online_cancel")
+                    if callable(prev_cancel):
+                        prev_cancel()
+                    st["online_cancel"] = cancel
                                 notification_id=nid,
                             )
                         )
