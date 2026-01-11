@@ -1,11 +1,15 @@
 # Changelog
-## [0.4.4] - 2026-01-10
+## [0.4.4] - 2026-01-11
 ### Fixed
 - Fix offline/online persistent notifications (no crashes in coordinator listener).
-- Safe template formatting for translated notification strings (missing placeholders never
-  crash).
+- Safe template formatting for translated notification strings (missing placeholders never crash).
 - Use Home Assistant persistent_notification API correctly.
+- Cancel stale scheduled online-banner dismissals to prevent race conditions during connectivity flapping.
 - Avoid leaking credentials in event error chains/logging.
+
+### Added
+- Declare persistent_notification as a manifest dependency.
+- Add regression tests for offline/online notification behavior (formatting, debounce, and timer cancellation).
 
 ## [0.4.3-alpha2] - 2025-12-28
 ### Added
