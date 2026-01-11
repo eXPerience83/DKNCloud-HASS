@@ -1,7 +1,8 @@
 # Changelog
 ## [0.4.4] - 2026-01-10
 ### Fixed
-- Fix offline/online persistent notifications (no crashes in coordinator listener).
+- Fix offline/online persistent notifications (call persistent_notification helpers
+  safely from the coordinator listener).
 - Safe template formatting for translated notification strings (missing placeholders never
   crash).
 - Use Home Assistant persistent_notification API correctly.
