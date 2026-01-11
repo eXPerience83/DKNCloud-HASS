@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -573,9 +572,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ---------------- Connectivity notifications listener ----------------
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
 
-    cancel_handles: list[Callable[[], None]] = []
-    bucket["cancel_handles"] = cancel_handles
-
     def _on_coordinator_update() -> None:
         now = dt_util.utcnow()
         data = coordinator.data or {}
@@ -586,7 +582,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 name = str(dev.get("name") or dev_id)
                 online = _is_online(dev, now)
                 st = notify_state.setdefault(
-                    dev_id, {"last": True, "since_offline": None, "notified": False}
+                    dev_id,
+                    {
+                        "last": True,
+                        "since_offline": None,
+                        "notified": False,
+                        "online_cancel": None,
+                    },
                 )
                 last = bool(st["last"])
 
@@ -595,6 +597,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     st["last"] = False
                     st["since_offline"] = now
                     st["notified"] = False
+                    nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
+                    nid_online = f"{nid}:online"
+                    persistent_notification.async_dismiss(hass, nid_online)
+                    cancel = st.get("online_cancel")
+                    if callable(cancel):
+                        cancel()
+                    st["online_cancel"] = None
                     _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
                     continue
 
@@ -668,6 +677,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     )
                     _LOGGER.info("[%s] WServer back online.", dev_id)
 
+                    cancel = st.get("online_cancel")
+                    if callable(cancel):
+                        cancel()
+                    st["online_cancel"] = None
+
                     cancel = async_call_later(
                         hass,
                         ONLINE_BANNER_TTL_SEC,
@@ -676,7 +690,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         ),
                     )
                     if callable(cancel):
-                        cancel_handles.append(cancel)
+                        st["online_cancel"] = cancel
                     continue
 
                 # No transition
@@ -740,7 +754,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         cancel_sleep_expiry = bucket.get("sleep_expiry_task")
         if cancel_sleep_expiry is not None and not cancel_sleep_expiry.done():
             cancel_sleep_expiry.cancel()
-        for cancel in bucket.get("cancel_handles", []):
+        notify_state = bucket.get("notify_state", {})
+        for st in notify_state.values():
+            cancel = st.get("online_cancel")
+            if not callable(cancel):
+                continue
             try:
                 cancel()
             except Exception as err:  # noqa: BLE001
@@ -749,9 +767,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     entry.entry_id,
                     err,
                 )
+            st["online_cancel"] = None
 
         # Clear transient state while preserving the bucket on partial unloads.
-        bucket["cancel_handles"] = []
         bucket.pop("pending_refresh", None)
         bucket.pop("device_locks", None)
 
