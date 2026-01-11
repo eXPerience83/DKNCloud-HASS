@@ -638,11 +638,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         title, message = _fmt(
                             strings, "offline", name, ts_local, last_iso, mins
                         )
-                        persistent_notification.async_create(
-                            hass,
-                            message=message,
-                            title=title,
-                            notification_id=nid,
+                        hass.async_create_task(
+                            persistent_notification.async_create(
+                                hass,
+                                message=message,
+                                title=title,
+                                notification_id=nid,
+                            )
                         )
                         st["notified"] = True
                         _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
@@ -655,16 +657,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     st["notified"] = False
 
                     nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                    persistent_notification.async_dismiss(hass, nid)
+                    hass.async_create_task(
+                        persistent_notification.async_dismiss(hass, nid)
+                    )
 
                     ts_local = dt_util.as_local(now).strftime("%H:%M")
                     title, message = _fmt(strings, "online", name, ts_local, None, None)
                     nid_online = f"{nid}:online"
-                    persistent_notification.async_create(
-                        hass,
-                        message=message,
-                        title=title,
-                        notification_id=nid_online,
+                    hass.async_create_task(
+                        persistent_notification.async_create(
+                            hass,
+                            message=message,
+                            title=title,
+                            notification_id=nid_online,
+                        )
                     )
                     _LOGGER.info("[%s] WServer back online.", dev_id)
 
