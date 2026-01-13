@@ -1,4 +1,10 @@
 # Changelog
+## [0.4.4.1] - 2026-01-12
+### Fixed
+- Dismiss offline/online notifications on successful unloads to prevent stale UI.
+- Clear online-banner cancel handles defensively during state transitions and unload.
+- Fall back to default notification templates if a localized template is malformed.
+
 ## [0.4.4] - 2026-01-11
 ### Fixed
 - Fix offline/online persistent notifications (no crashes in coordinator listener).
