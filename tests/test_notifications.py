@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import types
 from datetime import datetime, timedelta, timezone
@@ -311,329 +310,322 @@ def test_fmt_missing_values_with_format_specifier() -> None:
     assert message == "Last seen — (— minutes ago)."
 
 
-def test_offline_notification_after_debounce(
+def test_fmt_warns_and_falls_back_on_malformed_templates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    integration._NOTIFY_FMT_FALLBACK_LOGGED.clear()
+    strings = {
+        "offline": {
+            "title": "Device {name",
+            "message": "Lost at {ts_local",
+        }
+    }
+
+    with caplog.at_level("WARNING"):
+        title, message = integration._fmt(
+            strings, "offline", "Living Room", "10:01", None, None
+        )
+
+    assert title == "DKN Cloud offline notification"
+    assert message == "Living Room lost the connection at 10:01."
+    assert "Notification templates fell back to defaults for offline" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_offline_notification_after_debounce(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _run() -> None:
-        hass = DummyHass()
-        entry = _make_entry()
-
-        monkeypatch.setattr(
-            integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-        )
-
-        await integration.async_setup_entry(hass, entry)
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        listener = coordinator._listeners[-1]
-
-        integration.persistent_notification.async_create = Mock()
-        integration.persistent_notification.async_dismiss = Mock()
-
-        base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
-        coordinator.data = {
-            "dev-1": {"name": "Unit 1", "connection_date": old.isoformat()}
-        }
-
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
-        listener()
-        integration.persistent_notification.async_create.assert_not_called()
-
-        later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
-        listener()
-
-        expected_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-1"
-        integration.persistent_notification.async_create.assert_called_once()
-        assert (
-            integration.persistent_notification.async_create.call_args.kwargs[
-                "notification_id"
-            ]
-            == expected_nid
-        )
-
-    asyncio.run(_run())
-
-
-def test_online_notification_dismisses_offline_and_schedules_banner(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _run() -> None:
-        hass = DummyHass()
-        entry = _make_entry()
-
-        monkeypatch.setattr(
-            integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-        )
-
-        await integration.async_setup_entry(hass, entry)
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        listener = coordinator._listeners[-1]
-
-        integration.persistent_notification.async_create = Mock()
-        integration.persistent_notification.async_dismiss = Mock()
-
-        scheduled: list[tuple[float, Any]] = []
-
-        def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Any:
-            scheduled.append((delay, action))
-
-            def cancel() -> None:
-                return None
-
-            return cancel
-
-        monkeypatch.setattr(integration, "async_call_later", fake_call_later)
-
-        base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
-        coordinator.data = {
-            "dev-2": {"name": "Unit 2", "connection_date": old.isoformat()}
-        }
-
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
-        listener()
-        later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
-        listener()
-
-        online_time = later + timedelta(seconds=10)
-        coordinator.data = {
-            "dev-2": {"name": "Unit 2", "connection_date": online_time.isoformat()}
-        }
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: online_time)
-        listener()
-
-        offline_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-2"
-        online_nid = f"{offline_nid}:online"
-
-        integration.persistent_notification.async_dismiss.assert_any_call(
-            hass, offline_nid
-        )
-        assert integration.persistent_notification.async_create.call_count == 2
-        integration.persistent_notification.async_create.assert_any_call(
-            hass,
-            message=ANY,
-            title=ANY,
-            notification_id=offline_nid,
-        )
-        integration.persistent_notification.async_create.assert_any_call(
-            hass,
-            message=ANY,
-            title=ANY,
-            notification_id=online_nid,
-        )
-        assert scheduled
-        assert scheduled[0][0] == ONLINE_BANNER_TTL_SEC
-
-        scheduled[0][1](None)
-        integration.persistent_notification.async_dismiss.assert_any_call(
-            hass, online_nid
-        )
-
-    asyncio.run(_run())
-
-
-def test_listener_never_raises_on_unknown_placeholders(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _run() -> None:
-        hass = DummyHass()
-        entry = _make_entry()
-
-        monkeypatch.setattr(
-            integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-        )
-
-        await integration.async_setup_entry(hass, entry)
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        listener = coordinator._listeners[-1]
-
-        integration.persistent_notification.async_create = Mock()
-        integration.persistent_notification.async_dismiss = Mock()
-
-        hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
-            "offline": {
-                "title": "Device {unknown}",
-                "message": "Went down at {ts_local} ({unknown}).",
-            },
-            "online": {
-                "title": "Back {unknown}",
-                "message": "Up at {ts_local} ({unknown}).",
-            },
-        }
-
-        base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
-        coordinator.data = {
-            "dev-3": {"name": "Unit 3", "connection_date": old.isoformat()}
-        }
-
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
-        listener()
-        later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
-        listener()
-
-    asyncio.run(_run())
-
-
-def test_online_banner_second_transition_cancels_previous(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _run() -> None:
-        hass = DummyHass()
-        entry = _make_entry()
-
-        monkeypatch.setattr(
-            integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-        )
-
-        await integration.async_setup_entry(hass, entry)
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        listener = coordinator._listeners[-1]
-
-        integration.persistent_notification.async_create = Mock()
-        integration.persistent_notification.async_dismiss = Mock()
-
-        events: list[str] = []
-        cancels: list[Mock] = []
-
-        def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Any:
-            label = f"{len(cancels) + 1}"
-            events.append(f"schedule-{label}")
-
-            def _cancel() -> None:
-                events.append(f"cancel-{label}")
-
-            cancel = Mock(side_effect=_cancel)
-            cancels.append(cancel)
-            return cancel
-
-        monkeypatch.setattr(integration, "async_call_later", fake_call_later)
-
-        base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
-        coordinator.data = {
-            "dev-5": {"name": "Unit 5", "connection_date": old.isoformat()}
-        }
-
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
-        listener()
-        later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
-        listener()
-
-        online_time = later + timedelta(seconds=10)
-        coordinator.data = {
-            "dev-5": {"name": "Unit 5", "connection_date": online_time.isoformat()}
-        }
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: online_time)
-        listener()
-
-        notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]["dev-5"]
-        notify_state["last"] = False
-
-        later_online = online_time + timedelta(seconds=5)
-        coordinator.data = {
-            "dev-5": {"name": "Unit 5", "connection_date": later_online.isoformat()}
-        }
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later_online)
-        listener()
-
-        assert events == ["schedule-1", "cancel-1", "schedule-2"]
-        assert cancels[0].called
-        assert cancels[1].called is False
-
-    asyncio.run(_run())
-
-
-def test_online_to_offline_cancels_online_banner(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _run() -> None:
-        hass = DummyHass()
-        entry = _make_entry()
-
-        monkeypatch.setattr(
-            integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-        )
-
-        await integration.async_setup_entry(hass, entry)
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        listener = coordinator._listeners[-1]
-
-        integration.persistent_notification.async_create = Mock()
-        integration.persistent_notification.async_dismiss = Mock()
-
-        cancel = Mock()
-        notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
-        notify_state["dev-6"] = {
-            "last": True,
-            "since_offline": None,
-            "notified": False,
-            "online_cancel": cancel,
-        }
-
-        base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
-        coordinator.data = {
-            "dev-6": {"name": "Unit 6", "connection_date": old.isoformat()}
-        }
-
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
-        listener()
-
-        online_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-6:online"
-        integration.persistent_notification.async_dismiss.assert_any_call(
-            hass, online_nid
-        )
-        cancel.assert_called_once()
-
-    asyncio.run(_run())
-
-
-def test_offline_notification_includes_datetime_connection_date(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def _run() -> None:
-        hass = DummyHass()
-        entry = _make_entry()
-
-        monkeypatch.setattr(
-            integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-        )
-
-        await integration.async_setup_entry(hass, entry)
-        coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-        listener = coordinator._listeners[-1]
-
-        integration.persistent_notification.async_create = Mock()
-        integration.persistent_notification.async_dismiss = Mock()
-
-        hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
-            "offline": {
-                "title": "{name} offline",
-                "message": "Last {last_iso} ({mins} minutes ago).",
-            }
-        }
-
-        base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 300)
-        coordinator.data = {"dev-4": {"name": "Unit 4", "connection_date": old}}
-
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
-        listener()
-
-        later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
-        monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
-        listener()
-
-        assert integration.persistent_notification.async_create.called
-        message = integration.persistent_notification.async_create.call_args.kwargs[
-            "message"
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
+    coordinator.data = {"dev-1": {"name": "Unit 1", "connection_date": old.isoformat()}}
+
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
+    listener()
+    integration.persistent_notification.async_create.assert_not_called()
+
+    later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
+    listener()
+
+    expected_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-1"
+    integration.persistent_notification.async_create.assert_called_once()
+    assert (
+        integration.persistent_notification.async_create.call_args.kwargs[
+            "notification_id"
         ]
-        assert old.isoformat() in message
-        assert "minutes ago" in message
+        == expected_nid
+    )
 
-    asyncio.run(_run())
+
+@pytest.mark.asyncio
+async def test_online_notification_dismisses_offline_and_schedules_banner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    scheduled: list[tuple[float, Any]] = []
+
+    def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Any:
+        scheduled.append((delay, action))
+
+        def cancel() -> None:
+            return None
+
+        return cancel
+
+    monkeypatch.setattr(integration, "async_call_later", fake_call_later)
+
+    base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
+    coordinator.data = {"dev-2": {"name": "Unit 2", "connection_date": old.isoformat()}}
+
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
+    listener()
+    later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
+    listener()
+
+    online_time = later + timedelta(seconds=10)
+    coordinator.data = {
+        "dev-2": {"name": "Unit 2", "connection_date": online_time.isoformat()}
+    }
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: online_time)
+    listener()
+
+    offline_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-2"
+    online_nid = f"{offline_nid}:online"
+
+    integration.persistent_notification.async_dismiss.assert_any_call(hass, offline_nid)
+    assert integration.persistent_notification.async_create.call_count == 2
+    integration.persistent_notification.async_create.assert_any_call(
+        hass,
+        message=ANY,
+        title=ANY,
+        notification_id=offline_nid,
+    )
+    integration.persistent_notification.async_create.assert_any_call(
+        hass,
+        message=ANY,
+        title=ANY,
+        notification_id=online_nid,
+    )
+    assert scheduled
+    assert scheduled[0][0] == ONLINE_BANNER_TTL_SEC
+
+    scheduled[0][1](None)
+    integration.persistent_notification.async_dismiss.assert_any_call(hass, online_nid)
+
+
+@pytest.mark.asyncio
+async def test_listener_never_raises_on_unknown_placeholders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
+        "offline": {
+            "title": "Device {unknown}",
+            "message": "Went down at {ts_local} ({unknown}).",
+        },
+        "online": {
+            "title": "Back {unknown}",
+            "message": "Up at {ts_local} ({unknown}).",
+        },
+    }
+
+    base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
+    coordinator.data = {"dev-3": {"name": "Unit 3", "connection_date": old.isoformat()}}
+
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
+    listener()
+    later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
+    listener()
+
+
+@pytest.mark.asyncio
+async def test_online_banner_second_transition_cancels_previous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    events: list[str] = []
+    cancels: list[Mock] = []
+
+    def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Any:
+        label = f"{len(cancels) + 1}"
+        events.append(f"schedule-{label}")
+
+        def _cancel() -> None:
+            events.append(f"cancel-{label}")
+
+        cancel = Mock(side_effect=_cancel)
+        cancels.append(cancel)
+        return cancel
+
+    monkeypatch.setattr(integration, "async_call_later", fake_call_later)
+
+    base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
+    coordinator.data = {"dev-5": {"name": "Unit 5", "connection_date": old.isoformat()}}
+
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
+    listener()
+    later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
+    listener()
+
+    online_time = later + timedelta(seconds=10)
+    coordinator.data = {
+        "dev-5": {"name": "Unit 5", "connection_date": online_time.isoformat()}
+    }
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: online_time)
+    listener()
+
+    notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]["dev-5"]
+    notify_state["last"] = False
+
+    later_online = online_time + timedelta(seconds=5)
+    coordinator.data = {
+        "dev-5": {"name": "Unit 5", "connection_date": later_online.isoformat()}
+    }
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later_online)
+    listener()
+
+    assert events == ["schedule-1", "cancel-1", "schedule-2"]
+    assert cancels[0].called
+    assert cancels[1].called is False
+
+
+@pytest.mark.asyncio
+async def test_online_to_offline_cancels_online_banner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    cancel = Mock()
+    notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
+    notify_state["dev-6"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel,
+    }
+
+    base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
+    coordinator.data = {"dev-6": {"name": "Unit 6", "connection_date": old.isoformat()}}
+
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
+    listener()
+
+    online_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-6:online"
+    integration.persistent_notification.async_dismiss.assert_any_call(hass, online_nid)
+    cancel.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_offline_notification_includes_datetime_connection_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
+        "offline": {
+            "title": "{name} offline",
+            "message": "Last {last_iso} ({mins} minutes ago).",
+        }
+    }
+
+    base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 300)
+    coordinator.data = {"dev-4": {"name": "Unit 4", "connection_date": old}}
+
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
+    listener()
+
+    later = base + timedelta(seconds=OFFLINE_DEBOUNCE_SEC + 1)
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: later)
+    listener()
+
+    assert integration.persistent_notification.async_create.called
+    message = integration.persistent_notification.async_create.call_args.kwargs[
+        "message"
+    ]
+    assert old.isoformat() in message
+    assert "minutes ago" in message
