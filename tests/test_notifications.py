@@ -310,6 +310,27 @@ def test_fmt_missing_values_with_format_specifier() -> None:
     assert message == "Last seen — (— minutes ago)."
 
 
+def test_fmt_warns_and_falls_back_on_malformed_templates(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    integration._NOTIFY_FMT_FALLBACK_LOGGED.clear()
+    strings = {
+        "offline": {
+            "title": "Device {name",
+            "message": "Lost at {ts_local",
+        }
+    }
+
+    with caplog.at_level("WARNING"):
+        title, message = integration._fmt(
+            strings, "offline", "Living Room", "10:01", None, None
+        )
+
+    assert title == "DKN Cloud offline notification"
+    assert message == "Living Room lost the connection at 10:01."
+    assert "Notification templates fell back to defaults for offline" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_offline_notification_after_debounce(
     monkeypatch: pytest.MonkeyPatch,
