@@ -66,6 +66,8 @@ _DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
     },
 }
 
+_NOTIFY_FMT_FALLBACK_LOGGED: set[str] = set()
+
 
 @dataclass(slots=True)
 class SleepTracking:
@@ -390,7 +392,14 @@ def _fmt(
     try:
         title = title_tpl.format_map(values)
         message = msg_tpl.format_map(values)
-    except Exception:  # noqa: BLE001
+    except Exception as err:  # noqa: BLE001
+        if kind not in _NOTIFY_FMT_FALLBACK_LOGGED:
+            _LOGGER.warning(
+                "Notification templates fell back to defaults for %s (%s).",
+                kind,
+                type(err).__name__,
+            )
+            _NOTIFY_FMT_FALLBACK_LOGGED.add(kind)
         fallback = _DEFAULT_NOTIFY_STRINGS[kind]
         title = fallback["title"].format_map(values)
         message = fallback["message"].format_map(values)
