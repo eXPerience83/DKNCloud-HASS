@@ -732,11 +732,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if st is None:
                 continue
             cancel = st.get("online_cancel")
-            try:
-                if callable(cancel):
-                    cancel()
-            finally:
-                st["online_cancel"] = None
+            if callable(cancel):
+                cancel()
             nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
             persistent_notification.async_dismiss(hass, nid)
             persistent_notification.async_dismiss(hass, f"{nid}:online")
