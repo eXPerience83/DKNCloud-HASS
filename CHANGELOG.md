@@ -3,8 +3,10 @@
 ### Fixed
 - Dismiss offline/online notifications on successful unloads to prevent stale UI.
 - Clear online-banner cancel handles defensively during state transitions and unload.
+- Clean up notify state for removed devices to prevent stale notifications and timers.
 - Fall back to default notification templates if a localized template is malformed.
 - Warn once per notification kind when malformed templates trigger a fallback.
+- Clear fallback-warning suppression after the last unload so reloads can surface warnings.
 
 ## [0.4.4] - 2026-01-11
 ### Fixed

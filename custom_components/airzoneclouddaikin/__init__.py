@@ -588,7 +588,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     def _on_coordinator_update() -> None:
         now = dt_util.utcnow()
-        data = coordinator.data or {}
+        raw_data = coordinator.data
+        data = raw_data or {}
         strings = bucket.get("notify_strings") or _DEFAULT_NOTIFY_STRINGS
 
         for dev_id, dev in data.items():
@@ -720,6 +721,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     type(err).__name__,
                 )
 
+        if raw_data is None or not raw_data:
+            return
+        if not getattr(coordinator, "last_update_success", True):
+            return
+
+        removed = set(notify_state) - set(data)
+        for dev_id in removed:
+            st = notify_state.pop(dev_id, None)
+            if st is None:
+                continue
+            cancel = st.get("online_cancel")
+            try:
+                if callable(cancel):
+                    cancel()
+            finally:
+                st["online_cancel"] = None
+            nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
+            persistent_notification.async_dismiss(hass, nid)
+            persistent_notification.async_dismiss(hass, f"{nid}:online")
+
     unsub = coordinator.async_add_listener(_on_coordinator_update)
     entry.async_on_unload(unsub_sleep)
     entry.async_on_unload(unsub)
@@ -797,5 +818,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if unload_ok:
             notify_state.clear()
             domain_bucket.pop(entry.entry_id, None)
+            if not domain_bucket:
+                _NOTIFY_FMT_FALLBACK_LOGGED.clear()
 
     return unload_ok

@@ -588,6 +588,112 @@ async def test_online_to_offline_cancels_online_banner(
 
 
 @pytest.mark.asyncio
+async def test_removed_device_cleans_notification_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    cancel = Mock()
+    notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
+    notify_state["dev-removed"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel,
+    }
+
+    coordinator.data = {"dev-7": {"name": "Unit 7", "connection_date": None}}
+    listener()
+
+    assert "dev-removed" not in notify_state
+    cancel.assert_called_once()
+    removed_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:dev-removed"
+    integration.persistent_notification.async_dismiss.assert_any_call(hass, removed_nid)
+    integration.persistent_notification.async_dismiss.assert_any_call(
+        hass, f"{removed_nid}:online"
+    )
+
+
+@pytest.mark.asyncio
+async def test_removed_device_cleanup_skipped_on_empty_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    cancel = Mock()
+    notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
+    notify_state["dev-keep"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel,
+    }
+
+    coordinator.data = {}
+    listener()
+    assert "dev-keep" in notify_state
+    cancel.assert_not_called()
+
+    coordinator.data = None
+    listener()
+    assert "dev-keep" in notify_state
+    cancel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fallback_cache_clears_on_last_unload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+
+    integration._NOTIFY_FMT_FALLBACK_LOGGED.clear()
+    strings = {
+        "offline": {
+            "title": "Device {name",
+            "message": "Lost at {ts_local",
+        }
+    }
+    integration._fmt(strings, "offline", "Living Room", "10:01", None, None)
+    assert integration._NOTIFY_FMT_FALLBACK_LOGGED
+
+    unload_ok = await integration.async_unload_entry(hass, entry)
+
+    assert unload_ok
+    assert not integration._NOTIFY_FMT_FALLBACK_LOGGED
+
+
+@pytest.mark.asyncio
 async def test_offline_notification_includes_datetime_connection_date(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
