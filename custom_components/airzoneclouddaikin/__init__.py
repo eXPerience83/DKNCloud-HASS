@@ -721,7 +721,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     type(err).__name__,
                 )
 
-        if raw_data is None or not raw_data:
+        if raw_data is None:
             return
         if not getattr(coordinator, "last_update_success", True):
             return

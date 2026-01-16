@@ -627,7 +627,7 @@ async def test_removed_device_cleans_notification_state(
 
 
 @pytest.mark.asyncio
-async def test_removed_device_cleanup_skipped_on_empty_data(
+async def test_removed_device_cleanup_runs_on_empty_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     hass = DummyHass()
@@ -644,24 +644,32 @@ async def test_removed_device_cleanup_skipped_on_empty_data(
     integration.persistent_notification.async_create = Mock()
     integration.persistent_notification.async_dismiss = Mock()
 
-    cancel = Mock()
+    cancel_empty = Mock()
     notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
-    notify_state["dev-keep"] = {
+    notify_state["dev-removed"] = {
         "last": True,
         "since_offline": None,
         "notified": False,
-        "online_cancel": cancel,
+        "online_cancel": cancel_empty,
     }
 
     coordinator.data = {}
     listener()
-    assert "dev-keep" in notify_state
-    cancel.assert_not_called()
+    assert "dev-removed" not in notify_state
+    cancel_empty.assert_called_once()
+
+    cancel_none = Mock()
+    notify_state["dev-keep"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel_none,
+    }
 
     coordinator.data = None
     listener()
     assert "dev-keep" in notify_state
-    cancel.assert_not_called()
+    cancel_none.assert_not_called()
 
 
 @pytest.mark.asyncio
