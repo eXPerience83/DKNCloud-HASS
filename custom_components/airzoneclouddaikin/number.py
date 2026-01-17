@@ -97,6 +97,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
     _native_min: int
     _native_max: int
     _native_step: int
+    _payload_wrapped: bool = True
 
     def __init__(
         self,
@@ -176,7 +177,10 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         if current is not None and current == ivalue:
             return
 
-        payload = {"device": {self._field_name: ivalue}}
+        if self._payload_wrapped:
+            payload = {"device": {self._field_name: ivalue}}
+        else:
+            payload = {self._field_name: ivalue}
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
@@ -203,6 +207,7 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
     _native_min = _SLEEP_MIN
     _native_max = _SLEEP_MAX
     _native_step = _SLEEP_STEP
+    _payload_wrapped = False
 
     _attr_has_entity_name = True
     _attr_name = "Sleep time"
@@ -233,6 +238,7 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     _native_min = _UNOCC_HEAT_MIN
     _native_max = _UNOCC_HEAT_MAX
     _native_step = _UNOCC_STEP
+    _payload_wrapped = False
 
     _attr_has_entity_name = True
     _attr_name = "Unoccupied Heat Temp"
@@ -263,6 +269,7 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     _native_min = _UNOCC_COOL_MIN
     _native_max = _UNOCC_COOL_MAX
     _native_step = _UNOCC_STEP
+    _payload_wrapped = False
 
     _attr_has_entity_name = True
     _attr_name = "Unoccupied Cool Temp"
