@@ -1,4 +1,27 @@
 # Changelog
+## [0.4.5] - 2026-01-17
+### Fixed
+- Dismiss offline/online notifications on successful unloads to prevent stale UI.
+- Clear online-banner cancel handles defensively during state transitions and unload.
+- Clean up notify state for removed devices to prevent stale notifications and timers.
+- Ensure notification state cleanup runs on successful empty updates to prevent stale
+  offline/online banners and orphaned timers when the device list becomes empty.
+- Fall back to default notification templates if a localized template is malformed.
+- Warn once per notification kind when malformed templates trigger a fallback.
+- Clear fallback-warning suppression after the last unload so reloads can surface warnings.
+
+## [0.4.4] - 2026-01-11
+### Fixed
+- Fix offline/online persistent notifications (no crashes in coordinator listener).
+- Safe template formatting for translated notification strings (missing placeholders never crash).
+- Use Home Assistant persistent_notification API correctly.
+- Cancel stale scheduled online-banner dismissals to prevent race conditions during connectivity flapping.
+- Avoid leaking credentials in event error chains/logging.
+
+### Added
+- Declare persistent_notification as a manifest dependency.
+- Add regression tests for offline/online notification behavior (formatting, debounce, and timer cancellation).
+
 ## [0.4.3-alpha2] - 2025-12-28
 ### Added
 - Expose the optional sleep timeout auto-clean setting during initial setup (Config Flow).
