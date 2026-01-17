@@ -1,4 +1,9 @@
 # Changelog
+## [0.4.6] - 2026-01-17
+### Fixed
+- Align `/devices` writes for sleep time and unoccupied min/max with the backend
+  contract by sending root-level payloads.
+
 ## [0.4.5] - 2026-01-17
 ### Fixed
 - Dismiss offline/online notifications on successful unloads to prevent stale UI.
