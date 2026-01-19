@@ -333,7 +333,11 @@ async def test_error_logs_do_not_leak_password(
 
 @pytest.mark.asyncio
 async def test_async_set_scenary_uses_wrapped_payload() -> None:
-    api = AirzoneAPI(username="user@example.com", session=AsyncMock(spec=ClientSession))
+    api = AirzoneAPI(
+        username="user@example.com",
+        password="secret",
+        session=AsyncMock(spec=ClientSession),
+    )
     api.put_device_fields = AsyncMock()
 
     await api.async_set_scenary("123", "sleep")
