@@ -9,6 +9,8 @@ import types
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -270,35 +272,38 @@ def _make_entity(
     return entity, api
 
 
-def test_sleep_time_payload_is_root_level() -> None:
+@pytest.mark.asyncio
+async def test_sleep_time_payload_is_root_level() -> None:
     """Sleep time should send a root-level payload."""
 
     entity, api = _make_entity(DKNSleepTimeNumber, device_data={"sleep_time": 30})
 
-    asyncio.run(entity.async_set_native_value(40))
+    await entity.async_set_native_value(40)
 
     assert api.calls == [("dev1", {"sleep_time": 40})]
 
 
-def test_unoccupied_heat_min_payload_is_root_level() -> None:
+@pytest.mark.asyncio
+async def test_unoccupied_heat_min_payload_is_root_level() -> None:
     """Unoccupied heat min should send a root-level payload."""
 
     entity, api = _make_entity(
         DKNUnoccupiedHeatMinNumber, device_data={"min_temp_unoccupied": 16}
     )
 
-    asyncio.run(entity.async_set_native_value(18))
+    await entity.async_set_native_value(18)
 
     assert api.calls == [("dev1", {"min_temp_unoccupied": 18})]
 
 
-def test_unoccupied_cool_max_payload_is_root_level() -> None:
+@pytest.mark.asyncio
+async def test_unoccupied_cool_max_payload_is_root_level() -> None:
     """Unoccupied cool max should send a root-level payload."""
 
     entity, api = _make_entity(
         DKNUnoccupiedCoolMaxNumber, device_data={"max_temp_unoccupied": 26}
     )
 
-    asyncio.run(entity.async_set_native_value(28))
+    await entity.async_set_native_value(28)
 
     assert api.calls == [("dev1", {"max_temp_unoccupied": 28})]
