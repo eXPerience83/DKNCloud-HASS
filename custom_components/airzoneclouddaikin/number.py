@@ -179,7 +179,9 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
 
         device_fields: dict[str, Any] = {self._field_name: ivalue}
         payload: dict[str, Any] = (
-            {"device": device_fields} if self._payload_wrapped else device_fields
+            {"device": dict(device_fields)}
+            if self._payload_wrapped
+            else dict(device_fields)
         )
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
