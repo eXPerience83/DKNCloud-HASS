@@ -1,5 +1,5 @@
 # Changelog
-## [0.4.6] - 2026-01-17
+## [0.4.6] - 2026-01-20
 ### Fixed
 - Align `/devices` writes for sleep time and unoccupied min/max with the backend
   contract by sending root-level payloads.
