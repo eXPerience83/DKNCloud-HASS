@@ -231,7 +231,7 @@ async def test_login_success_sets_token_and_preserves_password() -> None:
     api = AirzoneAPI(
         username="user@example.com",
         password="secret",
-        session=AsyncMock(spec=ClientSession),
+        session=AsyncMock(spec_set=ClientSession),
     )
     with patch.object(
         api,
@@ -249,7 +249,7 @@ async def test_login_handles_unauthorized() -> None:
     api = AirzoneAPI(
         username="user@example.com",
         password="secret",
-        session=AsyncMock(spec=ClientSession),
+        session=AsyncMock(spec_set=ClientSession),
     )
     with patch.object(
         api,
@@ -329,3 +329,19 @@ async def test_error_logs_do_not_leak_password(
 
     assert "topsecret" not in caplog.text
     assert "user@example.com" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_async_set_scenary_uses_wrapped_payload() -> None:
+    api = AirzoneAPI(
+        username="user@example.com",
+        password="secret",
+        session=AsyncMock(spec_set=ClientSession),
+    )
+    api.put_device_fields = AsyncMock()
+
+    await api.async_set_scenary("123", "sleep")
+
+    api.put_device_fields.assert_awaited_once_with(
+        "123", {"device": {"scenary": "sleep"}}
+    )
