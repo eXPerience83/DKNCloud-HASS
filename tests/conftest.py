@@ -146,8 +146,20 @@ def stub_ha_and_integration_modules(monkeypatch: pytest.MonkeyPatch) -> None:
 
     helpers_stub = types.ModuleType("custom_components.airzoneclouddaikin.helpers")
 
-    def acquire_device_lock(*_args: Any, **_kwargs: Any) -> asyncio.Lock:
-        return asyncio.Lock()
+    _locks: dict[tuple[str, str], asyncio.Lock] = {}
+
+    def acquire_device_lock(
+        _hass: Any,
+        entry_id: str,
+        device_id: str,
+        *_args: Any,
+        **_kwargs: Any,
+    ) -> asyncio.Lock:
+        key = (entry_id, device_id)
+        lock = _locks.get(key)
+        if lock is None:
+            lock = _locks.setdefault(key, asyncio.Lock())
+        return lock
 
     def clamp_number(value: float, *_args: Any, **_kwargs: Any) -> float:
         return value
