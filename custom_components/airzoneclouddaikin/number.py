@@ -177,11 +177,10 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         if current is not None and current == ivalue:
             return
 
-        device_fields: dict[str, Any] = {self._field_name: ivalue}
         payload: dict[str, Any] = (
-            {"device": dict(device_fields)}
+            {"device": {self._field_name: ivalue}}
             if self._payload_wrapped
-            else dict(device_fields)
+            else {self._field_name: ivalue}
         )
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
