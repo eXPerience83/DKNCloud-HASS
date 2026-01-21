@@ -51,6 +51,7 @@ class HomeAssistantError(Exception):
         super().__init__(*args)
         self.translation_domain = kwargs.get("translation_domain")
         self.translation_key = kwargs.get("translation_key")
+        self.translation_placeholders = kwargs.get("translation_placeholders")
 
 
 exceptions_module.HomeAssistantError = HomeAssistantError
