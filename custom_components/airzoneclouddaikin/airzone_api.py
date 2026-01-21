@@ -345,8 +345,9 @@ class AirzoneAPI:
                     translation_domain=DOMAIN,
                     translation_key="wserver_not_connected",
                 ) from None
-            if cre.status == 423:
+            elif cre.status == 423:
                 raise HomeAssistantError(
+                    "DKN machine not ready (423)",
                     translation_domain=DOMAIN,
                     translation_key="machine_not_ready",
                 ) from None
