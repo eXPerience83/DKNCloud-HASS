@@ -1,4 +1,8 @@
 # Changelog
+## [0.4.7] - 2026-01-21
+### Fixed
+- Add dedicated handling for /events HTTP 423 ("machine not ready") with translations.
+
 ## [0.4.6] - 2026-01-20
 ### Fixed
 - Align `/devices` writes for sleep time and unoccupied min/max with the backend
