@@ -47,6 +47,11 @@ exceptions_module = types.ModuleType("homeassistant.exceptions")
 class HomeAssistantError(Exception):
     """Minimal Home Assistant error placeholder."""
 
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args)
+        self.translation_domain = kwargs.get("translation_domain")
+        self.translation_key = kwargs.get("translation_key")
+
 
 exceptions_module.HomeAssistantError = HomeAssistantError
 ha_module.exceptions = exceptions_module
@@ -345,3 +350,21 @@ async def test_async_set_scenary_uses_wrapped_payload() -> None:
     api.put_device_fields.assert_awaited_once_with(
         "123", {"device": {"scenary": "sleep"}}
     )
+
+
+@pytest.mark.asyncio
+async def test_send_event_maps_423_machine_not_ready() -> None:
+    api = AirzoneAPI(
+        username="user@example.com",
+        password="secret",
+        session=AsyncMock(spec_set=ClientSession),
+    )
+    api._authed_request_with_retries = AsyncMock(
+        side_effect=_client_response_error(status=423)
+    )
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await api.send_event({"event": "payload"})
+
+    assert exc_info.value.translation_domain == "airzoneclouddaikin"
+    assert exc_info.value.translation_key == "machine_not_ready"

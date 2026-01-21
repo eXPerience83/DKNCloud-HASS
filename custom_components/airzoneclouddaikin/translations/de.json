@@ -50,6 +50,9 @@
   "exceptions": {
     "wserver_not_connected": {
       "message": "DKN-WServer nicht verbunden (422)"
+    },
+    "machine_not_ready": {
+      "message": "DKN-Gerät nicht bereit (423)"
     }
   },
   "issues": {

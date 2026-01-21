@@ -345,6 +345,11 @@ class AirzoneAPI:
                     translation_domain=DOMAIN,
                     translation_key="wserver_not_connected",
                 ) from None
+            if cre.status == 423:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="machine_not_ready",
+                ) from None
             raise HomeAssistantError(f"DKN event failed (HTTP {cre.status})") from None
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
