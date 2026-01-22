@@ -343,6 +343,8 @@ Treat this as a UI heuristic; **the backend contract is simply whether the devic
 ## 9) Error Semantics Worth Handling
 
 - `/events` may respond 2xx even if the physical unit later clamps/corrects the value.
+- `/events` may return 422 when the WServer is not connected.
+- `/events` may return 423 when the device/machine is not ready.
 - Some changes propagate with delay; always prefer polling `/devices?...` to confirm settled state.
 - Treat repeated scenary writes (e.g., `sleep → occupied`) as **idempotent** and safe.
 

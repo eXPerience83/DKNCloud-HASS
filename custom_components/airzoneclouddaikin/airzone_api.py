@@ -340,12 +340,20 @@ class AirzoneAPI:
         except ClientResponseError as cre:
             if cre.status == 401:
                 raise ConfigEntryAuthFailed("Authentication failed") from None
-            if cre.status == 422:
+            elif cre.status == 422:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
                     translation_key="wserver_not_connected",
                 ) from None
-            raise HomeAssistantError(f"DKN event failed (HTTP {cre.status})") from None
+            elif cre.status == 423:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="machine_not_ready",
+                ) from None
+            else:
+                raise HomeAssistantError(
+                    f"DKN event failed (HTTP {cre.status})"
+                ) from None
 
     async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
         """PUT /devices/{id} with provided payload (retries for 429/5xx).
