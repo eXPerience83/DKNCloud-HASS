@@ -157,9 +157,9 @@ class AirzoneAPI:
                 method, url, params=params, json=json, headers=headers, timeout=timeout
             ) as resp:
                 resp.raise_for_status()
-                empty_body = resp.status == 204 or resp.content_length in (0, None)
+                empty_body = resp.status == 204 or resp.content_length == 0
                 if resp.content_type == "application/json":
-                    if resp.status == 204 or resp.content_length == 0:
+                    if empty_body:
                         return None
                     return await resp.json()
                 if empty_body:
