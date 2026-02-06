@@ -551,7 +551,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 refresh_needed = True
 
             if refresh_needed:
-                coordinator.async_request_refresh()
+                hass.async_create_task(coordinator.async_request_refresh())
 
     def _on_sleep_candidate() -> None:
         existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
