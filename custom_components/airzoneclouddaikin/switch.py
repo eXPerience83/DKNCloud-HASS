@@ -86,8 +86,18 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     def _backend_power_is_on(self) -> bool:
         """Return backend-reported power (ignore optimistic)."""
-        power = str(self._device.get("power", "0")).strip()
-        return power == "1"
+        power = self._device.get("power")
+        s = str(power).strip().lower()
+        if s in ("1", "on", "true", "yes"):
+            return True
+        if s in ("0", "off", "false", "no", "", "none"):
+            return False
+        if isinstance(power, bool):
+            return power
+        try:
+            return bool(int(power))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _resolve_climate_entity_id(self) -> str | None:
         """Resolve the sibling climate entity via the entity registry."""
