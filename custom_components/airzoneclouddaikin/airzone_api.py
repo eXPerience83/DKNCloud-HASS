@@ -159,7 +159,7 @@ class AirzoneAPI:
                 resp.raise_for_status()
                 empty_body = resp.status == 204 or resp.content_length == 0
                 if resp.content_type == "application/json":
-                    if resp.status == 204 or resp.content_length == 0:
+                    if empty_body:
                         return None
                     return await resp.json()
                 if empty_body:
