@@ -158,6 +158,8 @@ class AirzoneAPI:
             ) as resp:
                 resp.raise_for_status()
                 if resp.content_type == "application/json":
+                    if resp.status == 204 or resp.content_length in {0, None}:
+                        return None
                     return await resp.json()
                 return await resp.text()
         except ClientResponseError as cre:
