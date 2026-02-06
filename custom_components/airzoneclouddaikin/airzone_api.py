@@ -157,10 +157,13 @@ class AirzoneAPI:
                 method, url, params=params, json=json, headers=headers, timeout=timeout
             ) as resp:
                 resp.raise_for_status()
+                empty_body = resp.status == 204 or resp.content_length in (0, None)
                 if resp.content_type == "application/json":
                     if resp.status == 204 or resp.content_length == 0:
                         return None
                     return await resp.json()
+                if empty_body:
+                    return ""
                 return await resp.text()
         except ClientResponseError as cre:
             _LOGGER.debug(

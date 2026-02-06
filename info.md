@@ -51,6 +51,9 @@
 
 - `PUT /devices/<device_id>?format=json&user_email=...&user_token=...`
 - **Success codes observed:** 200, 204
+- **Response body:** 204 responses typically include an empty body; clients should
+  treat empty JSON/text bodies as `None`/`""` and still consider the request
+  successful.
 - **Canonical payload shapes (aligned to the official UI):**
   - `scenary` is sent **nested** under `device`.
   - Most other “simple fields” are sent **root-level** (top-level JSON).
