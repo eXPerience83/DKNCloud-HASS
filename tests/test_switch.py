@@ -442,3 +442,19 @@ def test_send_event_logs_and_reraises_on_failure() -> None:
         assert "P1 failed" in str(err)
     else:  # pragma: no cover - safety net
         raise AssertionError("_send_event did not re-raise API error")
+
+
+def test_backend_power_is_on_normalizes_values() -> None:
+    """_backend_power_is_on should normalize common truthy/falsey values."""
+    truthy_values = [True, "true", "on", "yes", 1, "1", 2, "2"]
+    falsey_values = [False, "false", "off", "no", 0, "0", "", "none", None]
+
+    for value in truthy_values:
+        device = {"id": "dev1", "name": "Zone", "power": value}
+        entity, _hass = _make_switch(device)
+        assert entity._backend_power_is_on() is True
+
+    for value in falsey_values:
+        device = {"id": "dev1", "name": "Zone", "power": value}
+        entity, _hass = _make_switch(device)
+        assert entity._backend_power_is_on() is False

@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from json import JSONDecodeError
 from typing import Any
 
 from aiohttp import (
@@ -159,9 +160,13 @@ class AirzoneAPI:
                 resp.raise_for_status()
                 empty_body = resp.status == 204 or resp.content_length == 0
                 if resp.content_type == "application/json":
-                    if empty_body:
-                        return None
-                    return await resp.json()
+                    try:
+                        return await resp.json()
+                    except (JSONDecodeError, ValueError):
+                        body = (await resp.text()).strip()
+                        if not body:
+                            return None
+                        raise
                 if empty_body:
                     return ""
                 return await resp.text()
