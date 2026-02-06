@@ -3,6 +3,7 @@
 ### Fixed
 - Add dedicated handling for /events HTTP 423 ("machine not ready") with translations.
 - Avoid JSON parsing for empty application/json responses (e.g., HTTP 204).
+- Normalize backend power parsing in the power switch to avoid redundant P1 writes.
 - Ensure coordinator refresh coroutines are scheduled after sleep-expiry cleanup
   and post-write refresh delays.
 
