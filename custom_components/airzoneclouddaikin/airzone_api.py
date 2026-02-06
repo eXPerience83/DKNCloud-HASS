@@ -159,7 +159,7 @@ class AirzoneAPI:
                 resp.raise_for_status()
                 empty_body = resp.status == 204 or resp.content_length in (0, None)
                 if resp.content_type == "application/json":
-                    if empty_body:
+                    if resp.status == 204 or resp.content_length == 0:
                         return None
                     return await resp.json()
                 if empty_body:
@@ -345,10 +345,14 @@ class AirzoneAPI:
         except ClientResponseError as cre:
             if cre.status == 401:
                 raise ConfigEntryAuthFailed("Authentication failed") from None
-            if cre.status == 422:
+            error_map = {
+                422: "wserver_not_connected",
+                423: "machine_not_ready",
+            }
+            if cre.status in error_map:
                 raise HomeAssistantError(
                     translation_domain=DOMAIN,
-                    translation_key="wserver_not_connected",
+                    translation_key=error_map[cre.status],
                 ) from None
             raise HomeAssistantError(f"DKN event failed (HTTP {cre.status})") from None
 

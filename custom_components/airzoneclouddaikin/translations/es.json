@@ -50,6 +50,9 @@
   "exceptions": {
     "wserver_not_connected": {
       "message": "DKN WServer sin conexión (422)"
+    },
+    "machine_not_ready": {
+      "message": "Máquina DKN no lista (423)"
     }
   },
   "issues": {

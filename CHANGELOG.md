@@ -1,4 +1,11 @@
 # Changelog
+## [0.4.7] - 2026-02-06
+### Fixed
+- Add dedicated handling for /events HTTP 423 ("machine not ready") with translations.
+- Avoid JSON parsing for empty application/json responses (e.g., HTTP 204).
+- Ensure coordinator refresh coroutines are scheduled after sleep-expiry cleanup
+  and post-write refresh delays.
+
 ## [0.4.6] - 2026-01-20
 ### Fixed
 - Align `/devices` writes for sleep time and unoccupied min/max with the backend
