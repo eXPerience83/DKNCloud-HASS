@@ -13,6 +13,8 @@
   partial results when non-auth installation requests fail.
 - Preserve cancellation semantics during parallel device fetches by propagating
   cancelled installation requests immediately.
+- Avoid logging installation identifiers during per-installation fetch errors to
+  keep coordinator logs free of sensitive metadata.
 
 ## [0.4.7] - 2026-02-06
 ### Fixed

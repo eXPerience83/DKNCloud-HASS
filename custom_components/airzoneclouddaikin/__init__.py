@@ -232,7 +232,7 @@ async def _async_update_data(
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
 
         auth_error = False
-        for inst_id, result in zip(installation_ids, fetch_results, strict=False):
+        for _inst_id, result in zip(installation_ids, fetch_results, strict=True):
             if isinstance(result, asyncio.CancelledError):
                 raise result
             if isinstance(result, ClientResponseError):
@@ -240,15 +240,13 @@ async def _async_update_data(
                     auth_error = True
                     continue
                 _LOGGER.warning(
-                    "Skipping installation %s due to HTTP %s while fetching devices.",
-                    inst_id,
+                    "Skipping one installation due to HTTP %s while fetching devices.",
                     result.status,
                 )
                 continue
             if isinstance(result, Exception):
                 _LOGGER.debug(
-                    "Skipping installation %s due to %s while fetching devices.",
-                    inst_id,
+                    "Skipping one installation due to %s while fetching devices.",
                     type(result).__name__,
                 )
                 continue
@@ -266,9 +264,8 @@ async def _async_update_data(
                 data[str(dev_id)] = dev
 
         if auth_error:
-            bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
-            if not bucket.get("reauth_requested"):
-                bucket["reauth_requested"] = True
+            if not domain_bucket.get("reauth_requested"):
+                domain_bucket["reauth_requested"] = True
                 _LOGGER.warning("Authentication expired; opening reauth flow.")
                 hass.async_create_task(
                     hass.config_entries.flow.async_init(
