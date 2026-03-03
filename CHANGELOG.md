@@ -11,6 +11,8 @@
   is unknown (`None`) and coordinator data later becomes available.
 - Parallelize per-installation device fetches during coordinator updates and keep
   partial results when non-auth installation requests fail.
+- Preserve cancellation semantics during parallel device fetches by propagating
+  cancelled installation requests immediately.
 
 ## [0.4.7] - 2026-02-06
 ### Fixed

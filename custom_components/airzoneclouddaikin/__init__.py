@@ -233,6 +233,8 @@ async def _async_update_data(
 
         auth_error = False
         for inst_id, result in zip(installation_ids, fetch_results, strict=False):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
             if isinstance(result, ClientResponseError):
                 if result.status == 401:
                     auth_error = True

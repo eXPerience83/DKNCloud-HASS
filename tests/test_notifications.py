@@ -772,6 +772,24 @@ async def test_async_update_data_continues_after_transient_installation_error(
 
 
 @pytest.mark.asyncio
+async def test_async_update_data_propagates_cancelled_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPI:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [{"installation": {"id": "inst-cancel"}}]
+
+        async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await integration._async_update_data(hass, entry, DummyAPI())
+
+
+@pytest.mark.asyncio
 async def test_async_update_data_401_from_one_installation_triggers_reauth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
