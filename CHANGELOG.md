@@ -9,6 +9,8 @@
   even when coordinator device snapshots are empty.
 - Recompute HEAT_COOL capability in the options flow when the cached support flag
   is unknown (`None`) and coordinator data later becomes available.
+- Parallelize per-installation device fetches during coordinator updates and keep
+  partial results when non-auth installation requests fail.
 
 ## [0.4.7] - 2026-02-06
 ### Fixed

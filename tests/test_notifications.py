@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from datetime import datetime, timedelta, timezone
@@ -743,3 +744,74 @@ async def test_offline_notification_includes_datetime_connection_date(
     ]
     assert old.isoformat() in message
     assert "minutes ago" in message
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_continues_after_transient_installation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPI:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                raise RuntimeError("temporary")
+            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+
+    data = await integration._async_update_data(hass, entry, DummyAPI())
+
+    assert list(data) == ["dev-b"]
+    assert data["dev-b"]["name"] == "Unit B"
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_401_from_one_installation_triggers_reauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    flow_calls: list[dict[str, Any]] = []
+
+    async def _async_init(
+        domain: str, context: dict[str, Any], data: dict[str, Any]
+    ) -> dict[str, Any]:
+        flow_calls.append({"domain": domain, "context": context, "data": data})
+        return {"type": "flow"}
+
+    hass.config_entries.flow = types.SimpleNamespace(async_init=_async_init)
+    hass.async_create_task = lambda coro: asyncio.create_task(coro)
+
+    class FakeClientResponseError(Exception):
+        def __init__(self, status: int) -> None:
+            self.status = status
+
+    monkeypatch.setattr(integration, "ClientResponseError", FakeClientResponseError)
+
+    class DummyAPI:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-401"}},
+                {"installation": {"id": "inst-ok"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-401":
+                raise FakeClientResponseError(401)
+            return [{"id": "dev-ok", "name": "Unit OK", "scenary": "home"}]
+
+    with pytest.raises(UpdateFailed, match=r"Authentication required \(401\)"):
+        await integration._async_update_data(hass, entry, DummyAPI())
+
+    await asyncio.sleep(0)
+
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["reauth_requested"] is True
+    assert flow_calls and flow_calls[0]["domain"] == DOMAIN

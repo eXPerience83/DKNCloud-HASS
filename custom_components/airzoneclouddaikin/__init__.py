@@ -216,6 +216,7 @@ async def _async_update_data(
         data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
 
+        installation_ids: list[Any] = []
         for rel in relations or []:
             inst_id: Any | None = None
             inst = rel.get("installation")
@@ -224,10 +225,33 @@ async def _async_update_data(
             if inst_id is None:
                 inst_id = rel.get("installation_id") or rel.get("id")
 
-            if not inst_id:
+            if inst_id:
+                installation_ids.append(inst_id)
+
+        fetches = [api.fetch_devices(inst_id) for inst_id in installation_ids]
+        fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
+
+        auth_error = False
+        for inst_id, result in zip(installation_ids, fetch_results, strict=False):
+            if isinstance(result, ClientResponseError):
+                if result.status == 401:
+                    auth_error = True
+                    continue
+                _LOGGER.warning(
+                    "Skipping installation %s due to HTTP %s while fetching devices.",
+                    inst_id,
+                    result.status,
+                )
+                continue
+            if isinstance(result, Exception):
+                _LOGGER.debug(
+                    "Skipping installation %s due to %s while fetching devices.",
+                    inst_id,
+                    type(result).__name__,
+                )
                 continue
 
-            devices = await api.fetch_devices(inst_id)
+            devices = result
             for dev in devices or []:
                 dev_id = dev.get("id")
                 if not dev_id:
@@ -238,6 +262,20 @@ async def _async_update_data(
                     else:
                         continue
                 data[str(dev_id)] = dev
+
+        if auth_error:
+            bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+            if not bucket.get("reauth_requested"):
+                bucket["reauth_requested"] = True
+                _LOGGER.warning("Authentication expired; opening reauth flow.")
+                hass.async_create_task(
+                    hass.config_entries.flow.async_init(
+                        DOMAIN,
+                        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+                        data=dict(entry.data),
+                    )
+                )
+            raise UpdateFailed("Authentication required (401)")
 
         now = dt_util.utcnow()
         tracked_ids = set(sleep_tracking)
@@ -277,6 +315,8 @@ async def _async_update_data(
         return data
 
     except asyncio.CancelledError:
+        raise
+    except UpdateFailed:
         raise
     except ClientResponseError as cre:
         status = cre.status
