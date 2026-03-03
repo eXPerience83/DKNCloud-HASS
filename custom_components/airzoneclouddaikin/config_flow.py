@@ -288,7 +288,6 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
                 return True
             if cached is False:
                 return False
-            return None
 
         coordinator = bucket.get("coordinator")
         data = getattr(coordinator, "data", None)
@@ -296,9 +295,14 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
             return None
 
         try:
-            return any(device_supports_heat_cool(dev) for dev in data.values())
+            supports_heat_cool = any(
+                device_supports_heat_cool(dev) for dev in data.values()
+            )
         except Exception:  # noqa: BLE001
             return None
+
+        bucket["heat_cool_supported"] = supports_heat_cool
+        return supports_heat_cool
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

@@ -7,6 +7,8 @@
 ### Fixed
 - Remove orphaned PII sensor entities by unique-id suffix during opt-out cleanup,
   even when coordinator device snapshots are empty.
+- Recompute HEAT_COOL capability in the options flow when the cached support flag
+  is unknown (`None`) and coordinator data later becomes available.
 
 ## [0.4.7] - 2026-02-06
 ### Fixed
