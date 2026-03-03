@@ -255,6 +255,12 @@ def test_async_setup_entry_removes_orphan_pii_entities_only() -> None:
     registry_entities = [
         RegistryEntity("sensor.olddevice_mac", "olddevice_mac", "sensor", domain),
         RegistryEntity(
+            "sensor.olddevice_installation_id",
+            "olddevice_installation_id",
+            "sensor",
+            domain,
+        ),
+        RegistryEntity(
             "sensor.olddevice_local_temp", "olddevice_local_temp", "sensor", domain
         ),
         RegistryEntity("sensor.external_mac", "other_mac", "sensor", "other_platform"),
@@ -276,5 +282,8 @@ def test_async_setup_entry_removes_orphan_pii_entities_only() -> None:
 
     asyncio.run(_run_setup())
 
-    assert reg.removed == ["sensor.olddevice_mac"]
+    assert reg.removed == [
+        "sensor.olddevice_mac",
+        "sensor.olddevice_installation_id",
+    ]
     assert added_entities == []

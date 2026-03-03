@@ -285,8 +285,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
                 if ent.domain != "sensor" or ent.platform != DOMAIN:
                     continue
                 uid = (ent.unique_id or "").strip()
-                attr = uid.rsplit("_", 1)[-1] if "_" in uid else ""
-                if attr in PII_ATTRS:
+                if any(uid.endswith(f"_{attr}") for attr in PII_ATTRS):
                     reg.async_remove(ent.entity_id)
     except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
