@@ -3,6 +3,8 @@
 ### Changed
 - Enable HACS `zip_release` packaging and add validated release ZIP workflows for
   `airzoneclouddaikin.zip`.
+- Document dynamic climate `supported_features` behavior (DRY/FAN_ONLY/OFF
+  contract rationale) and lock the mode-feature matrix with regression tests.
 
 ### Fixed
 - Remove orphaned PII sensor entities by unique-id suffix during opt-out cleanup,
