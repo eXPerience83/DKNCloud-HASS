@@ -1,4 +1,13 @@
 # Changelog
+## [0.4.8] - 2026-03-03
+### Changed
+- Enable HACS `zip_release` packaging and add validated release ZIP workflows for
+  `airzoneclouddaikin.zip`.
+
+### Fixed
+- Remove orphaned PII sensor entities by unique-id suffix during opt-out cleanup,
+  even when coordinator device snapshots are empty.
+
 ## [0.4.7] - 2026-02-06
 ### Fixed
 - Add dedicated handling for /events HTTP 423 ("machine not ready") with translations.

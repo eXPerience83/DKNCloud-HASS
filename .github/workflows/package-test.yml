@@ -1,0 +1,59 @@
+name: Package Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  package:
+    name: Build & validate ZIP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_NAME="airzoneclouddaikin.zip"
+          rm -f "${ZIP_NAME}"
+
+          cd "${GITHUB_WORKSPACE}/custom_components/airzoneclouddaikin"
+          zip -r "${GITHUB_WORKSPACE}/${ZIP_NAME}" ./ \
+            -x "*.pyc" \
+            -x "*/__pycache__/*" \
+            -x ".DS_Store"
+
+          cd "${GITHUB_WORKSPACE}"
+          ls -la "${ZIP_NAME}"
+
+      - name: Validate ZIP structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_NAME="airzoneclouddaikin.zip"
+
+          test -s "${ZIP_NAME}"
+
+          FILE_COUNT="$(unzip -Z1 "${ZIP_NAME}" | wc -l | tr -d ' ')"
+          if [ "${FILE_COUNT}" -eq 0 ]; then
+            echo "ZIP is empty"
+            exit 1
+          fi
+
+          if unzip -Z1 "${ZIP_NAME}" | grep -qE '^custom_components/'; then
+            echo "ZIP contains 'custom_components/' prefix (content must be in ZIP root)"
+            unzip -Z1 "${ZIP_NAME}" | head -n 200
+            exit 1
+          fi
+
+          unzip -Z1 "${ZIP_NAME}" | grep -qx '__init__.py'
+          unzip -Z1 "${ZIP_NAME}" | grep -qx 'manifest.json'
+          echo "ZIP validation OK"
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: airzoneclouddaikin-zip
+          path: airzoneclouddaikin.zip
+          if-no-files-found: error

@@ -281,15 +281,12 @@ async def async_setup_entry(hass, entry, async_add_entities):
     try:
         if not expose_pii:
             reg = er.async_get(hass)
-            known_device_ids = set((coordinator.data or {}).keys())
-            computed_pii_uids = {
-                f"{dev_id}_{attr}" for dev_id in known_device_ids for attr in PII_ATTRS
-            }
             for ent in er.async_entries_for_config_entry(reg, entry.entry_id):
                 if ent.domain != "sensor" or ent.platform != DOMAIN:
                     continue
                 uid = (ent.unique_id or "").strip()
-                if uid in computed_pii_uids:
+                attr = uid.rsplit("_", 1)[-1] if "_" in uid else ""
+                if attr in PII_ATTRS:
                     reg.async_remove(ent.entity_id)
     except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("PII cleanup skipped due to registry error: %s", exc)
