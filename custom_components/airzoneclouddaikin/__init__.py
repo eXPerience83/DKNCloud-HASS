@@ -131,6 +131,24 @@ def _backend_power_is_off(device: dict[str, Any]) -> bool:
         return False
 
 
+def _request_reauth_once(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Trigger reauth flow once per entry and mark the entry bucket."""
+
+    bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+    if bucket.get("reauth_requested"):
+        return
+
+    bucket["reauth_requested"] = True
+    _LOGGER.warning("Authentication expired; opening reauth flow.")
+    hass.async_create_task(
+        hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+            data=dict(entry.data),
+        )
+    )
+
+
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Coordinator that aggregates installations and exposes device data.
 
@@ -293,16 +311,7 @@ async def _async_update_data(
             last_devices_by_inst[inst_id] = inst_device_ids
 
         if auth_error:
-            if not domain_bucket.get("reauth_requested"):
-                domain_bucket["reauth_requested"] = True
-                _LOGGER.warning("Authentication expired; opening reauth flow.")
-                hass.async_create_task(
-                    hass.config_entries.flow.async_init(
-                        DOMAIN,
-                        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-                        data=dict(entry.data),
-                    )
-                )
+            _request_reauth_once(hass, entry)
             raise UpdateFailed("Authentication required (401)")
 
         had_prior_snapshot = bool(domain_bucket.get("has_successful_snapshot", False))
@@ -367,17 +376,7 @@ async def _async_update_data(
     except ClientResponseError as cre:
         status = cre.status
         if cre.status == 401:
-            bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
-            if not bucket.get("reauth_requested"):
-                bucket["reauth_requested"] = True
-                _LOGGER.warning("Authentication expired; opening reauth flow.")
-                hass.async_create_task(
-                    hass.config_entries.flow.async_init(
-                        DOMAIN,
-                        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-                        data=dict(entry.data),
-                    )
-                )
+            _request_reauth_once(hass, entry)
             raise UpdateFailed("Authentication required (401)") from None
         raise UpdateFailed(f"Failed to update Airzone data: HTTP {status}") from None
     except Exception as err:  # noqa: BLE001
