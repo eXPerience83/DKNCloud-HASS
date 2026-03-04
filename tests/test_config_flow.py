@@ -216,6 +216,11 @@ def _install_homeassistant_stubs() -> None:
     sys.modules["homeassistant.const"] = const_module
 
     core_module = types.ModuleType("homeassistant.core")
+
+    class HomeAssistant:  # pragma: no cover - stub only
+        pass
+
+    core_module.HomeAssistant = HomeAssistant
     sys.modules["homeassistant.core"] = core_module
 
     data_entry_flow_module = types.ModuleType("homeassistant.data_entry_flow")
@@ -248,6 +253,26 @@ def _install_homeassistant_stubs() -> None:
     helpers_module.config_validation = cv_module
     sys.modules["homeassistant.helpers.config_validation"] = cv_module
 
+    event_module = types.ModuleType("homeassistant.helpers.event")
+
+    def async_call_later(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    event_module.async_call_later = async_call_later
+    helpers_module.event = event_module
+    sys.modules["homeassistant.helpers.event"] = event_module
+
+    update_coordinator_module = types.ModuleType(
+        "homeassistant.helpers.update_coordinator"
+    )
+
+    class DataUpdateCoordinator:  # pragma: no cover - stub only
+        pass
+
+    update_coordinator_module.DataUpdateCoordinator = DataUpdateCoordinator
+    helpers_module.update_coordinator = update_coordinator_module
+    sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator_module
+
     ha_module.config_entries = config_entries_module
     ha_module.const = const_module
     ha_module.core = core_module
@@ -257,6 +282,17 @@ def _install_homeassistant_stubs() -> None:
 
 _install_voluptuous_stub()
 _install_homeassistant_stubs()
+
+custom_components_module = sys.modules.setdefault(
+    "custom_components", types.ModuleType("custom_components")
+)
+custom_components_module.__path__ = [str(ROOT / "custom_components")]
+
+airzone_package = sys.modules.setdefault(
+    "custom_components.airzoneclouddaikin",
+    types.ModuleType("custom_components.airzoneclouddaikin"),
+)
+airzone_package.__path__ = [str(ROOT / "custom_components" / "airzoneclouddaikin")]
 
 from homeassistant.config_entries import SOURCE_REAUTH  # type: ignore  # noqa: E402
 from homeassistant.const import (  # type: ignore  # noqa: E402
@@ -474,6 +510,39 @@ def test_options_flow_updates_options_and_preserves_hidden_keys(hass: HassStub) 
     assert new_options[CONF_SLEEP_TIMEOUT_ENABLED] is True
     assert new_options["user_token"] == "tok-123"
     assert new_options["hidden_key"] == "keep-me"
+
+
+def test_options_flow_recomputes_heat_cool_when_cached_none(hass: HassStub) -> None:
+    entry = ConfigEntry(
+        domain=DOMAIN,
+        data={CONF_USERNAME: "user@example.com"},
+        options={
+            "user_token": "tok-123",
+            CONF_SCAN_INTERVAL: 10,
+            CONF_EXPOSE_PII: False,
+            CONF_ENABLE_HEAT_COOL: False,
+            CONF_SLEEP_TIMEOUT_ENABLED: False,
+        },
+        unique_id="user@example.com",
+    )
+    entry.add_to_hass(hass)
+
+    hass.data[DOMAIN] = {
+        entry.entry_id: {
+            "heat_cool_supported": None,
+            "coordinator": types.SimpleNamespace(
+                data={"dev1": {"modes": "0011"}, "dev2": {"modes": "1111"}}
+            ),
+        }
+    }
+
+    flow = AirzoneOptionsFlow(entry)
+    flow.hass = hass
+
+    result = flow._any_device_supports_heat_cool()
+
+    assert result is True
+    assert hass.data[DOMAIN][entry.entry_id]["heat_cool_supported"] is True
 
 
 def test_options_flow_defaults_sleep_timeout_when_missing(hass: HassStub) -> None:

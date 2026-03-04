@@ -190,6 +190,9 @@ if not hasattr(climate_const_module, "ClimateEntityFeature"):
     class ClimateEntityFeature(IntFlag):
         TARGET_TEMPERATURE = 1
         FAN_MODE = 2
+        PRESET_MODE = 4
+        TURN_ON = 8
+        TURN_OFF = 16
 
     climate_const_module.ClimateEntityFeature = ClimateEntityFeature
 
@@ -291,6 +294,7 @@ climate_spec.loader.exec_module(climate_module_impl)
 
 AirzoneClimate = climate_module_impl.AirzoneClimate
 HVACMode = climate_const_module.HVACMode
+ClimateEntityFeature = climate_const_module.ClimateEntityFeature
 DOMAIN = climate_module_impl.DOMAIN
 
 
@@ -392,3 +396,47 @@ def test_heat_cool_retained_when_current_mode_loses_support() -> None:
         HVACMode.DRY,
         HVACMode.HEAT_COOL,
     ]
+
+
+def test_supported_features_matrix_by_hvac_mode() -> None:
+    """Freeze supported_features matrix by HVAC mode, including alias mode 8."""
+
+    base = (
+        ClimateEntityFeature.PRESET_MODE
+        | ClimateEntityFeature.TURN_ON
+        | ClimateEntityFeature.TURN_OFF
+    )
+
+    cases = [
+        ({"power": "0", "mode": "1"}, base),
+        ({"power": "1", "mode": "5"}, base),
+        (
+            {"power": "1", "mode": "1"},
+            base
+            | ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.FAN_MODE,
+        ),
+        (
+            {"power": "1", "mode": "2"},
+            base
+            | ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.FAN_MODE,
+        ),
+        (
+            {"power": "1", "mode": "4"},
+            base
+            | ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.FAN_MODE,
+        ),
+        ({"power": "1", "mode": "3"}, base | ClimateEntityFeature.FAN_MODE),
+        ({"power": "1", "mode": "8"}, base | ClimateEntityFeature.FAN_MODE),
+    ]
+
+    for snapshot, expected in cases:
+        device = {
+            "name": "Zone",
+            "modes": "11111",
+            **snapshot,
+        }
+        entity = _make_climate(device, heat_cool_opt_in=True)
+        assert entity.supported_features == expected

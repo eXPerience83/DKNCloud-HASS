@@ -131,6 +131,24 @@ def _backend_power_is_off(device: dict[str, Any]) -> bool:
         return False
 
 
+def _request_reauth_once(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Trigger reauth flow once per entry and mark the entry bucket."""
+
+    bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+    if bucket.get("reauth_requested"):
+        return
+
+    bucket["reauth_requested"] = True
+    _LOGGER.warning("Authentication expired; opening reauth flow.")
+    hass.async_create_task(
+        hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+            data=dict(entry.data),
+        )
+    )
+
+
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Coordinator that aggregates installations and exposes device data.
 
@@ -216,6 +234,7 @@ async def _async_update_data(
         data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
 
+        installation_ids: list[str] = []
         for rel in relations or []:
             inst_id: Any | None = None
             inst = rel.get("installation")
@@ -224,10 +243,64 @@ async def _async_update_data(
             if inst_id is None:
                 inst_id = rel.get("installation_id") or rel.get("id")
 
-            if not inst_id:
+            if inst_id:
+                installation_ids.append(str(inst_id))
+
+        last_devices_by_inst: dict[str, set[str]] = domain_bucket.setdefault(
+            "last_devices_by_inst", {}
+        )
+        device_installation_map: dict[str, str] = domain_bucket.setdefault(
+            "device_installation_map", {}
+        )
+
+        current_installations = set(installation_ids)
+        stale_installations = [
+            inst_id
+            for inst_id in list(last_devices_by_inst)
+            if inst_id not in current_installations
+        ]
+        for stale_inst in stale_installations:
+            stale_ids = last_devices_by_inst.pop(stale_inst, set())
+            for stale_dev_id in stale_ids:
+                if device_installation_map.get(stale_dev_id) == stale_inst:
+                    device_installation_map.pop(stale_dev_id, None)
+
+        fetches = [api.fetch_devices(inst_id) for inst_id in installation_ids]
+        fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
+
+        last_data: dict[str, dict[str, Any]] = domain_bucket.get("last_data", {})
+        if not isinstance(last_data, dict):
+            last_data = {}
+
+        auth_error = False
+        had_non_auth_install_errors = False
+        failed_installations: set[str] = set()
+
+        for inst_id, result in zip(installation_ids, fetch_results, strict=True):
+            if isinstance(result, asyncio.CancelledError):
+                raise result
+            if isinstance(result, ClientResponseError):
+                if result.status == 401:
+                    auth_error = True
+                    continue
+                had_non_auth_install_errors = True
+                failed_installations.add(inst_id)
+                _LOGGER.warning(
+                    "Skipping one installation due to HTTP %s while fetching devices.",
+                    result.status,
+                )
+                continue
+            if isinstance(result, Exception):
+                had_non_auth_install_errors = True
+                failed_installations.add(inst_id)
+                _LOGGER.debug(
+                    "Skipping one installation due to %s while fetching devices.",
+                    type(result).__name__,
+                )
                 continue
 
-            devices = await api.fetch_devices(inst_id)
+            devices = result
+            inst_device_ids: set[str] = set()
             for dev in devices or []:
                 dev_id = dev.get("id")
                 if not dev_id:
@@ -237,13 +310,46 @@ async def _async_update_data(
                         dev["id"] = dev_id
                     else:
                         continue
-                data[str(dev_id)] = dev
 
+                dev_id_str = str(dev_id)
+                data[dev_id_str] = dev
+                inst_device_ids.add(dev_id_str)
+                device_installation_map[dev_id_str] = inst_id
+
+            previous_ids = set(last_devices_by_inst.get(inst_id, set()))
+            for stale_dev_id in previous_ids - inst_device_ids:
+                if device_installation_map.get(stale_dev_id) == inst_id:
+                    device_installation_map.pop(stale_dev_id, None)
+            last_devices_by_inst[inst_id] = inst_device_ids
+
+        if auth_error:
+            _request_reauth_once(hass, entry)
+            raise UpdateFailed("Authentication required (401)")
+
+        had_prior_snapshot = bool(domain_bucket.get("has_successful_snapshot", False))
+        if had_non_auth_install_errors and not had_prior_snapshot:
+            domain_bucket["last_update_had_install_errors"] = True
+            raise UpdateFailed(
+                "Failed to update Airzone data: partial installation refresh"
+            )
+
+        if had_prior_snapshot and failed_installations:
+            for inst_id in failed_installations:
+                for dev_id in last_devices_by_inst.get(inst_id, set()):
+                    dev = last_data.get(dev_id)
+                    if dev is not None:
+                        data.setdefault(dev_id, dev)
+
+        domain_bucket["last_update_had_install_errors"] = had_non_auth_install_errors
+        domain_bucket["failed_installations_last_update"] = set(failed_installations)
+        domain_bucket["has_successful_snapshot"] = True
+        domain_bucket["last_data"] = dict(data)
         now = dt_util.utcnow()
         tracked_ids = set(sleep_tracking)
         active_ids = set(data)
-        for stale_id in tracked_ids - active_ids:
-            sleep_tracking.pop(stale_id, None)
+        if not had_non_auth_install_errors:
+            for stale_id in tracked_ids - active_ids:
+                sleep_tracking.pop(stale_id, None)
         for dev_id, dev in data.items():
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
 
@@ -278,20 +384,12 @@ async def _async_update_data(
 
     except asyncio.CancelledError:
         raise
+    except UpdateFailed:
+        raise
     except ClientResponseError as cre:
         status = cre.status
         if cre.status == 401:
-            bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
-            if not bucket.get("reauth_requested"):
-                bucket["reauth_requested"] = True
-                _LOGGER.warning("Authentication expired; opening reauth flow.")
-                hass.async_create_task(
-                    hass.config_entries.flow.async_init(
-                        DOMAIN,
-                        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-                        data=dict(entry.data),
-                    )
-                )
+            _request_reauth_once(hass, entry)
             raise UpdateFailed("Authentication required (401)") from None
         raise UpdateFailed(f"Failed to update Airzone data: HTTP {status}") from None
     except Exception as err:  # noqa: BLE001
@@ -727,6 +825,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
 
         removed = set(notify_state) - set(data)
+        if bucket.get("last_update_had_install_errors"):
+            failed_installations = set(
+                bucket.get("failed_installations_last_update", set())
+            )
+            device_installation_map = bucket.get("device_installation_map", {})
+            if failed_installations and isinstance(device_installation_map, dict):
+                removed = {
+                    dev_id
+                    for dev_id in removed
+                    if device_installation_map.get(dev_id) not in failed_installations
+                }
         for dev_id in removed:
             st = notify_state.pop(dev_id, None)
             if st is None:

@@ -675,7 +675,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             feats |= ClimateEntityFeature.FAN_MODE
         elif mode == HVACMode.FAN_ONLY:
             feats |= ClimateEntityFeature.FAN_MODE
-        # DRY/OFF: no temperature/fan controls
+        # Intentionally dynamic per the backend/UI contract documented in info.md:
+        # - DRY: setpoints are not meaningful and fan control is typically not exposed.
+        # - FAN_ONLY (including backend alias P2=8): fan control only; no target
+        #   temperature because P7/P8 setpoints do not apply.
+        # - OFF: no temperature/fan controls.
 
         # Presets always available (mapped to scenary)
         feats |= ClimateEntityFeature.PRESET_MODE

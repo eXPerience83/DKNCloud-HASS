@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from datetime import datetime, timedelta, timezone
@@ -743,3 +744,216 @@ async def test_offline_notification_includes_datetime_connection_date(
     ]
     assert old.isoformat() in message
     assert "minutes ago" in message
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_raises_on_initial_partial_installation_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPI:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                raise RuntimeError("temporary")
+            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+
+    with pytest.raises(UpdateFailed, match="partial installation refresh"):
+        await integration._async_update_data(hass, entry, DummyAPI())
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_preserves_failed_installation_from_previous_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPIOk:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
+            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+
+    first = await integration._async_update_data(hass, entry, DummyAPIOk())
+    assert set(first) == {"dev-a", "dev-b"}
+
+    class DummyAPIPartial:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                raise RuntimeError("temporary")
+            return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
+
+    second = await integration._async_update_data(hass, entry, DummyAPIPartial())
+
+    assert set(second) == {"dev-a", "dev-b"}
+    assert second["dev-a"]["name"] == "Unit A"
+    assert second["dev-b"]["name"] == "Unit B2"
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_propagates_cancelled_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPI:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [{"installation": {"id": "inst-cancel"}}]
+
+        async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
+            raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await integration._async_update_data(hass, entry, DummyAPI())
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_401_from_one_installation_triggers_reauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    flow_calls: list[dict[str, Any]] = []
+
+    async def _async_init(
+        domain: str, context: dict[str, Any], data: dict[str, Any]
+    ) -> dict[str, Any]:
+        flow_calls.append({"domain": domain, "context": context, "data": data})
+        return {"type": "flow"}
+
+    hass.config_entries.flow = types.SimpleNamespace(async_init=_async_init)
+    hass.async_create_task = lambda coro: asyncio.create_task(coro)
+
+    class FakeClientResponseError(Exception):
+        def __init__(self, status: int) -> None:
+            self.status = status
+
+    monkeypatch.setattr(integration, "ClientResponseError", FakeClientResponseError)
+
+    class DummyAPI:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-401"}},
+                {"installation": {"id": "inst-ok"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-401":
+                raise FakeClientResponseError(401)
+            return [{"id": "dev-ok", "name": "Unit OK", "scenary": "home"}]
+
+    with pytest.raises(UpdateFailed, match=r"Authentication required \(401\)"):
+        await integration._async_update_data(hass, entry, DummyAPI())
+
+    await asyncio.sleep(0)
+
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["reauth_requested"] is True
+    assert flow_calls and flow_calls[0]["domain"] == DOMAIN
+
+
+@pytest.mark.asyncio
+async def test_removed_cleanup_keeps_failed_installation_devices_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    bucket["last_update_had_install_errors"] = True
+    bucket["failed_installations_last_update"] = {"inst-b"}
+    bucket["device_installation_map"] = {
+        "dev-a": "inst-a",
+        "dev-b": "inst-b",
+    }
+
+    cancel_a = Mock()
+    cancel_b = Mock()
+    notify_state = bucket["notify_state"]
+    notify_state["dev-a"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel_a,
+    }
+    notify_state["dev-b"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel_b,
+    }
+
+    coordinator.data = {}
+    listener()
+
+    assert "dev-a" not in notify_state
+    assert "dev-b" in notify_state
+    cancel_a.assert_called_once()
+    cancel_b.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_prunes_removed_installation_cache_state() -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPIInitial:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
+            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+
+    await integration._async_update_data(hass, entry, DummyAPIInitial())
+
+    class DummyAPIRemovedA:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [{"installation": {"id": "inst-b"}}]
+
+        async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
+            return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
+
+    data = await integration._async_update_data(hass, entry, DummyAPIRemovedA())
+    bucket = hass.data[DOMAIN][entry.entry_id]
+
+    assert set(data) == {"dev-b"}
+    assert "inst-a" not in bucket["last_devices_by_inst"]
+    assert "dev-a" not in bucket["device_installation_map"]

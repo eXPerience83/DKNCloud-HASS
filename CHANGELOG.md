@@ -1,4 +1,29 @@
 # Changelog
+## [0.4.8] - 2026-03-03
+### Changed
+- Enable HACS `zip_release` packaging and add validated release ZIP workflows for
+  `airzoneclouddaikin.zip`.
+- Document dynamic climate `supported_features` behavior (DRY/FAN_ONLY/OFF
+  contract rationale) and lock the mode-feature matrix with regression tests.
+
+### Fixed
+- Remove orphaned PII sensor entities by unique-id suffix during opt-out cleanup,
+  even when coordinator device snapshots are empty.
+- Recompute HEAT_COOL capability in the options flow when the cached support flag
+  is unknown (`None`) and coordinator data later becomes available.
+- Parallelize per-installation device fetches during coordinator updates and keep
+  partial results when non-auth installation requests fail.
+- Preserve cancellation semantics during parallel device fetches by propagating
+  cancelled installation requests immediately.
+- Avoid logging installation identifiers during per-installation fetch errors to
+  keep coordinator logs free of sensitive metadata.
+- Treat initial partial installation refreshes as update failures and retain the
+  last successful per-installation snapshot on later transient errors.
+- Scope removed-device notification cleanup during partial refreshes so only
+  installations refreshed successfully are considered for removal handling.
+- Prune cached per-installation device maps when installations disappear from the
+  backend relations snapshot.
+
 ## [0.4.7] - 2026-02-06
 ### Fixed
 - Add dedicated handling for /events HTTP 423 ("machine not ready") with translations.
