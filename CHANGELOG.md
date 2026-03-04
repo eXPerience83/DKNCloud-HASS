@@ -17,6 +17,8 @@
   cancelled installation requests immediately.
 - Avoid logging installation identifiers during per-installation fetch errors to
   keep coordinator logs free of sensitive metadata.
+- Treat initial partial installation refreshes as update failures and retain the
+  last successful per-installation snapshot on later transient errors.
 
 ## [0.4.7] - 2026-02-06
 ### Fixed

@@ -747,7 +747,7 @@ async def test_offline_notification_includes_datetime_connection_date(
 
 
 @pytest.mark.asyncio
-async def test_async_update_data_continues_after_transient_installation_error(
+async def test_async_update_data_raises_on_initial_partial_installation_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     hass = DummyHass()
@@ -765,10 +765,49 @@ async def test_async_update_data_continues_after_transient_installation_error(
                 raise RuntimeError("temporary")
             return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
 
-    data = await integration._async_update_data(hass, entry, DummyAPI())
+    with pytest.raises(UpdateFailed, match="partial installation refresh"):
+        await integration._async_update_data(hass, entry, DummyAPI())
 
-    assert list(data) == ["dev-b"]
-    assert data["dev-b"]["name"] == "Unit B"
+
+@pytest.mark.asyncio
+async def test_async_update_data_preserves_failed_installation_from_previous_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPIOk:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
+            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+
+    first = await integration._async_update_data(hass, entry, DummyAPIOk())
+    assert set(first) == {"dev-a", "dev-b"}
+
+    class DummyAPIPartial:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                raise RuntimeError("temporary")
+            return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
+
+    second = await integration._async_update_data(hass, entry, DummyAPIPartial())
+
+    assert set(second) == {"dev-a", "dev-b"}
+    assert second["dev-a"]["name"] == "Unit A"
+    assert second["dev-b"]["name"] == "Unit B2"
 
 
 @pytest.mark.asyncio

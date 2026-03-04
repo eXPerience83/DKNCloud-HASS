@@ -216,7 +216,7 @@ async def _async_update_data(
         data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
 
-        installation_ids: list[Any] = []
+        installation_ids: list[str] = []
         for rel in relations or []:
             inst_id: Any | None = None
             inst = rel.get("installation")
@@ -226,25 +226,43 @@ async def _async_update_data(
                 inst_id = rel.get("installation_id") or rel.get("id")
 
             if inst_id:
-                installation_ids.append(inst_id)
+                installation_ids.append(str(inst_id))
 
         fetches = [api.fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
 
+        last_data: dict[str, dict[str, Any]] = domain_bucket.get("last_data", {})
+        if not isinstance(last_data, dict):
+            last_data = {}
+
+        device_installation_map: dict[str, str] = domain_bucket.setdefault(
+            "device_installation_map", {}
+        )
+        last_devices_by_inst: dict[str, set[str]] = domain_bucket.setdefault(
+            "last_devices_by_inst", {}
+        )
+
         auth_error = False
-        for _inst_id, result in zip(installation_ids, fetch_results, strict=True):
+        had_non_auth_install_errors = False
+        failed_installations: set[str] = set()
+
+        for inst_id, result in zip(installation_ids, fetch_results, strict=True):
             if isinstance(result, asyncio.CancelledError):
                 raise result
             if isinstance(result, ClientResponseError):
                 if result.status == 401:
                     auth_error = True
                     continue
+                had_non_auth_install_errors = True
+                failed_installations.add(inst_id)
                 _LOGGER.warning(
                     "Skipping one installation due to HTTP %s while fetching devices.",
                     result.status,
                 )
                 continue
             if isinstance(result, Exception):
+                had_non_auth_install_errors = True
+                failed_installations.add(inst_id)
                 _LOGGER.debug(
                     "Skipping one installation due to %s while fetching devices.",
                     type(result).__name__,
@@ -252,6 +270,7 @@ async def _async_update_data(
                 continue
 
             devices = result
+            inst_device_ids: set[str] = set()
             for dev in devices or []:
                 dev_id = dev.get("id")
                 if not dev_id:
@@ -261,7 +280,17 @@ async def _async_update_data(
                         dev["id"] = dev_id
                     else:
                         continue
-                data[str(dev_id)] = dev
+
+                dev_id_str = str(dev_id)
+                data[dev_id_str] = dev
+                inst_device_ids.add(dev_id_str)
+                device_installation_map[dev_id_str] = inst_id
+
+            previous_ids = set(last_devices_by_inst.get(inst_id, set()))
+            for stale_dev_id in previous_ids - inst_device_ids:
+                if device_installation_map.get(stale_dev_id) == inst_id:
+                    device_installation_map.pop(stale_dev_id, None)
+            last_devices_by_inst[inst_id] = inst_device_ids
 
         if auth_error:
             if not domain_bucket.get("reauth_requested"):
@@ -276,11 +305,29 @@ async def _async_update_data(
                 )
             raise UpdateFailed("Authentication required (401)")
 
+        had_prior_snapshot = bool(domain_bucket.get("has_successful_snapshot", False))
+        if had_non_auth_install_errors and not had_prior_snapshot:
+            domain_bucket["last_update_had_install_errors"] = True
+            raise UpdateFailed(
+                "Failed to update Airzone data: partial installation refresh"
+            )
+
+        if had_prior_snapshot and failed_installations:
+            for inst_id in failed_installations:
+                for dev_id in last_devices_by_inst.get(inst_id, set()):
+                    dev = last_data.get(dev_id)
+                    if dev is not None:
+                        data.setdefault(dev_id, dev)
+
+        domain_bucket["last_update_had_install_errors"] = had_non_auth_install_errors
+        domain_bucket["has_successful_snapshot"] = True
+        domain_bucket["last_data"] = dict(data)
         now = dt_util.utcnow()
         tracked_ids = set(sleep_tracking)
         active_ids = set(data)
-        for stale_id in tracked_ids - active_ids:
-            sleep_tracking.pop(stale_id, None)
+        if not had_non_auth_install_errors:
+            for stale_id in tracked_ids - active_ids:
+                sleep_tracking.pop(stale_id, None)
         for dev_id, dev in data.items():
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
 
@@ -763,6 +810,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if raw_data is None:
             return
         if not getattr(coordinator, "last_update_success", True):
+            return
+        if bucket.get("last_update_had_install_errors"):
             return
 
         removed = set(notify_state) - set(data)
