@@ -19,6 +19,10 @@
   keep coordinator logs free of sensitive metadata.
 - Treat initial partial installation refreshes as update failures and retain the
   last successful per-installation snapshot on later transient errors.
+- Scope removed-device notification cleanup during partial refreshes so only
+  installations refreshed successfully are considered for removal handling.
+- Prune cached per-installation device maps when installations disappear from the
+  backend relations snapshot.
 
 ## [0.4.7] - 2026-02-06
 ### Fixed

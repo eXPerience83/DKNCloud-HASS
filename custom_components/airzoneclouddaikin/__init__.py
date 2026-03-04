@@ -246,19 +246,31 @@ async def _async_update_data(
             if inst_id:
                 installation_ids.append(str(inst_id))
 
+        last_devices_by_inst: dict[str, set[str]] = domain_bucket.setdefault(
+            "last_devices_by_inst", {}
+        )
+        device_installation_map: dict[str, str] = domain_bucket.setdefault(
+            "device_installation_map", {}
+        )
+
+        current_installations = set(installation_ids)
+        stale_installations = [
+            inst_id
+            for inst_id in list(last_devices_by_inst)
+            if inst_id not in current_installations
+        ]
+        for stale_inst in stale_installations:
+            stale_ids = last_devices_by_inst.pop(stale_inst, set())
+            for stale_dev_id in stale_ids:
+                if device_installation_map.get(stale_dev_id) == stale_inst:
+                    device_installation_map.pop(stale_dev_id, None)
+
         fetches = [api.fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
 
         last_data: dict[str, dict[str, Any]] = domain_bucket.get("last_data", {})
         if not isinstance(last_data, dict):
             last_data = {}
-
-        device_installation_map: dict[str, str] = domain_bucket.setdefault(
-            "device_installation_map", {}
-        )
-        last_devices_by_inst: dict[str, set[str]] = domain_bucket.setdefault(
-            "last_devices_by_inst", {}
-        )
 
         auth_error = False
         had_non_auth_install_errors = False
@@ -329,6 +341,7 @@ async def _async_update_data(
                         data.setdefault(dev_id, dev)
 
         domain_bucket["last_update_had_install_errors"] = had_non_auth_install_errors
+        domain_bucket["failed_installations_last_update"] = set(failed_installations)
         domain_bucket["has_successful_snapshot"] = True
         domain_bucket["last_data"] = dict(data)
         now = dt_util.utcnow()
@@ -810,10 +823,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
         if not getattr(coordinator, "last_update_success", True):
             return
-        if bucket.get("last_update_had_install_errors"):
-            return
 
         removed = set(notify_state) - set(data)
+        if bucket.get("last_update_had_install_errors"):
+            failed_installations = set(
+                bucket.get("failed_installations_last_update", set())
+            )
+            device_installation_map = bucket.get("device_installation_map", {})
+            if failed_installations and isinstance(device_installation_map, dict):
+                removed = {
+                    dev_id
+                    for dev_id in removed
+                    if device_installation_map.get(dev_id) not in failed_installations
+                }
         for dev_id in removed:
             st = notify_state.pop(dev_id, None)
             if st is None:

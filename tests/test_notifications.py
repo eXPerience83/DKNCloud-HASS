@@ -872,3 +872,88 @@ async def test_async_update_data_401_from_one_installation_triggers_reauth(
     bucket = hass.data[DOMAIN][entry.entry_id]
     assert bucket["reauth_requested"] is True
     assert flow_calls and flow_calls[0]["domain"] == DOMAIN
+
+
+@pytest.mark.asyncio
+async def test_removed_cleanup_keeps_failed_installation_devices_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    monkeypatch.setattr(
+        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    )
+
+    await integration.async_setup_entry(hass, entry)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    listener = coordinator._listeners[-1]
+
+    integration.persistent_notification.async_create = Mock()
+    integration.persistent_notification.async_dismiss = Mock()
+
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    bucket["last_update_had_install_errors"] = True
+    bucket["failed_installations_last_update"] = {"inst-b"}
+    bucket["device_installation_map"] = {
+        "dev-a": "inst-a",
+        "dev-b": "inst-b",
+    }
+
+    cancel_a = Mock()
+    cancel_b = Mock()
+    notify_state = bucket["notify_state"]
+    notify_state["dev-a"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel_a,
+    }
+    notify_state["dev-b"] = {
+        "last": True,
+        "since_offline": None,
+        "notified": False,
+        "online_cancel": cancel_b,
+    }
+
+    coordinator.data = {}
+    listener()
+
+    assert "dev-a" not in notify_state
+    assert "dev-b" in notify_state
+    cancel_a.assert_called_once()
+    cancel_b.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_prunes_removed_installation_cache_state() -> None:
+    hass = DummyHass()
+    entry = _make_entry()
+
+    class DummyAPIInitial:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [
+                {"installation": {"id": "inst-a"}},
+                {"installation": {"id": "inst-b"}},
+            ]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            if inst_id == "inst-a":
+                return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
+            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+
+    await integration._async_update_data(hass, entry, DummyAPIInitial())
+
+    class DummyAPIRemovedA:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [{"installation": {"id": "inst-b"}}]
+
+        async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
+            return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
+
+    data = await integration._async_update_data(hass, entry, DummyAPIRemovedA())
+    bucket = hass.data[DOMAIN][entry.entry_id]
+
+    assert set(data) == {"dev-b"}
+    assert "inst-a" not in bucket["last_devices_by_inst"]
+    assert "dev-a" not in bucket["device_installation_map"]
