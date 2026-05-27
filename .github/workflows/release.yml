@@ -56,7 +56,7 @@ jobs:
           echo "ZIP validation OK"
 
       - name: Upload ZIP to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: airzoneclouddaikin.zip
           overwrite_files: true
