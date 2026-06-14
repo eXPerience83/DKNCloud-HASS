@@ -1,14 +1,16 @@
 # Changelog
-## [5.0.0a1] - 2026-06-14
+## [0.5.0a1] - 2026-06-14
+### Breaking changes
+- Minimum Home Assistant version is now 2026.3.0.
+- Python runtime baseline is now 3.14+.
+
 ### Changed
-- **Breaking change:** minimum Home Assistant is now 2026.3.0 and Python runtime is
-  now 3.14+.
-- Declare `homeassistant` minimum `2026.3.0` in `manifest.json` and `hacs.json`.
 - Upgraded tooling baseline: Black `>=26` (target-version `py314`), Ruff `>=0.15`
   (target-version `py314`).
 - Updated `AGENTS.md`, `CONTRIBUTING.md`, and `README.md` to reflect Python 3.14+
   and Home Assistant 2026.3.0+ minimum versions.
 - Dropped Python 3.13 from CI test matrix; tests now run on Python 3.14 only.
+- Bumped `homeassistant` minimum in `hacs.json` to `2026.3.0`.
 
 ### Added
 - Added `testpaths` and `asyncio_mode` config to `pyproject.toml`.
