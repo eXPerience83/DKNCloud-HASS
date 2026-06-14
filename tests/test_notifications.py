@@ -1,253 +1,26 @@
-"""Notification formatting and coordinator listener coverage."""
+"""Notification formatting, coordinator update, setup, and unload coverage."""
 
 from __future__ import annotations
 
 import asyncio
-import sys
-import types
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-for key in list(sys.modules):
-    if key.startswith("custom_components.airzoneclouddaikin"):
-        sys.modules.pop(key, None)
-
-UTC = getattr(datetime, "UTC", timezone.utc)  # noqa: UP017
-
-try:
-    from aiohttp import (  # type: ignore[import-untyped]
-        ClientConnectorError,
-        ClientResponseError,
-        ClientSession,
-        ClientTimeout,
-    )
-except ImportError, ModuleNotFoundError:  # pragma: no cover - handled by CI deps
-    aiohttp_module = types.ModuleType("aiohttp")
-    sys.modules["aiohttp"] = aiohttp_module
-
-    class ClientResponseError(Exception):
-        """Minimal aiohttp ClientResponseError placeholder."""
-
-    class ClientConnectorError(Exception):
-        """Minimal aiohttp ClientConnectorError placeholder."""
-
-    class ClientSession:  # pragma: no cover - placeholder
-        pass
-
-    class ClientTimeout:
-        """Minimal aiohttp ClientTimeout placeholder."""
-
-        def __init__(self, *_: Any, **__: Any) -> None:
-            return None
-
-    aiohttp_module.ClientResponseError = ClientResponseError
-    aiohttp_module.ClientConnectorError = ClientConnectorError
-    aiohttp_module.ClientSession = ClientSession
-    aiohttp_module.ClientTimeout = ClientTimeout
-
-# ---------------------------------------------------------------------------
-# Minimal Home Assistant shims so the package import works without HA
-# ---------------------------------------------------------------------------
-ha_module = types.ModuleType("homeassistant")
-sys.modules["homeassistant"] = ha_module
-
-components_module = types.ModuleType("homeassistant.components")
-persistent_notification_module = types.ModuleType(
-    "homeassistant.components.persistent_notification"
-)
-components_module.persistent_notification = persistent_notification_module
-sys.modules["homeassistant.components"] = components_module
-sys.modules["homeassistant.components.persistent_notification"] = (
-    persistent_notification_module
-)
-ha_module.components = components_module
-
-config_entries_module = types.ModuleType("homeassistant.config_entries")
-config_entries_module.SOURCE_REAUTH = "reauth"
-
-
-class ConfigEntry:  # pragma: no cover - used for import wiring
-    def __init__(self) -> None:
-        self.entry_id = "entry-1"
-        self.data: dict[str, Any] = {}
-        self.options: dict[str, Any] = {}
-        self.unique_id: str | None = None
-        self.version = 1
-        self._unload: list[Any] = []
-
-    def async_on_unload(self, func: Any) -> None:
-        self._unload.append(func)
-
-    def add_update_listener(self, listener: Any) -> Any:
-        return listener
-
-
-config_entries_module.ConfigEntry = ConfigEntry
-sys.modules["homeassistant.config_entries"] = config_entries_module
-ha_module.config_entries = config_entries_module
-
-const_module = types.ModuleType("homeassistant.const")
-const_module.CONF_USERNAME = "username"
-sys.modules["homeassistant.const"] = const_module
-ha_module.const = const_module
-
-core_module = types.ModuleType("homeassistant.core")
-
-
-class HomeAssistant:  # pragma: no cover - placeholder
-    pass
-
-
-core_module.HomeAssistant = HomeAssistant
-sys.modules["homeassistant.core"] = core_module
-ha_module.core = core_module
-
-exceptions_module = types.ModuleType("homeassistant.exceptions")
-
-
-class HomeAssistantError(Exception):
-    """Minimal Home Assistant error placeholder."""
-
-
-class ConfigEntryAuthFailed(HomeAssistantError):
-    """Minimal auth failure placeholder."""
-
-
-exceptions_module.HomeAssistantError = HomeAssistantError
-exceptions_module.ConfigEntryAuthFailed = ConfigEntryAuthFailed
-sys.modules["homeassistant.exceptions"] = exceptions_module
-ha_module.exceptions = exceptions_module
-
-helpers_module = types.ModuleType("homeassistant.helpers")
-sys.modules["homeassistant.helpers"] = helpers_module
-
-aiohttp_client_module = types.ModuleType("homeassistant.helpers.aiohttp_client")
-
-
-def async_get_clientsession(*_: Any, **__: Any) -> None:
-    return None
-
-
-aiohttp_client_module.async_get_clientsession = async_get_clientsession
-helpers_module.aiohttp_client = aiohttp_client_module
-sys.modules["homeassistant.helpers.aiohttp_client"] = aiohttp_client_module
-
-event_module = types.ModuleType("homeassistant.helpers.event")
-
-
-async def async_call_later(*_: Any, **__: Any) -> None:
-    return None
-
-
-event_module.async_call_later = async_call_later
-helpers_module.event = event_module
-sys.modules["homeassistant.helpers.event"] = event_module
-
-translation_module = types.ModuleType("homeassistant.helpers.translation")
-
-
-async def async_get_translations(*_: Any, **__: Any) -> dict[str, str]:
-    return {}
-
-
-translation_module.async_get_translations = async_get_translations
-helpers_module.translation = translation_module
-sys.modules["homeassistant.helpers.translation"] = translation_module
-
-update_coordinator_module = types.ModuleType("homeassistant.helpers.update_coordinator")
-
-
-class UpdateFailed(Exception):
-    """Placeholder for coordinator update failures."""
-
-
-class DataUpdateCoordinator:
-    """Minimal coordinator stub that registers listeners."""
-
-    def __init__(
-        self, hass: Any, *_: Any, update_method: Any = None, **__: Any
-    ) -> None:
-        self.hass = hass
-        self.update_method = update_method
-        self.data: dict[str, Any] = {}
-        self._listeners: list[Any] = []
-
-    async def async_config_entry_first_refresh(self) -> None:
-        if self.update_method is not None:
-            self.data = await self.update_method()
-
-    def async_add_listener(self, listener: Any) -> Any:
-        self._listeners.append(listener)
-
-        def _unsub() -> None:
-            if listener in self._listeners:
-                self._listeners.remove(listener)
-
-        return _unsub
-
-    def async_request_refresh(self) -> None:
-        return None
-
-    def __class_getitem__(cls, item: object) -> type:
-        return cls
-
-
-update_coordinator_module.UpdateFailed = UpdateFailed
-update_coordinator_module.DataUpdateCoordinator = DataUpdateCoordinator
-helpers_module.update_coordinator = update_coordinator_module
-sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator_module
-
-util_module = types.ModuleType("homeassistant.util")
-dt_module = types.ModuleType("homeassistant.util.dt")
-util_module.dt = dt_module
-helpers_module.util = util_module
-sys.modules["homeassistant.util"] = util_module
-sys.modules["homeassistant.util.dt"] = dt_module
-
-
-def utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
-def parse_datetime(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=UTC)
-    return parsed
-
-
-def as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
-
-
-def as_local(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value
-
-
-dt_module.utcnow = utcnow
-dt_module.parse_datetime = parse_datetime
-dt_module.as_utc = as_utc
-dt_module.as_local = as_local
-
-ha_module.helpers = helpers_module
-
-import custom_components.airzoneclouddaikin as integration  # noqa: E402
-from custom_components.airzoneclouddaikin.const import (  # noqa: E402
+from aiohttp import ClientResponseError
+from aiohttp.client_reqrep import RequestInfo
+from homeassistant.const import CONF_USERNAME
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import UpdateFailed
+from multidict import CIMultiDict
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+from yarl import URL
+
+import custom_components.airzoneclouddaikin as integration
+from custom_components.airzoneclouddaikin.config_flow import CONF_SCAN_INTERVAL
+from custom_components.airzoneclouddaikin.const import (
     DOMAIN,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
@@ -255,65 +28,113 @@ from custom_components.airzoneclouddaikin.const import (  # noqa: E402
 )
 
 
-class DummyConfigEntries:
-    async def async_forward_entry_setups(self, *_: Any, **__: Any) -> None:
-        return None
+class FakeSetupAPI:
+    """Fake API used by setup and notification tests."""
 
-    async def async_forward_entry_unload(self, *_: Any, **__: Any) -> bool:
-        return True
+    installations: list[dict[str, Any]] = []
+    devices_by_installation: dict[str, list[dict[str, Any]]] = {}
+    instances: list[FakeSetupAPI] = []
 
-    async def async_reload(self, *_: Any, **__: Any) -> None:
-        return None
+    def __init__(
+        self,
+        username: str | None,
+        session: Any,
+        *,
+        password: str | None = None,
+        token: str | None = None,
+    ) -> None:
+        self.username = username
+        self.session = session
+        self.password = password
+        self.token = token
+        self.fetch_installations = AsyncMock(return_value=list(self.installations))
 
-    def async_entries(self, *_: Any, **__: Any) -> list[Any]:
-        return []
+        async def _fetch_devices(installation_id: str) -> list[dict[str, Any]]:
+            return list(self.devices_by_installation.get(str(installation_id), []))
+
+        self.fetch_devices = AsyncMock(side_effect=_fetch_devices)
+        self.async_set_scenary = AsyncMock()
+        self.send_event = AsyncMock()
+        self.put_device_fields = AsyncMock()
+        self.instances.append(self)
 
 
-class DummyHass:
-    def __init__(self) -> None:
-        self.data: dict[str, Any] = {}
-        self.config = types.SimpleNamespace(language="en")
-        self.config_entries = DummyConfigEntries()
+@pytest.fixture
+def setup_api_class(monkeypatch: pytest.MonkeyPatch) -> type[FakeSetupAPI]:
+    """Patch integration setup to use a fake API class."""
+    FakeSetupAPI.installations = []
+    FakeSetupAPI.devices_by_installation = {}
+    FakeSetupAPI.instances = []
+    monkeypatch.setattr(integration, "AirzoneAPI", FakeSetupAPI)
+    return FakeSetupAPI
 
 
-def _make_entry() -> ConfigEntry:
-    entry = ConfigEntry()
-    entry.data = {const_module.CONF_USERNAME: "user@example.com"}
-    entry.options = {"user_token": "token", "scan_interval": 10}
-    return entry
+def _client_response_error(status: int) -> ClientResponseError:
+    """Create a ClientResponseError with minimal request info."""
+    request_info = RequestInfo(
+        URL("https://example.com"),
+        "GET",
+        CIMultiDict(),
+        URL("https://example.com"),
+    )
+    return ClientResponseError(request_info, history=(), status=status)
+
+
+async def _setup_entry(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    setup_api_class: type[FakeSetupAPI],
+    *,
+    installations: list[dict[str, Any]] | None = None,
+    devices_by_installation: dict[str, list[dict[str, Any]]] | None = None,
+) -> None:
+    """Set up the integration entry with a fake API snapshot."""
+    setup_api_class.installations = installations or []
+    setup_api_class.devices_by_installation = devices_by_installation or {}
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 def test_fmt_includes_name_in_message() -> None:
+    """Notification templates should interpolate known placeholders."""
     strings = {
         "offline": {
             "title": "{name} offline",
             "message": "{name} lost connection at {ts_local}.",
         }
     }
+
     title, message = integration._fmt(
         strings, "offline", "Living Room", "10:01", None, None
     )
+
     assert title == "Living Room offline"
     assert message == "Living Room lost connection at 10:01."
 
 
 def test_fmt_missing_values_with_format_specifier() -> None:
+    """Missing placeholder values should format to a neutral dash."""
     strings = {
         "offline": {
             "title": "{name} offline",
             "message": "Last seen {last_iso} ({mins:d} minutes ago).",
         }
     }
+
     title, message = integration._fmt(
         strings, "offline", "Living Room", "10:01", None, None
     )
+
     assert title == "Living Room offline"
-    assert message == "Last seen — (— minutes ago)."
+    assert message == "Last seen \u2014 (\u2014 minutes ago)."
 
 
 def test_fmt_warns_and_falls_back_on_malformed_templates(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Malformed templates should fall back once per kind."""
     integration._NOTIFY_FMT_FALLBACK_LOGGED.clear()
     strings = {
         "offline": {
@@ -333,22 +154,47 @@ def test_fmt_warns_and_falls_back_on_malformed_templates(
 
 
 @pytest.mark.asyncio
-async def test_offline_notification_after_debounce(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_setup_unload_smoke_with_fake_snapshot(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
+    sample_device: dict[str, Any],
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
+    """Config entry setup should load, store coordinator data, and unload."""
+    entry = dkn_config_entry_factory()
 
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
+    await _setup_entry(
+        hass,
+        entry,
+        setup_api_class,
+        installations=[{"installation_id": "install-123"}],
+        devices_by_installation={"install-123": [sample_device]},
     )
 
-    await integration.async_setup_entry(hass, entry)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["coordinator"].data == {"dev1": sample_device}
+    assert bucket["api"] is setup_api_class.instances[-1]
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.entry_id not in hass.data.get(DOMAIN, {})
+
+
+@pytest.mark.asyncio
+async def test_offline_notification_after_debounce(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Offline notification should appear only after debounce."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
@@ -374,25 +220,23 @@ async def test_offline_notification_after_debounce(
 
 @pytest.mark.asyncio
 async def test_online_notification_dismisses_offline_and_schedules_banner(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """Online transition should dismiss offline and schedule banner cleanup."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     scheduled: list[tuple[float, Any]] = []
 
-    def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Any:
+    def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Callable[[], None]:
         scheduled.append((delay, action))
 
         def cancel() -> None:
@@ -445,21 +289,19 @@ async def test_online_notification_dismisses_offline_and_schedules_banner(
 
 @pytest.mark.asyncio
 async def test_listener_never_raises_on_unknown_placeholders(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """Unknown placeholders in translated templates should not crash listener."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
         "offline": {
@@ -485,26 +327,24 @@ async def test_listener_never_raises_on_unknown_placeholders(
 
 @pytest.mark.asyncio
 async def test_online_banner_second_transition_cancels_previous(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """A second online transition should cancel the previous online banner."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     events: list[str] = []
     cancels: list[Mock] = []
 
-    def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Any:
+    def fake_call_later(hass_arg: Any, delay: float, action: Any) -> Mock:
         label = f"{len(cancels) + 1}"
         events.append(f"schedule-{label}")
 
@@ -551,21 +391,18 @@ async def test_online_banner_second_transition_cancels_previous(
 
 @pytest.mark.asyncio
 async def test_online_to_offline_cancels_online_banner(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
+    """Going offline should cancel any pending online banner."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
+    listener = hass.data[DOMAIN][entry.entry_id]["coordinator"]._listeners[-1]
 
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
-
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     cancel = Mock()
     notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
@@ -578,6 +415,7 @@ async def test_online_to_offline_cancels_online_banner(
 
     base = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
     old = base - timedelta(seconds=integration._OFFLINE_STALE_SECONDS + 10)
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     coordinator.data = {"dev-6": {"name": "Unit 6", "connection_date": old.isoformat()}}
 
     monkeypatch.setattr(integration.dt_util, "utcnow", lambda: base)
@@ -590,21 +428,19 @@ async def test_online_to_offline_cancels_online_banner(
 
 @pytest.mark.asyncio
 async def test_removed_device_cleans_notification_state(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """Removed devices should clear notification state and dismiss banners."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     cancel = Mock()
     notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
@@ -629,21 +465,19 @@ async def test_removed_device_cleans_notification_state(
 
 @pytest.mark.asyncio
 async def test_removed_device_cleanup_runs_on_empty_data(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """Empty data should remove stale notify state, but None data should not."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     cancel_empty = Mock()
     notify_state = hass.data[DOMAIN][entry.entry_id]["notify_state"]
@@ -675,16 +509,13 @@ async def test_removed_device_cleanup_runs_on_empty_data(
 
 @pytest.mark.asyncio
 async def test_fallback_cache_clears_on_last_unload(
-    monkeypatch: pytest.MonkeyPatch,
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """Malformed-template warning cache should clear after the last unload."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
 
     integration._NOTIFY_FMT_FALLBACK_LOGGED.clear()
     strings = {
@@ -696,7 +527,8 @@ async def test_fallback_cache_clears_on_last_unload(
     integration._fmt(strings, "offline", "Living Room", "10:01", None, None)
     assert integration._NOTIFY_FMT_FALLBACK_LOGGED
 
-    unload_ok = await integration.async_unload_entry(hass, entry)
+    unload_ok = await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
 
     assert unload_ok
     assert not integration._NOTIFY_FMT_FALLBACK_LOGGED
@@ -704,21 +536,19 @@ async def test_fallback_cache_clears_on_last_unload(
 
 @pytest.mark.asyncio
 async def test_offline_notification_includes_datetime_connection_date(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """Datetime connection_date values should be included in notification text."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     hass.data[DOMAIN][entry.entry_id]["notify_strings"] = {
         "offline": {
@@ -747,17 +577,43 @@ async def test_offline_notification_includes_datetime_connection_date(
 
 
 @pytest.mark.asyncio
-async def test_async_update_data_raises_on_initial_partial_installation_error(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_async_update_data_uses_installation_id_over_relation_id(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
+    """Coordinator refresh should use installation_id, not relation id."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    fetched: list[str] = []
+
+    class DummyAPI:
+        async def fetch_installations(self) -> list[dict[str, Any]]:
+            return [{"id": "relation-1", "installation_id": "install-1"}]
+
+        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+            fetched.append(inst_id)
+            return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
+
+    data = await integration._async_update_data(hass, entry, DummyAPI())
+
+    assert fetched == ["install-1"]
+    assert set(data) == {"dev-a"}
+
+
+@pytest.mark.asyncio
+async def test_async_update_data_raises_on_initial_partial_installation_error(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+) -> None:
+    """Initial partial installation errors should fail the coordinator refresh."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
 
     class DummyAPI:
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [
-                {"installation": {"id": "inst-a"}},
-                {"installation": {"id": "inst-b"}},
+                {"installation_id": "inst-a"},
+                {"installation_id": "inst-b"},
             ]
 
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
@@ -771,17 +627,16 @@ async def test_async_update_data_raises_on_initial_partial_installation_error(
 
 @pytest.mark.asyncio
 async def test_async_update_data_preserves_failed_installation_from_previous_snapshot(
-    monkeypatch: pytest.MonkeyPatch,
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
+    """Later partial errors should keep the last snapshot for failed installs."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
 
     class DummyAPIOk:
         async def fetch_installations(self) -> list[dict[str, Any]]:
-            return [
-                {"installation": {"id": "inst-a"}},
-                {"installation": {"id": "inst-b"}},
-            ]
+            return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
@@ -793,10 +648,7 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
 
     class DummyAPIPartial:
         async def fetch_installations(self) -> list[dict[str, Any]]:
-            return [
-                {"installation": {"id": "inst-a"}},
-                {"installation": {"id": "inst-b"}},
-            ]
+            return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
@@ -812,14 +664,16 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
 
 @pytest.mark.asyncio
 async def test_async_update_data_propagates_cancelled_fetch(
-    monkeypatch: pytest.MonkeyPatch,
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
+    """Cancelled per-installation fetches should propagate cancellation."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
 
     class DummyAPI:
         async def fetch_installations(self) -> list[dict[str, Any]]:
-            return [{"installation": {"id": "inst-cancel"}}]
+            return [{"installation_id": "inst-cancel"}]
 
         async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
             raise asyncio.CancelledError()
@@ -830,67 +684,49 @@ async def test_async_update_data_propagates_cancelled_fetch(
 
 @pytest.mark.asyncio
 async def test_async_update_data_401_from_one_installation_triggers_reauth(
-    monkeypatch: pytest.MonkeyPatch,
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    flow_calls: list[dict[str, Any]] = []
-
-    async def _async_init(
-        domain: str, context: dict[str, Any], data: dict[str, Any]
-    ) -> dict[str, Any]:
-        flow_calls.append({"domain": domain, "context": context, "data": data})
-        return {"type": "flow"}
-
-    hass.config_entries.flow = types.SimpleNamespace(async_init=_async_init)
-    hass.async_create_task = lambda coro: asyncio.create_task(coro)
-
-    class FakeClientResponseError(Exception):
-        def __init__(self, status: int) -> None:
-            self.status = status
-
-    monkeypatch.setattr(integration, "ClientResponseError", FakeClientResponseError)
+    """A 401 from one installation should request reauth once."""
+    entry = dkn_config_entry_factory(data={CONF_USERNAME: "user@example.com"})
+    entry.add_to_hass(hass)
 
     class DummyAPI:
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [
-                {"installation": {"id": "inst-401"}},
-                {"installation": {"id": "inst-ok"}},
+                {"installation_id": "inst-401"},
+                {"installation_id": "inst-ok"},
             ]
 
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-401":
-                raise FakeClientResponseError(401)
+                raise _client_response_error(401)
             return [{"id": "dev-ok", "name": "Unit OK", "scenary": "home"}]
 
     with pytest.raises(UpdateFailed, match=r"Authentication required \(401\)"):
         await integration._async_update_data(hass, entry, DummyAPI())
 
-    await asyncio.sleep(0)
+    await hass.async_block_till_done()
 
     bucket = hass.data[DOMAIN][entry.entry_id]
     assert bucket["reauth_requested"] is True
-    assert flow_calls and flow_calls[0]["domain"] == DOMAIN
 
 
 @pytest.mark.asyncio
 async def test_removed_cleanup_keeps_failed_installation_devices_only(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    hass = DummyHass()
-    entry = _make_entry()
-
-    monkeypatch.setattr(
-        integration.AirzoneAPI, "fetch_installations", AsyncMock(return_value=[])
-    )
-
-    await integration.async_setup_entry(hass, entry)
+    """Removed-device cleanup should spare devices from failed installations."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     listener = coordinator._listeners[-1]
 
-    integration.persistent_notification.async_create = Mock()
-    integration.persistent_notification.async_dismiss = Mock()
+    monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
+    monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
 
     bucket = hass.data[DOMAIN][entry.entry_id]
     bucket["last_update_had_install_errors"] = True
@@ -926,16 +762,17 @@ async def test_removed_cleanup_keeps_failed_installation_devices_only(
 
 
 @pytest.mark.asyncio
-async def test_async_update_data_prunes_removed_installation_cache_state() -> None:
-    hass = DummyHass()
-    entry = _make_entry()
+async def test_async_update_data_prunes_removed_installation_cache_state(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+) -> None:
+    """Removed installations should prune cached device/install mappings."""
+    entry = dkn_config_entry_factory(options={CONF_SCAN_INTERVAL: 10})
+    entry.add_to_hass(hass)
 
     class DummyAPIInitial:
         async def fetch_installations(self) -> list[dict[str, Any]]:
-            return [
-                {"installation": {"id": "inst-a"}},
-                {"installation": {"id": "inst-b"}},
-            ]
+            return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
@@ -946,7 +783,7 @@ async def test_async_update_data_prunes_removed_installation_cache_state() -> No
 
     class DummyAPIRemovedA:
         async def fetch_installations(self) -> list[dict[str, Any]]:
-            return [{"installation": {"id": "inst-b"}}]
+            return [{"installation_id": "inst-b"}]
 
         async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
             return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
