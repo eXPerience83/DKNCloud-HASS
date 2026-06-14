@@ -1,0 +1,301 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+early_access: false
+enable_free_tier: true
+
+tone_instructions: "Be concise and evidence-based. Prioritize HA async/lifecycle correctness, API privacy, registry stability, release safety, and maintainability."
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: false
+  abort_on_close: true
+  disable_cache: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    base_branches:
+      - ".*"
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+      - "[skip review]"
+      - "skip review"
+    labels:
+      - "!do-not-review"
+      - "!skip-review"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+
+  path_filters:
+    - "!secrets/**"
+    - "!**/*.zip"
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/*.ico"
+    - "!**/*.pdf"
+    - "!**/*.pyc"
+    - "!**/.DS_Store"
+    - "!**/.pytest_cache/**"
+    - "!**/.ruff_cache/**"
+    - "!**/.mypy_cache/**"
+    - "!**/__pycache__/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/*.egg-info/**"
+
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        This repository targets Python 3.14+ and Home Assistant 2026.3+.
+
+        Review Python changes with that baseline in mind:
+        - Do not request compatibility with Python 3.13 or older.
+        - Do not propose syntax rewrites only for old Python compatibility.
+        - Do flag invalid Python syntax if present; Python 3 still requires
+          multi-exception handlers to use `except (A, B):`, not `except A, B:`.
+        - Prefer focused fixes over broad rewrites.
+
+    - path: "custom_components/airzoneclouddaikin/**/*.py"
+      instructions: |
+        Review as a Home Assistant custom integration distributed through HACS.
+
+        Focus on:
+        - Correct async Home Assistant patterns.
+        - No blocking I/O in the event loop.
+        - Proper use of DataUpdateCoordinator and ConfigEntry lifecycle.
+        - Stable unique_id, device_info, entity naming, and registry behavior.
+        - Safe setup/unload/reload behavior.
+        - ConfigEntryNotReady usage for startup API failures.
+        - Minimal public API churn and no unnecessary renames.
+        - No broad silent exception handling that hides API/coordinator regressions.
+        - No unnecessary defensive code for hypothetical payloads not documented
+          in info.md or observed in real backend behavior.
+        - No logging of email, password, user_token, full URLs with query
+          credentials, auth responses, or raw payloads containing secrets.
+
+        Treat info.md as the source of truth for backend behavior, request
+        shapes, accepted value ranges, mode mappings/aliases, scenary/sleep
+        semantics, and verification expectations.
+
+    - path: "custom_components/airzoneclouddaikin/airzone_api.py"
+      instructions: |
+        Pay special attention to the Airzone/DKN API boundary:
+        - Never expose user_email, user_token, password, full URLs with query
+          credentials, raw auth responses, or raw payloads containing secrets
+          in logs, diagnostics, exceptions, or test failure messages.
+        - Preserve canonical request shapes documented in info.md.
+        - Treat any 2xx from /events as success.
+        - Prefer /devices snapshot polling for verification semantics.
+        - Do not replace observed backend behavior with assumptions from generic
+          REST conventions.
+        - Be careful with aiohttp sessions, timeouts, cancellation, and cleanup.
+        - Avoid retry or polling changes that could create request storms.
+
+    - path: "custom_components/airzoneclouddaikin/__init__.py"
+      instructions: |
+        Review Home Assistant setup, unload, reload, coordinator, notifications,
+        and service/action lifecycle carefully.
+
+        Focus on:
+        - Public Home Assistant APIs only.
+        - Correct ConfigEntry lifecycle behavior.
+        - Correct setup, unload, reload, and cleanup behavior.
+        - No stale runtime data after unload/reload.
+        - ConfigEntryNotReady usage for startup API failures.
+        - No changes that could break entity IDs, unique IDs, devices,
+          dashboards, automations, or history.
+        - No logging of credentials, raw URLs, raw auth payloads, or raw device
+          payloads containing sensitive values.
+
+    - path: "custom_components/airzoneclouddaikin/config_flow.py"
+      instructions: |
+        Review Home Assistant config flow behavior:
+        - Keep user-facing errors translated.
+        - Do not leak username, password, token, or raw auth responses.
+        - Avoid blocking network operations outside async-safe patterns.
+        - Preserve reauth and duplicate-entry behavior.
+        - Preserve stable unique IDs.
+        - Keep imports and Home Assistant exceptions aligned with HA 2026.3+ APIs.
+
+    - path: "custom_components/airzoneclouddaikin/climate.py"
+      instructions: |
+        Review climate behavior against info.md:
+        - P2=1 COOL, P2=2 HEAT, P2=3 FAN_ONLY/VENTILATE, P2=5 DRY.
+        - Treat P2=8 as FAN_ONLY-equivalent for display/state when observed.
+        - Treat P2=6/7 as HEAT_COOL-equivalent for display/state when observed,
+          but do not expose HEAT_COOL/AUTO for user control unless explicitly
+          validated and supported.
+        - Avoid writing unsupported alias modes in normal operation.
+        - FAN_ONLY and DRY should not expose target temperature.
+        - DRY typically should not expose fan control.
+        - Be careful with Celsius/Fahrenheit conversion before sending P7/P8.
+        - Preserve entity registry stability and avoid unexpected feature churn.
+
+    - path: "custom_components/airzoneclouddaikin/number.py"
+      instructions: |
+        Review number entities against info.md:
+        - sleep_time writes are root-level payloads.
+        - unoccupied min/max temperature writes are root-level payloads.
+        - Preserve documented UI constraints unless a PR intentionally changes them.
+        - Do not rely on backend acceptance of out-of-range values as a contract.
+
+    - path: "custom_components/airzoneclouddaikin/diagnostics.py"
+      instructions: |
+        Treat diagnostics as privacy-sensitive.
+
+        Flag any exposure of:
+        - email, password, token, auth response, query-string credentials,
+          raw URLs, raw API payloads, or precise personal account details.
+
+        Prefer redacted, summarized diagnostics. Device state fields listed as
+        non-PII in info.md are acceptable when not combined with credentials.
+
+    - path: "custom_components/airzoneclouddaikin/translations/**/*.json"
+      instructions: |
+        Check that translation keys stay consistent across locales.
+        - en.json is the source of truth.
+        - Do not suggest changing stable public keys unless required.
+        - Preserve placeholders consistently across all languages.
+        - Do not introduce strings.json or %key translation references.
+
+    - path: ".github/workflows/**/*.yml"
+      instructions: |
+        Review GitHub Actions carefully.
+
+        Check:
+        - Minimal permissions.
+        - concurrency is present where appropriate.
+        - actions are pinned to versioned major tags.
+        - setup-python uses python-version "3.14" unless intentionally changed.
+        - shell: bash is present when using `set -euo pipefail`.
+        - ruff check and black --check fail the job on issues.
+        - pytest runs without real network calls or real credentials.
+        - Release ZIPs do not include custom_components/ as a prefix.
+        - Release ZIPs include manifest.json and __init__.py at the ZIP root.
+        - Release ZIPs reject __pycache__, *.pyc, caches, logs, and local secrets.
+        - YAML syntax is valid.
+        - No placeholders, TODOs, or empty keys.
+
+    - path: "tests/**/*.py"
+      instructions: |
+        Focus on behavioral coverage, not cosmetic test rewrites.
+
+        Check:
+        - Async test correctness.
+        - Stable Home Assistant stubs/fixtures.
+        - Regression coverage for config flow, coordinator, diagnostics,
+          entity behavior, services/actions, reload/unload, and notifications.
+        - No tests depending on real network calls or real Airzone credentials.
+        - No shared mutable fixtures that hide ordering bugs.
+        - No sys.modules stubs that leak across tests.
+        - Tests should run under Python 3.14 with pytest>=9.
+
+    - path: "tests/_ha_stubs.py"
+      instructions: |
+        Review Home Assistant test stubs carefully.
+
+        Focus on:
+        - Stubs should model only the Home Assistant behavior needed by tests.
+        - Stubs must not hide real lifecycle, registry, repair, reload, unload,
+          or coordinator bugs.
+        - Keep stubs minimal and deterministic.
+        - Avoid broad fake behavior that makes tests pass without validating the
+          production contract.
+
+    - path: "README.md"
+      instructions: |
+        Review for user-facing accuracy and upgrade safety.
+        - Compatibility must stay aligned with Python 3.14+ and Home Assistant 2026.3+.
+        - Do not document unimplemented features as available.
+        - Installation, HACS, troubleshooting, and release notes must stay consistent.
+        - If behavior depends on observed backend quirks, cross-check info.md.
+
+    - path: "CHANGELOG.md"
+      instructions: |
+        Enforce the repository changelog style from AGENTS.md:
+        - Version heading format: ## [version] - YYYY-MM-DD.
+        - Allowed sections only: Added, Changed, Deprecated, Removed, Fixed, Security.
+        - Breaking changes must be bullets prefixed with **Breaking change:**.
+        - Do not create a separate Breaking Changes heading.
+        - Keep diffs minimal and avoid reflowing unrelated entries.
+        - Flag missing breaking-change notes, migration warnings, or prerelease
+          labels when applicable.
+
+    - path: "AGENTS.md"
+      instructions: |
+        Review repository instructions as policy for AI agents.
+        - Keep them accurate for Python 3.14+ and HA 2026.3+.
+        - Do not add incorrect Python syntax guidance.
+        - Do not introduce contradictory rules with pyproject.toml, README.md,
+          CHANGELOG.md, or info.md.
+        - Prefer concise rules that reduce review noise.
+
+    - path: "info.md"
+      instructions: |
+        Review this as the backend contract document.
+        - Keep a clear distinction between observed backend contract, official
+          UI behavior, and non-contractual heuristics.
+        - Do not accept vague statements when code relies on precise request
+          shapes, mode mappings, or payload semantics.
+        - Flag any update that contradicts integration behavior or tests.
+        - Keep credentials and copy/paste examples safe.
+
+    - path: "secrets/**"
+      instructions: |
+        Local secrets are for manual Codex/OpenCode testing only.
+        - Do not review or request committing real secrets.
+        - Flag any real credential, token, email/password pair, or raw auth output.
+        - CI must never depend on secrets/*.env or real Airzone credentials.
+
+  tools:
+    ruff:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 900000
+
+chat:
+  auto_reply: true
+
+knowledge_base: {}
+
+code_generation:
+  docstrings:
+    language: "en-US"
+  unit_tests: {}
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
+  labeling: {}
