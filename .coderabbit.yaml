@@ -4,11 +4,7 @@ language: "en-US"
 early_access: false
 enable_free_tier: true
 
-tone_instructions: >
-  Be concise and evidence-based. Focus on correctness, Home Assistant compatibility,
-  async behavior, lifecycle safety, privacy, registry stability, release safety,
-  and maintainability. Flag plausible bugs, API misuse, lifecycle issues,
-  packaging regressions, and privacy leaks.
+tone_instructions: "Be concise and evidence-based. Prioritize HA async/lifecycle correctness, API privacy, registry stability, release safety, and maintainability."
 
 reviews:
   profile: "assertive"
