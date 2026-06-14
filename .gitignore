@@ -110,11 +110,6 @@ dmypy.json
 .pyre/
 
 # Local secrets / manual API testing
-secrets/.env
-secrets/*.env
-secrets/*.local
-secrets/*.json
-secrets/*.log
 .env
 .env.*
 !.env.example
