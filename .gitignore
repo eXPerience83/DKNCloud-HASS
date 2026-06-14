@@ -109,15 +109,7 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Local testing secrets (secrets/)
-#   Protect real credential files but keep tracked templates reviewable
-secrets/.env
-secrets/*.env
-secrets/*.local
-secrets/*.json
-secrets/*.log
-
-# Root-level env files
+# Local secrets / manual API testing
 .env
 .env.*
 !.env.example
