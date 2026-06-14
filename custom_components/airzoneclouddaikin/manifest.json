@@ -8,6 +8,5 @@
   "homeassistant": "2026.3.0",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
-  "requirements": [],
   "version": "5.0.0a1"
 }

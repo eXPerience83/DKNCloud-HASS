@@ -6,7 +6,7 @@ import importlib.util
 import sys
 import types
 from dataclasses import dataclass
-from enum import Enum, IntFlag
+from enum import IntFlag, StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -167,7 +167,7 @@ if not hasattr(const_module, "CONF_USERNAME"):
 
 if not hasattr(const_module, "UnitOfTemperature"):
 
-    class UnitOfTemperature(str, Enum):
+    class UnitOfTemperature(StrEnum):
         CELSIUS = "°C"
 
     const_module.UnitOfTemperature = UnitOfTemperature
@@ -175,7 +175,7 @@ if not hasattr(const_module, "UnitOfTemperature"):
 
 if not hasattr(climate_const_module, "HVACMode"):
 
-    class HVACMode(str, Enum):
+    class HVACMode(StrEnum):
         OFF = "off"
         COOL = "cool"
         HEAT = "heat"

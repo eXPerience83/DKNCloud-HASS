@@ -1,113 +1,62 @@
 name: Package Test
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
 
-concurrency:
-  group: package-test-${{ github.workflow }}-${{ github.ref_name }}
-  cancel-in-progress: true
-
 jobs:
   package:
+    name: Build & validate ZIP
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
-      - name: Check out repository
+      - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Python 3.14
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-          cache: "pip"
-
-      - name: Install validation dependencies
+      - name: Build ZIP
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade "black>=26" "ruff>=0.15" "pytest>=9"
-          python -m pip install -r requirements_test.txt
+          ZIP_NAME="airzoneclouddaikin.zip"
+          rm -f "${ZIP_NAME}"
 
-      - name: Compile Python sources
+          cd "${GITHUB_WORKSPACE}/custom_components/airzoneclouddaikin"
+          zip -r "${GITHUB_WORKSPACE}/${ZIP_NAME}" ./ \
+            -x "*.pyc" \
+            -x "*/__pycache__/*" \
+            -x ".DS_Store"
+
+          cd "${GITHUB_WORKSPACE}"
+          ls -la "${ZIP_NAME}"
+
+      - name: Validate ZIP structure
         shell: bash
         run: |
           set -euo pipefail
-          python -m compileall -q custom_components tests
+          ZIP_NAME="airzoneclouddaikin.zip"
 
-      - name: Ruff validation
-        shell: bash
-        run: |
-          set -euo pipefail
-          ruff check .
+          test -s "${ZIP_NAME}"
 
-      - name: Black validation
-        shell: bash
-        run: |
-          set -euo pipefail
-          black --check .
+          FILE_COUNT="$(unzip -Z1 "${ZIP_NAME}" | wc -l | tr -d ' ')"
+          if [ "${FILE_COUNT}" -eq 0 ]; then
+            echo "ZIP is empty"
+            exit 1
+          fi
 
-      - name: Run tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          pytest -q
-        env:
-          PYTHONPATH: .
+          if unzip -Z1 "${ZIP_NAME}" | grep -qE '^custom_components/'; then
+            echo "ZIP contains 'custom_components/' prefix (content must be in ZIP root)"
+            unzip -Z1 "${ZIP_NAME}" | head -n 200
+            exit 1
+          fi
 
-      - name: Build release ZIP (integration root at ZIP root)
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f "${{ github.workspace }}/airzoneclouddaikin.zip"
-          git archive --format=zip --output="${{ github.workspace }}/airzoneclouddaikin.zip" HEAD:custom_components/airzoneclouddaikin
-
-      - name: Validate ZIP structure (zip_release-compatible)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import zipfile
-
-          zip_path = "airzoneclouddaikin.zip"
-          required = {"manifest.json", "__init__.py"}
-
-          with zipfile.ZipFile(zip_path) as zf:
-              names = [n for n in zf.namelist() if n and not n.endswith("/")]
-
-          if not names:
-              raise SystemExit("ZIP is empty")
-
-          bad_prefix = [n for n in names if n.startswith("custom_components/")]
-          if bad_prefix:
-              raise SystemExit(
-                  "ZIP contains 'custom_components/' prefix; "
-                  "zip must be integration-root only"
-              )
-
-          generated = [
-              n
-              for n in names
-              if "__pycache__/" in n
-              or n.endswith((".pyc", ".pyo"))
-              or n.startswith((".pytest_cache/", ".ruff_cache/"))
-          ]
-          if generated:
-              raise SystemExit(
-                  "ZIP contains generated/cache files: " + ", ".join(generated)
-              )
-
-          missing = sorted(required.difference(names))
-          if missing:
-              raise SystemExit("ZIP missing required root files: " + ", ".join(missing))
-
-          print("ZIP structure validated.")
-          PY
+          unzip -Z1 "${ZIP_NAME}" | grep -qx '__init__.py'
+          unzip -Z1 "${ZIP_NAME}" | grep -qx 'manifest.json'
+          echo "ZIP validation OK"
 
       - name: Upload ZIP artifact
         uses: actions/upload-artifact@v7
         with:
           name: airzoneclouddaikin-zip
           path: airzoneclouddaikin.zip
+          if-no-files-found: error

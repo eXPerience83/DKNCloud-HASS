@@ -29,7 +29,7 @@ try:
         ClientSession,
         ClientTimeout,
     )
-except (ImportError, ModuleNotFoundError):  # pragma: no cover - handled by CI deps
+except ImportError, ModuleNotFoundError:  # pragma: no cover - handled by CI deps
     aiohttp_module = types.ModuleType("aiohttp")
     sys.modules["aiohttp"] = aiohttp_module
 

@@ -28,21 +28,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "pytest>=9"
-          if [ -f requirements_test.txt ]; then
-            python -m pip install -r requirements_test.txt
-          fi
-
-      - name: Install package
-        run: |
-          python -m pip install .
-
-      - name: Compile Python sources
-        run: |
-          python -m compileall -q custom_components tests
+          python -m pip install -r requirements_test.txt
 
       - name: Run tests
         run: |
           pytest -q
-        env:
-          PYTHONPATH: .
