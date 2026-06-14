@@ -50,7 +50,12 @@ reviews:
       - "github-actions[bot]"
 
   path_filters:
-    - "!secrets/**"
+    - "!secrets/.env"
+    - "!secrets/.*.env"
+    - "!secrets/*.env"
+    - "!secrets/*.local"
+    - "!secrets/*.json"
+    - "!secrets/*.log"
     - "!**/*.zip"
     - "!**/*.png"
     - "!**/*.jpg"
@@ -76,8 +81,9 @@ reviews:
         Review Python changes with that baseline in mind:
         - Do not request compatibility with Python 3.13 or older.
         - Do not propose syntax rewrites only for old Python compatibility.
-        - Do flag invalid Python syntax if present; Python 3 still requires
-          multi-exception handlers to use `except (A, B):`, not `except A, B:`.
+        - Follow Python 3.14+ syntax: `except A, B:` (without `as`) is valid
+          per PEP 758; `except A, B as e:` is still invalid and must be
+          written as `except (A, B) as e:`.
         - Prefer focused fixes over broad rewrites.
 
     - path: "custom_components/airzoneclouddaikin/**/*.py"
