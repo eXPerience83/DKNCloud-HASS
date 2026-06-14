@@ -428,7 +428,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
         try:
             requested = float(kwargs[ATTR_TEMPERATURE])
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return
 
         mode = self.hvac_mode

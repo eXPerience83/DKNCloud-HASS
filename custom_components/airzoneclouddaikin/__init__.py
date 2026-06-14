@@ -105,7 +105,7 @@ def _parse_sleep_time_minutes(device: dict[str, Any]) -> int | None:
 
     try:
         minutes = int(raw)
-    except (TypeError, ValueError):  # noqa: BLE001
+    except TypeError, ValueError:  # noqa: BLE001
         return None
 
     return minutes if minutes >= 0 else None
@@ -127,7 +127,7 @@ def _backend_power_is_off(device: dict[str, Any]) -> bool:
             return False
     try:
         return int(str(raw).strip()) == 0
-    except (TypeError, ValueError):  # noqa: BLE001
+    except TypeError, ValueError:  # noqa: BLE001
         return False
 
 

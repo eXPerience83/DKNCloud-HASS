@@ -60,7 +60,7 @@ def _adaptive_ttl(hass: HomeAssistant, entry_id: str) -> float:
         if scan_interval is not None:
             interval = float(scan_interval)
             ttl = max(ttl, interval + 0.5)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         pass
     return ttl
 
@@ -203,13 +203,13 @@ def clamp_number(
 
     try:
         num = float(value)
-    except (TypeError, ValueError):  # noqa: BLE001
+    except TypeError, ValueError:  # noqa: BLE001
         raise ValueError("Invalid numeric value") from None
 
     try:
         min_v = float(minimum)
         max_v = float(maximum)
-    except (TypeError, ValueError):  # noqa: BLE001
+    except TypeError, ValueError:  # noqa: BLE001
         raise ValueError("Invalid clamp bounds") from None
 
     if min_v > max_v:
@@ -219,7 +219,7 @@ def clamp_number(
 
     try:
         step_v = float(step)
-    except (TypeError, ValueError):  # noqa: BLE001
+    except TypeError, ValueError:  # noqa: BLE001
         step_v = 0.0
 
     if step_v > 0:
@@ -267,7 +267,7 @@ def bitmask_supports_p2(bitmask: str, code: int) -> bool:
 
     try:
         idx = int(code) - 1
-    except (TypeError, ValueError):  # noqa: BLE001
+    except TypeError, ValueError:  # noqa: BLE001
         return False
 
     return idx >= 0 and len(bitmask) > idx and bitmask[idx] == "1"

@@ -162,7 +162,7 @@ class AirzoneAPI:
                 if resp.content_type == "application/json":
                     try:
                         return await resp.json()
-                    except (JSONDecodeError, ValueError):
+                    except JSONDecodeError, ValueError:
                         body = (await resp.text()).strip()
                         if not body:
                             return None
