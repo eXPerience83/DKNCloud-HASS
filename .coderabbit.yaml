@@ -50,6 +50,8 @@ reviews:
       - "github-actions[bot]"
 
   path_filters:
+    - "!secrets/.env"
+    - "!secrets/.*.env"
     - "!secrets/*.env"
     - "!secrets/*.local"
     - "!secrets/*.json"
