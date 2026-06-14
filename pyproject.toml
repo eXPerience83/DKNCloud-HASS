@@ -1,19 +1,20 @@
-# Tooling aligned to Home Assistant Python floor (>=3.14).
-# NOTE: We purposely DO NOT set [tool.black].required-version to avoid CI mismatch.
-# CI pins Black to 25.*; if you ever want an exact lock, set both:
-#   - pyproject: required-version = "25.9.0"
-#   - CI: pip install "black==25.9.0"
+# Tooling aligned to the Home Assistant Python floor (>=3.14.0).
+# NOTE: We purposely DO NOT set [tool.black].required-version; CI installs
+# Black/Ruff from minimum supported versions to keep tooling forward-compatible.
+# Minimums: black>=26, ruff>=0.15 (set in CI workflows).
+# If you ever need an exact lock, set both:
+#   - pyproject: required-version = "<desired black version>"
+#   - CI: pip install "black==<desired black version>" "ruff==<desired ruff version>"
 
 [project]
-# Enforce the runtime floor aligned with upcoming HA Python 3.14 images.
+# Enforce the runtime floor aligned with Home Assistant Python 3.14 images.
 requires-python = ">=3.14"
 
 [tool.black]
 line-length = 88
-# Target Python 3.14 to mirror Home Assistant's floor; Black 25.9 already
-# accepts this target flag even though upstream has not formally documented it.
+# Black supports py314; keep a single target since the project requires 3.14+.
 target-version = ["py314"]
-# Do NOT set required-version here to keep compatibility with CI's "black==25.*".
+# Do NOT set required-version here to stay compatible with CI's rolling installs.
 
 [tool.ruff]
 line-length = 88
@@ -35,11 +36,8 @@ known-first-party = ["custom_components.airzoneclouddaikin"]
 combine-as-imports = true
 
 [tool.pytest.ini_options]
-# Silence upstream pytest-asyncio deprecation warnings on Python 3.14 while
-# keeping all other warnings visible during test runs.
-filterwarnings = [
-  "ignore::DeprecationWarning:pytest_asyncio.plugin",
-]
+testpaths = ["tests"]
+asyncio_mode = "auto"
 
 # --- Optional hardening (uncomment if needed) ---
 # [tool.ruff]

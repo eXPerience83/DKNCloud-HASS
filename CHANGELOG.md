@@ -1,4 +1,28 @@
 # Changelog
+## [5.0.0a1] - 2026-06-14
+### Changed
+- Upgraded tooling baseline: Python 3.14+ only, Black `>=26` (target-version py314),
+  Ruff `>=0.15` (target-version py314).
+- Updated `AGENTS.md`, `CONTRIBUTING.md`, and `README.md` to reflect Python 3.14+
+  and Home Assistant 2026.3.0+ minimum versions.
+- Replaced test dependencies with `pytest-homeassistant-custom-component>=0.13.339`,
+  `pytest-asyncio`, and `aioresponses`.
+- Migrated CI workflows (`format.yml`, `lint.yml`, `tests.yml`, `package-test.yml`,
+  `release.yml`) to use minimum version ranges (`black>=26`, `ruff>=0.15`, `pytest>=9`)
+  instead of pinned versions.
+- Dropped Python 3.13 from CI test matrix; tests now run on Python 3.14 only.
+- Migrated ZIP packaging from manual `zip` to `git archive` with Python-based
+  validation in `package-test.yml` and `release.yml`.
+- Added `concurrency` sections to `hassfest.yml` and `validate.yml`.
+
+### Added
+- Added `.coderabbit.yaml` configuration with per-path review instructions for
+  the `airzoneclouddaikin` integration.
+- Declared `ha_version: "2026.3.0"` and explicit empty `requirements: []` in
+  `manifest.json`.
+- Bumped `homeassistant` minimum in `hacs.json` to `2026.3.0`.
+- Added `testpaths` and `asyncio_mode` config to `pyproject.toml`.
+
 ## [0.4.8] - 2026-03-03
 ### Changed
 - Enable HACS `zip_release` packaging and add validated release ZIP workflows for

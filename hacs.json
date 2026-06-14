@@ -2,7 +2,7 @@
   "name": "DKN Cloud for HASS",
   "content_in_root": false,
   "render_readme": true,
-  "homeassistant": "2025.2.0",
+  "homeassistant": "2026.3.0",
   "hacs": "2.0.0",
   "zip_release": true,
   "filename": "airzoneclouddaikin.zip"

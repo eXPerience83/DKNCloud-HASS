@@ -1,0 +1,225 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: "en-US"
+early_access: false
+enable_free_tier: true
+
+tone_instructions: >
+  Be concise and evidence-based. Focus on correctness, HA compatibility,
+  async behavior, migration safety, privacy, registry stability, and
+  maintainability. Flag plausible bugs, API misuse, lifecycle issues,
+  and privacy leaks.
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: false
+  abort_on_close: true
+  disable_cache: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 5
+    base_branches:
+      - ".*"
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+      - "[skip review]"
+      - "skip review"
+    labels:
+      - "!do-not-review"
+      - "!skip-review"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+      - "github-actions[bot]"
+
+  path_filters:
+    - "!**/*.zip"
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/*.ico"
+    - "!**/*.pdf"
+    - "!**/.pytest_cache/**"
+    - "!**/.ruff_cache/**"
+    - "!**/__pycache__/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/*.egg-info/**"
+
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        This repository targets Python 3.14+ and CI formats with Black using
+        target-version py314. Black 26+ may format multi-exception handlers as
+        `except A, B:`. Treat that syntax as valid for this repository; do not
+        flag it as a SyntaxError or request `except (A, B):` unless CI fails.
+
+    - path: "custom_components/airzoneclouddaikin/**/*.py"
+      instructions: |
+        Review as a Home Assistant custom integration.
+        Focus on:
+        - Correct async Home Assistant patterns.
+        - No blocking I/O in the event loop.
+        - Proper use of DataUpdateCoordinator and ConfigEntry lifecycle.
+        - Stable unique_id, device_info, entity naming, and registry behavior.
+        - Safe setup/unload/reload behavior.
+        - ConfigEntryNotReady usage for startup API failures.
+        - No logging of API keys, tokens, email addresses, or raw payloads containing secrets.
+        - Minimal public API churn and no unnecessary renames.
+
+    - path: "custom_components/airzoneclouddaikin/airzone_api.py"
+      instructions: |
+        Pay special attention to:
+        - aiohttp timeout handling.
+        - 401 reauth logic.
+        - 429/5xx retry and backoff behavior.
+        - Token/password handling and in-memory cleanup.
+        - No secrets in logs or exception messages.
+        - Avoiding request storms or quota regressions.
+
+    - path: "custom_components/airzoneclouddaikin/config_flow.py"
+      instructions: |
+        Pay special attention to:
+        - Friendly validation errors.
+        - Token and password handling.
+        - Reauth/reconfigure behavior.
+        - Duplicate detection and stable unique IDs.
+        - Avoiding secrets in form defaults, placeholders, logs, or exceptions.
+
+    - path: "custom_components/airzoneclouddaikin/diagnostics.py"
+      instructions: |
+        Treat diagnostics as privacy-sensitive.
+        Flag any exposure of:
+        - API tokens.
+        - Email addresses.
+        - MAC addresses, PINs, GPS coordinates.
+        - Raw URLs containing query parameters.
+        - Raw API payloads that may contain sensitive user data.
+        Prefer redacted, rounded, or summarized diagnostics.
+
+    - path: "custom_components/airzoneclouddaikin/__init__.py"
+      instructions: |
+        Review Home Assistant setup and unload lifecycle carefully.
+        Focus on:
+        - Public Home Assistant APIs only.
+        - Correct ConfigEntry lifecycle behavior.
+        - Correct setup, unload, reload, and cleanup behavior.
+        - Avoiding stale runtime data.
+        - Correct error handling with ConfigEntryNotReady.
+        - No logging of emails, tokens, or raw API payloads.
+
+    - path: "custom_components/airzoneclouddaikin/coordinator.py"
+      instructions: |
+        Pay special attention to:
+        - aiohttp timeout handling.
+        - 401/429/5xx retry and backoff behavior.
+        - Coordinator availability semantics.
+        - Avoiding stale data bugs.
+        - Avoiding request storms or quota regressions.
+
+    - path: "custom_components/airzoneclouddaikin/helpers.py"
+      instructions: |
+        Review helper utility code carefully.
+        Focus on:
+        - Correct optimistic state overlay logic.
+        - Shared refresh scheduling correctness.
+        - Per-device lock serialization.
+        - No API keys or secrets in logs or exceptions.
+
+    - path: "custom_components/airzoneclouddaikin/translations/**/*.json"
+      instructions: |
+        Check that translation keys stay consistent across locales.
+        Do not suggest changing stable public keys unless required.
+        English technical strings are acceptable when intentionally shared
+        across locales during development.
+
+    - path: ".github/workflows/**/*.yml"
+      instructions: |
+        Review GitHub Actions carefully.
+        Check:
+        - Minimal permissions.
+        - concurrency is present where appropriate.
+        - actions are pinned to versioned major tags.
+        - setup-python uses python-version "3.14" unless intentionally changed.
+        - shell: bash is present when using set -euo pipefail.
+        - ruff check and black --check fail the job on issues.
+        - YAML syntax is valid.
+        - No placeholders, TODOs, or empty keys.
+
+    - path: "tests/**/*.py"
+      instructions: |
+        Focus on behavioral coverage, not cosmetic test rewrites.
+        Check:
+        - Async test correctness.
+        - Stable Home Assistant stubs/fixtures.
+        - Regression coverage for config flow, coordinator, diagnostics,
+          entity registry, and services.
+        - No tests depending on real network calls or real API keys.
+
+    - path: "README.md"
+      instructions: |
+        Review for user-facing accuracy and upgrade safety.
+        For Home Assistant/HACS documentation, check installation, integration
+        options, configuration, troubleshooting, and compatibility notes.
+
+    - path: "CHANGELOG.md"
+      instructions: |
+        Check that changelog entries are accurate, concise, and SemVer-aware.
+        Flag missing breaking-change notes, migration warnings, or prerelease
+        labels when applicable.
+
+    - path: "info.md"
+      instructions: |
+        Review the backend API contract documentation for accuracy.
+        Check that documented request shapes, field mappings, and curl examples
+        match the actual code behavior. Flag outdated or incorrect information.
+
+  tools:
+    ruff:
+      enabled: true
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+    github-checks:
+      enabled: true
+      timeout_ms: 900000
+
+chat:
+  auto_reply: true
+
+knowledge_base: {}
+
+code_generation:
+  docstrings:
+    language: "en-US"
+  unit_tests: {}
+
+issue_enrichment:
+  auto_enrich:
+    enabled: false
+  planning:
+    enabled: false
+  labeling: {}
