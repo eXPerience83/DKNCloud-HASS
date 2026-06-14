@@ -1,43 +1,34 @@
-# Local testing secrets
+# Local secrets
 
-This directory holds local-only credentials for manual testing of the DKN
-Cloud integration against a real Airzone Cloud account.
+This folder is for local/manual testing only.
 
-## Files
+Tracked files:
+- .gitignore
+- .env.example
+- README.md
 
-| File            | Tracked | Purpose                       |
-| --------------- | ------- | ----------------------------- |
-| `.env.example`  | Yes     | Template with placeholder values |
-| `.env`          | No      | Your real credentials (gitignored) |
-| `.gitignore`    | Yes     | Prevents accidental commits of secrets |
+Local-only files:
+- .env
+- *.env
+- *.local
+- *.json
+- *.log
 
-## Setup
-
-```bash
-cp secrets/.env.example secrets/.env
-# Edit secrets/.env with your real Airzone Cloud credentials
-```
-
-## Safety
-
-- **Never commit** `.env`, `*.env`, `*.local`, `*.json`, or `*.log` files inside
-  this directory.
-- The root `.gitignore` and `secrets/.gitignore` both protect against accidental
-  commits.
-- CI **must never** depend on `secrets/.env` or real Airzone credentials. All
-  CI tests use mocked API responses.
+Never commit real Airzone credentials, tokens, full API URLs, request logs, or raw payload captures containing credentials.
 
 ## Usage
 
-Source the env file before running tests or tools locally:
+Source the env file before running tools:
 
 ```bash
-export $(cat secrets/.env | xargs)
+set -a
+. secrets/.env
+set +a
 pytest -q
 ```
 
-Or prefix individual commands:
+One-liner for ad-hoc commands:
 
 ```bash
-env $(cat secrets/.env | xargs) pytest tests/test_airzone_api.py -q
+(set -a && . secrets/.env && pytest tests/test_airzone_api.py -q)
 ```
