@@ -70,7 +70,7 @@ jobs:
           import zipfile
 
           zip_path = "airzoneclouddaikin.zip"
-          required = {"manifest.json", "__init__.py"}
+          required = {"manifest.json", "__init__.py", "translations/en.json"}
 
           with zipfile.ZipFile(zip_path) as zf:
               names = [n for n in zf.namelist() if n and not n.endswith("/")]
@@ -91,6 +91,8 @@ jobs:
               if "__pycache__/" in n
               or n.endswith((".pyc", ".pyo"))
               or n.startswith((".pytest_cache/", ".ruff_cache/"))
+              or n == ".DS_Store"
+              or n.endswith("/.DS_Store")
           ]
           if generated:
               raise SystemExit(
