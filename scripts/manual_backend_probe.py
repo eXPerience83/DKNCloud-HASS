@@ -10,14 +10,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 try:
-    from .sanitize_backend_artifacts import sanitize_data, sanitize_url
+    from .sanitize_backend_artifacts import sanitize_data, sanitize_text, sanitize_url
 except ImportError:  # pragma: no cover - direct script execution fallback
-    from sanitize_backend_artifacts import sanitize_data, sanitize_url
+    from sanitize_backend_artifacts import sanitize_data, sanitize_text, sanitize_url
 
 BASE_URL = "https://dkn.airzonecloud.com"
 DEFAULT_TIMEOUT = 30
@@ -49,6 +49,19 @@ MODE_SUPPORT = {
     "mode_heatcool_p2_4": 4,
     "mode_dry": 5,
 }
+
+RESTORE_FIELDS = (
+    "mode",
+    "cold_consign",
+    "heat_consign",
+    "cold_speed",
+    "heat_speed",
+    "min_temp_unoccupied",
+    "max_temp_unoccupied",
+    "scenary",
+    "sleep_time",
+    "power",
+)
 
 
 @dataclass(frozen=True)
@@ -269,6 +282,38 @@ def command_payload(command: str, device_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _manual_fan_value(device: dict[str, Any]) -> str | None:
+    try:
+        available = int(device.get("availables_speeds", 0))
+    except TypeError, ValueError:
+        return None
+    if available >= 2:
+        return "2"
+    if available >= 1:
+        return "1"
+    return None
+
+
+def _runtime_event_payload(
+    command: str,
+    device_id: str,
+    initial_device: dict[str, Any],
+) -> dict[str, Any] | None:
+    if command in {"cool_fan_speed_1", "heat_fan_speed_1"}:
+        fan_value = _manual_fan_value(initial_device)
+        if fan_value is None:
+            return None
+        option = "P3" if command == "cool_fan_speed_1" else "P4"
+        return event_payload(device_id, option, fan_value)
+    return command_payload(command, device_id)
+
+
+def _runtime_expected_value(command: str, initial_device: dict[str, Any]) -> Any | None:
+    if command in {"cool_fan_speed_1", "heat_fan_speed_1"}:
+        return _manual_fan_value(initial_device)
+    return COMMANDS[command].expected_value
+
+
 def is_dangerous_command(command: str) -> bool:
     """Return whether a command requires an explicit dangerous flag."""
     return COMMANDS[command].dangerous_flag is not None
@@ -295,20 +340,20 @@ def resolve_env_file(
 ) -> Path | None:
     """Resolve the credential file using the documented precedence order."""
     values = os.environ if environ is None else environ
-    candidates: list[Path] = []
     if cli_env_file is not None:
-        candidates.append(cli_env_file)
+        path = cli_env_file if cli_env_file.is_absolute() else repo_root / cli_env_file
+        if not path.exists():
+            raise FileNotFoundError(path)
+        return path
     if values.get("DKN_ENV_FILE"):
-        candidates.append(Path(values["DKN_ENV_FILE"]))
-    candidates.extend(
-        [
-            repo_root / "secrets" / "dkn.env",
-        ]
-    )
-    for candidate in candidates:
+        candidate = Path(values["DKN_ENV_FILE"])
         path = candidate if candidate.is_absolute() else repo_root / candidate
-        if path.exists():
-            return path
+        if not path.exists():
+            raise FileNotFoundError(path)
+        return path
+    path = repo_root / "secrets" / "dkn.env"
+    if path.exists():
+        return path
     return None
 
 
@@ -362,6 +407,17 @@ class BackendClient:
         self.timeout = timeout
         self.token: str | None = None
 
+    def _parse_body(self, raw: str) -> Any:
+        if not raw.strip():
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {
+                "parse_error": "non_json_response",
+                "raw_text": sanitize_text(raw[:2000]),
+            }
+
     def _json_request(
         self,
         method: str,
@@ -399,8 +455,16 @@ class BackendClient:
         except HTTPError as err:
             raw = err.read().decode("utf-8", errors="replace")
             status = err.code
-        parsed = json.loads(raw) if raw.strip() else None
-        return HttpResult(status=status, body=parsed, url=url)
+        except (URLError, TimeoutError, OSError) as err:
+            return HttpResult(
+                status=0,
+                body={
+                    "network_error": type(err).__name__,
+                    "message": sanitize_text(str(err)),
+                },
+                url=url,
+            )
+        return HttpResult(status=status, body=self._parse_body(raw), url=url)
 
     def login(self) -> HttpResult:
         """Authenticate and store the returned user token."""
@@ -533,6 +597,124 @@ def _status_for_verification(
     return "accepted_but_not_verified"
 
 
+def _expected_matches(device: dict[str, Any], expected: dict[str, Any]) -> bool:
+    for field, value in expected.items():
+        if str(device.get(field)) != str(value):
+            return False
+    return True
+
+
+def _timeline_entry(
+    *,
+    status: int,
+    device: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {"http_status": status}
+    if device is not None:
+        entry["device"] = sanitize_data(device)
+    if error is not None:
+        entry["error"] = sanitize_text(error)
+    return entry
+
+
+def wait_for_device_state(
+    client: BackendClient,
+    installation_id: str,
+    device_id: str,
+    expected: dict[str, Any],
+    *,
+    timeout_sec: int,
+    poll_sec: int,
+    sleep_func: Any = time.sleep,
+) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
+    """Poll /devices until the selected device matches expected fields."""
+    deadline = time.monotonic() + timeout_sec
+    timeline: list[dict[str, Any]] = []
+    last_device: dict[str, Any] | None = None
+    saw_network_error = False
+
+    while True:
+        try:
+            result = client.devices(installation_id)
+            if result.status == 0:
+                saw_network_error = True
+                timeline.append(
+                    _timeline_entry(
+                        status=0, error=json.dumps(sanitize_data(result.body))
+                    )
+                )
+            elif not 200 <= result.status < 300:
+                timeline.append(
+                    _timeline_entry(
+                        status=result.status,
+                        error=json.dumps(sanitize_data(result.body)),
+                    )
+                )
+            else:
+                last_device = _select_device(result.body, device_id)
+                timeline.append(
+                    _timeline_entry(status=result.status, device=last_device)
+                )
+                if _expected_matches(last_device, expected):
+                    return "verified", last_device, timeline
+        except (RuntimeError, KeyError, TypeError, ValueError) as err:
+            timeline.append(_timeline_entry(status=0, error=str(err)))
+
+        if time.monotonic() >= deadline:
+            if saw_network_error and last_device is None:
+                return "network_error", last_device, timeline
+            if last_device is None:
+                return "not_verified", last_device, timeline
+            return "accepted_but_not_verified", last_device, timeline
+        sleep_func(poll_sec)
+
+
+def wait_for_mode_values(
+    client: BackendClient,
+    installation_id: str,
+    device_id: str,
+    *,
+    final_values: set[str],
+    alias_values: set[str],
+    alias_status: str,
+    timeout_sec: int,
+    poll_sec: int,
+    sleep_func: Any = time.sleep,
+) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
+    """Poll mode and accept documented backend aliases."""
+    deadline = time.monotonic() + timeout_sec
+    timeline: list[dict[str, Any]] = []
+    last_device: dict[str, Any] | None = None
+    saw_alias = False
+
+    while True:
+        result = client.devices(installation_id)
+        if result.status == 0:
+            timeline.append(_timeline_entry(status=0, error=json.dumps(result.body)))
+        elif 200 <= result.status < 300:
+            last_device = _select_device(result.body, device_id)
+            mode = str(last_device.get("mode"))
+            timeline.append(_timeline_entry(status=result.status, device=last_device))
+            if mode in final_values:
+                return "verified", last_device, timeline
+            if mode in alias_values:
+                saw_alias = True
+        else:
+            timeline.append(
+                _timeline_entry(
+                    status=result.status,
+                    error=json.dumps(sanitize_data(result.body)),
+                )
+            )
+
+        if time.monotonic() >= deadline:
+            if saw_alias:
+                return alias_status, last_device, timeline
+            return "accepted_but_not_verified", last_device, timeline
+        sleep_func(poll_sec)
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -608,7 +790,22 @@ def dry_run(args: argparse.Namespace, commands: list[str]) -> int:
                 "expected_value": spec.expected_value,
             }
         )
-    print(json.dumps(sanitize_data({"dry_run": True, "plan": plan}), indent=2))
+    print(
+        json.dumps(
+            sanitize_data(
+                {
+                    "dry_run": True,
+                    "prepare_occupied": args.prepare_occupied,
+                    "ensure_power_off_for_control_tests": (
+                        args.ensure_power_off_for_control_tests
+                    ),
+                    "restore_all": args.restore_all,
+                    "plan": plan,
+                }
+            ),
+            indent=2,
+        )
+    )
     return 0
 
 
@@ -700,6 +897,170 @@ def _restore_initial(
         client.event(event_payload(device_id, restore_option, str(original)))
 
 
+def _is_control_command(command: str) -> bool:
+    return COMMANDS[command].method == "POST"
+
+
+def _verify_after_write(
+    *,
+    client: BackendClient,
+    installation_id: str,
+    device_id: str,
+    expected: dict[str, Any],
+    timeout_sec: int,
+    poll_sec: int,
+) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
+    return wait_for_device_state(
+        client,
+        installation_id,
+        device_id,
+        expected,
+        timeout_sec=timeout_sec,
+        poll_sec=poll_sec,
+    )
+
+
+def _prepare_control_state(
+    *,
+    client: BackendClient,
+    installation_id: str,
+    device_id: str,
+    args: argparse.Namespace,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if args.prepare_occupied:
+        payload = scenary_payload("occupied")
+        result = client.put_device(device_id, payload)
+        status, observed, timeline = _verify_after_write(
+            client=client,
+            installation_id=installation_id,
+            device_id=device_id,
+            expected={"scenary": "occupied"},
+            timeout_sec=args.verify_timeout_sec,
+            poll_sec=args.verify_poll_sec,
+        )
+        records.append(
+            {
+                "command": "prepare_occupied",
+                "http_status": result.status,
+                "payload": sanitize_data(payload),
+                "result": status if 200 <= result.status < 300 else "not_verified",
+                "observed": sanitize_data(observed),
+                "timeline": timeline,
+            }
+        )
+    if args.ensure_power_off_for_control_tests:
+        payload = event_payload(device_id, "P1", "0")
+        result = client.event(payload)
+        status, observed, timeline = _verify_after_write(
+            client=client,
+            installation_id=installation_id,
+            device_id=device_id,
+            expected={"power": "0"},
+            timeout_sec=args.verify_timeout_sec,
+            poll_sec=args.verify_poll_sec,
+        )
+        records.append(
+            {
+                "command": "prepare_power_off",
+                "http_status": result.status,
+                "payload": sanitize_data(payload),
+                "result": status if 200 <= result.status < 300 else "not_verified",
+                "observed": sanitize_data(observed),
+                "timeline": timeline,
+            }
+        )
+    return records
+
+
+def _restore_payload_for_field(
+    device_id: str,
+    field: str,
+    value: Any,
+) -> tuple[str, dict[str, Any]] | None:
+    event_options = {
+        "mode": "P2",
+        "cold_consign": "P7",
+        "heat_consign": "P8",
+        "cold_speed": "P3",
+        "heat_speed": "P4",
+        "power": "P1",
+    }
+    if field in event_options:
+        return "POST", event_payload(device_id, event_options[field], str(value))
+    if field == "scenary":
+        return "PUT", scenary_payload(str(value))
+    if field in {"sleep_time", "min_temp_unoccupied", "max_temp_unoccupied"}:
+        return "PUT", root_payload(field, value)
+    return None
+
+
+def restore_initial_state(
+    *,
+    client: BackendClient,
+    installation_id: str,
+    device_id: str,
+    initial_device: dict[str, Any],
+    args: argparse.Namespace,
+) -> list[dict[str, Any]]:
+    """Best-effort final restoration of initial controllable state."""
+    records: list[dict[str, Any]] = []
+    for field in RESTORE_FIELDS:
+        if field not in initial_device:
+            continue
+        restore_payload = _restore_payload_for_field(
+            device_id,
+            field,
+            initial_device[field],
+        )
+        if restore_payload is None:
+            continue
+        method, payload = restore_payload
+        try:
+            result = (
+                client.event(payload)
+                if method == "POST"
+                else client.put_device(device_id, payload)
+            )
+            status, observed, timeline = _verify_after_write(
+                client=client,
+                installation_id=installation_id,
+                device_id=device_id,
+                expected={field: initial_device[field]},
+                timeout_sec=args.verify_timeout_sec,
+                poll_sec=args.verify_poll_sec,
+            )
+            restore_result = status if 200 <= result.status < 300 else "restore_failed"
+        except (RuntimeError, KeyError, TypeError, ValueError) as err:
+            result = HttpResult(
+                status=0,
+                body={
+                    "network_error": type(err).__name__,
+                    "message": sanitize_text(str(err)),
+                },
+                url="",
+            )
+            observed = None
+            timeline = []
+            restore_result = "restore_failed"
+        records.append(
+            {
+                "command": f"restore_{field}",
+                "http_status": result.status,
+                "payload": sanitize_data(payload),
+                "expected": initial_device[field],
+                "observed": sanitize_data(observed),
+                "result": (
+                    restore_result
+                    if restore_result == "verified"
+                    else f"restore_failed:{restore_result}"
+                ),
+                "timeline": timeline,
+            }
+        )
+    return records
+
+
 def _execute_command(
     *,
     client: BackendClient,
@@ -709,6 +1070,7 @@ def _execute_command(
     initial_device: dict[str, Any],
     output_dir: Path,
     flags: set[str],
+    args: argparse.Namespace,
 ) -> dict[str, Any]:
     spec = COMMANDS[command]
     if spec.dangerous_flag and spec.dangerous_flag not in flags:
@@ -717,39 +1079,89 @@ def _execute_command(
             "result": "dangerous_skipped",
             "expected": spec.expected_value,
         }
-    if not _mode_supported(initial_device, spec.requires_mode):
+    force_heatcool = command == "mode_heatcool_p2_4" and args.force_heatcool_auto_test
+    if not force_heatcool and not _mode_supported(initial_device, spec.requires_mode):
         return {
             "command": command,
             "result": "skipped",
             "reason": f"mode {spec.requires_mode} not supported by modes bitmask",
         }
 
-    payload = command_payload(command, device_id)
+    payload = _runtime_event_payload(command, device_id, initial_device)
     if payload is None:
-        return {"command": command, "result": "skipped", "reason": "no payload"}
+        return {
+            "command": command,
+            "result": "skipped",
+            "reason": "no compatible fan speed or payload",
+        }
+
+    preparation = (
+        _prepare_control_state(
+            client=client,
+            installation_id=installation_id,
+            device_id=device_id,
+            args=args,
+        )
+        if _is_control_command(command)
+        else []
+    )
 
     if spec.method == "PUT":
         result = client.put_device(device_id, payload)
     else:
         result = client.event(payload)
-    time.sleep(2)
-    after = client.devices(installation_id)
-    after_device = _select_device(after.body, device_id)
-    _restore_initial(client, command, device_id, initial_device)
+    expected_value = _runtime_expected_value(command, initial_device)
+
+    if not 200 <= result.status < 300:
+        verification_status = "network_error" if result.status == 0 else "not_verified"
+        after_device = None
+        timeline: list[dict[str, Any]] = []
+    elif command == "mode_fan":
+        verification_status, after_device, timeline = wait_for_mode_values(
+            client,
+            installation_id,
+            device_id,
+            final_values={"3"},
+            alias_values={"8"},
+            alias_status="accepted_alias_observed",
+            timeout_sec=args.settle_timeout_sec,
+            poll_sec=args.verify_poll_sec,
+        )
+    elif command == "mode_heatcool_p2_4":
+        verification_status, after_device, timeline = wait_for_mode_values(
+            client,
+            installation_id,
+            device_id,
+            final_values={"4"},
+            alias_values={"6", "7"},
+            alias_status="accepted_heatcool_alias",
+            timeout_sec=min(args.settle_timeout_sec, 60),
+            poll_sec=args.verify_poll_sec,
+        )
+    elif spec.expected_field is not None and expected_value is not None:
+        verification_status, after_device, timeline = _verify_after_write(
+            client=client,
+            installation_id=installation_id,
+            device_id=device_id,
+            expected={spec.expected_field: expected_value},
+            timeout_sec=args.verify_timeout_sec,
+            poll_sec=args.verify_poll_sec,
+        )
+    else:
+        verification_status = "verified"
+        after_device = None
+        timeline = []
 
     record = {
         "command": command,
         "http_status": result.status,
         "request_url": sanitize_url(result.url),
         "payload": sanitize_data(payload),
-        "expected": spec.expected_value,
+        "expected": expected_value,
         "observed": _observed_value(after_device, spec.expected_field),
-        "verification_status": after.status,
-        "result": _status_for_verification(
-            result.status,
-            spec.expected_value,
-            _observed_value(after_device, spec.expected_field),
-        ),
+        "preparation": preparation,
+        "result": verification_status,
+        "timeline": timeline,
     }
     _write_json(output_dir / f"{command}.json", record)
     return record
@@ -790,6 +1202,9 @@ def run_probe(args: argparse.Namespace, commands: list[str]) -> int:
     _write_json(output_dir / "initial_snapshot.json", initial_snapshot.body)
 
     flags = _dangerous_flags(args)
+    should_restore = args.restore_all and any(
+        command not in {"list", "snapshot"} for command in commands
+    )
     for command in commands:
         if command == "list":
             continue
@@ -811,8 +1226,19 @@ def run_probe(args: argparse.Namespace, commands: list[str]) -> int:
                 initial_device=initial_device,
                 output_dir=output_dir,
                 flags=flags,
+                args=args,
             )
         )
+    if should_restore:
+        restore_records = restore_initial_state(
+            client=client,
+            installation_id=installation_id,
+            device_id=device_id,
+            initial_device=initial_device,
+            args=args,
+        )
+        summary.extend(restore_records)
+        _write_json(output_dir / "restore_summary.json", restore_records)
 
     _write_json(output_dir / "summary.json", summary)
     print(json.dumps(sanitize_data(summary), indent=2))
@@ -857,6 +1283,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-p2-8", action="store_true")
     parser.add_argument("--test-auto-fan", action="store_true")
     parser.add_argument("--test-out-of-range", action="store_true")
+    parser.add_argument("--force-heatcool-auto-test", action="store_true")
+    parser.add_argument("--verify-timeout-sec", type=int, default=240)
+    parser.add_argument("--verify-poll-sec", type=int, default=15)
+    parser.add_argument("--settle-timeout-sec", type=int, default=90)
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Use short verification timings for quick local checks",
+    )
+    parser.add_argument(
+        "--prepare-occupied",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Set scenary=occupied before /events control commands",
+    )
+    parser.add_argument(
+        "--ensure-power-off-for-control-tests",
+        action="store_true",
+        help="Power off before control tests; this changes real device state",
+    )
+    parser.add_argument(
+        "--restore-all",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Best-effort final restoration of the initial controllable state",
+    )
     return parser
 
 
@@ -864,6 +1316,10 @@ def main(argv: list[str] | None = None) -> int:
     """Run the manual backend probe CLI."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.quick:
+        args.verify_timeout_sec = min(args.verify_timeout_sec, 20)
+        args.verify_poll_sec = min(args.verify_poll_sec, 2)
+        args.settle_timeout_sec = min(args.settle_timeout_sec, 20)
     commands = _plan_commands(args)
     if args.dry_run:
         return dry_run(args, commands)

@@ -260,6 +260,9 @@ def _iter_files(input_path: Path) -> Iterable[tuple[str, str]]:
 
     for path in sorted(input_path.rglob("*")):
         if path.is_file():
+            if path.suffix.lower() == ".zip":
+                yield from _iter_zip_files(path)
+                continue
             yield (
                 path.relative_to(input_path).as_posix(),
                 path.read_text(encoding="utf-8", errors="replace"),

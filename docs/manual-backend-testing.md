@@ -52,6 +52,12 @@ Run the conservative command suite:
 python scripts/manual_backend_probe.py --env-file secrets/dkn.env --safe-suite
 ```
 
+`--safe-suite` is conservative, but it is not read-only. It sends real commands
+to the selected device and may change power, mode, setpoints, fan speed, sleep
+timer, scenary, and unoccupied limits. Run the dry-run first, do not run it if
+you cannot recover the system manually from the official app, and treat final
+restoration as best-effort rather than guaranteed.
+
 Run one command:
 
 ```bash
@@ -70,10 +76,16 @@ URLs, tokens, emails, device IDs, installation IDs, MACs, PINs, names, or
 locations.
 
 For write commands, the probe takes an initial `/devices` snapshot, sends the
-canonical backend payload, verifies with another `/devices` snapshot, and tries
-to restore the original field when the command changes state. A 2xx response
+canonical backend payload, verifies by polling `/devices`, and performs a
+best-effort final restoration when `--restore-all` is enabled. A 2xx response
 without a matching observed snapshot value is reported as
 `accepted_but_not_verified`, not as a confirmed success.
+
+Control commands prepare the device with `scenary=occupied` by default. Disable
+that with `--no-prepare-occupied` only when you intentionally want to preserve
+the current scenary. `--ensure-power-off-for-control-tests` powers off the real
+device before control tests and should be used only for local evidence gathering
+when you are ready to restore the device manually if needed.
 
 ## Dangerous Probes
 

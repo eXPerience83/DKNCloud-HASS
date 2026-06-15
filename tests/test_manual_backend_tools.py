@@ -31,6 +31,61 @@ def _write_env_file(path: Path, marker: str) -> None:
     )
 
 
+def _probe_args(**overrides: Any) -> Any:
+    values = {
+        "prepare_occupied": True,
+        "ensure_power_off_for_control_tests": False,
+        "restore_all": True,
+        "verify_timeout_sec": 0,
+        "verify_poll_sec": 0,
+        "settle_timeout_sec": 0,
+        "force_heatcool_auto_test": False,
+    }
+    values.update(overrides)
+    return type("Args", (), values)()
+
+
+class FakePollClient:
+    def __init__(self, snapshots: list[Any]) -> None:
+        self.snapshots = list(snapshots)
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def devices(self, installation_id: str) -> probe.HttpResult:
+        body = self.snapshots.pop(0) if self.snapshots else []
+        return probe.HttpResult(
+            status=200,
+            body=body,
+            url=f"https://example.test/devices?installation_id={installation_id}",
+        )
+
+    def event(self, payload: dict[str, Any]) -> probe.HttpResult:
+        self.calls.append(("POST", "/events", payload))
+        return probe.HttpResult(status=200, body={}, url="https://example.test/events")
+
+    def put_device(self, device_id: str, payload: dict[str, Any]) -> probe.HttpResult:
+        self.calls.append(("PUT", device_id, payload))
+        return probe.HttpResult(
+            status=200,
+            body={},
+            url=f"https://example.test/devices/{device_id}",
+        )
+
+
+class FakeResponse:
+    def __init__(self, *, status: int, body: str) -> None:
+        self.status = status
+        self.body = body.encode()
+
+    def __enter__(self) -> FakeResponse:
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
 def test_env_file_cli_path_wins(tmp_path: Path) -> None:
     """--env-file should win over every other credential file source."""
     repo_root = tmp_path
@@ -52,6 +107,18 @@ def test_env_file_cli_path_wins(tmp_path: Path) -> None:
     )
 
 
+def test_env_file_cli_missing_raises(tmp_path: Path) -> None:
+    """Explicit CLI env files should not fall back silently."""
+    _write_env_file(tmp_path / "secrets" / "dkn.env", "default")
+
+    with pytest.raises(FileNotFoundError):
+        probe.load_credentials(
+            tmp_path,
+            cli_env_file=Path("missing.env"),
+            environ={},
+        )
+
+
 def test_env_file_environment_path_wins_over_default(tmp_path: Path) -> None:
     """DKN_ENV_FILE should win over secrets/dkn.env."""
     repo_root = tmp_path
@@ -67,6 +134,17 @@ def test_env_file_environment_path_wins_over_default(tmp_path: Path) -> None:
     assert credentials.password == "env-password"
 
 
+def test_env_file_environment_missing_raises(tmp_path: Path) -> None:
+    """Explicit DKN_ENV_FILE paths should not fall back silently."""
+    _write_env_file(tmp_path / "secrets" / "dkn.env", "default")
+
+    with pytest.raises(FileNotFoundError):
+        probe.load_credentials(
+            tmp_path,
+            environ={"DKN_ENV_FILE": "missing.env"},
+        )
+
+
 def test_dkn_env_works_as_default(tmp_path: Path) -> None:
     """secrets/dkn.env should be the default credential file."""
     repo_root = tmp_path
@@ -79,7 +157,7 @@ def test_dkn_env_works_as_default(tmp_path: Path) -> None:
 
 
 def test_legacy_dot_env_file_is_ignored(tmp_path: Path) -> None:
-    """secrets/.env should not be used as a credential fallback."""
+    """Legacy dot-env files should not be used as credential fallback."""
     repo_root = tmp_path
     _write_env_file(repo_root / "secrets" / ".env", "legacy")
 
@@ -270,6 +348,214 @@ def test_dry_run_does_not_call_network(
     assert '"dry_run": true' in output
     assert "DRY_RUN_DEVICE_ID" not in output
     assert "user_token" not in output
+    assert "prepare_occupied" in output
+    assert "restore_all" in output
+
+
+def test_json_request_handles_non_json_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP text/HTML responses should be returned as sanitized parse errors."""
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        return FakeResponse(
+            status=200,
+            body="<html>owner@example.com token=secret-token</html>",
+        )
+
+    monkeypatch.setattr(probe, "urlopen", fake_urlopen)
+    client = probe.BackendClient(email="owner@example.com", password="password")
+
+    result = client._json_request(
+        "POST",
+        "/users/sign_in",
+        payload={"email": "owner@example.com"},
+        authenticated=False,
+    )
+
+    assert result.status == 200
+    assert result.body["parse_error"] == "non_json_response"
+    assert "owner@example.com" not in result.body["raw_text"]
+    assert "secret-token" not in result.body["raw_text"]
+
+
+def test_json_request_handles_network_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Network errors should be captured in HttpResult instead of raised."""
+
+    def fake_urlopen(*_args: Any, **_kwargs: Any) -> FakeResponse:
+        raise OSError("socket failed for owner@example.com")
+
+    monkeypatch.setattr(probe, "urlopen", fake_urlopen)
+    client = probe.BackendClient(email="owner@example.com", password="password")
+
+    result = client._json_request(
+        "POST",
+        "/users/sign_in",
+        payload={"email": "owner@example.com"},
+        authenticated=False,
+    )
+
+    assert result.status == 0
+    assert result.body["network_error"] == "OSError"
+    assert "owner@example.com" not in result.body["message"]
+
+
+def test_polling_verifies_after_multiple_snapshots() -> None:
+    """Polling should continue until the selected device reaches expected state."""
+    client = FakePollClient(
+        [
+            [{"id": "device-1", "power": "0"}],
+            [{"id": "device-1", "power": "1"}],
+        ]
+    )
+
+    status, observed, timeline = probe.wait_for_device_state(
+        client,
+        "installation-1",
+        "device-1",
+        {"power": "1"},
+        timeout_sec=1,
+        poll_sec=0,
+        sleep_func=lambda _seconds: None,
+    )
+
+    assert status == "verified"
+    assert observed["power"] == "1"
+    assert len(timeline) == 2
+
+
+def test_polling_reports_not_verified_when_not_settled() -> None:
+    """Polling should not claim success when state never matches."""
+    client = FakePollClient([[{"id": "device-1", "power": "0"}]])
+
+    status, observed, timeline = probe.wait_for_device_state(
+        client,
+        "installation-1",
+        "device-1",
+        {"power": "1"},
+        timeout_sec=0,
+        poll_sec=0,
+        sleep_func=lambda _seconds: None,
+    )
+
+    assert status == "accepted_but_not_verified"
+    assert observed["power"] == "0"
+    assert len(timeline) == 1
+
+
+def test_mode_fan_accepts_alias_then_final_mode() -> None:
+    """P2=3 should tolerate transient mode 8 before stabilizing to 3."""
+    client = FakePollClient(
+        [
+            [{"id": "device-1", "mode": "8"}],
+            [{"id": "device-1", "mode": "3"}],
+        ]
+    )
+
+    status, observed, timeline = probe.wait_for_mode_values(
+        client,
+        "installation-1",
+        "device-1",
+        final_values={"3"},
+        alias_values={"8"},
+        alias_status="accepted_alias_observed",
+        timeout_sec=1,
+        poll_sec=0,
+        sleep_func=lambda _seconds: None,
+    )
+
+    assert status == "verified"
+    assert observed["mode"] == "3"
+    assert [entry["device"]["mode"] for entry in timeline] == ["8", "3"]
+
+
+def test_mode_fan_reports_alias_if_mode_remains_eight() -> None:
+    """P2=3 should report alias observation if mode remains 8."""
+    client = FakePollClient([[{"id": "device-1", "mode": "8"}]])
+
+    status, observed, _timeline = probe.wait_for_mode_values(
+        client,
+        "installation-1",
+        "device-1",
+        final_values={"3"},
+        alias_values={"8"},
+        alias_status="accepted_alias_observed",
+        timeout_sec=0,
+        poll_sec=0,
+        sleep_func=lambda _seconds: None,
+    )
+
+    assert status == "accepted_alias_observed"
+    assert observed["mode"] == "8"
+
+
+@pytest.mark.parametrize("mode", ["4", "6", "7"])
+def test_heatcool_accepts_equivalent_modes(mode: str) -> None:
+    """P2=4 should accept observed HEAT_COOL aliases."""
+    client = FakePollClient([[{"id": "device-1", "mode": mode}]])
+
+    status, observed, _timeline = probe.wait_for_mode_values(
+        client,
+        "installation-1",
+        "device-1",
+        final_values={"4"},
+        alias_values={"6", "7"},
+        alias_status="accepted_heatcool_alias",
+        timeout_sec=0,
+        poll_sec=0,
+        sleep_func=lambda _seconds: None,
+    )
+
+    expected_status = "verified" if mode == "4" else "accepted_heatcool_alias"
+    assert status == expected_status
+    assert observed["mode"] == mode
+
+
+def test_restore_initial_state_payload_order() -> None:
+    """Final restoration should emit payloads in the documented order."""
+    client = FakePollClient([[{"id": "device-1"}]] * 10)
+    initial_device = {
+        "mode": "2",
+        "cold_consign": "24.0",
+        "heat_consign": "20.0",
+        "cold_speed": "2",
+        "heat_speed": "1",
+        "min_temp_unoccupied": 18,
+        "max_temp_unoccupied": 28,
+        "scenary": "occupied",
+        "sleep_time": 30,
+        "power": "1",
+    }
+
+    probe.restore_initial_state(
+        client=client,
+        installation_id="installation-1",
+        device_id="device-1",
+        initial_device=initial_device,
+        args=_probe_args(),
+    )
+
+    assert [call[0] for call in client.calls] == [
+        "POST",
+        "POST",
+        "POST",
+        "POST",
+        "POST",
+        "PUT",
+        "PUT",
+        "PUT",
+        "PUT",
+        "POST",
+    ]
+    assert [call[2] for call in client.calls[:5]] == [
+        probe.event_payload("device-1", "P2", "2"),
+        probe.event_payload("device-1", "P7", "24.0"),
+        probe.event_payload("device-1", "P8", "20.0"),
+        probe.event_payload("device-1", "P3", "2"),
+        probe.event_payload("device-1", "P4", "1"),
+    ]
 
 
 def test_execute_snapshot_respects_requested_device_id(tmp_path: Path) -> None:
