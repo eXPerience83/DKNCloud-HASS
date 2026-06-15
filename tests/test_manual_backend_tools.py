@@ -152,6 +152,29 @@ def test_sanitizer_writes_no_secrets(tmp_path: Path) -> None:
     assert '"cold_consign": "25.0"' in combined_output
 
 
+def test_findings_redacts_device_id_from_endpoint_paths(tmp_path: Path) -> None:
+    """Endpoint summaries should not preserve device ids from URL paths."""
+    source = tmp_path / "evidence"
+    source.mkdir()
+    (source / "001.request.txt").write_text(
+        "PUT https://dkn.airzonecloud.com/devices/device-real-id?"
+        "format=json&user_email=owner@example.com&user_token=token-123\n"
+        '{"sleep_time":30}',
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "sanitized"
+    sanitizer.sanitize_artifacts(source, output)
+
+    findings = (output / "findings.md").read_text(encoding="utf-8")
+    combined_output = "\n".join(
+        path.read_text(encoding="utf-8") for path in output.iterdir() if path.is_file()
+    )
+
+    assert "device-real-id" not in combined_output
+    assert "`/devices/<REDACTED_ID>`" in findings
+
+
 def test_sanitizer_processes_safe_zip_entry(tmp_path: Path) -> None:
     """ZIP artifacts should be read in memory and sanitized."""
     archive_path = tmp_path / "evidence.zip"

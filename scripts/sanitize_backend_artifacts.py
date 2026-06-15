@@ -270,7 +270,8 @@ def _iter_files(input_path: Path) -> Iterable[tuple[str, str]]:
 
 
 def _endpoint_from_url(url: str) -> str:
-    parts = urlsplit(url)
+    sanitized = sanitize_url(url)
+    parts = urlsplit(sanitized)
     return parts.path or "/"
 
 
