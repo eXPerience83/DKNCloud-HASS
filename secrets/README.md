@@ -24,5 +24,5 @@ For local testing:
 cp secrets/dkn.env.example secrets/dkn.env
 ```
 
-Use `secrets/dkn.env` for local backend probes. The real credential file must
-stay local and ignored by Git.
+Use `secrets/dkn.env` for local backend evidence work. The real credential file
+must stay local and ignored by Git.

@@ -1,12 +1,11 @@
-# Manual Backend Testing
+# Manual Backend Evidence
 
-These tools are for local DKN/Airzone Cloud backend audits only. They are not
-part of the Home Assistant integration runtime, and CI must never call the real
-backend or depend on local secret files.
+These files and tools are for local DKN/Airzone Cloud evidence handling only.
+CI must never call the real backend or depend on local secret files.
 
 ## Local Credentials
 
-Create a local `secrets/dkn.env` from `secrets/dkn.env.example`:
+Create a local credential file from the versioned template:
 
 ```bash
 cp secrets/dkn.env.example secrets/dkn.env
@@ -19,99 +18,33 @@ AIRZONE_INSTALLATION_ID=
 AIRZONE_DEVICE_ID=
 ```
 
-`AIRZONE_INSTALLATION_ID` and `AIRZONE_DEVICE_ID` are optional. If they are not
-set, the probe uses the first installation relation and first device returned by
-the backend.
+`secrets/dkn.env` is ignored by Git and must stay local. Do not commit real
+credentials, tokens, full API URLs, raw request logs, ZIP evidence, or backend
+payload captures containing private data.
 
-Never commit `secrets/dkn.env`, real logs, ZIP evidence, raw backend responses,
-or anything under `secrets/manual-evidence` or `secrets/manual-runs`.
+## Evidence Folders
 
-## Probe Commands
+Historical backend evidence belongs under:
 
-Preview a sanitized plan without credentials or network calls:
-
-```bash
-python scripts/manual_backend_probe.py --dry-run --safe-suite
+```text
+secrets/manual-evidence/
 ```
 
-List installations and devices with sanitized output:
+Sanitized local outputs belong under:
 
-```bash
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --list
+```text
+secrets/manual-runs/
 ```
 
-Fetch a device snapshot:
-
-```bash
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --snapshot
-```
-
-Run the conservative command suite:
-
-```bash
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --safe-suite
-```
-
-`--safe-suite` is conservative, but it is not read-only. It sends real commands
-to the selected device and may change power, mode, setpoints, fan speed, sleep
-timer, scenary, and unoccupied limits. Run the dry-run first, do not run it if
-you cannot recover the system manually from the official app, and treat final
-restoration as best-effort rather than guaranteed.
-
-Run one command:
-
-```bash
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --command mode_cool
-```
-
-You can also point the probe at a credential file with `DKN_ENV_FILE`:
-
-```bash
-DKN_ENV_FILE=secrets/dkn.env python scripts/manual_backend_probe.py --list
-```
-
-The probe writes sanitized artifacts to `secrets/manual-runs/<timestamp>/`.
-It does not save raw login bodies, raw login responses, cookies, full sensitive
-URLs, tokens, emails, device IDs, installation IDs, MACs, PINs, names, or
-locations.
-
-For write commands, the probe takes an initial `/devices` snapshot, sends the
-canonical backend payload, verifies by polling `/devices`, and performs a
-best-effort final restoration when `--restore-all` is enabled. A 2xx response
-without a matching observed snapshot value is reported as
-`accepted_but_not_verified`, not as a confirmed success.
-
-Control commands prepare the device with `scenary=occupied` by default. Disable
-that with `--no-prepare-occupied` only when you intentionally want to preserve
-the current scenary. `--ensure-power-off-for-control-tests` powers off the real
-device before control tests and should be used only for local evidence gathering
-when you are ready to restore the device manually if needed.
-
-## Dangerous Probes
-
-Dangerous or experimental commands are skipped unless explicitly enabled:
-
-```bash
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --command mode_heatcool_p2_4 --test-p2-4
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --command mode_alias_p2_8 --test-p2-8
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --command cool_auto_fan_p3_0 --test-auto-fan
-python scripts/manual_backend_probe.py --env-file secrets/dkn.env --command cool_setpoint_out_of_range --test-out-of-range
-```
-
-`--dangerous-probes` enables all dangerous categories at once. Use it only for
-local evidence gathering on a device you can safely recover.
-
-Risks:
-
-- `P2=4` is HEAT_COOL/AUTO and should only be used when supported by the
-  `modes` bitmask or when intentionally forced for evidence.
-- `P2=8` is an observed FAN_ONLY alias and may confuse the official UI until a
-  normal supported mode is written again.
-- `P3/P4=0` auto fan support depends on firmware and device behavior.
-- Out-of-range setpoints are evidence-only probes and may be accepted by the
-  backend even when the UI would reject them.
+Both folders are ignored by Git. Keep raw PowerShell output, raw request files,
+raw response bodies, cookies, real IDs, MACs, PINs, names, locations, and ZIPs
+with backend evidence out of commits.
 
 ## Sanitizing Historical Evidence
+
+The historical PowerShell probe was the manually tested tool for real backend
+writes. This PR does not add a Python write probe. A safer Python probe can be
+introduced in a later PR after manual validation against the real backend.
 
 Sanitize an old folder:
 
@@ -125,7 +58,7 @@ Sanitize an old ZIP:
 python scripts/sanitize_backend_artifacts.py secrets/manual-evidence/DKNCloud-tests-20260103-092223.zip --output sanitized --overwrite
 ```
 
-The sanitizer creates:
+The sanitizer reads ZIP entries in memory, ignores unsafe ZIP paths, and writes:
 
 - `SUMMARY.sanitized.txt`
 - `commands.jsonl`
@@ -133,7 +66,5 @@ The sanitizer creates:
 - `findings.md`
 - `redaction_report.json`
 
-Review those files before sharing. Issues and PRs should include only sanitized
-summaries, sanitized command records, and sanitized findings. Do not attach raw
-PowerShell output, raw request files, raw response bodies, cookies, real IDs, or
-ZIPs containing real backend evidence.
+Review sanitized outputs before sharing. Issues and PRs should include only
+sanitized summaries, sanitized command records, and sanitized findings.

@@ -241,7 +241,7 @@ def _json_candidates(text: str) -> Iterable[Any]:
 def _iter_zip_files(input_path: Path) -> Iterable[tuple[str, str]]:
     with zipfile.ZipFile(input_path) as archive:
         for info in archive.infolist():
-            path = PurePosixPath(info.filename)
+            path = PurePosixPath(info.filename.replace("\\", "/"))
             if info.is_dir() or path.is_absolute() or ".." in path.parts:
                 continue
             with archive.open(info) as file:
@@ -339,6 +339,9 @@ def _extract_records(name: str, text: str, result: SanitizedArtifacts) -> None:
 
 def sanitize_artifacts(input_path: Path, output_dir: Path) -> SanitizedArtifacts:
     """Sanitize historical backend artifacts into shareable summaries."""
+    if not input_path.exists():
+        raise FileNotFoundError(input_path)
+
     result = SanitizedArtifacts()
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -424,6 +427,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     input_path = args.input.resolve()
+    if not input_path.exists():
+        parser.error(f"Input path does not exist: {input_path}")
     output_dir = (
         args.output.resolve()
         if args.output is not None
