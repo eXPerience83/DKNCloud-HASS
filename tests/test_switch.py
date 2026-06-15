@@ -43,11 +43,21 @@ def _make_switch(
     return entity
 
 
+def _register_failing_climate_service(
+    hass: HomeAssistant, service: str, error: Exception
+) -> None:
+    """Register a real HA service that raises the requested error."""
+
+    async def failing_service_call(_call: Any) -> None:
+        raise error
+
+    hass.services.async_register("climate", service, failing_service_call)
+
+
 @pytest.mark.asyncio
 async def test_turn_on_timeout_keeps_proxy_and_calls_fallback(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Timeouts in the climate proxy should not clear the cached entity id."""
     entity = _make_switch(
@@ -56,10 +66,7 @@ async def test_turn_on_timeout_keeps_proxy_and_calls_fallback(
         {"id": "dev1", "name": "Zone", "power": "0"},
     )
 
-    async def failing_call(*_args: Any, **_kwargs: Any) -> None:
-        raise TimeoutError("boom")
-
-    monkeypatch.setattr(hass.services, "async_call", failing_call)
+    _register_failing_climate_service(hass, "turn_on", TimeoutError("boom"))
     called = {"fallback": False}
 
     async def fake_fallback() -> None:
@@ -77,7 +84,6 @@ async def test_turn_on_timeout_keeps_proxy_and_calls_fallback(
 async def test_turn_on_service_not_found_drops_proxy(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """ServiceNotFound must decouple the proxy and still call the fallback."""
     entity = _make_switch(
@@ -86,10 +92,9 @@ async def test_turn_on_service_not_found_drops_proxy(
         {"id": "dev1", "name": "Zone", "power": "0"},
     )
 
-    async def failing_call(*_args: Any, **_kwargs: Any) -> None:
-        raise ServiceNotFound("climate", "turn_on")
-
-    monkeypatch.setattr(hass.services, "async_call", failing_call)
+    _register_failing_climate_service(
+        hass, "turn_on", ServiceNotFound("climate", "turn_on")
+    )
     called = {"fallback": False}
 
     async def fake_fallback() -> None:
@@ -107,7 +112,6 @@ async def test_turn_on_service_not_found_drops_proxy(
 async def test_turn_on_homeassistant_error_keeps_proxy_and_calls_fallback(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """HomeAssistantError in the climate proxy should not clear the cached id."""
     entity = _make_switch(
@@ -116,10 +120,9 @@ async def test_turn_on_homeassistant_error_keeps_proxy_and_calls_fallback(
         {"id": "dev1", "name": "Zone", "power": "0"},
     )
 
-    async def failing_call(*_args: Any, **_kwargs: Any) -> None:
-        raise HomeAssistantError("transient failure")
-
-    monkeypatch.setattr(hass.services, "async_call", failing_call)
+    _register_failing_climate_service(
+        hass, "turn_on", HomeAssistantError("transient failure")
+    )
     called = {"fallback": False}
 
     async def fake_fallback() -> None:
@@ -137,7 +140,6 @@ async def test_turn_on_homeassistant_error_keeps_proxy_and_calls_fallback(
 async def test_turn_off_unexpected_error_drops_proxy_and_calls_fallback(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unexpected exceptions in the climate proxy should drop the cached id."""
     entity = _make_switch(
@@ -146,10 +148,7 @@ async def test_turn_off_unexpected_error_drops_proxy_and_calls_fallback(
         {"id": "dev1", "name": "Zone", "power": "1"},
     )
 
-    async def failing_call(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("unexpected boom")
-
-    monkeypatch.setattr(hass.services, "async_call", failing_call)
+    _register_failing_climate_service(hass, "turn_off", RuntimeError("unexpected boom"))
     called = {"fallback": False}
 
     async def fake_fallback() -> None:

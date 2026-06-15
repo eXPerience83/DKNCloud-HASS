@@ -27,6 +27,16 @@ class DummyAPI:
         self.calls.append((device_id, payload))
 
 
+@pytest.fixture(autouse=True)
+def disable_post_write_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avoid delayed refresh timers in payload-shape unit tests."""
+
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.number.schedule_post_write_refresh",
+        lambda *_args, **_kwargs: None,
+    )
+
+
 def _make_entity(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
