@@ -199,8 +199,6 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ------------------------- Reauth -------------------------
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
         """Start reauth for an existing entry."""
-        # HA usually provides entry_id in context; if not, we fallback below.
-        self._reauth_entry_id = (self.context or {}).get("entry_id")
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -209,8 +207,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Ask only for password; refresh the token; never persist password."""
         # Resolve entry
         entry = None
-        if getattr(self, "_reauth_entry_id", None):
-            entry = self.hass.config_entries.async_get_entry(self._reauth_entry_id)
+        entry_id = self.context.get("entry_id")
+        if entry_id:
+            entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None:
             # Fallback: if a single entry exists, use it
             entries = self.hass.config_entries.async_entries(DOMAIN)

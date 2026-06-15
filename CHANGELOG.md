@@ -9,6 +9,7 @@
   and Home Assistant 2026.3.0+ minimum versions.
 - Dropped Python 3.13 from CI test matrix; tests now run on Python 3.14 only.
 - Bumped `homeassistant` minimum in `hacs.json` to `2026.3.0`.
+- Migrated test infrastructure to the Home Assistant custom component pytest stack.
 
 ### Added
 - Added `testpaths` and `asyncio_mode` config to `pyproject.toml`.

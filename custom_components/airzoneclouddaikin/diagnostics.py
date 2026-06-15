@@ -14,7 +14,6 @@ Notes:
 from __future__ import annotations
 
 import re
-from copy import deepcopy
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -91,7 +90,7 @@ async def async_get_config_entry_diagnostics(
     entry_summary = {
         "title": entry.title,
         "data_keys": sorted(list(entry.data.keys())),  # keys only, never values
-        "options": deepcopy(entry.options),
+        "options": dict(entry.options),
         "version": getattr(entry, "version", None),
     }
 

@@ -1,206 +1,231 @@
-"""Shared pytest fixtures for module stubbing."""
+"""Shared fixtures for DKN Cloud Home Assistant tests."""
 
 from __future__ import annotations
 
-import asyncio
-import importlib.util
-import sys
-import types
-from pathlib import Path
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
+from aioresponses import CallbackResult
+from homeassistant.const import CONF_USERNAME
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-ROOT = Path(__file__).resolve().parents[1]
+from custom_components.airzoneclouddaikin.config_flow import (
+    CONF_EXPOSE_PII,
+    CONF_SCAN_INTERVAL,
+)
+from custom_components.airzoneclouddaikin.const import (
+    CONF_ENABLE_HEAT_COOL,
+    CONF_SLEEP_TIMEOUT_ENABLED,
+    DOMAIN,
+)
 
 
-@pytest.fixture
-def stub_ha_and_integration_modules(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub Home Assistant and integration modules for isolated imports."""
-
-    def _set_module(name: str, module: types.ModuleType) -> None:
-        monkeypatch.setitem(sys.modules, name, module)
-
-    ha_module = types.ModuleType("homeassistant")
-    _set_module("homeassistant", ha_module)
-
-    core_module = types.ModuleType("homeassistant.core")
-
-    class HomeAssistant:  # pragma: no cover - type stub only
-        """Minimal HomeAssistant stub for type hints."""
-
-        def __init__(self) -> None:
-            self.data: dict[str, Any] = {}
-
-    core_module.HomeAssistant = HomeAssistant
-    _set_module("homeassistant.core", core_module)
-    ha_module.core = core_module
-
-    config_entries_module = types.ModuleType("homeassistant.config_entries")
-
-    class ConfigEntry:  # pragma: no cover - type stub only
-        """Minimal ConfigEntry stub."""
-
-        entry_id = "entry"
-
-    config_entries_module.ConfigEntry = ConfigEntry
-    _set_module("homeassistant.config_entries", config_entries_module)
-    ha_module.config_entries = config_entries_module
-
-    number_component = types.ModuleType("homeassistant.components.number")
-
-    class NumberEntity:  # pragma: no cover - base entity stub
-        def async_write_ha_state(self) -> None:
-            return None
-
-    class NumberMode:  # pragma: no cover - constant stub
-        """NumberMode stub."""
-
-        SLIDER = "slider"
-
-    number_component.NumberEntity = NumberEntity
-    number_component.NumberMode = NumberMode
-    _set_module("homeassistant.components.number", number_component)
-
-    helpers_entity_module = types.ModuleType("homeassistant.helpers.entity")
-
-    class EntityCategory:  # pragma: no cover - constant stub
-        """EntityCategory stub."""
-
-        CONFIG = "config"
-
-    helpers_entity_module.EntityCategory = EntityCategory
-    _set_module("homeassistant.helpers.entity", helpers_entity_module)
-
-    helpers_device_registry_module = types.ModuleType(
-        "homeassistant.helpers.device_registry"
-    )
-
-    class DeviceInfo(dict):  # pragma: no cover - minimal stub
-        """Dict-based DeviceInfo stub."""
-
-    helpers_device_registry_module.DeviceInfo = DeviceInfo
-    helpers_device_registry_module.CONNECTION_NETWORK_MAC = "mac"
-    _set_module("homeassistant.helpers.device_registry", helpers_device_registry_module)
-
-    helpers_update_module = types.ModuleType("homeassistant.helpers.update_coordinator")
-
-    class CoordinatorEntity:  # pragma: no cover - stub only
-        def __init__(self, coordinator: Any) -> None:
-            self.coordinator = coordinator
-
-        def __class_getitem__(cls, _item: Any) -> type:
-            return cls
-
-    helpers_update_module.CoordinatorEntity = CoordinatorEntity
-    _set_module("homeassistant.helpers.update_coordinator", helpers_update_module)
-
-    const_module = types.ModuleType("homeassistant.const")
-
-    class UnitOfTemperature:  # pragma: no cover - constant stub
-        """UnitOfTemperature stub."""
-
-        CELSIUS = "°C"
-
-    class UnitOfTime:  # pragma: no cover - constant stub
-        """UnitOfTime stub."""
-
-        MINUTES = "min"
-
-    const_module.UnitOfTemperature = UnitOfTemperature
-    const_module.UnitOfTime = UnitOfTime
-    _set_module("homeassistant.const", const_module)
-    ha_module.const = const_module
-
-    custom_components_module = types.ModuleType("custom_components")
-    custom_components_module.__path__ = [str(ROOT / "custom_components")]
-    _set_module("custom_components", custom_components_module)
-
-    airzone_package = types.ModuleType("custom_components.airzoneclouddaikin")
-    airzone_package.__path__ = [str(ROOT / "custom_components" / "airzoneclouddaikin")]
-    _set_module("custom_components.airzoneclouddaikin", airzone_package)
-
-    airzone_init_stub = types.ModuleType(
-        "custom_components.airzoneclouddaikin.__init__"
-    )
-
-    class _AirzoneCoordinatorStub:
-        """Lightweight AirzoneCoordinator replacement for number imports."""
-
-        def __init__(self) -> None:
-            self.data: dict[str, dict[str, Any]] = {}
-            self.hass: HomeAssistant | None = None
-
-    airzone_init_stub.AirzoneCoordinator = _AirzoneCoordinatorStub
-    _set_module("custom_components.airzoneclouddaikin.__init__", airzone_init_stub)
-
-    airzone_api_stub = types.ModuleType(
-        "custom_components.airzoneclouddaikin.airzone_api"
-    )
-
-    class AirzoneAPI:  # pragma: no cover - type stub
-        """Minimal AirzoneAPI stub."""
-
-    airzone_api_stub.AirzoneAPI = AirzoneAPI
-    _set_module("custom_components.airzoneclouddaikin.airzone_api", airzone_api_stub)
-
-    helpers_stub = types.ModuleType("custom_components.airzoneclouddaikin.helpers")
-
-    _locks: dict[tuple[str, str], asyncio.Lock] = {}
-
-    def acquire_device_lock(
-        _hass: Any,
-        entry_id: str,
-        device_id: str,
-        *_args: Any,
-        **_kwargs: Any,
-    ) -> asyncio.Lock:
-        key = (entry_id, device_id)
-        lock = _locks.get(key)
-        if lock is None:
-            lock = _locks.setdefault(key, asyncio.Lock())
-        return lock
-
-    def clamp_number(value: float, *_args: Any, **_kwargs: Any) -> float:
-        return value
-
-    def optimistic_get(
-        _hass: Any, _entry_id: str, _device_id: str, _field: str, backend_value: Any
-    ) -> Any:
-        return backend_value
-
-    def optimistic_set(*_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    def optimistic_invalidate(*_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    async def async_auto_exit_sleep_if_needed(*_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    def schedule_post_write_refresh(*_args: Any, **_kwargs: Any) -> None:
-        return None
-
-    helpers_stub.acquire_device_lock = acquire_device_lock
-    helpers_stub.clamp_number = clamp_number
-    helpers_stub.optimistic_get = optimistic_get
-    helpers_stub.optimistic_set = optimistic_set
-    helpers_stub.optimistic_invalidate = optimistic_invalidate
-    helpers_stub.async_auto_exit_sleep_if_needed = async_auto_exit_sleep_if_needed
-    helpers_stub.schedule_post_write_refresh = schedule_post_write_refresh
-    _set_module("custom_components.airzoneclouddaikin.helpers", helpers_stub)
+@pytest.fixture(autouse=True)
+def auto_enable_custom_integrations(request: pytest.FixtureRequest) -> None:
+    """Enable loading custom integrations in every Home Assistant harness test."""
+    try:
+        request.getfixturevalue("enable_custom_integrations")
+    except pytest.FixtureLookupError:
+        return
 
 
 @pytest.fixture
-def load_number_module(stub_ha_and_integration_modules: None) -> types.ModuleType:
-    """Load the number module under test after stubbing dependencies."""
+def fake_email() -> str:
+    """Return a stable fake email address."""
+    return "user@example.com"
 
-    module_name = "custom_components.airzoneclouddaikin.number"
-    spec = importlib.util.spec_from_file_location(
-        module_name, ROOT / "custom_components" / "airzoneclouddaikin" / "number.py"
-    )
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
+
+@pytest.fixture
+def fake_password() -> str:
+    """Return a stable fake password."""
+    return "not-a-real-password"
+
+
+@pytest.fixture
+def fake_token() -> str:
+    """Return a stable fake Airzone token."""
+    return "test-token"
+
+
+@pytest.fixture
+def dkn_config_entry_factory(
+    fake_email: str,
+    fake_token: str,
+) -> Callable[..., MockConfigEntry]:
+    """Return a factory for DKN MockConfigEntry instances."""
+
+    def _factory(
+        *,
+        entry_id: str = "dkn-entry",
+        email: str = fake_email,
+        token: str = fake_token,
+        title: str | None = None,
+        options: dict[str, Any] | None = None,
+        data: dict[str, Any] | None = None,
+        unique_id: str | None = None,
+        version: int = 2,
+    ) -> MockConfigEntry:
+        entry_options = {
+            "user_token": token,
+            CONF_SCAN_INTERVAL: 10,
+            CONF_EXPOSE_PII: False,
+            CONF_ENABLE_HEAT_COOL: False,
+            CONF_SLEEP_TIMEOUT_ENABLED: False,
+        }
+        if options:
+            entry_options.update(options)
+
+        entry_data = {CONF_USERNAME: email}
+        if data:
+            entry_data.update(data)
+
+        return MockConfigEntry(
+            domain=DOMAIN,
+            entry_id=entry_id,
+            title=title or email,
+            data=entry_data,
+            options=entry_options,
+            unique_id=unique_id if unique_id is not None else email.casefold(),
+            version=version,
+        )
+
+    return _factory
+
+
+@pytest.fixture
+def sample_device() -> dict[str, Any]:
+    """Return a representative Airzone device snapshot."""
+    return {
+        "id": "dev1",
+        "name": "Living Room",
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "brand": "Airzone DKN",
+        "firmware": "1.0.0",
+        "modes": "11111",
+        "mode": "1",
+        "power": "1",
+        "scenary": "occupied",
+        "local_temp": "22.0",
+        "cold_consign": "24.0",
+        "heat_consign": "20.0",
+        "cold_speed": "2",
+        "heat_speed": "2",
+        "availables_speeds": "3",
+        "sleep_time": 30,
+        "min_temp_unoccupied": 16,
+        "max_temp_unoccupied": 28,
+        "connection_date": "2024-01-01T12:00:00+00:00",
+    }
+
+
+@pytest.fixture
+def sample_devices(sample_device: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return a coordinator-style mapping of device id to device snapshot."""
+    return {str(sample_device["id"]): dict(sample_device)}
+
+
+class FakeAirzoneAPI:
+    """Small fake API object for setup/coordinator tests."""
+
+    def __init__(
+        self,
+        username: str | None = None,
+        session: Any | None = None,
+        *,
+        password: str | None = None,
+        token: str | None = None,
+        installations: list[dict[str, Any]] | None = None,
+        devices_by_installation: dict[str, list[dict[str, Any]]] | None = None,
+    ) -> None:
+        self.username = username
+        self.session = session
+        self.password = password
+        self.token = token
+        self.fetch_installations = AsyncMock(return_value=installations or [])
+        self.fetch_devices = AsyncMock(
+            side_effect=lambda installation_id: (devices_by_installation or {}).get(
+                str(installation_id), []
+            )
+        )
+        self.async_set_scenary = AsyncMock()
+        self.put_device_fields = AsyncMock()
+        self.send_event = AsyncMock()
+
+    async def login(self) -> bool:
+        """Pretend login succeeds when a token is available."""
+        return bool(self.token)
+
+    def clear_password(self) -> None:
+        """Drop the fake password."""
+        self.password = None
+
+
+@dataclass
+class DummyCoordinator:
+    """Minimal coordinator for direct entity unit tests."""
+
+    data: dict[str, dict[str, Any]]
+    hass: HomeAssistant
+    api: Any | None = None
+    refreshes: int = 0
+    listeners: list[Callable[..., None]] = field(default_factory=list)
+
+    def async_add_listener(
+        self,
+        listener: Callable[..., None],
+        _context: Any | None = None,
+    ) -> Callable[[], None]:
+        """Register a listener and return an unsubscribe callback."""
+        self.listeners.append(listener)
+
+        def _unsub() -> None:
+            if listener in self.listeners:
+                self.listeners.remove(listener)
+
+        return _unsub
+
+    async def async_request_refresh(self) -> None:
+        """Record refresh requests."""
+        self.refreshes += 1
+
+
+@pytest.fixture
+def dummy_coordinator_factory(
+    hass: HomeAssistant,
+) -> Callable[[dict[str, dict[str, Any]], Any | None], DummyCoordinator]:
+    """Return a factory for direct entity coordinator fakes."""
+
+    def _factory(
+        data: dict[str, dict[str, Any]],
+        api: Any | None = None,
+    ) -> DummyCoordinator:
+        return DummyCoordinator(data=data, hass=hass, api=api)
+
+    return _factory
+
+
+def capture_aioresponses_request(
+    captured: list[dict[str, Any]],
+    *,
+    status: int = 200,
+    payload: Any | None = None,
+) -> Callable[..., CallbackResult]:
+    """Return an aioresponses callback that records request kwargs."""
+
+    def _callback(url: Any, **kwargs: Any) -> CallbackResult:
+        captured.append(
+            {
+                "url": str(url),
+                "method": kwargs.get("method"),
+                "params": dict(kwargs.get("params") or {}),
+                "json": kwargs.get("json"),
+                "headers": dict(kwargs.get("headers") or {}),
+            }
+        )
+        return CallbackResult(status=status, payload=payload)
+
+    return _callback

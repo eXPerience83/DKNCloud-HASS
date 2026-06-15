@@ -1,195 +1,28 @@
-"""HTTP client retry behavior tests without Home Assistant dependencies."""
+"""Tests for the Airzone HTTP client contract and retry behavior."""
 
 from __future__ import annotations
 
-import sys
-import types
-from pathlib import Path
+import re
+from typing import Any
 from unittest.mock import AsyncMock, patch
+from urllib.parse import parse_qsl
 
 import pytest
+from aiohttp import ClientResponseError, ClientSession
+from aiohttp.client_reqrep import RequestInfo
+from aioresponses import CallbackResult, aioresponses
+from homeassistant.exceptions import HomeAssistantError
+from multidict import CIMultiDict
+from yarl import URL
 
-try:
-    from aiohttp import ClientResponseError, ClientSession
-    from aiohttp.client_reqrep import RequestInfo
-    from multidict import CIMultiDict
-    from yarl import URL
-except ModuleNotFoundError:  # pragma: no cover - handled by CI deps
-    # NOTE: This module-level skip is expected in lightweight environments
-    # (e.g., Codex/Qodo) where aiohttp is not installed. CI installs aiohttp
-    # via requirements_test.txt so these tests run in automation.
-    pytest.skip("aiohttp is required for API retry tests", allow_module_level=True)
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# ---------------------------------------------------------------------------
-# Minimal Home Assistant shims so the package import works without HA
-# ---------------------------------------------------------------------------
-ha_module = types.ModuleType("homeassistant")
-sys.modules["homeassistant"] = ha_module
-
-components_module = types.ModuleType("homeassistant.components")
-persistent_notification_module = types.ModuleType(
-    "homeassistant.components.persistent_notification"
+from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
+from custom_components.airzoneclouddaikin.const import (
+    API_DEVICES,
+    API_EVENTS,
+    API_INSTALLATION_RELATIONS,
+    API_LOGIN,
+    BASE_URL,
 )
-components_module.persistent_notification = persistent_notification_module
-sys.modules["homeassistant.components"] = components_module
-sys.modules["homeassistant.components.persistent_notification"] = (
-    persistent_notification_module
-)
-ha_module.components = components_module
-
-exceptions_module = types.ModuleType("homeassistant.exceptions")
-
-
-class HomeAssistantError(Exception):
-    """Minimal Home Assistant error placeholder."""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args)
-        self.translation_domain = kwargs.get("translation_domain")
-        self.translation_key = kwargs.get("translation_key")
-        self.translation_placeholders = kwargs.get("translation_placeholders") or {}
-
-
-exceptions_module.HomeAssistantError = HomeAssistantError
-ha_module.exceptions = exceptions_module
-sys.modules["homeassistant.exceptions"] = exceptions_module
-
-config_entries_module = types.ModuleType("homeassistant.config_entries")
-config_entries_module.SOURCE_REAUTH = "reauth"
-
-
-class ConfigEntry:  # pragma: no cover - used only for import wiring
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        self.entry_id = "dummy"
-        self.data = {}
-        self.options = {}
-        self.unique_id = None
-        self.version = 1
-
-
-config_entries_module.ConfigEntry = ConfigEntry
-sys.modules["homeassistant.config_entries"] = config_entries_module
-ha_module.config_entries = config_entries_module
-
-const_module = types.ModuleType("homeassistant.const")
-const_module.CONF_USERNAME = "username"
-sys.modules["homeassistant.const"] = const_module
-ha_module.const = const_module
-
-core_module = types.ModuleType("homeassistant.core")
-
-
-class HomeAssistant:  # pragma: no cover - signature irrelevant for tests
-    pass
-
-
-core_module.HomeAssistant = HomeAssistant
-sys.modules["homeassistant.core"] = core_module
-ha_module.core = core_module
-
-
-class ConfigEntryAuthFailed(HomeAssistantError):
-    """Minimal auth failure placeholder."""
-
-
-exceptions_module.ConfigEntryAuthFailed = ConfigEntryAuthFailed
-
-helpers_module = types.ModuleType("homeassistant.helpers")
-aiohttp_client_module = types.ModuleType("homeassistant.helpers.aiohttp_client")
-sys.modules["homeassistant.helpers"] = helpers_module
-
-
-def async_get_clientsession(*_: object, **__: object) -> None:
-    return None
-
-
-aiohttp_client_module.async_get_clientsession = async_get_clientsession
-helpers_module.aiohttp_client = aiohttp_client_module
-sys.modules["homeassistant.helpers.aiohttp_client"] = aiohttp_client_module
-
-event_module = types.ModuleType("homeassistant.helpers.event")
-
-
-async def async_call_later(*_: object, **__: object) -> None:
-    return None
-
-
-event_module.async_call_later = async_call_later
-helpers_module.event = event_module
-sys.modules["homeassistant.helpers.event"] = event_module
-
-translation_module = types.ModuleType("homeassistant.helpers.translation")
-
-
-async def async_get_translations(*_: object, **__: object) -> dict[str, str]:
-    return {}
-
-
-translation_module.async_get_translations = async_get_translations
-helpers_module.translation = translation_module
-sys.modules["homeassistant.helpers.translation"] = translation_module
-
-update_coordinator_module = types.ModuleType("homeassistant.helpers.update_coordinator")
-
-
-class UpdateFailed(Exception):
-    """Placeholder for coordinator update failures."""
-
-
-class DataUpdateCoordinator:  # pragma: no cover - not exercised in tests
-    def __init__(
-        self,
-        hass: object,
-        *args: object,
-        update_method: object | None = None,
-        **kwargs: object,
-    ) -> None:
-        self.hass = hass
-        self.update_method = update_method
-        self.data = None
-        self._listeners: list[object] = []
-
-    async def async_config_entry_first_refresh(self) -> None:
-        if self.update_method:
-            self.data = await self.update_method()
-
-    def async_add_listener(self, listener: object) -> object:
-        self._listeners.append(listener)
-
-        def _unsub() -> None:
-            if listener in self._listeners:
-                self._listeners.remove(listener)
-
-        return _unsub
-
-    async def async_request_refresh(self) -> None:
-        return None
-
-    # Allow generics like DataUpdateCoordinator[dict[str, Any]] in annotations.
-    def __class_getitem__(cls, item: object) -> type:
-        return cls
-
-
-update_coordinator_module.UpdateFailed = UpdateFailed
-update_coordinator_module.DataUpdateCoordinator = DataUpdateCoordinator
-helpers_module.update_coordinator = update_coordinator_module
-sys.modules["homeassistant.helpers.update_coordinator"] = update_coordinator_module
-
-util_module = types.ModuleType("homeassistant.util")
-dt_module = types.ModuleType("homeassistant.util.dt")
-util_module.dt = dt_module
-helpers_module.util = util_module
-sys.modules["homeassistant.util"] = util_module
-sys.modules["homeassistant.util.dt"] = dt_module
-
-ha_module.helpers = helpers_module
-
-
-from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI  # noqa: E402
 
 
 def _client_response_error(
@@ -210,6 +43,14 @@ def _client_response_error(
         message="",
         headers=headers,
     )
+
+
+def _request_params(url: URL, kwargs: dict[str, Any]) -> dict[str, str]:
+    """Return query params from aioresponses callback inputs."""
+    params = dict(kwargs.get("params") or {})
+    if not params:
+        params = dict(parse_qsl(url.query_string))
+    return {str(key): str(value) for key, value in params.items()}
 
 
 def _make_api(
@@ -233,25 +74,41 @@ def _make_api(
 
 
 @pytest.mark.asyncio
-async def test_login_success_sets_token_and_preserves_password() -> None:
-    api = AirzoneAPI(
-        username="user@example.com",
-        password="secret",
-        session=AsyncMock(spec_set=ClientSession),
-    )
-    with patch.object(
-        api,
-        "_request",
-        AsyncMock(return_value={"user": {"authentication_token": "tok"}}),
-    ):
-        assert await api.login() is True
+async def test_login_posts_to_sign_in_and_sets_token() -> None:
+    """Login should POST credentials to /users/sign_in and store the token."""
+    captured: list[dict[str, Any]] = []
+
+    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
+        captured.append({"url": str(url), "json": kwargs.get("json")})
+        return CallbackResult(
+            status=200,
+            payload={"user": {"authentication_token": "tok"}},
+        )
+
+    async with ClientSession() as session:
+        with aioresponses() as mocked:
+            mocked.post(f"{BASE_URL}{API_LOGIN}", callback=_callback)
+            api = AirzoneAPI(
+                username="user@example.com",
+                password="secret",
+                session=session,
+            )
+
+            assert await api.login() is True
 
     assert api.token == "tok"
     assert api.password == "secret"
+    assert captured == [
+        {
+            "url": f"{BASE_URL}{API_LOGIN}",
+            "json": {"email": "user@example.com", "password": "secret"},
+        }
+    ]
 
 
 @pytest.mark.asyncio
 async def test_login_handles_unauthorized() -> None:
+    """Unauthorized login should return False and leave the token empty."""
     api = AirzoneAPI(
         username="user@example.com",
         password="secret",
@@ -268,9 +125,151 @@ async def test_login_handles_unauthorized() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_installations_uses_installation_relations_endpoint() -> None:
+    """Installations should be read from /installation_relations with auth params."""
+    captured: list[dict[str, str]] = []
+
+    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
+        captured.append(_request_params(url, kwargs))
+        return CallbackResult(
+            status=200,
+            payload={
+                "installation_relations": [
+                    {"installation_id": "install-123", "id": "relation-ignored"}
+                ]
+            },
+        )
+
+    async with ClientSession() as session:
+        with aioresponses() as mocked:
+            mocked.get(
+                re.compile(rf"^{re.escape(BASE_URL + API_INSTALLATION_RELATIONS)}.*$"),
+                callback=_callback,
+            )
+            api = AirzoneAPI("user@example.com", session, token="tok")
+
+            result = await api.fetch_installations()
+
+    assert result == [{"installation_id": "install-123", "id": "relation-ignored"}]
+    assert captured == [
+        {
+            "user_email": "user@example.com",
+            "user_token": "tok",
+            "format": "json",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_devices_uses_installation_id_query_param() -> None:
+    """Device snapshots should be fetched from /devices with installation_id."""
+    captured: list[dict[str, str]] = []
+
+    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
+        captured.append(_request_params(url, kwargs))
+        return CallbackResult(status=200, payload={"devices": [{"id": "dev1"}]})
+
+    async with ClientSession() as session:
+        with aioresponses() as mocked:
+            mocked.get(
+                re.compile(rf"^{re.escape(BASE_URL + API_DEVICES)}.*$"),
+                callback=_callback,
+            )
+            api = AirzoneAPI("user@example.com", session, token="tok")
+
+            result = await api.fetch_devices("install-123")
+
+    assert result == [{"id": "dev1"}]
+    assert captured == [
+        {
+            "user_email": "user@example.com",
+            "user_token": "tok",
+            "format": "json",
+            "installation_id": "install-123",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_put_device_fields_uses_device_endpoint_and_payload() -> None:
+    """Device writes should PUT the caller-provided payload to /devices/<id>."""
+    captured: list[dict[str, Any]] = []
+
+    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
+        captured.append(
+            {
+                "url": str(url).partition("?")[0],
+                "params": _request_params(url, kwargs),
+                "json": kwargs.get("json"),
+            }
+        )
+        return CallbackResult(status=200, payload={"ok": True})
+
+    async with ClientSession() as session:
+        with aioresponses() as mocked:
+            mocked.put(
+                re.compile(rf"^{re.escape(BASE_URL + API_DEVICES + '/dev1')}.*$"),
+                callback=_callback,
+            )
+            api = AirzoneAPI("user@example.com", session, token="tok")
+
+            result = await api.put_device_fields(
+                "dev1", {"device": {"scenary": "sleep"}}
+            )
+
+    assert result == {"ok": True}
+    assert captured == [
+        {
+            "url": f"{BASE_URL}{API_DEVICES}/dev1",
+            "params": {
+                "user_email": "user@example.com",
+                "user_token": "tok",
+                "format": "json",
+            },
+            "json": {"device": {"scenary": "sleep"}},
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_send_event_treats_any_2xx_as_success() -> None:
+    """The /events control endpoint should accept non-200 2xx responses."""
+    captured: list[dict[str, Any]] = []
+
+    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
+        captured.append(
+            {
+                "params": _request_params(url, kwargs),
+                "json": kwargs.get("json"),
+            }
+        )
+        return CallbackResult(status=202, payload={"accepted": True})
+
+    payload = {"event": {"cgi": "modmaquina", "device_id": "dev1"}}
+    async with ClientSession() as session:
+        with aioresponses() as mocked:
+            mocked.post(
+                re.compile(rf"^{re.escape(BASE_URL + API_EVENTS)}.*$"),
+                callback=_callback,
+            )
+            api = AirzoneAPI("user@example.com", session, token="tok")
+
+            result = await api.send_event(payload)
+
+    assert result == {"accepted": True}
+    assert captured == [
+        {
+            "params": {"user_email": "user@example.com", "user_token": "tok"},
+            "json": payload,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_authed_request_retries_429_with_retry_after(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """429 responses should honor Retry-After and then retry."""
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
         lambda *_: 0.0,
@@ -287,6 +286,7 @@ async def test_authed_request_retries_429_with_retry_after(
 
 @pytest.mark.asyncio
 async def test_authed_request_5xx_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """5xx responses should retry with exponential backoff then raise."""
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
         lambda *_: 0.0,
@@ -303,6 +303,7 @@ async def test_authed_request_5xx_backoff(monkeypatch: pytest.MonkeyPatch) -> No
 
 @pytest.mark.asyncio
 async def test_timeout_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Timeouts should get one short retry."""
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
         lambda *_: 0.0,
@@ -319,6 +320,7 @@ async def test_timeout_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_error_logs_do_not_leak_password(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Debug logs should not include credentials or full secret-bearing URLs."""
     api = AirzoneAPI(
         username="user@example.com",
         password="topsecret",
@@ -339,6 +341,7 @@ async def test_error_logs_do_not_leak_password(
 
 @pytest.mark.asyncio
 async def test_async_set_scenary_uses_wrapped_payload() -> None:
+    """Scenary writes should be nested under device."""
     api = AirzoneAPI(
         username="user@example.com",
         password="secret",
@@ -355,6 +358,7 @@ async def test_async_set_scenary_uses_wrapped_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_send_event_maps_423_machine_not_ready() -> None:
+    """HTTP 423 from /events should map to the translated HA error."""
     api = AirzoneAPI(
         username="user@example.com",
         password="secret",
