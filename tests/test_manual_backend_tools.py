@@ -243,3 +243,16 @@ def test_sanitizer_missing_input_path_fails_clearly(tmp_path: Path) -> None:
         sanitizer.sanitize_artifacts(missing, output)
 
     assert not output.exists()
+
+
+def test_sanitizer_cli_missing_input_path_exits_without_output(
+    tmp_path: Path,
+) -> None:
+    """CLI should fail clearly when the input path does not exist."""
+    missing = tmp_path / "missing"
+    output = tmp_path / "sanitized"
+
+    with pytest.raises(SystemExit):
+        sanitizer.main([str(missing), "--output", str(output)])
+
+    assert not output.exists()
