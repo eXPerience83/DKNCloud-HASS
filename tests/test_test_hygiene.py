@@ -87,6 +87,11 @@ class ImportTimeStubVisitor(ast.NodeVisitor):
             self._check_assignment_target(node.target)
         self.generic_visit(node)
 
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        if self.scope_depth == 0:
+            self._track_sys_modules_alias(node.value, [node.target])
+        self.generic_visit(node)
+
     def visit_Delete(self, node: ast.Delete) -> None:
         if self.scope_depth == 0:
             for target in node.targets:
@@ -236,6 +241,27 @@ def test_import_time_stub_visitor_tracks_sys_modules_aliases() -> None:
             [
                 "import sys",
                 "mods = sys.modules",
+                "mods['fake_module'] = object()",
+                "mods.pop('other_module', None)",
+            ]
+        )
+    )
+    visitor = ImportTimeStubVisitor()
+    visitor.visit(tree)
+
+    assert visitor.violations == [
+        (3, "top-level sys.modules assignment"),
+        (4, "top-level sys.modules mutation call"),
+    ]
+
+
+def test_import_time_stub_visitor_tracks_namedexpr_sys_modules_aliases() -> None:
+    """Walrus aliases to sys.modules should not bypass import-time checks."""
+    tree = ast.parse(
+        "\n".join(
+            [
+                "import sys",
+                "(mods := sys.modules)",
                 "mods['fake_module'] = object()",
                 "mods.pop('other_module', None)",
             ]
