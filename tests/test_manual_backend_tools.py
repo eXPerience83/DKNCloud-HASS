@@ -52,11 +52,10 @@ def test_env_file_cli_path_wins(tmp_path: Path) -> None:
     )
 
 
-def test_env_file_environment_path_wins_over_defaults(tmp_path: Path) -> None:
-    """DKN_ENV_FILE should win over secrets/dkn.env and secrets/.env."""
+def test_env_file_environment_path_wins_over_default(tmp_path: Path) -> None:
+    """DKN_ENV_FILE should win over secrets/dkn.env."""
     repo_root = tmp_path
     _write_env_file(repo_root / "secrets" / "dkn.env", "default")
-    _write_env_file(repo_root / "secrets" / ".env", "legacy")
     _write_env_file(repo_root / "from-env.env", "env")
 
     credentials = probe.load_credentials(
@@ -68,11 +67,10 @@ def test_env_file_environment_path_wins_over_defaults(tmp_path: Path) -> None:
     assert credentials.password == "env-password"
 
 
-def test_dkn_env_wins_over_legacy_env(tmp_path: Path) -> None:
-    """secrets/dkn.env should be preferred over the legacy secrets/.env."""
+def test_dkn_env_works_as_default(tmp_path: Path) -> None:
+    """secrets/dkn.env should be the default credential file."""
     repo_root = tmp_path
     _write_env_file(repo_root / "secrets" / "dkn.env", "dkn")
-    _write_env_file(repo_root / "secrets" / ".env", "legacy")
 
     credentials = probe.load_credentials(repo_root, environ={})
 
@@ -80,15 +78,19 @@ def test_dkn_env_wins_over_legacy_env(tmp_path: Path) -> None:
     assert credentials.password == "dkn-password"
 
 
-def test_legacy_env_file_works_when_dkn_env_missing(tmp_path: Path) -> None:
-    """secrets/.env should still work when secrets/dkn.env is absent."""
+def test_legacy_dot_env_file_is_ignored(tmp_path: Path) -> None:
+    """secrets/.env should not be used as a credential fallback."""
     repo_root = tmp_path
     _write_env_file(repo_root / "secrets" / ".env", "legacy")
 
     credentials = probe.load_credentials(repo_root, environ={})
 
-    assert credentials.email == "legacy@example.test"
-    assert credentials.password == "legacy-password"
+    assert credentials == probe.Credentials(
+        email=None,
+        password=None,
+        installation_id=None,
+        device_id=None,
+    )
 
 
 def test_direct_environment_credentials_work_without_files(tmp_path: Path) -> None:

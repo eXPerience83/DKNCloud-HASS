@@ -303,7 +303,6 @@ def resolve_env_file(
     candidates.extend(
         [
             repo_root / "secrets" / "dkn.env",
-            repo_root / "secrets" / ".env",
         ]
     )
     for candidate in candidates:

@@ -23,9 +23,6 @@ AIRZONE_DEVICE_ID=
 set, the probe uses the first installation relation and first device returned by
 the backend.
 
-`secrets/.env` is still supported as a legacy fallback when `secrets/dkn.env` is
-not present.
-
 Never commit `secrets/dkn.env`, real logs, ZIP evidence, raw backend responses,
 or anything under `secrets/manual-evidence` or `secrets/manual-runs`.
 
@@ -64,7 +61,7 @@ python scripts/manual_backend_probe.py --env-file secrets/dkn.env --command mode
 You can also point the probe at a credential file with `DKN_ENV_FILE`:
 
 ```bash
-DKN_ENV_FILE=secrets/dkn.env python scripts/manual_backend_probe.py --snapshot
+DKN_ENV_FILE=secrets/dkn.env python scripts/manual_backend_probe.py --list
 ```
 
 The probe writes sanitized artifacts to `secrets/manual-runs/<timestamp>/`.

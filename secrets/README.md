@@ -8,7 +8,6 @@ Tracked files:
 - `README.md`
 
 Local-only files:
-- `.env`
 - `dkn.env`
 - `*.env`
 - `*.local`
@@ -25,6 +24,5 @@ For local testing:
 cp secrets/dkn.env.example secrets/dkn.env
 ```
 
-Use `secrets/dkn.env` for new local backend probes. The older `secrets/.env`
-name is still supported as a legacy fallback, but both files must stay local and
-ignored by Git.
+Use `secrets/dkn.env` for local backend probes. The real credential file must
+stay local and ignored by Git.
