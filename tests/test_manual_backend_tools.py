@@ -30,20 +30,33 @@ def test_sanitize_email_token_and_password() -> None:
     }
 
 
-def test_sanitize_sensitive_url_query_params() -> None:
-    """Sensitive query params and device URL path ids should be redacted."""
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("devices/device-real-id", "/devices/<REDACTED_ID>"),
+        ("installations/install-real-id", "/installations/<REDACTED_ID>"),
+        ("relations/relation-real-id", "/relations/<REDACTED_ID>"),
+        (
+            "installation_relations/relation-real-id",
+            "/installation_relations/<REDACTED_ID>",
+        ),
+    ],
+)
+def test_sanitize_sensitive_url_query_params(path: str, expected: str) -> None:
+    """Sensitive query params and backend resource path ids should be redacted."""
     url = (
-        "https://dkn.airzonecloud.com/devices/device-real-id?"
+        f"https://dkn.airzonecloud.com/{path}?"
         "format=json&user_email=owner@example.com&user_token=token-123"
     )
+    raw_id = path.rsplit("/", maxsplit=1)[-1]
 
     sanitized = sanitizer.sanitize_url(url)
 
     assert "owner@example.com" not in sanitized
     assert "token-123" not in sanitized
-    assert "device-real-id" not in sanitized
+    assert raw_id not in sanitized
     assert "user_email=%3CREDACTED_EMAIL%3E" in sanitized
-    assert "/devices/<REDACTED_ID>" in sanitized
+    assert expected in sanitized
 
 
 def test_sanitize_ids_mac_pin_and_names() -> None:
@@ -173,6 +186,31 @@ def test_findings_redacts_device_id_from_endpoint_paths(tmp_path: Path) -> None:
 
     assert "device-real-id" not in combined_output
     assert "`/devices/<REDACTED_ID>`" in findings
+
+
+def test_findings_redacts_known_resource_ids_from_endpoint_paths(
+    tmp_path: Path,
+) -> None:
+    """Endpoint summaries should not preserve known backend resource ids."""
+    source = tmp_path / "evidence"
+    source.mkdir()
+    (source / "001.request.txt").write_text(
+        "GET https://dkn.airzonecloud.com/installations/install-real-id?"
+        "format=json&user_email=owner@example.com&user_token=token-123\n"
+        "GET https://dkn.airzonecloud.com/relations/relation-real-id?"
+        "format=json&user_email=owner@example.com&user_token=token-123\n",
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "sanitized"
+    sanitizer.sanitize_artifacts(source, output)
+
+    findings = (output / "findings.md").read_text(encoding="utf-8")
+
+    assert "install-real-id" not in findings
+    assert "relation-real-id" not in findings
+    assert "`/installations/<REDACTED_ID>`" in findings
+    assert "`/relations/<REDACTED_ID>`" in findings
 
 
 def test_sanitizer_processes_safe_zip_entry(tmp_path: Path) -> None:

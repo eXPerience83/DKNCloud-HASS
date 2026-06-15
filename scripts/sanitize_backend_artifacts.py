@@ -122,7 +122,7 @@ def sanitize_url(url: str) -> str:
         else:
             query.append((key, sanitize_text(value)))
     path = re.sub(
-        r"(?i)(/devices/)[^/?#]+",
+        r"(?i)(/(?:devices|installations|relations|installation_relations)/)[^/?#]+",
         rf"\1{_placeholder_for_key('device_id')}",
         parts.path,
     )
