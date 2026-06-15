@@ -4,24 +4,25 @@ This folder is for local/manual testing only.
 
 Tracked files:
 - `.gitignore`
-- `.env.example`
+- `dkn.env.example`
 - `README.md`
 
 Local-only files:
-- `.env`
+- `dkn.env`
 - `*.env`
 - `*.local`
 - `*.json`
 - `*.log`
+- `manual-evidence/`
+- `manual-runs/`
 
 Never commit real Airzone credentials, tokens, full API URLs, request logs, or raw payload captures containing credentials.
 
 For local testing:
 
 ```bash
-set -a
-. secrets/.env
-set +a
+cp secrets/dkn.env.example secrets/dkn.env
 ```
 
-The real `secrets/.env` file must stay local and ignored by Git.
+Use `secrets/dkn.env` for local backend evidence work. The real credential file
+must stay local and ignored by Git.

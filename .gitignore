@@ -113,3 +113,13 @@ dmypy.json
 .env
 .env.*
 !.env.example
+secrets/*.env
+secrets/*.local
+secrets/*.json
+secrets/*.log
+secrets/*.zip
+secrets/manual-evidence/
+secrets/manual-runs/
+!secrets/.gitignore
+!secrets/README.md
+!secrets/*.env.example
