@@ -32,6 +32,11 @@ class DummyCoordinator:
         }
 
 
+def _assert_redacted(value: object) -> None:
+    """Accept HA and local redaction sentinels."""
+    assert value in {"***", "**REDACTED**"}
+
+
 async def test_diagnostics_redacts_sensitive_fields(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
@@ -48,15 +53,15 @@ async def test_diagnostics_redacts_sensitive_fields(
 
     result = await async_get_config_entry_diagnostics(hass, entry)
 
-    assert result["entry"]["options"]["user_token"] == "***"
+    _assert_redacted(result["entry"]["options"]["user_token"])
 
     coordinator_result = result["coordinator"]
     if isinstance(coordinator_result, dict):
         devices = coordinator_result.get("devices", {})
-        assert devices["device-1"]["user_token"] == "***"
-        assert devices["device-1"]["mac"] == "***"
-        assert devices["device-1"]["contactEmail"] == "***"
-        assert devices["device-1"]["metadata"]["gpsCoord"] == "***"
+        _assert_redacted(devices["device-1"]["user_token"])
+        _assert_redacted(devices["device-1"]["mac"])
+        _assert_redacted(devices["device-1"]["contactEmail"])
+        _assert_redacted(devices["device-1"]["metadata"]["gpsCoord"])
     else:
         assert coordinator_result == "***"
 
@@ -110,22 +115,22 @@ async def test_diagnostics_redacts_extended_pii_fields(
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     options = result["entry"]["options"]
-    assert options["installation_id"] == "***"
-    assert options["time_zone"] == "***"
-    assert options["spot_name"] == "***"
-    assert options["complete_name"] == "***"
-    assert options["user_token"] == "***"
+    _assert_redacted(options["installation_id"])
+    _assert_redacted(options["time_zone"])
+    _assert_redacted(options["spot_name"])
+    _assert_redacted(options["complete_name"])
+    _assert_redacted(options["user_token"])
 
     coordinator_result = result["coordinator"]
     flattened = str(result)
 
     if isinstance(coordinator_result, dict):
         device_data = coordinator_result["devices"]["device-1"]
-        assert device_data["installation_id"] == "***"
-        assert device_data["spot_name"] == "***"
-        assert device_data["complete_name"] == "***"
-        assert device_data["time_zone"] == "***"
-        assert device_data["metadata"]["owner_id"] == "***"
+        _assert_redacted(device_data["installation_id"])
+        _assert_redacted(device_data["spot_name"])
+        _assert_redacted(device_data["complete_name"])
+        _assert_redacted(device_data["time_zone"])
+        _assert_redacted(device_data["metadata"]["owner_id"])
         assert device_data["ws_id"] == "ws-456"
         assert "ws-456" in flattened
     else:

@@ -80,6 +80,17 @@ def _client_response_error(status: int) -> ClientResponseError:
     return ClientResponseError(request_info, history=(), status=status)
 
 
+def _latest_coordinator_listener(coordinator: Any) -> Callable[[], None]:
+    """Return the latest coordinator listener callback across HA internals."""
+    listeners = coordinator._listeners
+    if isinstance(listeners, dict):
+        listener = list(listeners.values())[-1]
+        if isinstance(listener, tuple):
+            return listener[0]
+        return listener
+    return listeners[-1]
+
+
 async def _setup_entry(
     hass: HomeAssistant,
     entry: MockConfigEntry,
@@ -191,7 +202,7 @@ async def test_offline_notification_after_debounce(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -229,7 +240,7 @@ async def test_online_notification_dismisses_offline_and_schedules_banner(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -298,7 +309,7 @@ async def test_listener_never_raises_on_unknown_placeholders(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -336,7 +347,7 @@ async def test_online_banner_second_transition_cancels_previous(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -399,7 +410,9 @@ async def test_online_to_offline_cancels_online_banner(
     """Going offline should cancel any pending online banner."""
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
-    listener = hass.data[DOMAIN][entry.entry_id]["coordinator"]._listeners[-1]
+    listener = _latest_coordinator_listener(
+        hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    )
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -437,7 +450,7 @@ async def test_removed_device_cleans_notification_state(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -474,7 +487,7 @@ async def test_removed_device_cleanup_runs_on_empty_data(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -545,7 +558,7 @@ async def test_offline_notification_includes_datetime_connection_date(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
@@ -723,7 +736,7 @@ async def test_removed_cleanup_keeps_failed_installation_devices_only(
     entry = dkn_config_entry_factory()
     await _setup_entry(hass, entry, setup_api_class)
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    listener = coordinator._listeners[-1]
+    listener = _latest_coordinator_listener(coordinator)
 
     monkeypatch.setattr(integration.persistent_notification, "async_create", Mock())
     monkeypatch.setattr(integration.persistent_notification, "async_dismiss", Mock())
