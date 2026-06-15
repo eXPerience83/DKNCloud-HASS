@@ -90,7 +90,7 @@ async def async_get_config_entry_diagnostics(
     entry_summary = {
         "title": entry.title,
         "data_keys": sorted(list(entry.data.keys())),  # keys only, never values
-        "options": dict(entry.options or {}),
+        "options": dict(entry.options),
         "version": getattr(entry, "version", None),
     }
 

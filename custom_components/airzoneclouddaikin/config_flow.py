@@ -207,7 +207,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Ask only for password; refresh the token; never persist password."""
         # Resolve entry
         entry = None
-        entry_id = (self.context or {}).get("entry_id")
+        entry_id = self.context.get("entry_id")
         if entry_id:
             entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None:
