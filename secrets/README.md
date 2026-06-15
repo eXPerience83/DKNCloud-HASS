@@ -4,7 +4,6 @@ This folder is for local/manual testing only.
 
 Tracked files:
 - `.gitignore`
-- `.env.example`
 - `dkn.env.example`
 - `README.md`
 
