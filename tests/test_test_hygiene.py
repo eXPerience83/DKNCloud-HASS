@@ -72,11 +72,14 @@ class ImportTimeStubVisitor(ast.NodeVisitor):
         if self.scope_depth == 0:
             for target in node.targets:
                 self._check_assignment_target(target)
+            self._track_sys_modules_alias(node.value, node.targets)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if self.scope_depth == 0:
             self._check_assignment_target(node.target)
+            if node.value is not None:
+                self._track_sys_modules_alias(node.value, [node.target])
         self.generic_visit(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
@@ -146,6 +149,27 @@ class ImportTimeStubVisitor(ast.NodeVisitor):
         if isinstance(target, ast.Subscript) and self._is_sys_modules(target.value):
             self.violations.append((target.lineno, "top-level sys.modules deletion"))
 
+    def _track_sys_modules_alias(
+        self, value: ast.expr, targets: list[ast.expr]
+    ) -> None:
+        if not self._is_sys_modules(value):
+            return
+        for target in targets:
+            for name in self._iter_name_targets(target):
+                self.sys_modules_aliases.add(name)
+
+    def _iter_name_targets(self, target: ast.expr) -> list[str]:
+        if isinstance(target, ast.Name):
+            return [target.id]
+        if isinstance(target, (ast.Tuple, ast.List)):
+            names: list[str] = []
+            for element in target.elts:
+                names.extend(self._iter_name_targets(element))
+            return names
+        if isinstance(target, ast.Starred):
+            return self._iter_name_targets(target.value)
+        return []
+
     def _is_sys_modules_method_call(self, node: ast.Call) -> bool:
         return (
             isinstance(node.func, ast.Attribute)
@@ -203,6 +227,27 @@ def test_tests_do_not_install_shared_stubs_at_import_time() -> None:
             *violations,
         ]
     )
+
+
+def test_import_time_stub_visitor_tracks_sys_modules_aliases() -> None:
+    """Alias assignments to sys.modules should not bypass import-time checks."""
+    tree = ast.parse(
+        "\n".join(
+            [
+                "import sys",
+                "mods = sys.modules",
+                "mods['fake_module'] = object()",
+                "mods.pop('other_module', None)",
+            ]
+        )
+    )
+    visitor = ImportTimeStubVisitor()
+    visitor.visit(tree)
+
+    assert visitor.violations == [
+        (3, "top-level sys.modules assignment"),
+        (4, "top-level sys.modules mutation call"),
+    ]
 
 
 def test_ci_tests_do_not_reference_local_secrets() -> None:

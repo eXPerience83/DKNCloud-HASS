@@ -291,12 +291,17 @@ def test_options_flow_recomputes_heat_cool_when_cached_none(
 
 async def test_options_flow_defaults_sleep_timeout_when_missing(
     hass: HomeAssistant,
-    dkn_config_entry_factory: Callable[..., MockConfigEntry],
     fake_token: str,
 ) -> None:
     """Older entries without sleep timeout option should default it to False."""
-    entry = dkn_config_entry_factory(
-        options={"user_token": fake_token, CONF_SCAN_INTERVAL: 10}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="legacy-entry",
+        title="user@example.com",
+        data={CONF_USERNAME: "user@example.com"},
+        options={"user_token": fake_token, CONF_SCAN_INTERVAL: 10},
+        unique_id="user@example.com",
+        version=2,
     )
     entry.add_to_hass(hass)
 
