@@ -10,14 +10,14 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator  # typed coordinator
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN
 from .helpers import (
     acquire_device_lock,
     async_auto_exit_sleep_if_needed,
+    build_device_info,
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
@@ -194,24 +194,9 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         return "mdi:power" if self.is_on else "mdi:power-off"
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return device registry info (PII-safe and unified across platforms).
-
-        NOTE: Pass MAC via 'connections' at construction time using
-        CONNECTION_NETWORK_MAC; avoid mutating the object after creation.
-        """
-        dev = self._device
-        mac = (str(dev.get("mac") or "").strip()) or None
-        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
-
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            manufacturer=MANUFACTURER,
-            model=dev.get("brand") or "Airzone DKN",
-            sw_version=str(dev.get("firmware") or ""),
-            name=dev.get("name") or "Airzone Device",
-            connections=connections,
-        )
+    def device_info(self):
+        """Return device registry info (PII-safe and unified across platforms)."""
+        return build_device_info(self._device, self._device_id)
 
     # -----------------------------
     # Write operations

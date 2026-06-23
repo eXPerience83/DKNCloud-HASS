@@ -19,13 +19,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
-from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneCoordinator
-from .const import DOMAIN, INTERNAL_STALE_AFTER_SEC, MANUFACTURER
+from .const import DOMAIN, INTERNAL_STALE_AFTER_SEC
+from .helpers import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,20 +97,9 @@ class AirzoneDeviceOnBinarySensor(
         return bool(self._device)
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return Device Registry metadata (connections via DeviceInfo)."""
-        dev = self._device
-        mac = (str(dev.get("mac") or "").strip()) or None
-        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
-
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            manufacturer=MANUFACTURER,
-            model=dev.get("brand") or "Airzone DKN",
-            sw_version=str(dev.get("firmware") or ""),
-            name=dev.get("name") or "Airzone Device",
-            connections=connections,
-        )
+    def device_info(self):
+        """Return Device Registry metadata."""
+        return build_device_info(self._device, self._device_id)
 
 
 class AirzoneWServerOnlineBinarySensor(
@@ -177,17 +166,6 @@ class AirzoneWServerOnlineBinarySensor(
         }
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return Device Registry metadata (connections via DeviceInfo)."""
-        dev = self._device
-        mac = (str(dev.get("mac") or "").strip()) or None
-        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
-
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            manufacturer=MANUFACTURER,
-            model=dev.get("brand") or "Airzone DKN",
-            sw_version=str(dev.get("firmware") or ""),
-            name=dev.get("name") or "Airzone Device",
-            connections=connections,
-        )
+    def device_info(self):
+        """Return Device Registry metadata."""
+        return build_device_info(self._device, self._device_id)

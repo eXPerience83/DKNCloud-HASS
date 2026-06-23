@@ -23,14 +23,13 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneCoordinator
-from .const import DOMAIN, MANUFACTURER
-from .helpers import device_supports_heat_cool
+from .const import DOMAIN
+from .helpers import build_device_info, device_supports_heat_cool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -356,24 +355,9 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         self._attr_entity_registry_enabled_default = enabled_by_default
 
     @property
-    def device_info(self) -> DeviceInfo:
-        """Return unified Device Registry metadata.
-
-        NOTE: We pass the MAC through the constructor 'connections' using
-        CONNECTION_NETWORK_MAC and avoid mutating the object after creation.
-        """
-        dev = self._device
-        mac = (str(dev.get("mac") or "").strip()) or None
-        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
-
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            manufacturer=MANUFACTURER,
-            model=dev.get("brand") or "Airzone DKN",
-            sw_version=str(dev.get("firmware") or ""),
-            name=dev.get("name") or "Airzone Device",
-            connections=connections,
-        )
+    def device_info(self):
+        """Return unified Device Registry metadata."""
+        return build_device_info(self._device, self._device_id)
 
     @property
     def _device(self) -> dict[str, Any]:
