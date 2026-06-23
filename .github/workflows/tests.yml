@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -33,3 +33,5 @@ jobs:
       - name: Run tests
         run: |
           python -m pytest -q
+        env:
+          PYTHONPATH: .
