@@ -23,6 +23,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -355,7 +356,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         self._attr_entity_registry_enabled_default = enabled_by_default
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return unified Device Registry metadata."""
         return build_device_info(self._device, self._device_id)
 

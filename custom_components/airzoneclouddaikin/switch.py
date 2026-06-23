@@ -10,6 +10,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator  # typed coordinator
@@ -194,7 +195,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         return "mdi:power" if self.is_on else "mdi:power-off"
 
     @property
-    def device_info(self):
+    def device_info(self) -> DeviceInfo:
         """Return device registry info (PII-safe and unified across platforms)."""
         return build_device_info(self._device, self._device_id)
 
