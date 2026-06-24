@@ -1,5 +1,7 @@
 # Changelog
+
 ## [0.5.0a1] - 2026-06-24
+
 ### Changed
 - **Breaking change:** Minimum Home Assistant version is now 2026.3.0.
 - **Breaking change:** Python runtime baseline is now 3.14+.
@@ -27,6 +29,7 @@
 - Added sanitized backend evidence tooling for safe diagnostics and review.
 
 ## [0.4.8] - 2026-03-03
+
 ### Changed
 - Enable HACS `zip_release` packaging and add validated release ZIP workflows for
   `airzoneclouddaikin.zip`.
