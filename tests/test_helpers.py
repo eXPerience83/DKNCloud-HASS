@@ -12,6 +12,7 @@ from custom_components.airzoneclouddaikin import helpers
 from custom_components.airzoneclouddaikin.const import DOMAIN
 from custom_components.airzoneclouddaikin.helpers import (
     async_auto_exit_sleep_if_needed,
+    build_device_info,
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
@@ -169,3 +170,24 @@ async def test_auto_exit_sleep_skips_active_session(
     assert device_id not in optimistic_bucket
     assert "pending_refresh" not in hass.data.get(DOMAIN, {}).get(entry_id, {})
     assert not scheduled
+
+
+def test_build_device_info_uses_snapshot_id_when_present() -> None:
+    """Identifiers should use device["id"] when available, not the coordinator key."""
+    device = {"id": "snap-1", "name": "Room", "mac": "AA:BB:CC:DD:EE:01"}
+    info = build_device_info(device, "coordinator-key-mac")
+
+    identifiers = info.get("identifiers")
+    assert identifiers is not None
+    assert ("airzoneclouddaikin", "snap-1") in identifiers
+    assert ("airzoneclouddaikin", "coordinator-key-mac") not in identifiers
+
+
+def test_build_device_info_falls_back_to_device_id() -> None:
+    """When device["id"] is missing, identifiers must fall back to the coordinator key."""
+    device: dict[str, str] = {"name": "Room", "mac": "AA:BB:CC:DD:EE:02"}
+    info = build_device_info(device, "fallback-key")
+
+    identifiers = info.get("identifiers")
+    assert identifiers is not None
+    assert ("airzoneclouddaikin", "fallback-key") in identifiers

@@ -24,11 +24,13 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
     DOMAIN,
+    MANUFACTURER,
     OPTIMISTIC_TTL_SEC,
     POST_WRITE_REFRESH_DELAY_SEC,
     SCENARY_HOME,
@@ -355,3 +357,19 @@ async def async_auto_exit_sleep_if_needed(
             on_success()
 
     schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
+
+
+def build_device_info(device: dict[str, Any], device_id: str) -> DeviceInfo:
+    """Return DeviceInfo with identifiers, manufacturer, model, sw_version, name, and MAC connection."""
+    stable_device_id = str(device.get("id") or device_id).strip() or device_id
+    mac = (str(device.get("mac") or "").strip()) or None
+    connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
+
+    return DeviceInfo(
+        identifiers={(DOMAIN, stable_device_id)},
+        manufacturer=MANUFACTURER,
+        model=device.get("brand") or "Airzone DKN",
+        sw_version=str(device.get("firmware") or ""),
+        name=device.get("name") or "Airzone Device",
+        connections=connections,
+    )

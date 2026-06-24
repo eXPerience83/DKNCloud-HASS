@@ -9,15 +9,16 @@ from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneCoordinator
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN, MANUFACTURER
+from .const import DOMAIN
 from .helpers import (
     acquire_device_lock,
+    build_device_info,
     clamp_number,
     optimistic_get,
     optimistic_set,
@@ -126,23 +127,8 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
     # ---------- Device registry ----------
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device registry info (PII-safe and unified across platforms).
-
-        NOTE: Pass MAC via 'connections' at construction time using
-        CONNECTION_NETWORK_MAC; avoid mutating the object after creation.
-        """
-        device = self._device
-        mac = (str(device.get("mac") or "").strip()) or None
-        connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
-
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._device_id)},
-            manufacturer=MANUFACTURER,
-            model=device.get("brand") or "Airzone DKN",
-            sw_version=str(device.get("firmware") or ""),
-            name=device.get("name") or "Airzone Device",
-            connections=connections,
-        )
+        """Return device registry info (PII-safe and unified across platforms)."""
+        return build_device_info(self._device, self._device_id)
 
     # ---------- State ----------
     @property
