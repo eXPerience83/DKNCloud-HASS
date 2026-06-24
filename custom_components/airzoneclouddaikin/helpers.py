@@ -361,11 +361,12 @@ async def async_auto_exit_sleep_if_needed(
 
 def build_device_info(device: dict[str, Any], device_id: str) -> DeviceInfo:
     """Return DeviceInfo with identifiers, manufacturer, model, sw_version, name, and MAC connection."""
+    stable_device_id = str(device.get("id") or device_id).strip() or device_id
     mac = (str(device.get("mac") or "").strip()) or None
     connections = {(CONNECTION_NETWORK_MAC, mac)} if mac else None
 
     return DeviceInfo(
-        identifiers={(DOMAIN, device_id)},
+        identifiers={(DOMAIN, stable_device_id)},
         manufacturer=MANUFACTURER,
         model=device.get("brand") or "Airzone DKN",
         sw_version=str(device.get("firmware") or ""),
