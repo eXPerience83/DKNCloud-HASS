@@ -14,7 +14,7 @@
 - Refactored `build_device_info()` into a shared helper in `helpers.py` and
   restored `DeviceInfo` type hints on `device_info` properties across all
   platforms.
-- Use `device["id"]` as the stable Device Registry identifier, falling back to
+- Used `device["id"]` as the stable Device Registry identifier, falling back to
   the coordinator snapshot key when `id` is absent.
 - Cleaned up README badge, CI workflows, and local test harness.
 - Added CodeRabbit minimatch patterns to protect local Airzone secrets from
