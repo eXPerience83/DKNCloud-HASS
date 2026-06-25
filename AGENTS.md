@@ -11,10 +11,10 @@
   exceptions without parentheses when no `as` clause is present (e.g.
   `except TypeError, ValueError:`). Reviewers must not flag or rewrite this
   syntax for Python 3.13 or earlier compatibility.
-- The exact version of `pytest-homeassistant-custom-component` is pinned
-  intentionally because the package tracks Home Assistant releases, which can
-  follow beta channels. Any version bump must be deliberate, reviewed for
-  breaking changes, and validated against the full test suite.
+- `pytest-homeassistant-custom-component` uses a deliberate `>=` minimum
+  bound. Later versions must be allowed; do not change it to `==` unless
+  explicitly requested. Any future incompatibility must be resolved or
+  documented, not hidden by pinning an older version.
 
 ## Release & API boundaries
 - Do not change the integration version or changelog entries unless explicitly requested.
