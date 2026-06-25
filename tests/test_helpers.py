@@ -218,7 +218,7 @@ def test_parse_float_no_precision_preserves_full_float() -> None:
     assert parse_float("23.456789") == 23.456789
 
 
-def test_parse_float_type_error_returns_none() -> None:
+def test_parse_float_unparseable_collections_return_none() -> None:
     """Values that cannot be converted to float must return None."""
     assert parse_float([]) is None
     assert parse_float({}) is None
