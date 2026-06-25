@@ -16,6 +16,7 @@ from custom_components.airzoneclouddaikin.helpers import (
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
+    parse_float,
 )
 
 
@@ -191,3 +192,33 @@ def test_build_device_info_falls_back_to_device_id() -> None:
     identifiers = info.get("identifiers")
     assert identifiers is not None
     assert ("airzoneclouddaikin", "fallback-key") in identifiers
+
+
+@pytest.mark.parametrize(
+    "value,precision,expected",
+    [
+        (None, None, None),
+        ("23.5", None, 23.5),
+        ("23,5", None, 23.5),
+        ("abc", None, None),
+        (23, None, 23.0),
+        (23.5, None, 23.5),
+        ("23.456", 1, 23.5),
+        ("23.4567894", 6, 23.456789),
+    ],
+)
+def test_parse_float(value: Any, precision: int | None, expected: float | None) -> None:
+    """parse_float should handle None, strings, comma decimals, and optional rounding."""
+    result = parse_float(value, precision=precision)
+    assert result == expected
+
+
+def test_parse_float_no_precision_preserves_full_float() -> None:
+    """Without precision, the full parsed float is returned unchanged."""
+    assert parse_float("23.456789") == 23.456789
+
+
+def test_parse_float_type_error_returns_none() -> None:
+    """Values that cannot be converted to float must return None."""
+    assert parse_float([]) is None
+    assert parse_float({}) is None

@@ -30,7 +30,7 @@ from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneCoordinator
 from .const import DOMAIN
-from .helpers import build_device_info, device_supports_heat_cool
+from .helpers import build_device_info, device_supports_heat_cool, parse_float
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -368,34 +368,12 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
     def available(self) -> bool:
         return bool(self._device)
 
-    @staticmethod
-    def _parse_float1(val: Any) -> float | None:
-        """Parse numeric string '23.0'/'23,0' and round to one decimal."""
-        if val is None:
-            return None
-        try:
-            f = float(str(val).replace(",", "."))
-            return round(f, 1)
-        except Exception:  # noqa: BLE001
-            return None
-
-    @staticmethod
-    def _parse_float6(val: Any) -> float | None:
-        """Parse numeric to float with 6 decimals (for coordinates)."""
-        if val is None:
-            return None
-        try:
-            f = float(str(val).replace(",", "."))
-            return round(f, 6)
-        except Exception:  # noqa: BLE001
-            return None
-
     @property
     def native_value(self) -> Any:
         # Temperatures / setpoints / limits / unoccupied -> float with 1 decimal
         if self._attribute in _TEMP_FLOAT_ATTRS:
             val = self._device.get(self._attribute)
-            return self._parse_float1(val)
+            return parse_float(val, precision=1)
 
         # Timestamps -> tz-aware datetime (HA will display in local timezone)
         if self._attribute in _TIMESTAMP_ATTRS:
@@ -479,7 +457,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         if self._attribute in {"latitude", "longitude"}:
             loc = self._device.get("location") or {}
             raw = loc.get(self._attribute)
-            return self._parse_float6(raw)
+            return parse_float(raw, precision=6)
 
         # Plain values
         return self._device.get(self._attribute)
