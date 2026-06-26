@@ -8,7 +8,6 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from aioresponses import CallbackResult
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -206,26 +205,3 @@ def dummy_coordinator_factory(
         return DummyCoordinator(data=data, hass=hass, api=api)
 
     return _factory
-
-
-def capture_aioresponses_request(
-    captured: list[dict[str, Any]],
-    *,
-    status: int = 200,
-    payload: Any | None = None,
-) -> Callable[..., CallbackResult]:
-    """Return an aioresponses callback that records request kwargs."""
-
-    def _callback(url: Any, **kwargs: Any) -> CallbackResult:
-        captured.append(
-            {
-                "url": str(url),
-                "method": kwargs.get("method"),
-                "params": dict(kwargs.get("params") or {}),
-                "json": kwargs.get("json"),
-                "headers": dict(kwargs.get("headers") or {}),
-            }
-        )
-        return CallbackResult(status=status, payload=payload)
-
-    return _callback
