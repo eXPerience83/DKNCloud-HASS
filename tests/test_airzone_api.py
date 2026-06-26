@@ -71,7 +71,7 @@ def _make_api(
 
 
 @pytest.mark.asyncio
-async def test_login_posts_to_sign_in_and_sets_token() -> None:
+async def test_login_posts_to_sign_in_and_sets_token(socket_enabled: None) -> None:
     """Login should POST credentials to /users/sign_in and store the token."""
     captured: list[dict[str, Any]] = []
 
@@ -122,7 +122,9 @@ async def test_login_handles_unauthorized() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_installations_uses_installation_relations_endpoint() -> None:
+async def test_fetch_installations_uses_installation_relations_endpoint(
+    socket_enabled: None,
+) -> None:
     """Installations should be read from /installation_relations with auth params."""
     captured: list[dict[str, str]] = []
 
@@ -158,7 +160,9 @@ async def test_fetch_installations_uses_installation_relations_endpoint() -> Non
 
 
 @pytest.mark.asyncio
-async def test_fetch_devices_uses_installation_id_query_param() -> None:
+async def test_fetch_devices_uses_installation_id_query_param(
+    socket_enabled: None,
+) -> None:
     """Device snapshots should be fetched from /devices with installation_id."""
     captured: list[dict[str, str]] = []
 
@@ -188,7 +192,9 @@ async def test_fetch_devices_uses_installation_id_query_param() -> None:
 
 
 @pytest.mark.asyncio
-async def test_put_device_fields_uses_device_endpoint_and_payload() -> None:
+async def test_put_device_fields_uses_device_endpoint_and_payload(
+    socket_enabled: None,
+) -> None:
     """Device writes should PUT the caller-provided payload to /devices/<id>."""
     captured: list[dict[str, Any]] = []
 
@@ -229,7 +235,7 @@ async def test_put_device_fields_uses_device_endpoint_and_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_event_treats_any_2xx_as_success() -> None:
+async def test_send_event_treats_any_2xx_as_success(socket_enabled: None) -> None:
     """The /events control endpoint should accept non-200 2xx responses."""
     captured: list[dict[str, Any]] = []
 
