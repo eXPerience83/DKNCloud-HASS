@@ -4,12 +4,17 @@
 
 ### Changed
 - Refactored duplicated float parsing into the shared `parse_float()` helper.
-- Reused `parse_float()` across climate and sensor entities while preserving existing rounding behavior: climate temperatures remain unrounded, sensor temperatures stay at 1 decimal, and coordinates stay at 6 decimals.
-- Migrated HTTP API tests from `aioresponses` to `aiointercept` so the test stack remains compatible with newer `aiohttp` versions.
-- Kept `pytest-homeassistant-custom-component>=0.13.340` as an open lower bound for test coverage against newer Home Assistant pytest stacks.
+- Reused `parse_float()` across climate and sensor entities while preserving
+  existing rounding behavior: climate temperatures remain unrounded, sensor
+  temperatures stay at 1 decimal, and coordinates stay at 6 decimals.
+- Migrated HTTP API tests from `aioresponses` to `aiointercept` so the test stack
+  remains compatible with newer `aiohttp` versions.
+- Kept `pytest-homeassistant-custom-component>=0.13.340` as an open lower bound
+  for test coverage against newer Home Assistant pytest stacks.
 
 ### Added
-- Added unit coverage for comma and dot decimal parsing, invalid values, optional precision, `TypeError` handling, and unparseable collections.
+- Added unit coverage for comma and dot decimal parsing, invalid values, optional
+  precision, `TypeError` handling, and unparseable collections.
 
 ## [0.5.0a1] - 2026-06-24
 
