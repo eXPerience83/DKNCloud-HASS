@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl
 import pytest
 from aiohttp import ClientResponseError, ClientSession
 from aiohttp.client_reqrep import RequestInfo
-from aioresponses import CallbackResult, aioresponses
+from aiointercept import CallbackResult, aiointercept
 from homeassistant.exceptions import HomeAssistantError
 from multidict import CIMultiDict
 from yarl import URL
@@ -45,12 +45,9 @@ def _client_response_error(
     )
 
 
-def _request_params(url: URL, kwargs: dict[str, Any]) -> dict[str, str]:
-    """Return query params from aioresponses callback inputs."""
-    params = dict(kwargs.get("params") or {})
-    if not params:
-        params = dict(parse_qsl(url.query_string))
-    return {str(key): str(value) for key, value in params.items()}
+def _request_params(url: URL) -> dict[str, str]:
+    """Return query parameters from an intercepted request URL."""
+    return dict(parse_qsl(url.query_string))
 
 
 def _make_api(
@@ -74,7 +71,7 @@ def _make_api(
 
 
 @pytest.mark.asyncio
-async def test_login_posts_to_sign_in_and_sets_token() -> None:
+async def test_login_posts_to_sign_in_and_sets_token(socket_enabled: None) -> None:
     """Login should POST credentials to /users/sign_in and store the token."""
     captured: list[dict[str, Any]] = []
 
@@ -86,7 +83,7 @@ async def test_login_posts_to_sign_in_and_sets_token() -> None:
         )
 
     async with ClientSession() as session:
-        with aioresponses() as mocked:
+        async with aiointercept(mock_external_urls=True) as mocked:
             mocked.post(f"{BASE_URL}{API_LOGIN}", callback=_callback)
             api = AirzoneAPI(
                 username="user@example.com",
@@ -125,12 +122,14 @@ async def test_login_handles_unauthorized() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fetch_installations_uses_installation_relations_endpoint() -> None:
+async def test_fetch_installations_uses_installation_relations_endpoint(
+    socket_enabled: None,
+) -> None:
     """Installations should be read from /installation_relations with auth params."""
     captured: list[dict[str, str]] = []
 
     def _callback(url: URL, **kwargs: Any) -> CallbackResult:
-        captured.append(_request_params(url, kwargs))
+        captured.append(_request_params(url))
         return CallbackResult(
             status=200,
             payload={
@@ -141,7 +140,7 @@ async def test_fetch_installations_uses_installation_relations_endpoint() -> Non
         )
 
     async with ClientSession() as session:
-        with aioresponses() as mocked:
+        async with aiointercept(mock_external_urls=True) as mocked:
             mocked.get(
                 re.compile(rf"^{re.escape(BASE_URL + API_INSTALLATION_RELATIONS)}.*$"),
                 callback=_callback,
@@ -161,16 +160,18 @@ async def test_fetch_installations_uses_installation_relations_endpoint() -> Non
 
 
 @pytest.mark.asyncio
-async def test_fetch_devices_uses_installation_id_query_param() -> None:
+async def test_fetch_devices_uses_installation_id_query_param(
+    socket_enabled: None,
+) -> None:
     """Device snapshots should be fetched from /devices with installation_id."""
     captured: list[dict[str, str]] = []
 
     def _callback(url: URL, **kwargs: Any) -> CallbackResult:
-        captured.append(_request_params(url, kwargs))
+        captured.append(_request_params(url))
         return CallbackResult(status=200, payload={"devices": [{"id": "dev1"}]})
 
     async with ClientSession() as session:
-        with aioresponses() as mocked:
+        async with aiointercept(mock_external_urls=True) as mocked:
             mocked.get(
                 re.compile(rf"^{re.escape(BASE_URL + API_DEVICES)}.*$"),
                 callback=_callback,
@@ -191,7 +192,9 @@ async def test_fetch_devices_uses_installation_id_query_param() -> None:
 
 
 @pytest.mark.asyncio
-async def test_put_device_fields_uses_device_endpoint_and_payload() -> None:
+async def test_put_device_fields_uses_device_endpoint_and_payload(
+    socket_enabled: None,
+) -> None:
     """Device writes should PUT the caller-provided payload to /devices/<id>."""
     captured: list[dict[str, Any]] = []
 
@@ -199,14 +202,14 @@ async def test_put_device_fields_uses_device_endpoint_and_payload() -> None:
         captured.append(
             {
                 "url": str(url).partition("?")[0],
-                "params": _request_params(url, kwargs),
+                "params": _request_params(url),
                 "json": kwargs.get("json"),
             }
         )
         return CallbackResult(status=200, payload={"ok": True})
 
     async with ClientSession() as session:
-        with aioresponses() as mocked:
+        async with aiointercept(mock_external_urls=True) as mocked:
             mocked.put(
                 re.compile(rf"^{re.escape(BASE_URL + API_DEVICES + '/dev1')}.*$"),
                 callback=_callback,
@@ -232,14 +235,14 @@ async def test_put_device_fields_uses_device_endpoint_and_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_event_treats_any_2xx_as_success() -> None:
+async def test_send_event_treats_any_2xx_as_success(socket_enabled: None) -> None:
     """The /events control endpoint should accept non-200 2xx responses."""
     captured: list[dict[str, Any]] = []
 
     def _callback(url: URL, **kwargs: Any) -> CallbackResult:
         captured.append(
             {
-                "params": _request_params(url, kwargs),
+                "params": _request_params(url),
                 "json": kwargs.get("json"),
             }
         )
@@ -247,7 +250,7 @@ async def test_send_event_treats_any_2xx_as_success() -> None:
 
     payload = {"event": {"cgi": "modmaquina", "device_id": "dev1"}}
     async with ClientSession() as session:
-        with aioresponses() as mocked:
+        async with aiointercept(mock_external_urls=True) as mocked:
             mocked.post(
                 re.compile(rf"^{re.escape(BASE_URL + API_EVENTS)}.*$"),
                 callback=_callback,

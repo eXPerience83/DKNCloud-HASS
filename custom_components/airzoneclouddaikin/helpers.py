@@ -359,6 +359,27 @@ async def async_auto_exit_sleep_if_needed(
     schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
 
 
+def parse_float(value: Any, *, precision: int | None = None) -> float | None:
+    """Parse a numeric value handling comma decimals, with optional rounding.
+
+    Returns None for None, non-parseable strings, or values that raise
+    TypeError/ValueError.  Strings with decimal commas (``"23,5"``) are
+    normalized to ``"23.5"`` before parsing.  When *precision* is *None*
+    (default) the parsed float is returned without rounding; otherwise
+    ``round(result, precision)`` is applied.
+    """
+
+    if value is None:
+        return None
+    try:
+        parsed = float(str(value).replace(",", "."))
+    except TypeError, ValueError:
+        return None
+    if precision is not None:
+        return round(parsed, precision)
+    return parsed
+
+
 def build_device_info(device: dict[str, Any], device_id: str) -> DeviceInfo:
     """Return DeviceInfo with identifiers, manufacturer, model, sw_version, name, and MAC connection."""
     stable_device_id = str(device.get("id") or device_id).strip() or device_id

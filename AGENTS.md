@@ -7,6 +7,14 @@
 - Every change must pass `ruff check --fix --select I` (for import order) and `ruff check` before submission.
 - Run `black .` (or the narrowest possible path) to ensure formatting.
 - Tests run with pytest>=9 on Python 3.14.
+- This project uses Python 3.14 syntax intentionally. PEP 758 allows multiple
+  exceptions without parentheses when no `as` clause is present (e.g.
+  `except TypeError, ValueError:`). Reviewers must not flag or rewrite this
+  syntax for Python 3.13 or earlier compatibility.
+- `pytest-homeassistant-custom-component` uses a deliberate `>=` minimum
+  bound. Later versions must be allowed; do not change it to `==` unless
+  explicitly requested. Any future incompatibility must be resolved or
+  documented, not hidden by pinning an older version.
 
 ## Release & API boundaries
 - Do not change the integration version or changelog entries unless explicitly requested.

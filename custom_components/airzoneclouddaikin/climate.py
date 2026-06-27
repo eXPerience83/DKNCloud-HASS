@@ -27,6 +27,7 @@ from .helpers import (
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
+    parse_float,
     parse_modes_bitmask,
     schedule_post_write_refresh,
 )
@@ -357,16 +358,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     @property
     def current_temperature(self) -> float | None:
         val = self._device.get("local_temp")
-        return self._parse_float(val)
-
-    @staticmethod
-    def _parse_float(val: Any) -> float | None:
-        if val is None:
-            return None
-        try:
-            return float(str(val).replace(",", "."))
-        except Exception:
-            return None
+        return parse_float(val)
 
     @property
     def target_temperature(self) -> float | None:
@@ -378,15 +370,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         else:
             # DRY / FAN_ONLY / OFF: do not expose target temperature
             return None
-        return self._parse_float(val)
+        return parse_float(val)
 
     @property
     def min_temp(self) -> float:
         """Return min allowable temp (per mode; neutral combo in OFF/DRY/FAN_ONLY)."""
         dev = self._device
         mode = self.hvac_mode
-        cold = self._parse_float(dev.get("min_limit_cold"))
-        heat = self._parse_float(dev.get("min_limit_heat"))
+        cold = parse_float(dev.get("min_limit_cold"))
+        heat = parse_float(dev.get("min_limit_heat"))
         if mode in (HVACMode.COOL, HVACMode.HEAT_COOL) and cold is not None:
             return cold
         if mode == HVACMode.HEAT and heat is not None:
@@ -399,8 +391,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         """Return max allowable temp (per mode; neutral combo in OFF/DRY/FAN_ONLY)."""
         dev = self._device
         mode = self.hvac_mode
-        cold = self._parse_float(dev.get("max_limit_cold"))
-        heat = self._parse_float(dev.get("max_limit_heat"))
+        cold = parse_float(dev.get("max_limit_cold"))
+        heat = parse_float(dev.get("max_limit_heat"))
         if mode in (HVACMode.COOL, HVACMode.HEAT_COOL) and cold is not None:
             return cold
         if mode == HVACMode.HEAT and heat is not None:
