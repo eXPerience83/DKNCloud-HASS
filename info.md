@@ -95,6 +95,30 @@
 - **Success codes observed:** 200, 201, 204  
   Treat **any 2xx** as success.
 
+#### Live machine information refresh — `infomaquina`
+
+A device can be asked to refresh its current machine information through the same
+`POST /events` endpoint:
+
+```json
+{
+  "event": {
+    "cgi": "infomaquina",
+    "option": "",
+    "value": "",
+    "device_id": "<id>"
+  }
+}
+```
+
+This event is a **refresh trigger**, not a state response. The integration must keep
+`GET /devices?...` as the source of entity state. Updated machine information can
+propagate asynchronously, so clients should observe a later `/devices` snapshot
+rather than treating the `infomaquina` response itself as device state.
+
+For Home Assistant this request is best-effort: a valid `/devices` snapshot must
+not be delayed or discarded while waiting for `infomaquina` or its retries.
+Authentication failures still require the normal reauthentication flow.
 
 ### Curl examples (copy/paste templates)
 
@@ -144,7 +168,6 @@ curl -sS --compressed \
   --data-raw '{ "event": { "cgi":"modmaquina","device_id":"'"$DEVICE_ID"'","option":"P2","value":"1" } }' \
   "$BASE/events?user_email=$EMAIL&user_token=$TOKEN"
 ```
-
 
 ---
 
