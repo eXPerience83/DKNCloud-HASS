@@ -16,7 +16,11 @@ from yarl import URL
 
 import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
-from custom_components.airzoneclouddaikin.const import API_EVENTS, DOMAIN, HEADERS_EVENTS
+from custom_components.airzoneclouddaikin.const import (
+    API_EVENTS,
+    DOMAIN,
+    HEADERS_EVENTS,
+)
 from custom_components.airzoneclouddaikin.live_refresh import (
     cancel_live_refresh,
     queue_live_refresh,
