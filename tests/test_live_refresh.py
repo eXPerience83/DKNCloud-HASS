@@ -91,9 +91,7 @@ async def test_coordinator_update_requests_live_refresh_for_fresh_devices(
     entry.add_to_hass(hass)
 
     api = _make_api()
-    api.fetch_installations = AsyncMock(
-        return_value=[{"installation_id": "install-1"}]
-    )
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "install-1"}])
     devices = [{"id": "dev1", "name": "Unit 1", "scenary": "occupied"}]
     api._authed_request_with_retries = AsyncMock(return_value={"devices": devices})
     api.request_device_info = AsyncMock(return_value=None)
