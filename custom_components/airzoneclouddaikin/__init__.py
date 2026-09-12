@@ -44,6 +44,7 @@ from .const import (
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
 from .helpers import device_supports_heat_cool
+from .live_refresh import cancel_live_refresh, queue_live_refresh
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -275,6 +276,7 @@ async def _async_update_data(
         auth_error = False
         had_non_auth_install_errors = False
         failed_installations: set[str] = set()
+        fresh_device_ids: set[str] = set()
 
         for inst_id, result in zip(installation_ids, fetch_results, strict=True):
             if isinstance(result, asyncio.CancelledError):
@@ -302,7 +304,11 @@ async def _async_update_data(
             devices = result
             inst_device_ids: set[str] = set()
             for dev in devices or []:
-                dev_id = dev.get("id")
+                backend_device_id = dev.get("id")
+                if backend_device_id:
+                    fresh_device_ids.add(str(backend_device_id))
+
+                dev_id = backend_device_id
                 if not dev_id:
                     mac = str(dev.get("mac") or "").strip().lower()
                     if mac:
@@ -380,6 +386,13 @@ async def _async_update_data(
                 effective_scenary = SCENARY_HOME
             dev["effective_scenary"] = effective_scenary
 
+        queue_live_refresh(
+            hass,
+            domain_bucket,
+            api,
+            fresh_device_ids,
+            lambda: _request_reauth_once(hass, entry),
+        )
         return data
 
     except asyncio.CancelledError:
@@ -529,6 +542,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
     bucket.setdefault("sleep_tracking", {})
+    entry.async_on_unload(lambda: cancel_live_refresh(bucket))
     cfg = entry.data
     opts = entry.options
 
@@ -896,6 +910,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     domain_bucket = hass.data.get(DOMAIN)
     if domain_bucket is not None and entry.entry_id in domain_bucket:
         bucket = domain_bucket[entry.entry_id]
+        cancel_live_refresh(bucket)
         cancel_sleep_expiry = bucket.get("sleep_expiry_task")
         if cancel_sleep_expiry is not None and not cancel_sleep_expiry.done():
             cancel_sleep_expiry.cancel()
@@ -920,6 +935,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Clear transient state while preserving the bucket on partial unloads.
         bucket.pop("pending_refresh", None)
         bucket.pop("device_locks", None)
+        bucket.pop("live_refresh_task", None)
+        bucket.pop("live_refresh_pending_ids", None)
+        bucket.pop("live_refresh_inflight_ids", None)
 
         if unload_ok:
             notify_state.clear()
