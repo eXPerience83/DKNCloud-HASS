@@ -20,8 +20,6 @@ Timeouts:
 
 Important:
 - 401 is never retried here; it must bubble up to the coordinator.
-- Successful device snapshots trigger a best-effort live information request so
-  the next polling cycle can consume fresher cloud state.
 - Legacy "scenary" helpers have been **removed**. Use put_device_fields(...) instead.
 """
 
@@ -273,37 +271,6 @@ class AirzoneAPI:
                 # Connection issues → propagate (HA will surface the error)
                 raise
 
-    async def _request_device_info_batch(self, devices: list[dict[str, Any]]) -> None:
-        """Best-effort request fresh machine information for fetched devices."""
-        device_ids = [
-            str(device_id)
-            for device in devices
-            if isinstance(device, dict) and (device_id := device.get("id"))
-        ]
-        if not device_ids:
-            return
-
-        results = await asyncio.gather(
-            *(self.request_device_info(device_id) for device_id in device_ids),
-            return_exceptions=True,
-        )
-
-        failures = 0
-        for result in results:
-            if isinstance(result, asyncio.CancelledError):
-                raise result
-            if isinstance(result, ClientResponseError) and result.status == 401:
-                raise result
-            if isinstance(result, Exception):
-                failures += 1
-
-        if failures:
-            _LOGGER.debug(
-                "Live device information refresh failed for %d device(s); "
-                "keeping the valid snapshot.",
-                failures,
-            )
-
     # --------------------------
     # Public API
     # --------------------------
@@ -353,7 +320,7 @@ class AirzoneAPI:
         return None
 
     async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
-        """GET /devices, then request fresher machine state for the next poll."""
+        """GET /devices with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {
             "format": "json",
             "installation_id": str(installation_id),
@@ -363,16 +330,11 @@ class AirzoneAPI:
             API_DEVICES,
             params=params,
         )
-
-        devices: list[dict[str, Any]] | None = None
         if isinstance(resp, dict) and "devices" in resp:
-            devices = resp.get("devices")
-        elif isinstance(resp, list):
-            devices = resp
-
-        if devices:
-            await self._request_device_info_batch(devices)
-        return devices
+            return resp.get("devices")
+        if isinstance(resp, list):
+            return resp
+        return None
 
     async def request_device_info(self, device_id: str) -> Any:
         """Ask the backend to refresh one device's live machine information."""
