@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, call
 
 import pytest
 from aiohttp import ClientResponseError, ClientSession
 from aiohttp.client_reqrep import RequestInfo
+from homeassistant.core import HomeAssistant
 from multidict import CIMultiDict
 from yarl import URL
 
+import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
 from custom_components.airzoneclouddaikin.const import API_EVENTS, HEADERS_EVENTS
 
@@ -76,6 +79,29 @@ async def test_fetch_devices_requests_live_refresh_for_snapshot_devices() -> Non
 
     assert result == devices
     assert api.request_device_info.await_args_list == [call("dev1"), call("dev2")]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_update_requests_live_refresh_for_fresh_devices(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Any,
+) -> None:
+    """Coordinator polling should inherit live refresh from successful snapshots."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+
+    api = _make_api()
+    api.fetch_installations = AsyncMock(
+        return_value=[{"installation_id": "install-1"}]
+    )
+    devices = [{"id": "dev1", "name": "Unit 1", "scenary": "occupied"}]
+    api._authed_request_with_retries = AsyncMock(return_value={"devices": devices})
+    api.request_device_info = AsyncMock(return_value=None)
+
+    data = await integration._async_update_data(hass, entry, api)
+
+    assert set(data) == {"dev1"}
+    api.request_device_info.assert_awaited_once_with("dev1")
 
 
 @pytest.mark.asyncio
