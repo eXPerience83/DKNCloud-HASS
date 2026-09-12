@@ -68,7 +68,7 @@ async def _async_live_refresh_worker(
             except asyncio.CancelledError:
                 raise
             except ClientResponseError as err:
-                if err.status == 401:
+                if err.status == 401 and not auth_failed:
                     auth_failed = True
                     on_auth_failure()
                 return False
