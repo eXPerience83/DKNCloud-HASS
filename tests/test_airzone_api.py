@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -285,6 +286,62 @@ async def test_authed_request_retries_429_with_retry_after(
     assert result == {"ok": True}
     assert sleeps == [2.0]
     assert api._cooldown_until == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_live_refresh_429_does_not_cool_down_snapshot_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live refresh backoff must not delay ordinary coordinator reads."""
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
+        lambda *_: 0.0,
+    )
+    api = AirzoneAPI(
+        username="user@example.com",
+        session=AsyncMock(spec=ClientSession),
+        token="tok",
+    )
+    clock = {"now": 0.0}
+    monkeypatch.setattr(api, "_now", lambda: clock["now"])
+    cooldown_started = asyncio.Event()
+    release_cooldown = asyncio.Event()
+    sleeps: list[float] = []
+    posts = 0
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        cooldown_started.set()
+        await release_cooldown.wait()
+        clock["now"] += seconds
+
+    async def fake_request(method: str, path: str, **_kwargs: Any) -> Any:
+        nonlocal posts
+        if method == "POST":
+            posts += 1
+            if posts == 1:
+                raise _client_response_error(429, {"Retry-After": "2"})
+            return {"accepted": True}
+        if path == API_INSTALLATION_RELATIONS:
+            return {"installation_relations": []}
+        if path == API_DEVICES:
+            return {"devices": []}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(api, "_sleep", fake_sleep)
+    monkeypatch.setattr(api, "_request", fake_request)
+    refresh_task = asyncio.create_task(api.request_device_info("dev1"))
+    try:
+        await asyncio.wait_for(cooldown_started.wait(), timeout=1)
+        assert api._live_refresh_cooldown_until == pytest.approx(2.0)
+        assert api._cooldown_until == 0.0
+        assert await asyncio.wait_for(api.fetch_installations(), timeout=0.1) == []
+        assert await asyncio.wait_for(api.fetch_devices("inst1"), timeout=0.1) == []
+        assert sleeps == [2.0]
+    finally:
+        release_cooldown.set()
+        await refresh_task
+    assert posts == 2
 
 
 @pytest.mark.asyncio

@@ -388,6 +388,7 @@ async def _async_update_data(
 
         queue_live_refresh(
             hass,
+            entry,
             domain_bucket,
             api,
             fresh_device_ids,

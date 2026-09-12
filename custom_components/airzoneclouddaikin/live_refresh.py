@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from aiohttp import ClientResponseError
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .airzone_api import AirzoneAPI
@@ -19,12 +20,16 @@ _LIVE_REFRESH_MAX_CONCURRENCY = 2
 
 def queue_live_refresh(
     hass: HomeAssistant,
+    entry: ConfigEntry,
     bucket: dict[str, Any],
     api: AirzoneAPI,
     device_ids: Iterable[str],
     on_auth_failure: Callable[[], None],
 ) -> None:
     """Queue best-effort live refreshes without blocking coordinator snapshots."""
+    if bucket.get("reauth_requested"):
+        return
+
     pending: set[str] = bucket.setdefault("live_refresh_pending_ids", set())
     inflight: set[str] = bucket.setdefault("live_refresh_inflight_ids", set())
 
@@ -40,8 +45,10 @@ def queue_live_refresh(
     if task is not None and not task.done():
         return
 
-    bucket["live_refresh_task"] = hass.async_create_task(
-        _async_live_refresh_worker(bucket, api, on_auth_failure)
+    bucket["live_refresh_task"] = entry.async_create_background_task(
+        hass,
+        _async_live_refresh_worker(bucket, api, on_auth_failure),
+        "DKN live device refresh",
     )
 
 

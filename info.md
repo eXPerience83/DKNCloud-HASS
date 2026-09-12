@@ -118,6 +118,7 @@ rather than treating the `infomaquina` response itself as device state.
 
 For Home Assistant this request is best-effort: a valid `/devices` snapshot must
 not be delayed or discarded while waiting for `infomaquina` or its retries.
+Its rate-limit cooldown is independent of the cooldown for coordinator reads.
 Authentication failures still require the normal reauthentication flow.
 
 ### Curl examples (copy/paste templates)
