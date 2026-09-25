@@ -32,6 +32,7 @@ TO_REDACT = {
     "token",
     "user_token",
     # Device/installation identifiers
+    "device_id",
     "mac",
     "pin",
     "serial",
@@ -80,6 +81,22 @@ def _redact_by_regex(obj: Any) -> Any:
     return obj
 
 
+def _sanitize_devices(devices: Any) -> Any:
+    """Alias device mapping keys and redact direct backend device identifiers."""
+    if not isinstance(devices, dict):
+        return devices
+
+    sanitized: dict[str, Any] = {}
+    ordered_devices = sorted(devices.items(), key=lambda item: str(item[0]))
+    for index, (_, device) in enumerate(ordered_devices, start=1):
+        if isinstance(device, dict):
+            device = dict(device)
+            if "id" in device:
+                device["id"] = "***"
+        sanitized[f"device_{index}"] = device
+    return sanitized
+
+
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, Any]:
@@ -88,7 +105,6 @@ async def async_get_config_entry_diagnostics(
     coordinator = domain_data.get("coordinator")
 
     entry_summary = {
-        "title": entry.title,
         "data_keys": sorted(list(entry.data.keys())),  # keys only, never values
         "options": dict(entry.options),
         "version": getattr(entry, "version", None),
@@ -102,13 +118,14 @@ async def async_get_config_entry_diagnostics(
                 interval = interval.total_seconds()
             except Exception:  # noqa: BLE001
                 interval = str(interval)
+        coordinator_data = getattr(coordinator, "data", {}) or {}
         coord_summary = {
             "last_update_success": getattr(coordinator, "last_update_success", None),
             "update_interval_seconds": interval,
-            "devices_count": len(getattr(coordinator, "data", {}) or {}),
+            "devices_count": len(coordinator_data),
             "heat_cool_single_setpoint": True,
             "heat_cool_routing": "cold(P7,P3)",
-            "devices": getattr(coordinator, "data", {}),
+            "devices": _sanitize_devices(coordinator_data),
         }
 
     raw = {"entry": entry_summary, "coordinator": coord_summary}
