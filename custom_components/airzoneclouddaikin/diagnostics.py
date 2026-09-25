@@ -61,7 +61,7 @@ _RE_PATTERNS = [
     re.compile(r"token|auth(entication)?|secret|api.?key", re.IGNORECASE),
     re.compile(r"mail|email", re.IGNORECASE),
     re.compile(r"\bmac\b|\bpin\b|\buuid\b|\bserial\b", re.IGNORECASE),
-    re.compile(r"lat|lon|gps|coord|location", re.IGNORECASE),
+    re.compile(r"lat|lon|gps|coord(?!inator)|location", re.IGNORECASE),
     re.compile(r"owner(_?id)?|installer|phone|postal|zip", re.IGNORECASE),
 ]
 
