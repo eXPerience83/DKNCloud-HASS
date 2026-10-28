@@ -1011,7 +1011,6 @@ release = [
     { name = "black" },
     { name = "homeassistant" },
     { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "pytest-homeassistant-custom-component" },
     { name = "ruff" },
 ]
@@ -1019,7 +1018,6 @@ test = [
     { name = "aiointercept" },
     { name = "homeassistant" },
     { name = "pytest" },
-    { name = "pytest-asyncio" },
     { name = "pytest-homeassistant-custom-component" },
 ]
 
@@ -1035,7 +1033,6 @@ release = [
     { name = "black", specifier = "==26.1.0" },
     { name = "homeassistant", specifier = "==2026.10.4" },
     { name = "pytest", specifier = "==9.0.3" },
-    { name = "pytest-asyncio", specifier = "==1.4.0" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.375" },
     { name = "ruff", specifier = "==0.17.2" },
 ]
@@ -1043,7 +1040,6 @@ test = [
     { name = "aiointercept", specifier = "==0.1.12" },
     { name = "homeassistant", specifier = "==2026.10.4" },
     { name = "pytest", specifier = "==9.0.3" },
-    { name = "pytest-asyncio", specifier = "==1.4.0" },
     { name = "pytest-homeassistant-custom-component", specifier = "==0.13.375" },
 ]
 

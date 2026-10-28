@@ -193,7 +193,14 @@ uv run --locked --no-sync black --check .
 ```
 
 The `test` group contains the Home Assistant test harness, `lint`
-contains Black and Ruff, and `release` combines both. The previous
+contains Black and Ruff, and `release` combines both. `pytest-asyncio` is
+installed **transitively** at the exact version required by PHACC; it must
+not be upgraded separately because PHACC pins it for its HA test stack.
+Renovate only proposes PyPI updates after the **same 3-day maturity delay**
+that `uv` enforces through `exclude-newer`, and it rebases proposals when
+`main` advances. HA and PHACC are excluded from ordinary Renovate updates:
+those versions are managed **together**, with review, under the
+[compatibility roadmap #109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109). The previous
 unbounded `requirements_test.txt` was removed to prevent conflicting
 dependency resolution. The release ZIP still contains only
 `custom_components/airzoneclouddaikin`.
