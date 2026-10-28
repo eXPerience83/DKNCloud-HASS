@@ -1,0 +1,46 @@
+name: Temporary regenerate uv lock for Renovate policy fix
+
+# This is a ONE-TIME workflow, scoped to one branch/file change; delete
+# immediately after it produces the validated lockfile. NOT for merge.
+on:
+  push:
+    branches: [fix/renovate-uv-stability-policy]
+    paths:
+      - .github/workflows/bootstrap-renovate-lock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    if: github.repository == 'eXPerience83/DKNCloud-HASS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Rebuild only required lock metadata and verify full suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock
+          uv lock --check
+          uv sync --locked --only-group release
+          uv run --locked --no-sync python -m pytest -q
+          uv run --locked --no-sync ruff check .
+          uv run --locked --no-sync black --check .
+          git add uv.lock
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'chore(ci): synchronize uv.lock after removing redundant pytest-asyncio pin'
+            git push origin HEAD:fix/renovate-uv-stability-policy
+          fi

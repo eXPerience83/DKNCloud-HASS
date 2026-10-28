@@ -2,5 +2,25 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "rebaseWhen": "behind-base-branch",
+  "packageRules": [
+    {
+      "description": "PyPI updates must satisfy the same 72-hour maturity window as uv exclude-newer = '3 days'; keep artifact generation reproducible.",
+      "matchDatasources": [
+        "pypi"
+      ],
+      "minimumReleaseAge": "3 days",
+      "minimumReleaseAgeBehaviour": "timestamp-required"
+    },
+    {
+      "description": "Home Assistant and PHACC must advance together via the reviewed baseline updater (roadmap #109 phase 4). pytest-asyncio is a PHACC-owned exact transitive pin.",
+      "matchPackageNames": [
+        "homeassistant",
+        "pytest-homeassistant-custom-component",
+        "pytest-asyncio"
+      ],
+      "enabled": false
+    }
   ]
 }
