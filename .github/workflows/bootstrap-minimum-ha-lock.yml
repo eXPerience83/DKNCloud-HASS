@@ -1,0 +1,59 @@
+name: Temporary minimum HA lock generator
+
+# One-time, branch-scoped generator: remove before opening the PR.
+on:
+  push:
+    branches: [ci/109-ha-minimum-compatibility]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: minimum-ha-lock-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    if: github.repository == 'eXPerience83/DKNCloud-HASS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+      - name: Compile, install, test and commit minimum HA pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip compile .github/requirements/minimum-ha.in \
+            --python-version 3.14 \
+            --generate-hashes \
+            --exclude-newer 2026-10-25T00:00:00Z \
+            --output-file .github/requirements/minimum-ha.txt
+          minimum_venv="$RUNNER_TEMP/ha-minimum-compatibility-venv"
+          uv venv --python "$(command -v python)" "$minimum_venv"
+          uv pip sync --python "$minimum_venv/bin/python" --require-hashes \
+            .github/requirements/minimum-ha.txt
+          "$minimum_venv/bin/python" - <<'PY'
+          import importlib.metadata as meta
+          from packaging.requirements import Requirement
+          print("HA:", meta.version("homeassistant"))
+          print("PHACC:", meta.version("pytest-homeassistant-custom-component"))
+          assert meta.version("homeassistant") == "2026.3.1"
+          assert meta.version("pytest-homeassistant-custom-component") == "0.13.317"
+          assert any(str(Requirement(r).specifier) == "==2026.3.1" for r in meta.requires("pytest-homeassistant-custom-component") if Requirement(r).name == "homeassistant")
+          PY
+          PYTHONPATH=. "$minimum_venv/bin/python" -m pytest -q -ra -p no:cacheprovider
+          git add .github/requirements/minimum-ha.txt
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'ci: hash-lock minimum Home Assistant test environment'
+            git push origin HEAD:ci/109-ha-minimum-compatibility
+          fi
