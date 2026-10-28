@@ -173,6 +173,34 @@ A: See [info.md](./info.md).
 
 ---
 
+## 🧪 Reproducible tests and development
+
+The locked test baseline runs on **Python 3.14.7**, with
+**Home Assistant 2026.10.4** and
+`pytest-homeassistant-custom-component==0.13.375`.
+All test and lint dependencies (including transitives) are recorded in
+`uv.lock`. This is the **test baseline**, not a change to the minimum
+supported Home Assistant version (**2026.3.0**).
+
+Install [uv](https://docs.astral.sh/uv/), then run:
+
+```sh
+uv lock --check
+uv sync --locked --only-group release
+uv run --locked --no-sync python -m pytest -q
+uv run --locked --no-sync ruff check .
+uv run --locked --no-sync black --check .
+```
+
+The `test` group contains the Home Assistant test harness, `lint`
+contains Black and Ruff, and `release` combines both. The previous
+unbounded `requirements_test.txt` was removed to prevent conflicting
+dependency resolution. The release ZIP still contains only
+`custom_components/airzoneclouddaikin`.
+
+Minimum-HA CI, additional Python compatibility, daily canary and automated
+baseline updates are tracked in [roadmap #109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109).
+
 ## 🤝 How to Contribute
 
 PRs for features, **translations**, and fixes are welcome!
