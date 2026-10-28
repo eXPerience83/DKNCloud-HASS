@@ -28,7 +28,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           version-file: pyproject.toml
           enable-cache: true
@@ -52,9 +52,9 @@ jobs:
           import importlib.metadata as m
           import sys
           import os
-          rows = ["## Locked Home Assistant test baseline", "", f"- Python: \`{sys.version.split()[0]}\`"]
+          rows = ["## Locked Home Assistant test baseline", "", f"- Python: `{sys.version.split()[0]}`"]
           for name in ("homeassistant", "pytest-homeassistant-custom-component", "pytest", "pytest-asyncio", "aiointercept"):
-              rows.append(f"- {name}: \`{m.version(name)}\`")
+              rows.append(f"- {name}: `{m.version(name)}`")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
               f.write("\n".join(rows) + "\n")
           PY

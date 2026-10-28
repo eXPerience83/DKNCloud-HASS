@@ -29,7 +29,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           version-file: pyproject.toml
           enable-cache: true
