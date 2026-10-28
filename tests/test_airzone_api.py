@@ -205,14 +205,10 @@ async def test_put_device_fields_uses_device_endpoint_and_payload(
         )
         return web.json_response({"ok": True})
 
-    await _serve_api(
-        aiohttp_server, monkeypatch, "PUT", f"{API_DEVICES}/dev1", handler
-    )
+    await _serve_api(aiohttp_server, monkeypatch, "PUT", f"{API_DEVICES}/dev1", handler)
     async with ClientSession() as session:
         api = AirzoneAPI("user@example.com", session, token="tok")
-        result = await api.put_device_fields(
-            "dev1", {"device": {"scenary": "sleep"}}
-        )
+        result = await api.put_device_fields("dev1", {"device": {"scenary": "sleep"}})
 
     assert result == {"ok": True}
     assert captured == [
@@ -236,9 +232,7 @@ async def test_send_event_treats_any_2xx_as_success(
     captured: list[dict[str, Any]] = []
 
     async def handler(request: web.Request) -> web.Response:
-        captured.append(
-            {"params": dict(request.query), "json": await request.json()}
-        )
+        captured.append({"params": dict(request.query), "json": await request.json()})
         return web.json_response({"accepted": True}, status=202)
 
     payload = {"event": {"cgi": "modmaquina", "device_id": "dev1"}}
