@@ -1,0 +1,177 @@
+name: Latest Home Assistant Compatibility Canary
+
+# Deliberately outside PR/push required checks and independent of uv.lock.
+on:
+  schedule:
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ha-compatibility-canary
+  cancel-in-progress: true
+
+env:
+  UV_NO_CACHE: "1"
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up supported Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Create isolated disposable test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          canary_venv="$RUNNER_TEMP/ha-canary-venv"
+          uv venv --python "$(command -v python)" "$canary_venv"
+          printf 'CANARY_PYTHON=%s\n' "$canary_venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Install metadata selector dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip install --python "$CANARY_PYTHON" "packaging==26.3"
+
+      - name: Select latest non-yanked stable HA/PHACC pair
+        shell: bash
+        run: |
+          set -euo pipefail
+          selection_file="$RUNNER_TEMP/ha-harness-selection.json"
+          "$CANARY_PYTHON" scripts/select_ha_harness.py > "$selection_file"
+          "$CANARY_PYTHON" - "$selection_file" <<'PY'
+          import json
+          import os
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              selection = json.load(stream)
+          fields = {
+              "LATEST_HA": selection["latest_homeassistant"],
+              "LATEST_PHACC": selection["latest_phacc"],
+              "SELECTED_HA": selection["selected_homeassistant"],
+              "SELECTED_PHACC": selection["selected_phacc"],
+          }
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+              for name, value in fields.items():
+                  print(f"{name}={value}", file=stream)
+
+          aligned = selection["latest_homeassistant"] == selection["selected_homeassistant"]
+          if not aligned:
+              print(
+                  "::warning title=Home Assistant harness lag::"
+                  f"Latest stable HA {selection['latest_homeassistant']} is not yet "
+                  f"supported by PHACC; testing HA {selection['selected_homeassistant']} "
+                  f"with PHACC {selection['selected_phacc']} instead."
+              )
+          summary = [
+              "## Latest Home Assistant compatibility canary",
+              "",
+              f"- Latest non-yanked stable HA: `{selection['latest_homeassistant']}`",
+              f"- Latest stable PHACC release: `{selection['latest_phacc']}`",
+              f"- Selected HA: `{selection['selected_homeassistant']}`",
+              f"- Selected PHACC: `{selection['selected_phacc']}`",
+              "- Latest stable HA covered: " + ("**yes**" if aligned else "**no — PHACC lag**"),
+              "- Newer PHACC releases targeting prerelease HA: "
+              + (", ".join(selection["skipped_prerelease_phacc"]) or "none"),
+              "",
+              "This is an informational scheduled/manual check, not the locked PR baseline.",
+              "",
+          ]
+          print("\n".join(summary))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+              stream.write("\n".join(summary))
+          PY
+
+      - name: Install selected compatible HA test harness
+        shell: bash
+        env:
+          UV_EXCLUDE_NEWER: "false"
+        run: |
+          set -euo pipefail
+          uv pip install --python "$CANARY_PYTHON" \
+            "pytest-homeassistant-custom-component==$SELECTED_PHACC"
+
+      - name: Verify installed versions and report environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$CANARY_PYTHON" - <<'PY'
+          import importlib.metadata as meta
+          import os
+          import subprocess
+
+          from scripts.select_ha_harness import exact_homeassistant_requirement
+
+          names = (
+              "homeassistant",
+              "pytest-homeassistant-custom-component",
+              "pytest",
+              "pytest-asyncio",
+              "packaging",
+          )
+          versions = {name: meta.version(name) for name in names}
+          if versions["homeassistant"] != os.environ["SELECTED_HA"]:
+              raise SystemExit("Installed Home Assistant does not match the selected version")
+          if versions["pytest-homeassistant-custom-component"] != os.environ["SELECTED_PHACC"]:
+              raise SystemExit("Installed PHACC does not match the selected version")
+          requires_ha = exact_homeassistant_requirement(
+              meta.requires("pytest-homeassistant-custom-component")
+          )
+          if requires_ha != versions["homeassistant"]:
+              raise SystemExit(
+                  f"PHACC requires HA {requires_ha}, but installed HA is {versions['homeassistant']}"
+              )
+          rows = [
+              "### Resolved test environment",
+              "",
+              "| Component | Installed version |",
+              "| --- | --- |",
+          ]
+          for name, version in versions.items():
+              rows.append(f"| {name} | `{version}` |")
+          rows.append(
+              "| Python | `"
+              + subprocess.check_output(
+                  [os.environ["CANARY_PYTHON"], "--version"], text=True
+              ).strip()
+              + "` |"
+          )
+          rows.append(
+              "| uv | `"
+              + subprocess.check_output(["uv", "--version"], text=True).strip()
+              + "` |"
+          )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+              stream.write("\n".join(rows) + "\n")
+          print("\n".join(rows))
+          PY
+
+      - name: Run full integration test suite
+        shell: bash
+        env:
+          HA_COMPATIBILITY_CANARY: "1"
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          "$CANARY_PYTHON" -m pytest -q -ra -p no:cacheprovider
