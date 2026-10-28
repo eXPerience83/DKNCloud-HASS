@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           uv pip compile .github/requirements/minimum-ha.in \
-            --python-version 3.14 \
+            --python-version 3.14.7 \
             --generate-hashes \
             --exclude-newer 2026-10-25T00:00:00Z \
             --output-file .github/requirements/minimum-ha.txt
