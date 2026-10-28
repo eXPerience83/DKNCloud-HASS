@@ -22,43 +22,64 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
-      - name: Set up Python 3.14
+      - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.15"
-          cache: "pip"
+          python-version-file: .python-version
 
-      - name: Install validation dependencies
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: |
+            .python-version
+            pyproject.toml
+            uv.lock
+
+      - name: Verify locked environment
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade "black>=26" "ruff>=0.15" "pytest>=9"
-          python -m pip install -r requirements_test.txt
+          uv lock --check
+          uv sync --locked --only-group release
+
+      - name: Report toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --locked --no-sync python - <<'PY'
+          import importlib.metadata as m
+          import sys
+          print("Python:", sys.version)
+          for name in ("homeassistant", "pytest-homeassistant-custom-component", "pytest", "pytest-asyncio", "black", "ruff"):
+              print(f"{name}: {m.version(name)}")
+          PY
+          uv --version
 
       - name: Compile Python sources
         shell: bash
         run: |
           set -euo pipefail
-          python -m compileall -q custom_components tests
+          uv run --locked --no-sync python -m compileall -q custom_components tests
 
       - name: Ruff validation
         shell: bash
         run: |
           set -euo pipefail
-          ruff check .
+          uv run --locked --no-sync ruff check .
 
       - name: Black validation
         shell: bash
         run: |
           set -euo pipefail
-          black --check .
+          uv run --locked --no-sync black --check .
 
       - name: Run tests
         shell: bash
         run: |
           set -euo pipefail
-          python -m pytest -q
+          uv run --locked --no-sync python -m pytest -q
         env:
           PYTHONPATH: .
 
