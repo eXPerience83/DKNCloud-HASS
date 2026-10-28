@@ -141,7 +141,7 @@ Enter your Airzone Cloud **username** and **password**.
 
 | Home Assistant | Python   | Daikin Model/Adapter         |
 |----------------|----------|------------------------------|
-| **2026.3.0+** | **3.14.0+** | DAIKIN ES.DKNWSERVER (Cloud) |
+| **2026.3.1+** | **3.14.2+** | DAIKIN ES.DKNWSERVER (Cloud) |
 
 *Other Airzone or Daikin adapters may not be supported.*
 
@@ -198,8 +198,20 @@ unbounded `requirements_test.txt` was removed to prevent conflicting
 dependency resolution. The release ZIP still contains only
 `custom_components/airzoneclouddaikin`.
 
-Minimum-HA CI, additional Python compatibility, daily canary and automated
-baseline updates are tracked in [roadmap #109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109).
+The **required** [minimum HA compatibility workflow](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-minimum-compatibility.yml) runs the same complete pytest suite under an independently hash-locked **Home Assistant 2026.3.1 / PHACC 0.13.317** environment; the ordinary test workflow keeps the separately locked **HA 2026.10.4 / PHACC 0.13.375** baseline. Both use **Python 3.14.7** and run on every PR and push to main. Each job reports installed versions and distinguishes installation errors from test regressions.
+
+**Minimum supported version adjustment (2026.3.0 → 2026.3.1):**
+PHACC did not publish a release for HA 2026.3.0; its earliest exact-compatible 2026.3 harness is **0.13.317 for HA 2026.3.1**. Keeping a truthful, fully testable minimum therefore requires the one-patch floor adjustment; see [roadmap #109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109). Python 3.15 is not currently part of the supported HA 3.14 test environment; do not mistake a newer interpreter's availability for validated HA support.
+
+The minimum environment is installed in a **separate virtualenv** from the main `uv.lock`, using `.github/requirements/minimum-ha.txt` with required hashes. To reproduce it locally, on Python 3.14.7:
+
+```sh
+uv venv --python 3.14.7 .venv-minimum-ha
+uv pip sync --python .venv-minimum-ha/bin/python --require-hashes .github/requirements/minimum-ha.txt
+PYTHONPATH=. .venv-minimum-ha/bin/python -m pytest -q
+```
+
+Python 3.15 forward-compatibility and the daily canary remain separate [roadmap #109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109) tasks.
 
 ## 🤝 How to Contribute
 
