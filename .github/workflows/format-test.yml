@@ -1,0 +1,42 @@
+name: Temporary test formatter
+
+# Temporary PR branch workflow; remove immediately after formatting.
+on:
+  push:
+    branches: [ci/109-ha-minimum-compatibility]
+    paths:
+      - .github/workflows/format-test.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.repository == 'eXPerience83/DKNCloud-HASS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+      - name: Autoformat test file using pinned Black
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --only-group lint
+          uv run --locked --no-sync black tests/test_airzone_api.py
+          uv run --locked --no-sync ruff check tests/test_airzone_api.py
+          git add tests/test_airzone_api.py
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'style(tests): format aiohttp loopback fixtures'
+            git push origin HEAD:ci/109-ha-minimum-compatibility
+          fi
