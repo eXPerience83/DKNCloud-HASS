@@ -1,10 +1,7 @@
 name: Latest Home Assistant Compatibility Canary
 
 # Deliberately outside PR/push required checks and independent of uv.lock.
-# The temporary push trigger is removed after live validation on this branch.
 on:
-  push:
-    branches: [ci/109-ha-stable-canary]
   schedule:
     - cron: "47 4 * * *"
   workflow_dispatch:
