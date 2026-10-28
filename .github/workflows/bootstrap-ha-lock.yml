@@ -1,0 +1,42 @@
+name: Temporary locked HA baseline generator
+
+# This branch-only bootstrap produces a real uv.lock on a networked runner.
+# Remove this workflow before requesting review/merge.
+on:
+  push:
+    branches: [ci/109-locked-ha-test-baseline]
+
+permissions:
+  contents: write
+
+jobs:
+  generate-lock:
+    if: github.repository == 'eXPerience83/DKNCloud-HASS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+      - name: Resolve and commit baseline lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock
+          uv lock --check
+          uv sync --locked --only-group release
+          uv run --locked --no-sync python -m pytest -q
+          uv run --locked --no-sync ruff check .
+          uv run --locked --no-sync black --check .
+          git add uv.lock
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'chore(ci): lock reproducible Home Assistant test baseline'
+            git push origin HEAD:ci/109-locked-ha-test-baseline
+          fi

@@ -1,37 +1,54 @@
-# Tooling aligned to the Home Assistant Python floor (>=3.14.0).
-# NOTE: We purposely DO NOT set [tool.black].required-version; CI installs
-# Black/Ruff from minimum supported versions to keep tooling forward-compatible.
-# Minimums: black>=26, ruff>=0.15 (set in CI workflows).
-# If you ever need an exact lock, set both:
-#   - pyproject: required-version = "<desired black version>"
-#   - CI: pip install "black==<desired black version>" "ruff==<desired ruff version>"
-
+# Development/test tooling. The integration runtime remains governed by
+# custom_components/airzoneclouddaikin/manifest.json and HACS metadata.
+# The locked HA harness uses the supported Python 3.14 line; compatibility
+# testing for additional HA/Python combinations is tracked in #109.
 [project]
-# Enforce the runtime floor aligned with Home Assistant Python 3.14 images.
+name = "dkncloud-hass"
+version = "0.5.0a2"
 requires-python = ">=3.14"
+
+[dependency-groups]
+lint = [
+    "black==26.1.0",
+    "ruff==0.17.2",
+]
+test = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.4.0",
+    "aiointercept==0.1.12",
+    "pytest-homeassistant-custom-component==0.13.375",
+    "homeassistant==2026.10.4",
+]
+release = [
+    { include-group = "lint" },
+    { include-group = "test" },
+]
+
+[tool.uv]
+required-version = "==0.13.5"
+default-groups = []
+# Avoid adopting newly published transitive dependencies immediately.
+exclude-newer = "3 days"
+# The baseline harness targets Python 3.14.7; don't accidentally resolve
+# against 3.15 when HA/PHACC have a different supported interpreter range.
+environments = ["python_full_version >= '3.14.2' and python_full_version < '3.15'"]
 
 [tool.black]
 line-length = 88
-# Black supports py314; keep a single target since the project requires 3.14+.
 target-version = ["py314"]
-# Do NOT set required-version here to stay compatible with CI's rolling installs.
 
 [tool.ruff]
 line-length = 88
-# Match runtime: Python 3.14
 target-version = "py314"
-# Do not set a default global 'fix' here; workflows control fixing with CLI flags.
 
 [tool.ruff.lint]
-# Core rule sets: pycodestyle/pyflakes/isort/pyupgrade/bugbear
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
-  "E203", # Whitespace before ':' (conflicts with Black on slicing)
-  "E501", # Line length (Black handles wrapping)
+  "E203",
+  "E501",
 ]
 
 [tool.ruff.lint.isort]
-# IMPORTANT: first-party must match this integration's package
 known-first-party = ["custom_components.airzoneclouddaikin"]
 combine-as-imports = true
 
@@ -40,12 +57,3 @@ testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-
-# --- Optional hardening (uncomment if needed) ---
-# [tool.ruff]
-# force-exclude = true
-# exclude = [".git", ".venv", "venv", ".mypy_cache", ".pytest_cache", "build", "dist"]
-
-# If you re-export symbols in __init__.py and want to ignore F401 there:
-# [tool.ruff.per-file-ignores]
-# "custom_components/airzoneclouddaikin/__init__.py" = ["F401"]
