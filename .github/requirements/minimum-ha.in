@@ -4,5 +4,4 @@
 # Keep homeassistant in sync with hacs.json; do not change with regular baseline.
 homeassistant==2026.3.1
 pytest-homeassistant-custom-component==0.13.317
-aiointercept==0.1.9
 packaging==26.3

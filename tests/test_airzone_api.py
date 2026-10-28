@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 from unittest.mock import AsyncMock, patch
-from urllib.parse import parse_qsl
 
 import pytest
-from aiohttp import ClientResponseError, ClientSession
+from aiohttp import ClientResponseError, ClientSession, web
 from aiohttp.client_reqrep import RequestInfo
-from aiointercept import CallbackResult, aiointercept
 from homeassistant.exceptions import HomeAssistantError
 from multidict import CIMultiDict
 from yarl import URL
@@ -45,11 +42,6 @@ def _client_response_error(
     )
 
 
-def _request_params(url: URL) -> dict[str, str]:
-    """Return query parameters from an intercepted request URL."""
-    return dict(parse_qsl(url.query_string))
-
-
 def _make_api(
     monkeypatch: pytest.MonkeyPatch, responses: list[object]
 ) -> tuple[AirzoneAPI, list[float]]:
@@ -70,28 +62,42 @@ def _make_api(
     return api, sleeps
 
 
+async def _serve_api(aiohttp_server, monkeypatch, method: str, path: str, handler):
+    """Route a real aiohttp client to an isolated loopback backend.
+
+    This avoids DNS interception dependencies that conflict with the
+    pinned yarl version of Home Assistant 2026.3.1.
+    """
+    app = web.Application()
+    app.router.add_route(method, path, handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.BASE_URL",
+        str(server.make_url("/")).rstrip("/"),
+    )
+
+
 @pytest.mark.asyncio
-async def test_login_posts_to_sign_in_and_sets_token(socket_enabled: None) -> None:
+async def test_login_posts_to_sign_in_and_sets_token(
+    socket_enabled: None, aiohttp_server, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Login should POST credentials to /users/sign_in and store the token."""
     captured: list[dict[str, Any]] = []
 
-    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
-        captured.append({"url": str(url), "json": kwargs.get("json")})
-        return CallbackResult(
-            status=200,
-            payload={"user": {"authentication_token": "tok"}},
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(
+            {"url": f"{BASE_URL}{request.path}", "json": await request.json()}
         )
+        return web.json_response({"user": {"authentication_token": "tok"}})
 
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_LOGIN, handler)
     async with ClientSession() as session:
-        async with aiointercept(mock_external_urls=True) as mocked:
-            mocked.post(f"{BASE_URL}{API_LOGIN}", callback=_callback)
-            api = AirzoneAPI(
-                username="user@example.com",
-                password="secret",
-                session=session,
-            )
-
-            assert await api.login() is True
+        api = AirzoneAPI(
+            username="user@example.com",
+            password="secret",
+            session=session,
+        )
+        assert await api.login() is True
 
     assert api.token == "tok"
     assert api.password == "secret"
@@ -123,31 +129,27 @@ async def test_login_handles_unauthorized() -> None:
 
 @pytest.mark.asyncio
 async def test_fetch_installations_uses_installation_relations_endpoint(
-    socket_enabled: None,
+    socket_enabled: None, aiohttp_server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Installations should be read from /installation_relations with auth params."""
     captured: list[dict[str, str]] = []
 
-    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
-        captured.append(_request_params(url))
-        return CallbackResult(
-            status=200,
-            payload={
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(dict(request.query))
+        return web.json_response(
+            {
                 "installation_relations": [
                     {"installation_id": "install-123", "id": "relation-ignored"}
                 ]
-            },
+            }
         )
 
+    await _serve_api(
+        aiohttp_server, monkeypatch, "GET", API_INSTALLATION_RELATIONS, handler
+    )
     async with ClientSession() as session:
-        async with aiointercept(mock_external_urls=True) as mocked:
-            mocked.get(
-                re.compile(rf"^{re.escape(BASE_URL + API_INSTALLATION_RELATIONS)}.*$"),
-                callback=_callback,
-            )
-            api = AirzoneAPI("user@example.com", session, token="tok")
-
-            result = await api.fetch_installations()
+        api = AirzoneAPI("user@example.com", session, token="tok")
+        result = await api.fetch_installations()
 
     assert result == [{"installation_id": "install-123", "id": "relation-ignored"}]
     assert captured == [
@@ -161,24 +163,19 @@ async def test_fetch_installations_uses_installation_relations_endpoint(
 
 @pytest.mark.asyncio
 async def test_fetch_devices_uses_installation_id_query_param(
-    socket_enabled: None,
+    socket_enabled: None, aiohttp_server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Device snapshots should be fetched from /devices with installation_id."""
     captured: list[dict[str, str]] = []
 
-    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
-        captured.append(_request_params(url))
-        return CallbackResult(status=200, payload={"devices": [{"id": "dev1"}]})
+    async def handler(request: web.Request) -> web.Response:
+        captured.append(dict(request.query))
+        return web.json_response({"devices": [{"id": "dev1"}]})
 
+    await _serve_api(aiohttp_server, monkeypatch, "GET", API_DEVICES, handler)
     async with ClientSession() as session:
-        async with aiointercept(mock_external_urls=True) as mocked:
-            mocked.get(
-                re.compile(rf"^{re.escape(BASE_URL + API_DEVICES)}.*$"),
-                callback=_callback,
-            )
-            api = AirzoneAPI("user@example.com", session, token="tok")
-
-            result = await api.fetch_devices("install-123")
+        api = AirzoneAPI("user@example.com", session, token="tok")
+        result = await api.fetch_devices("install-123")
 
     assert result == [{"id": "dev1"}]
     assert captured == [
@@ -193,32 +190,29 @@ async def test_fetch_devices_uses_installation_id_query_param(
 
 @pytest.mark.asyncio
 async def test_put_device_fields_uses_device_endpoint_and_payload(
-    socket_enabled: None,
+    socket_enabled: None, aiohttp_server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Device writes should PUT the caller-provided payload to /devices/<id>."""
     captured: list[dict[str, Any]] = []
 
-    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
+    async def handler(request: web.Request) -> web.Response:
         captured.append(
             {
-                "url": str(url).partition("?")[0],
-                "params": _request_params(url),
-                "json": kwargs.get("json"),
+                "url": f"{BASE_URL}{request.path}",
+                "params": dict(request.query),
+                "json": await request.json(),
             }
         )
-        return CallbackResult(status=200, payload={"ok": True})
+        return web.json_response({"ok": True})
 
+    await _serve_api(
+        aiohttp_server, monkeypatch, "PUT", f"{API_DEVICES}/dev1", handler
+    )
     async with ClientSession() as session:
-        async with aiointercept(mock_external_urls=True) as mocked:
-            mocked.put(
-                re.compile(rf"^{re.escape(BASE_URL + API_DEVICES + '/dev1')}.*$"),
-                callback=_callback,
-            )
-            api = AirzoneAPI("user@example.com", session, token="tok")
-
-            result = await api.put_device_fields(
-                "dev1", {"device": {"scenary": "sleep"}}
-            )
+        api = AirzoneAPI("user@example.com", session, token="tok")
+        result = await api.put_device_fields(
+            "dev1", {"device": {"scenary": "sleep"}}
+        )
 
     assert result == {"ok": True}
     assert captured == [
@@ -235,29 +229,23 @@ async def test_put_device_fields_uses_device_endpoint_and_payload(
 
 
 @pytest.mark.asyncio
-async def test_send_event_treats_any_2xx_as_success(socket_enabled: None) -> None:
+async def test_send_event_treats_any_2xx_as_success(
+    socket_enabled: None, aiohttp_server, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The /events control endpoint should accept non-200 2xx responses."""
     captured: list[dict[str, Any]] = []
 
-    def _callback(url: URL, **kwargs: Any) -> CallbackResult:
+    async def handler(request: web.Request) -> web.Response:
         captured.append(
-            {
-                "params": _request_params(url),
-                "json": kwargs.get("json"),
-            }
+            {"params": dict(request.query), "json": await request.json()}
         )
-        return CallbackResult(status=202, payload={"accepted": True})
+        return web.json_response({"accepted": True}, status=202)
 
     payload = {"event": {"cgi": "modmaquina", "device_id": "dev1"}}
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
     async with ClientSession() as session:
-        async with aiointercept(mock_external_urls=True) as mocked:
-            mocked.post(
-                re.compile(rf"^{re.escape(BASE_URL + API_EVENTS)}.*$"),
-                callback=_callback,
-            )
-            api = AirzoneAPI("user@example.com", session, token="tok")
-
-            result = await api.send_event(payload)
+        api = AirzoneAPI("user@example.com", session, token="tok")
+        result = await api.send_event(payload)
 
     assert result == {"accepted": True}
     assert captured == [

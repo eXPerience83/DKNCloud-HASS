@@ -58,7 +58,7 @@ jobs:
               if not sep or not name or not version or name in requirements:
                   raise SystemExit(f"Invalid or duplicate exact pin: {text!r}")
               requirements[name] = version
-          expected = {"homeassistant", "pytest-homeassistant-custom-component", "aiointercept", "packaging"}
+          expected = {"homeassistant", "pytest-homeassistant-custom-component", "packaging"}
           if requirements.keys() != expected:
               raise SystemExit(f"Expected exactly {sorted(expected)}; found {sorted(requirements)}")
           if requirements["homeassistant"] != minimum:
