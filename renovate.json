@@ -11,16 +11,30 @@
         "pypi"
       ],
       "minimumReleaseAge": "3 days",
-      "minimumReleaseAgeBehaviour": "timestamp-required"
+      "minimumReleaseAgeBehaviour": "timestamp-required",
+      "internalChecksFilter": "strict"
+    },
+    {
+      "description": "Keep GitHub Actions Python on the Home Assistant/PHACC-validated 3.14 patch series; review new minor versions explicitly.",
+      "matchManagers": [
+        "pyenv"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "/^3\\.14\\.\\d+$/"
     },
     {
       "description": "Home Assistant and PHACC must advance together via the reviewed baseline updater (roadmap #109 phase 4). pytest-asyncio is a PHACC-owned exact transitive pin.",
       "matchPackageNames": [
         "homeassistant",
         "pytest-homeassistant-custom-component",
+        "pytest",
         "pytest-asyncio"
       ],
       "enabled": false
     }
-  ]
+  ],
+  "dependencyDashboard": true,
+  "internalChecksFilter": "strict"
 }
