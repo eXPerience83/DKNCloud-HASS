@@ -246,7 +246,7 @@ def _lock(
     source: str = 'virtual = "."',
     other: str = "1.0",
 ) -> str:
-    return f'''version = 1
+    return f"""version = 1
 revision = 1
 requires-python = ">=3.14"
 
@@ -289,7 +289,7 @@ test = [
     {{ name = "homeassistant", specifier = "=={ha}" }},
     {{ name = "pytest-homeassistant-custom-component", specifier = "=={phacc}" }},
 ]
-'''
+"""
 
 
 def _valid_locks() -> tuple[str, str]:

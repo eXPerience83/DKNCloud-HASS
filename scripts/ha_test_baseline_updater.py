@@ -281,7 +281,9 @@ def _validate_local_record(
     phacc: str,
 ) -> None:
     if len(before) != 1 or len(after) != 1:
-        raise UpdaterError("uv.lock must contain exactly one local dkncloud-hass record")
+        raise UpdaterError(
+            "uv.lock must contain exactly one local dkncloud-hass record"
+        )
     old, new = deepcopy(before[0]), deepcopy(after[0])
     if old.get("version") != new.get("version") or old.get("source") != new.get(
         "source"

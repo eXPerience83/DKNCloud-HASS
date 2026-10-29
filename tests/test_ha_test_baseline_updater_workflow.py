@@ -20,7 +20,7 @@ def test_updater_is_schedule_or_manual_only() -> None:
     assert "  workflow_dispatch:" in header
     assert "\n  push:" not in header
     assert "\n  pull_request:" not in header
-    assert '        default: false' in header
+    assert "        default: false" in header
 
 
 def test_validation_is_read_only_and_publication_is_gated() -> None:

@@ -12,11 +12,11 @@ def _package(name: str, version: str, *dependencies: str) -> str:
     if dependencies:
         items = ", ".join(f'{{ name = "{dependency}" }}' for dependency in dependencies)
         dependency_block = f"\ndependencies = [{items}]"
-    return f'''[[package]]
+    return f"""[[package]]
 name = "{name}"
 version = "{version}"
 source = {{ registry = "https://pypi.org/simple" }}{dependency_block}
-'''
+"""
 
 
 def _lock(
@@ -35,8 +35,7 @@ def _lock(
         _package(name, version, *dependencies)
         for name, version, dependencies in packages
     )
-    records.append(
-        f"""[[package]]
+    records.append(f"""[[package]]
 name = "dkncloud-hass"
 version = "4.0.3"
 source = {{ virtual = "." }}
@@ -62,8 +61,7 @@ test = [
     {{ name = "homeassistant", specifier = "=={ha}" }},
     {{ name = "pytest-homeassistant-custom-component", specifier = "=={phacc}" }},
 ]
-"""
-    )
+""")
     header = """version = 1
 revision = 1
 requires-python = ">=3.14"
