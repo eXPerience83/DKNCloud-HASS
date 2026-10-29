@@ -204,13 +204,13 @@ exclude-newer = "3 days"
 """
 
 
-def test_pyproject_updates_exact_two_pins_and_ha_comment() -> None:
+def test_pyproject_updates_exact_two_pins_preserving_other_comments() -> None:
     """The text update keeps unrelated configuration bytes intact."""
     updated = update_pyproject(_pyproject(), _update_plan())
 
     assert '"homeassistant==2026.9.0"' in updated
     assert '"pytest-homeassistant-custom-component==0.13.400"' in updated
-    assert "# Home Assistant 2026.9.0 requires Python 3.14.2+" in updated
+    assert "# Home Assistant 2026.8.3 requires Python 3.14.2+" in updated
     assert "# Tooling aligned to the Home Assistant 2026.5" in updated
 
 

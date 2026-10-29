@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import shutil
 import subprocess
@@ -44,8 +43,8 @@ def test_baseline_pr_ref_sanitizer_is_portable(value: str, expected: str) -> Non
     assert "[:alnum:]_.-" in sanitizer
     assert "[:alnum:]._- " not in sanitizer
 
-    env = os.environ.copy()
-    env["VALUE"] = value
+    # Explicit benign subprocess environment: do not inherit user secrets.
+    env = {"VALUE": value, "PATH": "/usr/bin:/bin", "LC_ALL": "C"}
     result = subprocess.run(
         [
             "bash",
