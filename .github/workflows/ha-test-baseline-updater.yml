@@ -1,6 +1,11 @@
 name: Reviewed HA Test Baseline Updater
 
 on:
+  # Temporary dry-run trigger on the feature branch only. Remove before merge.
+  push:
+    branches: [ci/109-review-only-ha-baseline-updater]
+    paths:
+      - .github/workflows/ha-test-baseline-updater.yml
   schedule:
     - cron: "43 6 * * *"
   workflow_dispatch:
