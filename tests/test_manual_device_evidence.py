@@ -33,6 +33,10 @@ def test_record_and_export_only_allowlisted_data() -> None:
         "auto",
         22.5,
     )
+    # A forgotten raw log must never be included in the exported ZIP.
+    (evidence.RUNS / name / "raw-request.log").write_text(
+        "user_token=private-secret", encoding="utf-8"
+    )
     path = evidence.finish(name)
     with zipfile.ZipFile(path) as archive:
         assert set(archive.namelist()) == {
