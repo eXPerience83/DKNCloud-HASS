@@ -1,6 +1,9 @@
 {
   "domain": "airzoneclouddaikin",
   "name": "DKN Cloud for HASS",
+  "categories": [
+    "climate.heat_pumps_air_conditioning"
+  ],
   "codeowners": [
     "@eXPerience83"
   ],
@@ -11,8 +14,5 @@
   "documentation": "https://github.com/eXPerience83/DKNCloud-HASS",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
-  "version": "0.5.0a2",
-  "categories": [
-    "climate.heat_pumps_air_conditioning"
-  ]
+  "version": "0.5.0a2"
 }
