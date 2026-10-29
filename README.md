@@ -239,8 +239,8 @@ tests) was **69.62% statement coverage across 2,097 executable statements**
 at **70.17%**. These are observations from the pinned Python 3.14.7 /
 HA 2026.10.4 harness, **not claims of completeness or real-device coverage**.
 After the new lifecycle, command and API contract tests, the same harness passed
-**203 tests** with **75.49%** global coverage, including **69.14%** in
-`climate.py`, **75.56%** in `airzone_api.py` and **74.76%** in `__init__.py`.
+**204 tests** with **75.54%** global coverage, including **69.14%** in
+`climate.py`, **75.56%** in `airzone_api.py` and **74.95%** in `__init__.py`.
 The incremental gates are **74% global**, **65% climate**, **75% API** and
 **73% coordinator** — deliberately below measured values with a modest margin.
 
@@ -273,7 +273,9 @@ concurrent installation collection and cancellation, HTTP error/retry handling,
 and DKN `P1/P3/P4/P7/P8` climate commands. **No public CI test authenticates
 against the Airzone service or uses real MACs, PINs or account credentials.**
 The HACS/Marketplace installation and physical backend convergence still require
-separate manual smoke evidence; see [#121](https://github.com/eXPerience83/DKNCloud-HASS/issues/121)
+separate manual smoke evidence. The current runtime has no separate
+`infomaquina` HTTP endpoint; `GET /devices`, `POST /events` and P-channel
+write contracts are exercised with synthetic data. See [#121](https://github.com/eXPerience83/DKNCloud-HASS/issues/121)
 and hardware-gated [#102](https://github.com/eXPerience83/DKNCloud-HASS/pull/102).
 
 A **[daily reviewed baseline updater](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-test-baseline-updater.yml)** checks the stable, non-yanked HA/PHACC pair at **06:43 UTC**, independently of the daily compatibility canary. It derives the maturity policy from the existing `[tool.uv].exclude-newer = "3 days"` setting, **requires both HA and PHACC releases to age at least three days**, and never upgrades only one side of an exact-match harness pair. No prerelease or yanked build is promoted; PHACC lag is reported without claiming the latest HA was tested.
