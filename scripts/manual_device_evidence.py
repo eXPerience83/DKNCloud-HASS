@@ -13,16 +13,37 @@ from pathlib import Path
 
 RUNS = Path(__file__).resolve().parent.parent / "secrets" / "manual-runs"
 CASES = (
-    "setup", "registry", "state_read", "ha_command", "official_app",
-    "physical_controls", "refresh_102", "reload", "restart",
-    "offline_recovery", "reauth", "options", "marketplace_install", "hacs_upgrade",
+    "setup",
+    "registry",
+    "state_read",
+    "ha_command",
+    "official_app",
+    "physical_controls",
+    "refresh_102",
+    "reload",
+    "restart",
+    "offline_recovery",
+    "reauth",
+    "options",
+    "marketplace_install",
+    "hacs_upgrade",
 )
 CHECKPOINTS = (
-    "baseline", "action", "snapshot_before", "refresh_requested",
-    "snapshot_after", "ha_observed", "recovered", "verification",
+    "baseline",
+    "action",
+    "snapshot_before",
+    "refresh_requested",
+    "snapshot_after",
+    "ha_observed",
+    "recovered",
+    "verification",
 )
 SOURCES = (
-    "home_assistant", "official_app", "physical_unit", "backend_snapshot", "tester",
+    "home_assistant",
+    "official_app",
+    "physical_unit",
+    "backend_snapshot",
+    "tester",
 )
 RESULTS = ("pass", "fail", "pending", "stale", "unavailable")
 MODES = ("unknown", "off", "cool", "heat", "fan_only", "dry", "heat_cool")
@@ -30,13 +51,19 @@ POWER = ("unknown", "on", "off")
 FAN = ("unknown", "auto", "1", "2", "3", "4", "5")
 VARIANTS = ("main", "pr102")
 RUN_NAME = re.compile(r"dkn-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\Z")
-HA_VERSION = re.compile(
-    r"20[0-9]{2}\.[0-9]{1,2}\.[0-9]{1,2}(?:b[0-9]+|rc[0-9]+)?\Z"
-)
+HA_VERSION = re.compile(r"20[0-9]{2}\.[0-9]{1,2}\.[0-9]{1,2}(?:b[0-9]+|rc[0-9]+)?\Z")
 REVISION = re.compile(r"[0-9a-f]{40}\Z")
 RECORD_KEYS = {
-    "timestamp_utc", "case", "checkpoint", "source", "result",
-    "elapsed_seconds", "power", "mode", "fan", "setpoint_c",
+    "timestamp_utc",
+    "case",
+    "checkpoint",
+    "source",
+    "result",
+    "elapsed_seconds",
+    "power",
+    "mode",
+    "fan",
+    "setpoint_c",
 }
 
 
@@ -71,9 +98,7 @@ def _validate_record(value: object) -> dict:
     ):
         raise ValueError("Elapsed seconds must be between 0 and 3600")
     temp = value["setpoint_c"]
-    if temp is not None and (
-        type(temp) not in (float, int) or not 0 <= temp <= 50
-    ):
+    if temp is not None and (type(temp) not in (float, int) or not 0 <= temp <= 50):
         raise ValueError("Setpoint must be between 0 and 50 degrees Celsius")
     return value
 
@@ -121,9 +146,7 @@ def record(
     setpoint_c: float | None = None,
 ) -> None:
     folder = _run_dir(name)
-    if not (folder / "session.json").is_file() or (
-        folder / "evidence.zip"
-    ).exists():
+    if not (folder / "session.json").is_file() or (folder / "evidence.zip").exists():
         raise ValueError("Run does not exist or has already been finalized")
     item = _validate_record(
         {
@@ -145,11 +168,13 @@ def record(
 
 def finish(name: str) -> Path:
     folder = _run_dir(name)
-    metadata = json.loads(
-        (folder / "session.json").read_text(encoding="utf-8")
-    )
+    metadata = json.loads((folder / "session.json").read_text(encoding="utf-8"))
     allowed = {
-        "schema", "variant", "ha_version", "revision", "started_utc",
+        "schema",
+        "variant",
+        "ha_version",
+        "revision",
+        "started_utc",
         "evidence_kind",
     }
     if set(metadata) != allowed:
@@ -179,8 +204,7 @@ def finish(name: str) -> Path:
     if not records:
         raise ValueError("No observations recorded")
     counts = {
-        status: sum(item["result"] == status for item in records)
-        for status in RESULTS
+        status: sum(item["result"] == status for item in records) for status in RESULTS
     }
     summary = [
         "# DKN real-device manual observation log",
@@ -216,9 +240,7 @@ def finish(name: str) -> Path:
         "SUMMARY.md": "\n".join(summary) + "\n",
     }
     destination = folder / "evidence.zip"
-    with zipfile.ZipFile(
-        destination, "w", compression=zipfile.ZIP_DEFLATED
-    ) as archive:
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for filename, data in contents.items():
             archive.writestr(filename, data)
     return destination
@@ -250,8 +272,15 @@ def main(argv: list[str] | None = None) -> int:
             print(start(args.variant, args.ha_version, args.revision))
         elif args.action == "record":
             record(
-                args.run, args.case, args.checkpoint, args.source, args.result,
-                args.elapsed_seconds, args.power, args.mode, args.fan,
+                args.run,
+                args.case,
+                args.checkpoint,
+                args.source,
+                args.result,
+                args.elapsed_seconds,
+                args.power,
+                args.mode,
+                args.fan,
                 args.setpoint_c,
             )
             print("Observation recorded (allowlisted fields only)")
