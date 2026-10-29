@@ -459,7 +459,7 @@ wheels = [
 
 [[package]]
 name = "black"
-version = "26.1.0"
+version = "26.10.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -469,14 +469,14 @@ dependencies = [
     { name = "platformdirs" },
     { name = "pytokens" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/88/560b11e521c522440af991d46848a2bde64b5f7202ec14e1f46f9509d328/black-26.1.0.tar.gz", hash = "sha256:d294ac3340eef9c9eb5d29288e96dc719ff269a88e27b396340459dd85da4c58", size = 658785, upload-time = "2026-01-18T04:50:11.993Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/65/a9611a6ec0a8c88d86e59385da02d68d9533f7e86a05913d20c67be54029/black-26.10.1.tar.gz", hash = "sha256:5f9f83beae62437e060dafd53d7f1fc327e3d3494f74d72ee5c2b73eb90fc4e7", size = 741979, upload-time = "2026-10-10T04:13:40.776Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6a/83/be35a175aacfce4b05584ac415fd317dd6c24e93a0af2dcedce0f686f5d8/black-26.1.0-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:9dc8c71656a79ca49b8d3e2ce8103210c9481c57798b48deeb3a8bb02db5f115", size = 1871864, upload-time = "2026-01-18T04:59:47.586Z" },
-    { url = "https://files.pythonhosted.org/packages/a5/f5/d33696c099450b1274d925a42b7a030cd3ea1f56d72e5ca8bbed5f52759c/black-26.1.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:b22b3810451abe359a964cc88121d57f7bce482b53a066de0f1584988ca36e79", size = 1701009, upload-time = "2026-01-18T04:59:49.443Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/87/670dd888c537acb53a863bc15abbd85b22b429237d9de1b77c0ed6b79c42/black-26.1.0-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:53c62883b3f999f14e5d30b5a79bd437236658ad45b2f853906c7cbe79de00af", size = 1767806, upload-time = "2026-01-18T04:59:50.769Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/9c/cd3deb79bfec5bcf30f9d2100ffeec63eecce826eb63e3961708b9431ff1/black-26.1.0-cp314-cp314-win_amd64.whl", hash = "sha256:f016baaadc423dc960cdddf9acae679e71ee02c4c341f78f3179d7e4819c095f", size = 1433217, upload-time = "2026-01-18T04:59:52.218Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/29/f3be41a1cf502a283506f40f5d27203249d181f7a1a2abce1c6ce188035a/black-26.1.0-cp314-cp314-win_arm64.whl", hash = "sha256:66912475200b67ef5a0ab665011964bf924745103f51977a78b4fb92a9fc1bf0", size = 1245773, upload-time = "2026-01-18T04:59:54.457Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/3d/51bdb3ecbfadfaf825ec0c75e1de6077422b4afa2091c6c9ba34fbfc0c2d/black-26.1.0-py3-none-any.whl", hash = "sha256:1054e8e47ebd686e078c0bb0eaf31e6ce69c966058d122f2c0c950311f9f3ede", size = 204010, upload-time = "2026-01-18T04:50:09.978Z" },
+    { url = "https://files.pythonhosted.org/packages/76/7b/e8d275b23f3023881c0b0d8ce3bbda0d100c79bdef87fb6518bf9e0c5040/black-26.10.1-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:8375962579d537364cc0efa19b1474481915d3a793f9fc0774901814c5e5b5f4", size = 2147731, upload-time = "2026-10-10T04:19:04.643Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/62/e44f86ee5fc7b893ee0ee935a79c785932da7758d2c339749d90a20ef213/black-26.10.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:d8b3a9074a680b3c5749633714e9ae3992a1e5a23343a97ad61cd9b119b444d2", size = 1981714, upload-time = "2026-10-10T04:19:06.287Z" },
+    { url = "https://files.pythonhosted.org/packages/89/2f/e12ca76edfcd037fe9e7e7635d9468d1d51255cf25a01b2f8f97a38f147d/black-26.10.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:289282aa2e09d3162312a3be1788ff21b08e9ea9cc4a81e656024728b32428fb", size = 2047807, upload-time = "2026-10-10T04:19:08.193Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/af/676d3c5cbb2ab0f17c8459b3ae8ea15ebdcc5a2f1c1c586228ec85b8897f/black-26.10.1-cp314-cp314-win_amd64.whl", hash = "sha256:5cd88fd7b444ca51f3fc883b6f6657ea53a258b0b2eef6d9f2dfcfa17ce0e27b", size = 1652537, upload-time = "2026-10-10T04:19:09.817Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/7b/860022d369fdd5fe14280b1e7109f58753c371ff91ce2311d68a056e488a/black-26.10.1-cp314-cp314-win_arm64.whl", hash = "sha256:2520037aa62f8a1454d0811b8f5c88b444445b03a4bfba480d8d220893b64c34", size = 1504226, upload-time = "2026-10-10T04:19:11.367Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/28/9dd29175c1db777e6189e2a0bb5f37101adf19c3e509b236c8920f778d0b/black-26.10.1-py3-none-any.whl", hash = "sha256:28842f9a8207cc1df6eb983a35a14c5a0dfcd603d214fe82d84bef552afd2e3a", size = 239267, upload-time = "2026-10-10T04:13:38.808Z" },
 ]
 
 [[package]]
@@ -1027,12 +1027,12 @@ test = [
 
 [package.metadata.requires-dev]
 lint = [
-    { name = "black", specifier = "==26.1.0" },
+    { name = "black", specifier = "==26.10.1" },
     { name = "ruff", specifier = "==0.17.2" },
 ]
 release = [
     { name = "aiointercept", specifier = "==0.1.12" },
-    { name = "black", specifier = "==26.1.0" },
+    { name = "black", specifier = "==26.10.1" },
     { name = "homeassistant", specifier = "==2026.10.4" },
     { name = "pytest", specifier = "==9.0.3" },
     { name = "pytest-cov", specifier = "==7.1.0" },
