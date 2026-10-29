@@ -88,9 +88,7 @@ def validate_zip(
                 (".pyc", ".pyo")
             ):
                 raise ValueError(f"Generated/cache file in release ZIP: {name!r}")
-            if item.create_system == 3 and stat.S_ISLNK(
-                item.external_attr >> 16
-            ):
+            if item.create_system == 3 and stat.S_ISLNK(item.external_attr >> 16):
                 raise ValueError(f"Symlink in release ZIP: {name!r}")
 
         files = {item.filename for item in members if not item.is_dir()}
@@ -106,15 +104,18 @@ def validate_zip(
     if manifest.get("domain") != DOMAIN:
         raise ValueError(f"Unexpected integration domain: {manifest.get('domain')!r}")
     if manifest.get("categories") != [CATEGORY]:
-        raise ValueError("Marketplace category must identify heat pumps/air conditioning")
+        raise ValueError(
+            "Marketplace category must identify heat pumps/air conditioning"
+        )
     if manifest.get("config_flow") is not True:
         raise ValueError("Marketplace integration requires its config flow")
     version = manifest.get("version")
     if not isinstance(version, str) or not version.strip():
         raise ValueError("manifest.json requires a nonempty version")
-    if not isinstance(manifest.get("issue_tracker"), str) or not manifest[
-        "issue_tracker"
-    ].strip():
+    if (
+        not isinstance(manifest.get("issue_tracker"), str)
+        or not manifest["issue_tracker"].strip()
+    ):
         raise ValueError("manifest.json requires issue_tracker")
     if expected_release_tag is not None and expected_release_tag != f"v{version}":
         raise ValueError(
@@ -127,9 +128,7 @@ def main() -> None:
     """Validate the archive created in package CI or a release workflow."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument(
-        "--hacs-json", type=Path, default=Path("hacs.json")
-    )
+    parser.add_argument("--hacs-json", type=Path, default=Path("hacs.json"))
     parser.add_argument("--expected-release-tag")
     args = parser.parse_args()
     try:
