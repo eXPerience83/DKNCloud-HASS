@@ -238,6 +238,11 @@ tests) was **69.62% statement coverage across 2,097 executable statements**
 `airzone_api.py` at **72.78%**, and the integration coordinator (`__init__.py`)
 at **70.17%**. These are observations from the pinned Python 3.14.7 /
 HA 2026.10.4 harness, **not claims of completeness or real-device coverage**.
+After the new lifecycle, command and API contract tests, the same harness passed
+**203 tests** with **75.49%** global coverage, including **69.14%** in
+`climate.py`, **75.56%** in `airzone_api.py` and **74.76%** in `__init__.py`.
+The incremental gates are **74% global**, **65% climate**, **75% API** and
+**73% coordinator** — deliberately below measured values with a modest margin.
 
 The normal locked **current-HA** test workflow runs pytest-cov and uploads
 `coverage.json` and `coverage.xml` as a downloadable GitHub Actions artifact.
@@ -255,10 +260,10 @@ uv run --locked --no-sync python -m pytest -q \
   --cov-report=xml:coverage.xml \
   --cov-report=json:coverage.json
 uv run --locked --no-sync python scripts/check_coverage.py \
-  coverage.json --min-total 70.0 \
-  --module-min __init__.py=70.0 \
+  coverage.json --min-total 74.0 \
+  --module-min __init__.py=73.0 \
   --module-min airzone_api.py=75.0 \
-  --module-min climate.py=50.0
+  --module-min climate.py=65.0
 ```
 
 Added regression cases use only deterministic synthetic data, HA's in-memory

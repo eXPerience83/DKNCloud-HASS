@@ -883,3 +883,34 @@ async def test_entry_restart_simulation_reuses_token_and_cleans_state(
     assert "pending_refresh" not in second
     assert second["coordinator"].data["dev1"]["id"] == "dev1"
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
+    sample_device: dict[str, Any],
+) -> None:
+    """An options change rebuilds the HA coordinator and retains its snapshots."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(
+        hass,
+        entry,
+        setup_api_class,
+        installations=[{"installation_id": "site-1"}],
+        devices_by_installation={"site-1": [sample_device]},
+    )
+    previous = hass.data[DOMAIN][entry.entry_id]["api"]
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_SCAN_INTERVAL: 20}
+    )
+    await hass.async_block_till_done()
+
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["api"] is not previous
+    assert bucket["scan_interval"] == 20
+    assert bucket["coordinator"].data["dev1"]["id"] == "dev1"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
