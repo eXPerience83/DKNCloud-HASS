@@ -10,7 +10,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 [![Lint](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/lint.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/lint.yml)
 [![CodeQL](https://img.shields.io/badge/CodeQL-Enabled-success?logo=github)](https://github.com/eXPerience83/DKNCloud-HASS/security/code-scanning)
 [![License](https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS?logo=github)](./LICENSE)
-[![HACS Default](https://img.shields.io/badge/HACS-Default-blue.svg)](https://github.com/hacs/integration)
+[![HACS / Marketplace catalog](https://img.shields.io/badge/HACS%20%2F%20Marketplace-Catalog-blue.svg)](https://github.com/hacs/default/blob/master/integration)
 [![Python](https://img.shields.io/badge/python-3.14.0%2B-blue)](https://www.python.org/)
 [![Ko-fi](https://img.shields.io/badge/Ko%E2%80%91fi-Support%20this%20project-ff5e5b?logo=ko-fi&logoColor=white)](https://ko-fi.com/experience83)
 [![PayPal](https://img.shields.io/badge/PayPal-Donate-blue?logo=paypal)](https://paypal.me/eXPerience83)
@@ -75,14 +75,24 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 ## ⚙️ Installation
 
-### HACS (Default store — Recommended)
-1. In Home Assistant, go to **HACS → Integrations**  
-2. Search for **DKN Cloud for HASS**  
-3. Click **Install** and then **Restart** Home Assistant  
-4. Go to **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for HASS**  
-   [![Open your Home Assistant instance and start setting up DKN Cloud for HASS.](https://my.home-assistant.io/badges/integration.svg)](https://my.home-assistant.io/redirect/integration/?domain=airzoneclouddaikin)
+### Home Assistant 2026.11+ — built-in Marketplace (recommended)
+1. Open **Settings → Marketplace** in Home Assistant (no separate HACS installation).
+2. Find **DKN Cloud for HASS** in the integration catalog and install it.
+3. Follow any restart prompt, then open **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for HASS**.
 
-> **Manual (advanced; not needed when using HACS):**  
+[![Open the DKN Cloud repository in Home Assistant Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration)
+
+### Home Assistant 2026.10 and earlier — HACS
+1. Open **HACS → Integrations**, search for **DKN Cloud for HASS**, and install.
+2. Restart if prompted, then add **DKN Cloud for HASS** under **Settings → Devices & Services**.
+
+The [existing HACS link](https://my.home-assistant.io/redirect/hacs_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration) also forwards to Marketplace from HA 2026.11 onward. Existing HACS-installed integrations are migrated by Home Assistant. Both use the same `hacs.json` and GitHub release ZIP.
+
+**Release availability:** `v0.5.0a2` is a **pre-release** and is available only to users who opt into pre-releases; the regular stable channel does not automatically receive this alpha. Do not treat CI success as real-device validation or a stable release.
+
+[![Start configuring DKN Cloud in Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=airzoneclouddaikin)
+
+> **Manual (advanced; not needed when using Marketplace/HACS):**  
 > Copy `custom_components/airzoneclouddaikin/` into your `<config>/custom_components/` folder and restart.
 
 ---
@@ -180,7 +190,7 @@ The locked test baseline runs on **Python 3.14.7**, with
 `pytest-homeassistant-custom-component==0.13.375`.
 All test and lint dependencies (including transitives) are recorded in
 `uv.lock`. This is the **test baseline**, not a change to the minimum
-supported Home Assistant version (**2026.3.0**).
+supported Home Assistant version (**2026.3.1**).
 
 Install [uv](https://docs.astral.sh/uv/), then run:
 
