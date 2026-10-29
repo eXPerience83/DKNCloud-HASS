@@ -1,0 +1,30 @@
+name: Temporary phase 6 formatting preview
+
+on:
+  pull_request:
+    paths:
+      - scripts/manual_device_evidence.py
+      - tests/test_manual_device_evidence.py
+      - .github/workflows/phase6-format-preview.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version-file: pyproject.toml
+      - run: |
+          uv lock --check
+          uv sync --locked --only-group lint
+          uv run --locked --no-sync black --diff scripts/manual_device_evidence.py tests/test_manual_device_evidence.py
