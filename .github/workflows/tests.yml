@@ -66,4 +66,29 @@ jobs:
           PYTHONPATH: .
         run: |
           set -euo pipefail
-          uv run --locked --no-sync python -m pytest -q
+          uv run --locked --no-sync python -m pytest -q \
+            --cov=custom_components.airzoneclouddaikin \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=xml:coverage.xml \
+            --cov-report=json:coverage.json
+
+      - name: Report and check incremental statement coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --locked --no-sync python scripts/check_coverage.py \
+            coverage.json --min-total 74.0 \
+            --module-min __init__.py=73.0 \
+            --module-min airzone_api.py=75.0 \
+            --module-min climate.py=65.0
+
+      - name: Upload per-module coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: dkn-statement-coverage
+          path: |
+            coverage.json
+            coverage.xml
+          if-no-files-found: warn
+          retention-days: 14

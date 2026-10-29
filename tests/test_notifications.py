@@ -807,3 +807,110 @@ async def test_async_update_data_prunes_removed_installation_cache_state(
     assert set(data) == {"dev-b"}
     assert "inst-a" not in bucket["last_devices_by_inst"]
     assert "dev-a" not in bucket["device_installation_map"]
+
+
+@pytest.mark.asyncio
+async def test_config_entry_reload_reconstructs_coordinator_with_same_device(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
+    sample_device: dict[str, Any],
+) -> None:
+    """Reload is a real Home Assistant lifecycle transition, not just a fake callback."""
+    from homeassistant.helpers import device_registry, entity_registry
+
+    entry = dkn_config_entry_factory()
+    await _setup_entry(
+        hass,
+        entry,
+        setup_api_class,
+        installations=[{"installation_id": "installation-1"}],
+        devices_by_installation={"installation-1": [sample_device]},
+    )
+    initial_api = hass.data[DOMAIN][entry.entry_id]["api"]
+    entities = entity_registry.async_entries_for_config_entry(
+        entity_registry.async_get(hass), entry.entry_id
+    )
+    climate_entities = [entity for entity in entities if entity.domain == "climate"]
+    assert climate_entities, "Setup should publish a climate entity to HA"
+    dev_reg = device_registry.async_get(hass)
+    assert any(
+        entity.device_id and dev_reg.async_get(entity.device_id) is not None
+        for entity in climate_entities
+    )
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["api"] is not initial_api
+    assert bucket["coordinator"].data["dev1"]["id"] == "dev1"
+    after = entity_registry.async_entries_for_config_entry(
+        entity_registry.async_get(hass), entry.entry_id
+    )
+    assert {entity.entity_id for entity in after} == {
+        entity.entity_id for entity in entities
+    }
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_entry_restart_simulation_reuses_token_and_cleans_state(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
+    sample_device: dict[str, Any],
+) -> None:
+    """An unload/setup round trip keeps persisted HA options but not transient state."""
+    entry = dkn_config_entry_factory(options={"user_token": "synthetic-token"})
+    await _setup_entry(
+        hass,
+        entry,
+        setup_api_class,
+        installations=[{"installation_id": "site"}],
+        devices_by_installation={"site": [sample_device]},
+    )
+    first_api = hass.data[DOMAIN][entry.entry_id]["api"]
+    hass.data[DOMAIN][entry.entry_id]["pending_refresh"] = object()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert entry.entry_id not in hass.data[DOMAIN]
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    second = hass.data[DOMAIN][entry.entry_id]
+    assert second["api"] is not first_api
+    assert second["api"].token == "synthetic-token"
+    assert "pending_refresh" not in second
+    assert second["coordinator"].data["dev1"]["id"] == "dev1"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.asyncio
+async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
+    sample_device: dict[str, Any],
+) -> None:
+    """An options change rebuilds the HA coordinator and retains its snapshots."""
+    entry = dkn_config_entry_factory()
+    await _setup_entry(
+        hass,
+        entry,
+        setup_api_class,
+        installations=[{"installation_id": "site-1"}],
+        devices_by_installation={"site-1": [sample_device]},
+    )
+    previous = hass.data[DOMAIN][entry.entry_id]["api"]
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_SCAN_INTERVAL: 20}
+    )
+    await hass.async_block_till_done()
+
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["api"] is not previous
+    assert bucket["scan_interval"] == 20
+    assert bucket["coordinator"].data["dev1"]["id"] == "dev1"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

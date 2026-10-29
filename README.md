@@ -230,6 +230,54 @@ PYTHONPATH=. .venv-minimum-ha/bin/python -m pytest -q
 
 A **separate [daily Home Assistant compatibility canary](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-compatibility-canary.yml)** runs at **04:47 UTC** and can be launched manually. It selects the newest **stable, non-yanked** HA version with a matching stable `pytest-homeassistant-custom-component` release, skips HA prereleases and reports when the harness trails the latest stable HA. It installs the selected pair in an isolated virtual environment and runs the **same full pytest suite**, with no credentials or DKN cloud access. Canary failures reveal compatibility problems but **do not block PR CI, update `uv.lock`, or trigger automatic dependency updates**. It runs on the pinned Python 3.14 baseline; if a future HA requires another Python version, the installation failure will be visible rather than silently widening support.
 
+### DKN-specific coverage and regression testing
+
+The first measured baseline in phase 5 (before adding DKN command/lifecycle
+tests) was **69.62% statement coverage across 2,097 executable statements**
+(167 passing tests). In particular, `climate.py` began at **47.56%**,
+`airzone_api.py` at **72.78%**, and the integration coordinator (`__init__.py`)
+at **70.17%**. These are observations from the pinned Python 3.14.7 /
+HA 2026.10.4 harness, **not claims of completeness or real-device coverage**.
+After the new lifecycle, command and API contract tests, the same harness passed
+**204 tests** with **75.54%** global coverage, including **69.14%** in
+`climate.py`, **75.56%** in `airzone_api.py` and **74.95%** in `__init__.py`.
+The incremental gates are **74% global**, **65% climate**, **75% API** and
+**73% coordinator** — deliberately below measured values with a modest margin.
+
+The normal locked **current-HA** test workflow runs pytest-cov and uploads
+`coverage.json` and `coverage.xml` as a downloadable GitHub Actions artifact.
+Its GitHub Step Summary shows per-module statement counts and flags regressions
+below incremental, evidence-based floors. The independently hash-locked minimum-HA
+workflow still runs the **same full suite** without needing pytest-cov (to avoid
+unreviewed changes to its fixed dependency graph). Run locally with:
+
+```sh
+uv lock --check
+uv sync --locked --only-group test
+uv run --locked --no-sync python -m pytest -q \
+  --cov=custom_components.airzoneclouddaikin \
+  --cov-report=term-missing:skip-covered \
+  --cov-report=xml:coverage.xml \
+  --cov-report=json:coverage.json
+uv run --locked --no-sync python scripts/check_coverage.py \
+  coverage.json --min-total 74.0 \
+  --module-min __init__.py=73.0 \
+  --module-min airzone_api.py=75.0 \
+  --module-min climate.py=65.0
+```
+
+Added regression cases use only deterministic synthetic data, HA's in-memory
+test harness and local loopback HTTP. They exercise real HA entry setup,
+entity/device registries, unload/reload/restart simulation, legacy entry migration,
+concurrent installation collection and cancellation, HTTP error/retry handling,
+and DKN `P1/P3/P4/P7/P8` climate commands. **No public CI test authenticates
+against the Airzone service or uses real MACs, PINs or account credentials.**
+The HACS/Marketplace installation and physical backend convergence still require
+separate manual smoke evidence. The current runtime has no separate
+`infomaquina` HTTP endpoint; `GET /devices`, `POST /events` and P-channel
+write contracts are exercised with synthetic data. See [#121](https://github.com/eXPerience83/DKNCloud-HASS/issues/121)
+and hardware-gated [#102](https://github.com/eXPerience83/DKNCloud-HASS/pull/102).
+
 A **[daily reviewed baseline updater](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-test-baseline-updater.yml)** checks the stable, non-yanked HA/PHACC pair at **06:43 UTC**, independently of the daily compatibility canary. It derives the maturity policy from the existing `[tool.uv].exclude-newer = "3 days"` setting, **requires both HA and PHACC releases to age at least three days**, and never upgrades only one side of an exact-match harness pair. No prerelease or yanked build is promoted; PHACC lag is reported without claiming the latest HA was tested.
 
 When a pair is mature, the updater tests a **proposed** `pyproject.toml` + `uv.lock` in an isolated validation job: the delta must be confined to the HA/PHACC dependency graph, `uv lock --check`, the full pytest suite, Ruff and Black must pass. Only then may a separate narrowly permissioned job open **one review-only PR**. Its artifact is hash-verified, its branch is unique per version pair, and it rejects duplicate PRs, failed validation and a moved `main`. **No automerge** or automatic release is enabled, and `.github/requirements/minimum-ha.*`, `hacs.json` and runtime integration code remain untouched. With manual **Run workflow**, `publish=false` performs a read-only dry run; selecting `publish=true` may propose a PR only when run from `main`.
