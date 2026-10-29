@@ -358,3 +358,78 @@ async def test_send_event_maps_423_machine_not_ready() -> None:
 
     assert exc_info.value.translation_domain == "airzoneclouddaikin"
     assert exc_info.value.translation_key == "machine_not_ready"
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
+async def test_nonretryable_errors_are_propagated_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+) -> None:
+    """Never retry client or 401 errors, including authentication failures."""
+    api, sleeps = _make_api(monkeypatch, [_client_response_error(status=status)])
+
+    with pytest.raises(ClientResponseError) as error:
+        await api._authed_request_with_retries("GET", "/devices?secret=redacted")
+
+    assert error.value.status == status
+    assert api._request.await_count == 1
+    assert sleeps == []
+
+
+async def test_timeout_retries_only_once_when_second_call_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated timeouts are finite and do not exhaust the 5xx retry budget."""
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
+        lambda *_: 0.0,
+    )
+    api, sleeps = _make_api(monkeypatch, [TimeoutError(), TimeoutError()])
+    with pytest.raises(TimeoutError):
+        await api._authed_request_with_retries("GET", "/devices")
+    assert api._request.await_count == 2
+    assert sleeps == pytest.approx([0.4])
+
+
+async def test_429_retry_after_is_honored_but_cooldown_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Server Retry-After determines actual sleep; shared cooldown caps at 10s."""
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
+        lambda *_: 0.0,
+    )
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "100"}), {"ok": 1}]
+    )
+    assert await api._authed_request_with_retries("GET", "/devices") == {"ok": 1}
+    assert sleeps == [100.0]
+    assert api._cooldown_until == pytest.approx(10.0)
+
+
+async def test_request_cancellation_is_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller cancellation propagates without retry or sleeping."""
+    import asyncio
+
+    api, sleeps = _make_api(monkeypatch, [asyncio.CancelledError()])
+    with pytest.raises(asyncio.CancelledError):
+        await api._authed_request_with_retries("GET", "/devices")
+    assert api._request.await_count == 1
+    assert sleeps == []
+
+
+async def test_real_client_204_reply_returns_empty_body(
+    socket_enabled: None,
+    aiohttp_server,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The HTTP response contract accepts empty successful bodies."""
+    async def handler(_request: web.Request) -> web.Response:
+        return web.Response(status=204)
+
+    await _serve_api(aiohttp_server, monkeypatch, "DELETE", "/devices/dev1", handler)
+    async with ClientSession() as session:
+        api = AirzoneAPI("user@example.com", session, token="tok")
+        assert await api._request("DELETE", "/devices/dev1") == ""
