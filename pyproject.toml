@@ -14,6 +14,7 @@ lint = [
 ]
 test = [
     "pytest==9.0.3",
+    "pytest-cov==7.1.0",
     # pytest-asyncio is an exact transitive dependency of the pinned PHACC.
     # Do not update it independently: PHACC owns the compatible version.
     "aiointercept==0.1.12",
