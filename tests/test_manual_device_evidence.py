@@ -22,17 +22,25 @@ def test_record_and_export_only_allowlisted_data() -> None:
     name = evidence.start("pr102", "2026.10.4", "a" * 40)
     evidence.record(name, "official_app", "action", "official_app", "pass", 0)
     evidence.record(
-        name, "refresh_102", "snapshot_after", "backend_snapshot", "pass",
-        12.4, "on", "cool", "auto", 22.5,
+        name,
+        "refresh_102",
+        "snapshot_after",
+        "backend_snapshot",
+        "pass",
+        12.4,
+        "on",
+        "cool",
+        "auto",
+        22.5,
     )
     path = evidence.finish(name)
     with zipfile.ZipFile(path) as archive:
         assert set(archive.namelist()) == {
-            "session.json", "observations.jsonl", "SUMMARY.md",
+            "session.json",
+            "observations.jsonl",
+            "SUMMARY.md",
         }
-        body = "\n".join(
-            archive.read(item).decode() for item in archive.namelist()
-        )
+        body = "\n".join(archive.read(item).decode() for item in archive.namelist())
     assert '"variant": "pr102"' in body
     assert "refresh_102" in body
     assert "22.5" in body
@@ -85,6 +93,10 @@ def test_refuses_empty_run_and_invalid_measurements() -> None:
         evidence.record(name, "setup", "verification", "tester", "pass", -1)
     with pytest.raises(ValueError, match="Setpoint"):
         evidence.record(
-            name, "ha_command", "ha_observed", "home_assistant", "pass",
+            name,
+            "ha_command",
+            "ha_observed",
+            "home_assistant",
+            "pass",
             setpoint_c=88,
         )
