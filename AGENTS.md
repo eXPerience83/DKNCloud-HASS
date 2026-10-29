@@ -2,19 +2,23 @@
 
 ## Tooling
 - Tooling (CI, lint, format) runs on **Python 3.14**. The `pyproject.toml` targets packaging/tooling and also pins `requires-python = ">=3.14"`. All code under `custom_components/airzoneclouddaikin/` targets Python 3.14+, matching the Home Assistant 2026.3 runtime baseline.
-- Format code with Black (line length 88, target-version `py314`) with minimum `black>=26` (enforced via CI; version pin not stored in `pyproject.toml`).
-- Lint and sort imports with Ruff targeting `py314`, with minimum `ruff>=0.15` (enforced via CI), matching the configuration in `pyproject.toml`.
-- Every change must pass `ruff check --fix --select I` (for import order) and `ruff check` before submission.
-- Run `black .` (or the narrowest possible path) to ensure formatting.
-- Tests run with pytest>=9 on Python 3.14.
+- Format code with Black (line length 88, target-version `py314`), using the exact version pinned in `pyproject.toml` and `uv.lock`.
+- Lint and sort imports with Ruff targeting `py314`, using the exact version pinned in `pyproject.toml` and `uv.lock`.
+- For local fixes, run `uv run --locked ruff check --fix --select I .` and then `uv run --locked ruff check .`.
+- Run `uv run --locked black .` (or a narrower path) to format code; CI checks with `black --check`.
+- The test harness runs on the exact Python 3.14 patch in `.python-version` and uses the locked pytest version required by PHACC.
 - This project uses Python 3.14 syntax intentionally. PEP 758 allows multiple
   exceptions without parentheses when no `as` clause is present (e.g.
   `except TypeError, ValueError:`). Reviewers must not flag or rewrite this
   syntax for Python 3.13 or earlier compatibility.
-- `pytest-homeassistant-custom-component` uses a deliberate `>=` minimum
-  bound. Later versions must be allowed; do not change it to `==` unless
-  explicitly requested. Any future incompatibility must be resolved or
-  documented, not hidden by pinning an older version.
+- `homeassistant`, `pytest-homeassistant-custom-component` (PHACC), and `pytest`
+  are a coordinated, exactly pinned test baseline. Update Home Assistant and
+  PHACC through the reviewed baseline updater; never bump pytest independently
+  if PHACC still requires a different exact version.
+- `uv.lock` is authoritative: CI uses `uv lock --check` and locked syncs. Preserve
+  `exclude-newer = "3 days"` and Renovate's matching minimum-release-age gate.
+  The CI Python interpreter stays on the approved 3.14 patch series; advancing
+  to Python 3.15 needs separate Home Assistant/PHACC compatibility review.
 
 ## Release & API boundaries
 - Do not change the integration version or changelog entries unless explicitly requested.
@@ -60,13 +64,15 @@
 - Any code change that affects API I/O or entity behavior must be reflected in `info.md` (and in user-facing docs when applicable).
 
 ## Integration Architecture
-- This repository hosts the custom integration **DKN Cloud for Home Assistant**, distributed through **HACS**.
+- This repository hosts the custom integration **DKN Cloud for Home Assistant**, distributed through **HACS / Home Assistant Marketplace**.
 - Preserve the current coordinator-driven architecture under `custom_components/airzoneclouddaikin` when extending functionality. Study the existing setup (`__init__.py`, platform files, and helpers) and mirror their async patterns, error handling, and notification logic.
 - When implementing features, align with Home Assistant best practices (ConfigEntry setup, `DataUpdateCoordinator`, platform separation) and avoid introducing blocking I/O in the event loop.
 
 ## Verification
 - Ensure the integration still loads within Home Assistant with the existing config flows and maintains parity with the current logic paths for entity updates and notifications.
-- Before submitting changes, run the following checks:
-  - `ruff check --fix --select I && ruff check` — lint and import ordering.
-  - `black .` — code formatting.
-  - `pytest tests/` — unit tests.
+- Before submitting changes, follow the same locked toolchain as CI:
+  - `uv lock --check` — ensure `pyproject.toml` and `uv.lock` agree.
+  - `uv sync --locked --only-group release` — install the pinned lint and test environment.
+  - `uv run --locked --no-sync ruff check .` — lint and import ordering.
+  - `uv run --locked --no-sync black --check .` — formatting verification.
+  - `uv run --locked --no-sync python -m pytest -q` — unit tests.
