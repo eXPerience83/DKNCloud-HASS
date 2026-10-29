@@ -58,9 +58,7 @@ def report_coverage(
             errors.append(f"Expected module not measured: {module}")
         elif seen[module] + 1e-8 < floor:
             errors.append(f"{module}: {seen[module]:.2f}% below {floor:.2f}%")
-    rows.extend(
-        ["", "**Result:** " + ("FAILED" if errors else "thresholds met")]
-    )
+    rows.extend(["", "**Result:** " + ("FAILED" if errors else "thresholds met")])
     if errors:
         rows.extend(["", *[f"- {message}" for message in errors]])
     return "\n".join(rows) + "\n", errors
@@ -87,9 +85,7 @@ def main() -> int:
             parser.error(f"{name} floor must be between 0 and 100")
 
     try:
-        text, violations = report_coverage(
-            args.report, args.min_total, thresholds
-        )
+        text, violations = report_coverage(args.report, args.min_total, thresholds)
     except (ValueError, OSError, KeyError, TypeError) as error:
         print(f"Invalid coverage report: {error}", file=sys.stderr)
         return 2

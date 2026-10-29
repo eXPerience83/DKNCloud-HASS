@@ -8,7 +8,6 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from homeassistant.components.climate.const import HVACMode
 from homeassistant.core import HomeAssistant
 
 import custom_components.airzoneclouddaikin.climate as climate_module
@@ -52,12 +51,8 @@ def _climate(
     entity = AirzoneClimate(coordinator, "climate-entry", "unit-1")
     entity.hass = hass
     monkeypatch.setattr(entity, "async_write_ha_state", Mock())
-    monkeypatch.setattr(
-        climate_module, "schedule_post_write_refresh", Mock()
-    )
-    monkeypatch.setattr(
-        climate_module, "async_auto_exit_sleep_if_needed", AsyncMock()
-    )
+    monkeypatch.setattr(climate_module, "schedule_post_write_refresh", Mock())
+    monkeypatch.setattr(climate_module, "async_auto_exit_sleep_if_needed", AsyncMock())
     return entity, api
 
 
@@ -78,7 +73,14 @@ async def test_set_temperature_routes_to_expected_setpoint(
     await entity.async_set_temperature(temperature=23)
 
     api.send_event.assert_awaited_once_with(
-        {"event": {"cgi": "modmaquina", "device_id": "unit-1", "option": option, "value": "23.0"}}
+        {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": "unit-1",
+                "option": option,
+                "value": "23.0",
+            }
+        }
     )
 
 
@@ -99,7 +101,14 @@ async def test_set_fan_mode_respects_heat_and_ventilation_alias(
     await entity.async_set_fan_mode("high")
 
     api.send_event.assert_awaited_once_with(
-        {"event": {"cgi": "modmaquina", "device_id": "unit-1", "option": option, "value": "3"}}
+        {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": "unit-1",
+                "option": option,
+                "value": "3",
+            }
+        }
     )
 
 
@@ -161,5 +170,12 @@ async def test_power_on_from_off_uses_p1_before_cooling_mode(
     )
     await entity.async_turn_on()
     api.send_event.assert_awaited_once_with(
-        {"event": {"cgi": "modmaquina", "device_id": "unit-1", "option": "P1", "value": 1}}
+        {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": "unit-1",
+                "option": "P1",
+                "value": 1,
+            }
+        }
     )

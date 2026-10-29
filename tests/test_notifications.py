@@ -831,9 +831,7 @@ async def test_config_entry_reload_reconstructs_coordinator_with_same_device(
     entities = entity_registry.async_entries_for_config_entry(
         entity_registry.async_get(hass), entry.entry_id
     )
-    climate_entities = [
-        entity for entity in entities if entity.domain == "climate"
-    ]
+    climate_entities = [entity for entity in entities if entity.domain == "climate"]
     assert climate_entities, "Setup should publish a climate entity to HA"
     dev_reg = device_registry.async_get(hass)
     assert any(

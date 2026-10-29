@@ -426,6 +426,7 @@ async def test_real_client_204_reply_returns_empty_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The HTTP response contract accepts empty successful bodies."""
+
     async def handler(_request: web.Request) -> web.Response:
         return web.Response(status=204)
 
