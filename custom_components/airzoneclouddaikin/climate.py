@@ -10,6 +10,7 @@ from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -48,11 +49,11 @@ MODE_TO_HVAC: dict[str, HVACMode | None] = {
     "7": HVACMode.HEAT_COOL,
     "8": HVACMode.FAN_ONLY,
 }
-# NOTE: For FAN_ONLY we pick P2=3 or P2=8 dynamically via _preferred_ventilate_code().
+# FAN_ONLY sends P2=3 only; reported P2=8 is a telemetry alias.
 HVAC_TO_MODE: dict[HVACMode, str] = {
     HVACMode.COOL: "1",
     HVACMode.HEAT: "2",
-    HVACMode.FAN_ONLY: "3",  # default; real send uses _preferred_ventilate_code()
+    HVACMode.FAN_ONLY: "3",
     HVACMode.HEAT_COOL: "4",
     HVACMode.DRY: "5",
 }
@@ -154,11 +155,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         return bitmask_supports_p2(self._modes_bitstring(), code)
 
     def _preferred_ventilate_code(self) -> str | None:
-        if self._supports_p2_value(3):
-            return "3"
-        if self._supports_p2_value(8):
-            return "8"
-        return None
+        """Only advertised P2=3 is a selectable ventilation command."""
+        return "3" if self._supports_p2_value(3) else None
 
     def _heat_cool_opt_in(self) -> bool:
         hass = getattr(self, "hass", None)
@@ -246,8 +244,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 modes.append(HVACMode.COOL)
             if self._supports_p2_value(2):
                 modes.append(HVACMode.HEAT)
-            fan_supported = self._supports_p2_value(3) or self._supports_p2_value(8)
-            if fan_supported:
+            if self._supports_p2_value(3):
                 modes.append(HVACMode.FAN_ONLY)
             if heat_cool_enabled:
                 modes.append(HVACMode.HEAT_COOL)
@@ -255,9 +252,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 modes.append(HVACMode.DRY)
             return modes
 
-        modes.extend([HVACMode.COOL, HVACMode.HEAT])
-        modes.append(HVACMode.FAN_ONLY)
-        modes.append(HVACMode.DRY)
+        # Do not expose FAN_ONLY without a confirmed P2=3 capability.
+        modes.extend([HVACMode.COOL, HVACMode.HEAT, HVACMode.DRY])
         return modes
 
     # ---- Presets (HA) ----------------------------------------------------
@@ -612,9 +608,31 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
             return
 
+        # Reject unavailable ventilation before power-on or preset transitions.
+        fan_code: str | None = None
+        if hvac_mode == HVACMode.FAN_ONLY:
+            fan_code = self._preferred_ventilate_code()
+            if fan_code is None:
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="fan_only_unsupported",
+                ) from None
+        elif hvac_mode not in HVAC_TO_MODE:
+            _LOGGER.debug("Ignoring unsupported HVAC mode: %s", hvac_mode)
+            return
+
         await self._ensure_occupied_before_active_action("set_hvac_mode")
 
-        if self._device_power_on() and self._hvac_from_device() == hvac_mode:
+        # A deliberate FAN_ONLY request can replace a reported P2=8 alias
+        # with the selectable P2=3 without writing on passive state reads.
+        normalize_fan_alias = (
+            hvac_mode == HVACMode.FAN_ONLY and self._backend_mode_code() == "8"
+        )
+        if (
+            self._device_power_on()
+            and self._hvac_from_device() == hvac_mode
+            and not normalize_fan_alias
+        ):
             _LOGGER.debug(
                 "HVAC mode %s already active; skipping redundant P2", hvac_mode
             )
@@ -626,14 +644,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
             if hvac_mode == HVACMode.FAN_ONLY:
-                code = self._preferred_ventilate_code()
-                if code is None:
-                    _LOGGER.debug(
-                        "Ignoring set_hvac_mode=fan_only: device bitmask lacks P2=3/8"
-                    )
-                    return
-                await self._send_p_event("P2", code)
-                optimistic_set(self.hass, self._entry_id, self._device_id, "mode", code)
+                await self._send_p_event("P2", fan_code)
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "mode", fan_code
+                )
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
             else:
                 mode_code = HVAC_TO_MODE.get(hvac_mode)

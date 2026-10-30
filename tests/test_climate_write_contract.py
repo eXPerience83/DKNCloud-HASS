@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from homeassistant.components.climate.const import HVACMode
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 import custom_components.airzoneclouddaikin.climate as climate_module
 from custom_components.airzoneclouddaikin.climate import AirzoneClimate
@@ -237,3 +238,94 @@ async def test_reported_unapproved_auto_disables_setpoint_and_fan_writes(
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
     climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("modes", "expected_code"),
+    [
+        ("00100000", "3"),  # FAN_ONLY via P2=3
+        ("00100001", "3"),  # ignore P2=8 even if advertised
+    ],
+)
+async def test_fan_only_from_off_uses_supported_code_and_only_then_powers_on(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    modes: str,
+    expected_code: str,
+) -> None:
+    """Selected FAN_ONLY code is supported; power-on precedes the P2 write."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode="1", power="0", modes=modes
+    )
+
+    await entity.async_set_hvac_mode(HVACMode.FAN_ONLY)
+
+    commands = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert [event["option"] for event in commands] == ["P1", "P2"]
+    assert [event["value"] for event in commands] == [1, expected_code]
+
+
+@pytest.mark.parametrize("modes", ["11000000", "00000001", ""])
+async def test_unsupported_fan_only_rejects_before_power_or_away_exit(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    modes: str,
+) -> None:
+    """No unsupported HVAC mode may power on the equipment or exit its preset."""
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="1",
+        power="0",
+        scenary="vacant",
+        modes=modes,
+    )
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await entity.async_set_hvac_mode(HVACMode.FAN_ONLY)
+
+    assert exc_info.value.translation_domain == DOMAIN
+    assert exc_info.value.translation_key == "fan_only_unsupported"
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
+
+
+async def test_ventilation_selection_normalizes_reported_eight_to_three(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deliberate ventilation selection writes P2=3 even if state reports 8."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch,
+        mode="8", power="1", modes="11101000",
+    )
+    await entity.async_set_hvac_mode(HVACMode.FAN_ONLY)
+    api.send_event.assert_awaited_once_with(
+        {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": "unit-1",
+                "option": "P2",
+                "value": "3",
+            }
+        }
+    )
+
+
+async def test_already_in_mode_three_does_not_repeat_p2_write(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing 3-only ventilation remains unchanged with no needless writes."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch,
+        mode="3", power="1", modes="11101000",
+    )
+    await entity.async_set_hvac_mode(HVACMode.FAN_ONLY)
+    api.send_event.assert_not_awaited()
