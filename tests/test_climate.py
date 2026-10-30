@@ -282,3 +282,47 @@ def test_unapproved_reported_mode_4_remains_read_only(
     assert HVACMode.HEAT_COOL not in entity.hvac_modes
     assert not entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
     assert not entity.supported_features & ClimateEntityFeature.FAN_MODE
+
+
+@pytest.mark.parametrize(
+    ("modes_bitmask", "is_supported"),
+    [
+        ("00100000", True),  # P2=3
+        ("00000001", False),  # P2=8 is read-only
+        ("00100001", True),  # P2=3 supported; never write P2=8
+        ("11000000", False),  # neither
+        ("", False),  # unknown capabilities: never offer an unverified write
+    ],
+)
+def test_fan_only_is_exposed_only_for_advertised_p2_codes(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    modes_bitmask: str,
+    is_supported: bool,
+) -> None:
+    """Only P2=3 is selectable; P2=8 is a backend telemetry alias."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {"power": "1", "mode": "1", "modes": modes_bitmask},
+        heat_cool_opt_in=False,
+    )
+
+    assert (HVACMode.FAN_ONLY in entity.hvac_modes) is is_supported
+
+
+@pytest.mark.parametrize("modes_bitmask", ["00000001", "11000000", ""])
+def test_reported_mode_8_is_fan_only_regardless_of_bitmask(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    modes_bitmask: str,
+) -> None:
+    """Backend FAN_ONLY mode 8 remains readable even with missing capabilities."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {"power": "1", "mode": "8", "modes": modes_bitmask},
+        heat_cool_opt_in=False,
+    )
+
+    assert entity.hvac_mode is HVACMode.FAN_ONLY
