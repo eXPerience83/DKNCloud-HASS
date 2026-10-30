@@ -75,6 +75,7 @@ class AirzoneAPI:
         self._session = session
         self._token: str | None = token
         self._cooldown_until: float = 0.0
+        self._live_refresh_cooldown_until: float = 0.0
 
     def __repr__(self) -> str:
         """Return a safe representation that never leaks secrets."""
@@ -193,6 +194,7 @@ class AirzoneAPI:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
+        live_refresh: bool = False,
     ) -> Any:
         """Authenticated request with limited retries for 429/5xx + ONE retry on timeout.
 
@@ -200,10 +202,14 @@ class AirzoneAPI:
         - 401 is *not* retried here; it is propagated so the coordinator opens reauth.
         """
         attempt = 0
+        cooldown_attr = (
+            "_live_refresh_cooldown_until" if live_refresh else "_cooldown_until"
+        )
         while True:
             now = self._now()
-            if self._cooldown_until > now:
-                await self._sleep(self._cooldown_until - now)
+            cooldown_until = getattr(self, cooldown_attr)
+            if cooldown_until > now:
+                await self._sleep(cooldown_until - now)
 
             try:
                 return await self._request(
@@ -232,8 +238,10 @@ class AirzoneAPI:
                                 delay = max(delay, float(retry_after))
                         except Exception:  # noqa: BLE001
                             pass
-                        self._cooldown_until = max(
-                            self._cooldown_until, now + min(delay, 10.0)
+                        setattr(
+                            self,
+                            cooldown_attr,
+                            max(getattr(self, cooldown_attr), now + min(delay, 10.0)),
                         )
                     _LOGGER.debug(
                         "Retrying %s %s after %s due to HTTP %s (attempt %d/%d)",
@@ -335,6 +343,26 @@ class AirzoneAPI:
         if isinstance(resp, list):
             return resp
         return None
+
+    async def request_device_info(self, device_id: str) -> Any:
+        """Ask the backend to refresh one device's live machine information."""
+        params = self._auth_params()
+        payload = {
+            "event": {
+                "cgi": "infomaquina",
+                "option": "",
+                "value": "",
+                "device_id": str(device_id),
+            }
+        }
+        return await self._authed_request_with_retries(
+            "POST",
+            API_EVENTS,
+            params=params,
+            json=payload,
+            extra_headers=HEADERS_EVENTS,
+            live_refresh=True,
+        )
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
         """POST to /events (realtime control) with JSON/XHR headers + retries."""
