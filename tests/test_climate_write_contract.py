@@ -301,8 +301,12 @@ async def test_ventilation_selection_normalizes_reported_eight_to_three(
 ) -> None:
     """A deliberate ventilation selection writes P2=3 even if state reports 8."""
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        mode="8", power="1", modes="11101000",
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="8",
+        power="1",
+        modes="11101000",
     )
     await entity.async_set_hvac_mode(HVACMode.FAN_ONLY)
     api.send_event.assert_awaited_once_with(
@@ -324,8 +328,12 @@ async def test_already_in_mode_three_does_not_repeat_p2_write(
 ) -> None:
     """Existing 3-only ventilation remains unchanged with no needless writes."""
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        mode="3", power="1", modes="11101000",
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="3",
+        power="1",
+        modes="11101000",
     )
     await entity.async_set_hvac_mode(HVACMode.FAN_ONLY)
     api.send_event.assert_not_awaited()
