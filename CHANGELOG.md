@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.5.0a4] - 2026-10-30
+
+> **Alpha candidate for Home Assistant 2026.11 beta testing.** Not stable.
+> Minimum supported Home Assistant: **2026.10.4**.
+> Contains the previously prepared 0.5.0a3 changes plus the safety fix below.
+> This candidate requires a separately published GitHub prerelease for HACS/Marketplace;
+> passing CI or preparing a ZIP is not evidence of an installed or tested release.
+
+### Fixed
+- Guard every selectable HVAC mode at the command boundary against the device
+  capability bitmask: COOL (P2=1), HEAT (P2=2), DRY (P2=5), FAN_ONLY (P2=3
+  only), and experimental HEAT_COOL (P2=4 with opt-in).
+- Ignore unsupported or missing/malformed capability selections before power,
+  preset or mode commands; do not offer speculative HVAC choices when the mask
+  is missing. Continue to display reported mode telemetry independently.
+- Add synthetic regression coverage for unsupported direct HA service requests,
+  unchanged supported mode selection, and unknown capability masks (#139).
+
+### Validation and known limitations
+- CI and synthetic tests passed for the P0 change; behavior on real hardware
+  and the Home Assistant 2026.11 beta frontend still requires manual validation.
+- External device snapshot freshness (#101/#102), reauthentication (#105),
+  and other limitations noted below for 0.5.0a3 remain outstanding.
+- The `0.5.0a3` version was prepared but not published as a GitHub Release.
+
 ## [0.5.0a3] - 2026-10-30
 
 > **Alpha preview for Home Assistant 2026.11 validation.**
