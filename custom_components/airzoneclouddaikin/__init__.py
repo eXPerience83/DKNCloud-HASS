@@ -163,7 +163,20 @@ class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     api: AirzoneAPI
 
 
-async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> bool:
+@dataclass(slots=True)
+class AirzoneRuntimeData:
+    """Entry-scoped API and coordinator shared by the entity platforms."""
+
+    api: AirzoneAPI
+    coordinator: AirzoneCoordinator
+
+
+type AirzoneConfigEntry = ConfigEntry[AirzoneRuntimeData]
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant, config_entry: AirzoneConfigEntry
+) -> bool:
     """Migrate legacy config entries to the latest schema."""
 
     target_version = 2
@@ -524,7 +537,7 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
     return age <= _OFFLINE_STALE_SECONDS
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
     """Set up DKN Cloud for HASS from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
@@ -586,6 +599,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         opts.get(CONF_ENABLE_HEAT_COOL, False) and supports_heat_cool is not False
     )
     bucket["heat_cool_opt_in"] = heat_cool_opt_in
+
+    # Platform dependencies live with the config entry. Auxiliary state remains
+    # in the existing bucket until the lifecycle/helper migration is completed.
+    entry.runtime_data = AirzoneRuntimeData(api=api, coordinator=coordinator)
 
     if opts.get(CONF_ENABLE_HEAT_COOL, False) and supports_heat_cool is False:
         _LOGGER.warning(
@@ -870,7 +887,7 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = True
     for platform in _BASE_PLATFORMS + _EXTRA_PLATFORMS:

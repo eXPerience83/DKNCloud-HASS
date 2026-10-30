@@ -22,13 +22,14 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import UnitOfTemperature, UnitOfTime
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .__init__ import AirzoneCoordinator
+from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
 from .const import DOMAIN
 from .helpers import build_device_info, device_supports_heat_cool, parse_float
 
@@ -257,17 +258,11 @@ PII_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
 ]
 
 
-async def async_setup_entry(hass, entry, async_add_entities):
+async def async_setup_entry(
+    hass: HomeAssistant, entry: AirzoneConfigEntry, async_add_entities
+) -> None:
     """Create sensors according to coordinator snapshot and privacy options."""
-    data = hass.data[DOMAIN].get(entry.entry_id)
-    if not data:
-        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
-        return
-
-    coordinator: AirzoneCoordinator | None = data.get("coordinator")
-    if coordinator is None:
-        _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
-        return
+    coordinator = entry.runtime_data.coordinator
 
     # Read opt-in from options first, then data (setup step)
     opts = entry.options or {}

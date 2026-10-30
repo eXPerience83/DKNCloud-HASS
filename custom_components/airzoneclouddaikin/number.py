@@ -6,16 +6,14 @@ import asyncio
 from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .__init__ import AirzoneCoordinator
+from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
 from .airzone_api import AirzoneAPI
-from .const import DOMAIN
 from .helpers import (
     acquire_device_lock,
     build_device_info,
@@ -44,13 +42,12 @@ _UNOCC_STEP = 1
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: AirzoneConfigEntry,
     async_add_entities,
 ) -> None:
     """Set up number entities for DKN Cloud from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: AirzoneCoordinator = data["coordinator"]
-    api: AirzoneAPI = data["api"]
+    coordinator = entry.runtime_data.coordinator
+    api = entry.runtime_data.api
 
     entities: list[NumberEntity] = []
     for device_id, device in (coordinator.data or {}).items():

@@ -13,7 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .__init__ import AirzoneCoordinator  # typed coordinator
+from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
 from .const import DOMAIN
 from .helpers import (
     acquire_device_lock,
@@ -28,17 +28,11 @@ from .helpers import (
 _LOGGER = logging.getLogger(__name__)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities) -> None:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: AirzoneConfigEntry, async_add_entities
+) -> None:
     """Set up the switch platform from a config entry using the DataUpdateCoordinator."""
-    data = hass.data[DOMAIN].get(entry.entry_id)
-    if not data:
-        _LOGGER.error("No data found in hass.data for entry %s", entry.entry_id)
-        return
-
-    coordinator: AirzoneCoordinator | None = data.get("coordinator")
-    if coordinator is None:
-        _LOGGER.error("Coordinator missing for entry %s", entry.entry_id)
-        return
+    coordinator = entry.runtime_data.coordinator
 
     entities: list[AirzonePowerSwitch] = []
     for device_id in list((coordinator.data or {}).keys()):
