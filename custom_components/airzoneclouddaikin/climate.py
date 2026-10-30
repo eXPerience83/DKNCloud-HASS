@@ -36,8 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Airzone mode codes observed in API:
 # 1: COOL, 2: HEAT, 3: FAN_ONLY (ventilate cold-type), 4: HEAT_COOL, 5: DRY,
-# 6: COOL_AIR (treated as unknown for state reporting),
-# 7: HEAT_AIR (treated as unknown for state reporting),
+# 6/7: heat-cool/auto-like telemetry aliases (display only; never written),
 # 8: FAN_ONLY (ventilate heat-type)
 MODE_TO_HVAC: dict[str, HVACMode | None] = {
     "1": HVACMode.COOL,
@@ -45,8 +44,8 @@ MODE_TO_HVAC: dict[str, HVACMode | None] = {
     "3": HVACMode.FAN_ONLY,
     "4": HVACMode.HEAT_COOL,
     "5": HVACMode.DRY,
-    "6": None,
-    "7": None,
+    "6": HVACMode.HEAT_COOL,
+    "7": HVACMode.HEAT_COOL,
     "8": HVACMode.FAN_ONLY,
 }
 # NOTE: For FAN_ONLY we pick P2=3 or P2=8 dynamically via _preferred_ventilate_code().
@@ -177,6 +176,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     def _heat_cool_enabled(self) -> bool:
         return self._heat_cool_opt_in() and self._supports_p2_value(4)
+
+    def _display_only_heat_cool_alias(self) -> bool:
+        """Aliases 6/7 have no validated temperature or fan write contract."""
+        return self._backend_mode_code() in {"6", "7"}
 
     def _hvac_from_device(self) -> HVACMode | None:
         if not self._device_power_on():
@@ -403,6 +406,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         mode = self.hvac_mode
+        if self._display_only_heat_cool_alias():
+            _LOGGER.debug("Ignoring set_temperature for read-only DKN mode alias")
+            return
         if mode not in (HVACMode.COOL, HVACMode.HEAT, HVACMode.HEAT_COOL):
             _LOGGER.debug("Ignoring set_temperature in mode %s", mode)
             return
@@ -485,6 +491,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Accept normalized labels (low/medium/high) or numeric strings."""
+        if self._display_only_heat_cool_alias():
+            _LOGGER.debug("Ignoring set_fan_mode for read-only DKN mode alias")
+            return
         mode = self.hvac_mode
         if mode in (HVACMode.OFF, HVACMode.DRY) or mode is None:
             _LOGGER.debug("Ignoring set_fan_mode in mode %s", mode)
@@ -641,7 +650,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         """Return IntFlag capabilities; NEVER return a plain int."""
         feats: ClimateEntityFeature = ClimateEntityFeature(0)
         mode = self.hvac_mode
-        if mode in (HVACMode.COOL, HVACMode.HEAT, HVACMode.HEAT_COOL):
+        if (
+            mode in (HVACMode.COOL, HVACMode.HEAT, HVACMode.HEAT_COOL)
+            and not self._display_only_heat_cool_alias()
+        ):
             feats |= ClimateEntityFeature.TARGET_TEMPERATURE
             feats |= ClimateEntityFeature.FAN_MODE
         elif mode == HVACMode.FAN_ONLY:
@@ -651,6 +663,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         # - FAN_ONLY (including backend alias P2=8): fan control only; no target
         #   temperature because P7/P8 setpoints do not apply.
         # - OFF: no temperature/fan controls.
+        # - Backend aliases 6/7: show HEAT_COOL but keep setpoint/fan read-only.
 
         # Presets always available (mapped to scenary)
         feats |= ClimateEntityFeature.PRESET_MODE
