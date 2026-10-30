@@ -58,7 +58,7 @@ jobs:
           if minimum != ha_specs[0]:
               raise SystemExit(
                   f"Supported HA minimum {minimum} differs from locked test HA {ha_specs[0]}. "
-                  "Restore a separate pinned minimum-HA harness before advancing the baseline, "
+                  "Restore a separate pinned minimum-HA harness and update this guard before advancing the baseline, "
                   "or explicitly review and document a support-floor increase."
               )
           print(f"Verified supported HA minimum and test baseline: {minimum}")
