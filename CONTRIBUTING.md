@@ -1,5 +1,8 @@
 # Contributing
 
+- [Codex / Remote Dev local test runbook](docs/codex-remote-dev-testing.md): verify the pinned image and project toolchain, reproduce the full locked suite and package validation, and keep real-device evidence separate.
+
+
 - The integration targets Python 3.14+, matching the Home Assistant 2026.3 runtime baseline.
   Use Python 3.14 for local development and CI parity.
 - Format code with Black (line length 88, target-version `py314`) and sort/lint imports with Ruff. Use the exact versions pinned in `pyproject.toml` and `uv.lock`.
