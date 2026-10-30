@@ -56,6 +56,9 @@
     },
     "event_failed": {
       "message": "Comando DKN non riuscito (HTTP {status})."
+    },
+    "invalid_number_range": {
+      "message": "Il valore deve essere compreso tra {minimum} e {maximum}, con incrementi di {step}."
     }
   },
   "issues": {

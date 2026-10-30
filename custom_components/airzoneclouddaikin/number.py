@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from typing import Any
 
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
 from .airzone_api import AirzoneAPI
+from .const import DOMAIN
 from .helpers import (
     acquire_device_lock,
     build_device_info,
@@ -96,6 +99,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
     _native_max: int
     _native_step: int
     _payload_wrapped: bool = True
+    _reject_invalid_unoccupied_write: bool = False
 
     def __init__(
         self,
@@ -134,19 +138,40 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         return bool(device and device.get("available", True))
 
     @property
-    def native_value(self) -> int | None:
-        """Return the current value using the optimistic overlay when available."""
+    def native_value(self) -> int | float | None:
+        """Expose backend readings without clamping or truncating fractional values."""
         backend = self._device.get(self._field_name)
         val = optimistic_get(
             self.hass, self._entry_id, self._device_id, self._field_name, backend
         )
         try:
-            return int(val) if val is not None else None
-        except Exception:  # noqa: BLE001
+            number = float(val) if val is not None else None
+        except TypeError, ValueError:
             return None
+        if number is None or not math.isfinite(number):
+            return None
+        return int(number) if number.is_integer() else number
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value using the API and central optimistic overlay."""
+
+        if self._reject_invalid_unoccupied_write:
+            steps = (value - self._native_min) / self._native_step
+            if (
+                not math.isfinite(value)
+                or value < self._native_min
+                or value > self._native_max
+                or not math.isclose(steps, round(steps), abs_tol=1e-9)
+            ):
+                raise HomeAssistantError(
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_number_range",
+                    translation_placeholders={
+                        "minimum": str(self._native_min),
+                        "maximum": str(self._native_max),
+                        "step": str(self._native_step),
+                    },
+                ) from None
 
         clamped = clamp_number(
             value,
@@ -219,6 +244,7 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     """Number entity to control unoccupied heat min temperature (°C)."""
 
     _field_name = "min_temp_unoccupied"
+    _reject_invalid_unoccupied_write = True
     _native_min = _UNOCC_HEAT_MIN
     _native_max = _UNOCC_HEAT_MAX
     _native_step = _UNOCC_STEP
@@ -250,6 +276,7 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     """Number entity to control unoccupied cool max temperature (°C)."""
 
     _field_name = "max_temp_unoccupied"
+    _reject_invalid_unoccupied_write = True
     _native_min = _UNOCC_COOL_MIN
     _native_max = _UNOCC_COOL_MAX
     _native_step = _UNOCC_STEP
