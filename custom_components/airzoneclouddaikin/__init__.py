@@ -20,7 +20,7 @@ from typing import Any
 from aiohttp import ClientResponseError
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
-from homeassistant.const import CONF_USERNAME
+from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -50,8 +50,13 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_SCAN_INTERVAL_SEC = 10
 _OFFLINE_STALE_SECONDS = int(INTERNAL_STALE_AFTER_SEC)
 
-_BASE_PLATFORMS: list[str] = ["climate", "sensor", "switch", "binary_sensor"]
-_EXTRA_PLATFORMS: list[str] = ["number"]
+PLATFORMS: tuple[Platform, ...] = (
+    Platform.CLIMATE,
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.BINARY_SENSOR,
+    Platform.NUMBER,
+)
 
 # NOTE: These templates act only as a last-resort fallback; the localized
 # translations under translations/*.json provide the polished copy at runtime.
@@ -869,9 +874,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     entry.async_on_unload(unsub)
     entry.async_on_unload(_cancel_sleep_expiry_task)
 
-    await hass.config_entries.async_forward_entry_setups(entry, _BASE_PLATFORMS)
-    if _EXTRA_PLATFORMS:
-        await hass.config_entries.async_forward_entry_setups(entry, _EXTRA_PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
@@ -889,26 +892,20 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
     """Unload a config entry."""
-    unload_ok = True
-    for platform in _BASE_PLATFORMS + _EXTRA_PLATFORMS:
-        try:
-            ok = await hass.config_entries.async_forward_entry_unload(entry, platform)
-        except Exception:  # noqa: BLE001
-            unload_ok = False
-            _LOGGER.exception(
-                "Unexpected error unloading platform %s for config entry %s.",
-                platform,
-                entry.entry_id,
-            )
-            continue
+    try:
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    except Exception:  # noqa: BLE001
+        unload_ok = False
+        _LOGGER.exception(
+            "Unexpected error unloading platforms for config entry %s.",
+            entry.entry_id,
+        )
 
-        if not ok:
-            unload_ok = False
-            _LOGGER.warning(
-                "Platform %s did not unload cleanly for config entry %s.",
-                platform,
-                entry.entry_id,
-            )
+    if not unload_ok:
+        _LOGGER.warning(
+            "Not all platforms unloaded cleanly for config entry %s.",
+            entry.entry_id,
+        )
 
     domain_bucket = hass.data.get(DOMAIN)
     if domain_bucket is not None and entry.entry_id in domain_bucket:

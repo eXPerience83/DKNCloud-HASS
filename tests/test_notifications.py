@@ -916,3 +916,36 @@ async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize("failure", [False, RuntimeError("unload failed")])
+async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: bool | RuntimeError,
+) -> None:
+    """Bulk platform unload failure keeps state available for HA retry."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    cancel = Mock()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "notify_state": {"device": {"online_cancel": cancel}},
+        "pending_refresh": object(),
+        "device_locks": {"device": object()},
+    }
+    unload_platforms = AsyncMock(
+        side_effect=failure if isinstance(failure, Exception) else None,
+        return_value=failure if isinstance(failure, bool) else True,
+    )
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", unload_platforms)
+
+    assert not await integration.async_unload_entry(hass, entry)
+
+    unload_platforms.assert_awaited_once_with(entry, integration.PLATFORMS)
+    assert entry.entry_id in hass.data[DOMAIN]
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    cancel.assert_called_once_with()
+    assert bucket["notify_state"]["device"]["online_cancel"] is None
+    assert "pending_refresh" not in bucket
+    assert "device_locks" not in bucket
