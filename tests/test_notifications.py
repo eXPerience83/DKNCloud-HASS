@@ -938,9 +938,7 @@ async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
         side_effect=failure if isinstance(failure, Exception) else None,
         return_value=failure if isinstance(failure, bool) else True,
     )
-    monkeypatch.setattr(
-        hass.config_entries, "async_unload_platforms", unload_platforms
-    )
+    monkeypatch.setattr(hass.config_entries, "async_unload_platforms", unload_platforms)
 
     assert not await integration.async_unload_entry(hass, entry)
 
