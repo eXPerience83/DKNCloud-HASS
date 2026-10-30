@@ -37,6 +37,33 @@ jobs:
             pyproject.toml
             uv.lock
 
+      - name: Check minimum HA matches locked test baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import tomllib
+          from pathlib import Path
+
+          minimum = json.loads(Path("hacs.json").read_text(encoding="utf-8"))["homeassistant"]
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          ha_specs = [
+              spec.removeprefix("homeassistant==")
+              for spec in project["dependency-groups"]["test"]
+              if isinstance(spec, str) and spec.startswith("homeassistant==")
+          ]
+          if len(ha_specs) != 1:
+              raise SystemExit("Expected exactly one pinned homeassistant test dependency")
+          if minimum != ha_specs[0]:
+              raise SystemExit(
+                  f"Supported HA minimum {minimum} differs from locked test HA {ha_specs[0]}. "
+                  "Restore a separate pinned minimum-HA harness before advancing the baseline, "
+                  "or explicitly review and document a support-floor increase."
+              )
+          print(f"Verified supported HA minimum and test baseline: {minimum}")
+          PY
+
       - name: Verify locked test environment
         shell: bash
         run: |

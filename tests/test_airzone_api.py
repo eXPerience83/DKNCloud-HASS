@@ -65,8 +65,7 @@ def _make_api(
 async def _serve_api(aiohttp_server, monkeypatch, method: str, path: str, handler):
     """Route a real aiohttp client to an isolated loopback backend.
 
-    This avoids DNS interception dependencies that conflict with the
-    pinned yarl version of Home Assistant 2026.3.1.
+    This exercises real loopback HTTP without relying on DNS interception.
     """
     app = web.Application()
     app.router.add_route(method, path, handler)

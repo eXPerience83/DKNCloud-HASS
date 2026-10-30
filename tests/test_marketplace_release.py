@@ -36,7 +36,7 @@ def _create_zip(
             {
                 "name": "DKN Cloud for HASS",
                 "content_in_root": False,
-                "homeassistant": "2026.3.1",
+                "homeassistant": "2026.10.4",
                 "zip_release": True,
                 "filename": "airzoneclouddaikin.zip",
             }

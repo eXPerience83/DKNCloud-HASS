@@ -1,6 +1,6 @@
 # Contributing
 
-- The integration targets Python 3.14+, matching the Home Assistant 2026.3 runtime baseline.
+- The integration targets Python 3.14+, matching the Home Assistant 2026.10.4 minimum supported release.
   Use Python 3.14 for local development and CI parity.
 - Format code with Black (line length 88, target-version `py314`) and sort/lint imports with Ruff. Use the exact versions pinned in `pyproject.toml` and `uv.lock`.
 - The translation source of truth is `custom_components/airzoneclouddaikin/translations/en.json`. Keep every other locale file in
