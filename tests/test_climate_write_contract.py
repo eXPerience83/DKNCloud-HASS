@@ -212,3 +212,28 @@ async def test_unsupported_auto_request_never_powers_on_or_exits_away(
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
     climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
+
+
+async def test_reported_unapproved_auto_disables_setpoint_and_fan_writes(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forced service call cannot write through unapproved reported P2=4."""
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="4",
+        power="1",
+        scenary="vacant",
+        modes="11101000",
+        heat_cool_opt_in=False,
+    )
+
+    await entity.async_set_temperature(temperature=23)
+    await entity.async_set_fan_mode("high")
+
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
