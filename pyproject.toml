@@ -27,7 +27,7 @@ release = [
 ]
 
 [tool.uv]
-required-version = "==0.13.5"
+required-version = "==0.13.6"
 default-groups = []
 # Avoid adopting newly published transitive dependencies immediately.
 exclude-newer = "3 days"
