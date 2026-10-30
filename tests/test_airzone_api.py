@@ -361,7 +361,9 @@ async def test_send_event_maps_423_machine_not_ready() -> None:
 
 @pytest.mark.parametrize("status", [403, 500])
 @pytest.mark.asyncio
-async def test_send_event_maps_unexpected_status_to_translated_error(status: int) -> None:
+async def test_send_event_maps_unexpected_status_to_translated_error(
+    status: int,
+) -> None:
     """Other /events errors expose a localizable status without raw response data."""
     api = AirzoneAPI(
         username="user@example.com",
