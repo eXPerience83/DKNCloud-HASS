@@ -212,7 +212,10 @@ async def test_sleep_timer_keeps_existing_clamp_semantics(
 ) -> None:
     """The unoccupied validation does not alter the independent sleep timer."""
     entity, api = _make_entity(
-        hass, dummy_coordinator_factory, DKNSleepTimeNumber, device_data={"sleep_time": 30}
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30},
     )
 
     await entity.async_set_native_value(500)
