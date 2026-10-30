@@ -76,6 +76,8 @@ def test_reported_mode_aliases_show_heat_cool_without_enabling_writes(
     assert entity.hvac_mode is HVACMode.HEAT_COOL
     assert HVACMode.HEAT_COOL in entity.hvac_modes
     assert entity._heat_cool_enabled() is False
+    assert not entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
+    assert not entity.supported_features & ClimateEntityFeature.FAN_MODE
 
 
 def test_heat_cool_exposed_when_device_supports_and_opt_in_enabled(
