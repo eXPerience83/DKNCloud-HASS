@@ -36,8 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Airzone mode codes observed in API:
 # 1: COOL, 2: HEAT, 3: FAN_ONLY (ventilate cold-type), 4: HEAT_COOL, 5: DRY,
-# 6: COOL_AIR (treated as unknown for state reporting),
-# 7: HEAT_AIR (treated as unknown for state reporting),
+# 6/7: heat-cool/auto-like telemetry aliases (display only; never written),
 # 8: FAN_ONLY (ventilate heat-type)
 MODE_TO_HVAC: dict[str, HVACMode | None] = {
     "1": HVACMode.COOL,
@@ -45,8 +44,8 @@ MODE_TO_HVAC: dict[str, HVACMode | None] = {
     "3": HVACMode.FAN_ONLY,
     "4": HVACMode.HEAT_COOL,
     "5": HVACMode.DRY,
-    "6": None,
-    "7": None,
+    "6": HVACMode.HEAT_COOL,
+    "7": HVACMode.HEAT_COOL,
     "8": HVACMode.FAN_ONLY,
 }
 # NOTE: For FAN_ONLY we pick P2=3 or P2=8 dynamically via _preferred_ventilate_code().

@@ -56,6 +56,27 @@ def test_heat_cool_hidden_without_device_support(
     ]
 
 
+@pytest.mark.parametrize("reported_mode", ["6", "7"])
+@pytest.mark.parametrize("modes_bitmask", ["11101", ""])
+def test_reported_mode_aliases_show_heat_cool_without_enabling_writes(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    reported_mode: str,
+    modes_bitmask: str,
+) -> None:
+    """Backend-only aliases remain displayable with HEAT_COOL opt-in disabled."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {"name": "Zone", "modes": modes_bitmask, "mode": reported_mode, "power": "1"},
+        heat_cool_opt_in=False,
+    )
+
+    assert entity.hvac_mode is HVACMode.HEAT_COOL
+    assert HVACMode.HEAT_COOL in entity.hvac_modes
+    assert entity._heat_cool_enabled() is False
+
+
 def test_heat_cool_exposed_when_device_supports_and_opt_in_enabled(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
