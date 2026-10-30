@@ -321,6 +321,78 @@ async def test_ventilation_selection_normalizes_reported_eight_to_three(
     )
 
 
+
+@pytest.mark.parametrize(
+    ("requested_mode", "bitmask"),
+    [
+        (HVACMode.COOL, "01101000"),  # no P2=1
+        (HVACMode.HEAT, "10101000"),  # no P2=2
+        (HVACMode.DRY, "11100000"),  # no P2=5
+        (HVACMode.COOL, ""),  # unknown capabilities
+        (HVACMode.HEAT, "invalid"),  # malformed capabilities
+        (HVACMode.DRY, "111"),  # truncated capabilities
+    ],
+)
+@pytest.mark.parametrize("power", ["0", "1"])
+async def test_unadvertised_mode_never_writes_or_exits_away(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    requested_mode: HVACMode,
+    bitmask: str,
+    power: str,
+) -> None:
+    """Forced services cannot select an unadvertised P2 or alter device state."""
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="8",
+        power=power,
+        scenary="vacant",
+        modes=bitmask,
+    )
+
+    await entity.async_set_hvac_mode(requested_mode)
+
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("requested_mode", "bitmask", "expected_code"),
+    [
+        (HVACMode.COOL, "10000000", "1"),
+        (HVACMode.HEAT, "01000000", "2"),
+        (HVACMode.DRY, "00001000", "5"),
+    ],
+)
+async def test_advertised_mode_still_powers_on_then_selects_p2(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    requested_mode: HVACMode,
+    bitmask: str,
+    expected_code: str,
+) -> None:
+    """Capability guards preserve ordinary mode changes on supported devices."""
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="8",
+        power="0",
+        modes=bitmask,
+    )
+
+    await entity.async_set_hvac_mode(requested_mode)
+
+    commands = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert [event["option"] for event in commands] == ["P1", "P2"]
+    assert [event["value"] for event in commands] == [1, expected_code]
+
+
 async def test_already_in_mode_three_does_not_repeat_p2_write(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
