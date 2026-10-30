@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+import pytest
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.core import HomeAssistant
 
