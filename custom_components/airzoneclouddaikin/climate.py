@@ -236,8 +236,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         heat_cool_supported = self._supports_p2_value(4)
         heat_cool_enabled = heat_cool_supported and heat_cool_opt_in
 
-        current_mode = self.hvac_mode
-
         if bitstr:
             if self._supports_p2_value(1):
                 modes.append(HVACMode.COOL)
@@ -250,15 +248,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 modes.append(HVACMode.HEAT_COOL)
             if self._supports_p2_value(5):
                 modes.append(HVACMode.DRY)
-            if current_mode == HVACMode.HEAT_COOL and HVACMode.HEAT_COOL not in modes:
-                modes.append(HVACMode.HEAT_COOL)
             return modes
 
         modes.extend([HVACMode.COOL, HVACMode.HEAT])
         modes.append(HVACMode.FAN_ONLY)
         modes.append(HVACMode.DRY)
-        if current_mode == HVACMode.HEAT_COOL and HVACMode.HEAT_COOL not in modes:
-            modes.append(HVACMode.HEAT_COOL)
         return modes
 
     # ---- Presets (HA) ----------------------------------------------------
@@ -599,6 +593,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             return
 
+        # A reported P2=6/7 is only a HEAT_COOL state alias. Never treat
+        # telemetry as proof that P2=4 is selectable. Reject a forced HA
+        # service call before automatic power-on or away/sleep transitions.
+        if hvac_mode == HVACMode.HEAT_COOL and not self._heat_cool_enabled():
+            _LOGGER.debug(
+                "Ignoring set_hvac_mode=heat_cool: opt-in disabled or device unsupported"
+            )
+            return
+
         await self._ensure_occupied_before_active_action("set_hvac_mode")
 
         if self._device_power_on() and self._hvac_from_device() == hvac_mode:
@@ -623,11 +626,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 optimistic_set(self.hass, self._entry_id, self._device_id, "mode", code)
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
             else:
-                if hvac_mode == HVACMode.HEAT_COOL and not self._heat_cool_enabled():
-                    _LOGGER.debug(
-                        "Ignoring set_hvac_mode=heat_cool: opt-in disabled or device unsupported"
-                    )
-                    return
                 mode_code = HVAC_TO_MODE.get(hvac_mode)
                 if mode_code:
                     await self._send_p_event("P2", mode_code)
