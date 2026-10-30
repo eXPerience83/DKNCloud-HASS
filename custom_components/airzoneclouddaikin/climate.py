@@ -178,8 +178,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         return self._heat_cool_opt_in() and self._supports_p2_value(4)
 
     def _display_only_heat_cool_alias(self) -> bool:
-        """Aliases 6/7 have no validated temperature or fan write contract."""
-        return self._backend_mode_code() in {"6", "7"}
+        """P2=6/7 and unapproved P2=4 are read-only telemetry states."""
+        code = self._backend_mode_code()
+        return code in {"6", "7"} or (code == "4" and not self._heat_cool_enabled())
+
+    def _heat_side_auto_alias(self) -> bool:
+        """Reported P2=7 uses heat-side fields, unlike P2=4/6."""
+        return self._backend_mode_code() == "7"
 
     def _hvac_from_device(self) -> HVACMode | None:
         if not self._device_power_on():
@@ -236,8 +241,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         heat_cool_supported = self._supports_p2_value(4)
         heat_cool_enabled = heat_cool_supported and heat_cool_opt_in
 
-        current_mode = self.hvac_mode
-
         if bitstr:
             if self._supports_p2_value(1):
                 modes.append(HVACMode.COOL)
@@ -250,15 +253,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 modes.append(HVACMode.HEAT_COOL)
             if self._supports_p2_value(5):
                 modes.append(HVACMode.DRY)
-            if current_mode == HVACMode.HEAT_COOL and HVACMode.HEAT_COOL not in modes:
-                modes.append(HVACMode.HEAT_COOL)
             return modes
 
         modes.extend([HVACMode.COOL, HVACMode.HEAT])
         modes.append(HVACMode.FAN_ONLY)
         modes.append(HVACMode.DRY)
-        if current_mode == HVACMode.HEAT_COOL and HVACMode.HEAT_COOL not in modes:
-            modes.append(HVACMode.HEAT_COOL)
         return modes
 
     # ---- Presets (HA) ----------------------------------------------------
@@ -360,10 +359,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         mode = self.hvac_mode
-        if mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
-            val = self._overlay_value("cold_consign", self._device.get("cold_consign"))
-        elif mode == HVACMode.HEAT:
+        if mode == HVACMode.HEAT or (
+            mode == HVACMode.HEAT_COOL and self._heat_side_auto_alias()
+        ):
             val = self._overlay_value("heat_consign", self._device.get("heat_consign"))
+        elif mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+            val = self._overlay_value("cold_consign", self._device.get("cold_consign"))
         else:
             # DRY / FAN_ONLY / OFF: do not expose target temperature
             return None
@@ -376,10 +377,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         mode = self.hvac_mode
         cold = parse_float(dev.get("min_limit_cold"))
         heat = parse_float(dev.get("min_limit_heat"))
+        if (
+            mode == HVACMode.HEAT
+            or (mode == HVACMode.HEAT_COOL and self._heat_side_auto_alias())
+        ) and heat is not None:
+            return heat
         if mode in (HVACMode.COOL, HVACMode.HEAT_COOL) and cold is not None:
             return cold
-        if mode == HVACMode.HEAT and heat is not None:
-            return heat
         vals = [v for v in (cold, heat) if v is not None]
         return min(vals) if vals else 16.0
 
@@ -390,10 +394,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         mode = self.hvac_mode
         cold = parse_float(dev.get("max_limit_cold"))
         heat = parse_float(dev.get("max_limit_heat"))
+        if (
+            mode == HVACMode.HEAT
+            or (mode == HVACMode.HEAT_COOL and self._heat_side_auto_alias())
+        ) and heat is not None:
+            return heat
         if mode in (HVACMode.COOL, HVACMode.HEAT_COOL) and cold is not None:
             return cold
-        if mode == HVACMode.HEAT and heat is not None:
-            return heat
         vals = [v for v in (cold, heat) if v is not None]
         return max(vals) if vals else 32.0
 
@@ -472,13 +479,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if mode in (HVACMode.OFF, HVACMode.DRY) or mode is None:
             return None
 
-        if mode == HVACMode.HEAT:
+        if mode == HVACMode.HEAT or self._backend_mode_code() in {"7", "8"}:
             key = "heat_speed"
-        elif mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+        else:
             key = "cold_speed"
-        else:  # FAN_ONLY
-            code = self._backend_mode_code()
-            key = "heat_speed" if code == "8" else "cold_speed"
 
         val = self._overlay_value(key, self._device.get(key))
         if not val:
@@ -599,6 +603,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             return
 
+        # A reported P2=6/7 is only a HEAT_COOL state alias. Never treat
+        # telemetry as proof that P2=4 is selectable. Reject a forced HA
+        # service call before automatic power-on or away/sleep transitions.
+        if hvac_mode == HVACMode.HEAT_COOL and not self._heat_cool_enabled():
+            _LOGGER.debug(
+                "Ignoring set_hvac_mode=heat_cool: opt-in disabled or device unsupported"
+            )
+            return
+
         await self._ensure_occupied_before_active_action("set_hvac_mode")
 
         if self._device_power_on() and self._hvac_from_device() == hvac_mode:
@@ -623,11 +636,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 optimistic_set(self.hass, self._entry_id, self._device_id, "mode", code)
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
             else:
-                if hvac_mode == HVACMode.HEAT_COOL and not self._heat_cool_enabled():
-                    _LOGGER.debug(
-                        "Ignoring set_hvac_mode=heat_cool: opt-in disabled or device unsupported"
-                    )
-                    return
                 mode_code = HVAC_TO_MODE.get(hvac_mode)
                 if mode_code:
                     await self._send_p_event("P2", mode_code)
@@ -663,7 +671,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         # - FAN_ONLY (including backend alias P2=8): fan control only; no target
         #   temperature because P7/P8 setpoints do not apply.
         # - OFF: no temperature/fan controls.
-        # - Backend aliases 6/7: show HEAT_COOL but keep setpoint/fan read-only.
+        # - Backend aliases 6/7 and unapproved P2=4: report state but
+        #   keep setpoint/fan read-only.
 
         # Presets always available (mapped to scenary)
         feats |= ClimateEntityFeature.PRESET_MODE

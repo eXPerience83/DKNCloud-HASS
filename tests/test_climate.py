@@ -74,7 +74,7 @@ def test_reported_mode_aliases_show_heat_cool_without_enabling_writes(
     )
 
     assert entity.hvac_mode is HVACMode.HEAT_COOL
-    assert HVACMode.HEAT_COOL in entity.hvac_modes
+    assert HVACMode.HEAT_COOL not in entity.hvac_modes
     assert entity._heat_cool_enabled() is False
     assert not entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
     assert not entity.supported_features & ClimateEntityFeature.FAN_MODE
@@ -105,11 +105,11 @@ def test_heat_cool_exposed_when_device_supports_and_opt_in_enabled(
     ]
 
 
-def test_heat_cool_retained_when_current_mode_loses_support(
+def test_heat_cool_not_selectable_when_current_mode_loses_support(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
 ) -> None:
-    """The current HEAT_COOL mode should remain visible after support disappears."""
+    """Read a reported HEAT_COOL without advertising unsupported P2=4 writes."""
     device = {
         "name": "Zone",
         "modes": "11101",
@@ -126,8 +126,26 @@ def test_heat_cool_retained_when_current_mode_loses_support(
         HVACMode.HEAT,
         HVACMode.FAN_ONLY,
         HVACMode.DRY,
-        HVACMode.HEAT_COOL,
     ]
+    assert entity.hvac_mode is HVACMode.HEAT_COOL
+
+
+@pytest.mark.parametrize("reported_mode", ["4", "6", "7"])
+def test_heat_cool_reported_state_does_not_override_disabled_opt_in(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    reported_mode: str,
+) -> None:
+    """Even a supported P2=4 remains unselectable until explicitly opted in."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {"modes": "11111", "mode": reported_mode, "power": "1"},
+        heat_cool_opt_in=False,
+    )
+
+    assert entity.hvac_mode is HVACMode.HEAT_COOL
+    assert HVACMode.HEAT_COOL not in entity.hvac_modes
 
 
 def test_supported_features_matrix_by_hvac_mode(
@@ -176,3 +194,91 @@ def test_supported_features_matrix_by_hvac_mode(
             hass, dummy_coordinator_factory, device, heat_cool_opt_in=True
         )
         assert entity.supported_features == expected
+
+
+@pytest.mark.parametrize(
+    ("reported_mode", "setpoint", "minimum", "maximum", "fan"),
+    [
+        ("6", 25.0, 18.0, 30.0, "medium"),
+        ("7", 21.0, 16.0, 27.0, "high"),
+    ],
+)
+def test_auto_telemetry_aliases_use_correct_cold_or_heat_fields(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    reported_mode: str,
+    setpoint: float,
+    minimum: float,
+    maximum: float,
+    fan: str,
+) -> None:
+    """DKN APK uses P7/P3 fields for 6, but P8/P4 fields for 7."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {
+            "modes": "11101000",
+            "power": "1",
+            "mode": reported_mode,
+            "cold_consign": "25",
+            "heat_consign": "21",
+            "min_limit_cold": "18",
+            "max_limit_cold": "30",
+            "min_limit_heat": "16",
+            "max_limit_heat": "27",
+            "cold_speed": "2",
+            "heat_speed": "3",
+            "availables_speeds": "3",
+        },
+        heat_cool_opt_in=False,
+    )
+
+    assert entity.hvac_mode is HVACMode.HEAT_COOL
+    assert HVACMode.HEAT_COOL not in entity.hvac_modes
+    assert entity.target_temperature == setpoint
+    assert entity.min_temp == minimum
+    assert entity.max_temp == maximum
+    assert entity.fan_mode == fan
+    assert not entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
+    assert not entity.supported_features & ClimateEntityFeature.FAN_MODE
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_real_device_bitmask_never_offers_auto_or_alias_modes(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    opt_in: bool,
+) -> None:
+    """User's device advertises P2=1,2,3,5; never P2=4/6/7/8."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {"modes": "11101000", "power": "1", "mode": "2"},
+        heat_cool_opt_in=opt_in,
+    )
+
+    assert entity.hvac_modes == [
+        HVACMode.OFF,
+        HVACMode.COOL,
+        HVACMode.HEAT,
+        HVACMode.FAN_ONLY,
+        HVACMode.DRY,
+    ]
+
+
+def test_unapproved_reported_mode_4_remains_read_only(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+) -> None:
+    """Backend telemetry alone is not permission to issue AUTO control writes."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {"modes": "11101000", "power": "1", "mode": "4"},
+        heat_cool_opt_in=False,
+    )
+
+    assert entity.hvac_mode is HVACMode.HEAT_COOL
+    assert HVACMode.HEAT_COOL not in entity.hvac_modes
+    assert not entity.supported_features & ClimateEntityFeature.TARGET_TEMPERATURE
+    assert not entity.supported_features & ClimateEntityFeature.FAN_MODE

@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from homeassistant.components.climate.const import HVACMode
 from homeassistant.core import HomeAssistant
 
 import custom_components.airzoneclouddaikin.climate as climate_module
@@ -23,6 +24,8 @@ def _climate(
     mode: str = "1",
     power: str = "1",
     scenary: str = "occupied",
+    modes: str = "11111",
+    heat_cool_opt_in: bool = True,
 ) -> tuple[AirzoneClimate, Any]:
     """Create an independent climate entity backed by a synthetic DKN device."""
     dev = {
@@ -31,7 +34,7 @@ def _climate(
         "mode": mode,
         "power": power,
         "scenary": scenary,
-        "modes": "11111",
+        "modes": modes,
         "availables_speeds": "3",
         "cold_speed": "2",
         "heat_speed": "2",
@@ -46,7 +49,7 @@ def _climate(
     api = SimpleNamespace(send_event=AsyncMock(), put_device_fields=AsyncMock())
     hass.data.setdefault(DOMAIN, {}).setdefault("climate-entry", {})[
         "heat_cool_opt_in"
-    ] = True
+    ] = heat_cool_opt_in
     coordinator = dummy_coordinator_factory({"unit-1": dev}, api=api)
     entity = AirzoneClimate(coordinator, "climate-entry", "unit-1")
     entity.hass = hass
@@ -179,3 +182,58 @@ async def test_power_on_from_off_uses_p1_before_cooling_mode(
             }
         }
     )
+
+
+@pytest.mark.parametrize(
+    ("modes", "heat_cool_opt_in"),
+    [("11101", True), ("11111", False), ("", False)],
+)
+async def test_unsupported_auto_request_never_powers_on_or_exits_away(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    modes: str,
+    heat_cool_opt_in: bool,
+) -> None:
+    """A forced P2=4 request does not trigger P1 or a scenary transition."""
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="1",
+        power="0",
+        scenary="vacant",
+        modes=modes,
+        heat_cool_opt_in=heat_cool_opt_in,
+    )
+
+    await entity.async_set_hvac_mode(HVACMode.HEAT_COOL)
+
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
+
+
+async def test_reported_unapproved_auto_disables_setpoint_and_fan_writes(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A forced service call cannot write through unapproved reported P2=4."""
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="4",
+        power="1",
+        scenary="vacant",
+        modes="11101000",
+        heat_cool_opt_in=False,
+    )
+
+    await entity.async_set_temperature(temperature=23)
+    await entity.async_set_fan_mode("high")
+
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
