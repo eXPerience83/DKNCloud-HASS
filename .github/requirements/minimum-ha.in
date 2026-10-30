@@ -1,7 +1,0 @@
-# Independently pinned lowest HA/PHACC test harness.
-# HA 2026.3.0 has no published matching PHACC release; the first exact
-# compatible harness is PHACC 0.13.317 for HA 2026.3.1.
-# Keep homeassistant in sync with hacs.json; do not change with regular baseline.
-homeassistant==2026.3.1
-pytest-homeassistant-custom-component==0.13.317
-packaging==26.3

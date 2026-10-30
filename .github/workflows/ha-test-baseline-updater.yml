@@ -124,7 +124,7 @@ jobs:
               "- Upstream lag: " + (if .selected_homeassistant == .latest_homeassistant then "none" else "PHACC does not yet support the latest stable HA" end),
               "- Publication: " + (if .status == "update" then "only after lock validation, tests, lint and PR safety checks" else "no PR proposed" end),
               "",
-              "No automerge. The HA 2026.3.1 minimum CI environment is immutable here."
+              "No automerge. CI blocks baseline drift until minimum HA is tested independently or the support floor is explicitly raised."
             ] | join("\n")
           ' "$plan_path" >> "$GITHUB_STEP_SUMMARY"
 
@@ -198,7 +198,7 @@ jobs:
               "- Configured cooldown: `" + (.cooldown_days | tostring) + " days`",
               "- Lock command: `uv lock --upgrade-package homeassistant --upgrade-package pytest-homeassistant-custom-component`",
               "- Lock-delta validation: passed; only Home Assistant, PHACC, and allowed local dependency specifiers changed.",
-              "- Full pytest: `__PYTEST_RESULT__`", "- Minimum-HA files were untouched.",
+              "- Full pytest: `__PYTEST_RESULT__`", "- The HA support floor is unchanged; CI blocks baseline drift without an independent minimum-HA harness.",
               "- Ruff and Black checks: passed.",
               "- No automerge is enabled.",
               "- This PR was created with the repository `GITHUB_TOKEN`; a repository writer must select **Approve workflows to run** for CI."

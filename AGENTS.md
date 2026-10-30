@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Tooling
-- Tooling (CI, lint, format) runs on **Python 3.14**. The `pyproject.toml` targets packaging/tooling and also pins `requires-python = ">=3.14"`. All code under `custom_components/airzoneclouddaikin/` targets Python 3.14+, matching the Home Assistant 2026.3 runtime baseline.
+- Tooling (CI, lint, format) runs on **Python 3.14**. The `pyproject.toml` targets packaging/tooling and also pins `requires-python = ">=3.14"`. All code under `custom_components/airzoneclouddaikin/` targets Python 3.14+, matching the Home Assistant 2026.10.4 minimum supported release.
 - Format code with Black (line length 88, target-version `py314`), using the exact version pinned in `pyproject.toml` and `uv.lock`.
 - Lint and sort imports with Ruff targeting `py314`, using the exact version pinned in `pyproject.toml` and `uv.lock`.
 - For local fixes, run `uv run --locked ruff check --fix --select I .` and then `uv run --locked ruff check .`.

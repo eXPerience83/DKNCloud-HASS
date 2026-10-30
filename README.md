@@ -82,7 +82,7 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 [![Open the DKN Cloud repository in Home Assistant Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration)
 
-### Home Assistant 2026.10 and earlier — HACS
+### Home Assistant 2026.10.4–2026.10.x — HACS
 1. Open **HACS → Integrations**, search for **DKN Cloud for HASS**, and install.
 2. Restart if prompted, then add **DKN Cloud for HASS** under **Settings → Devices & Services**.
 
@@ -151,7 +151,7 @@ Enter your Airzone Cloud **username** and **password**.
 
 | Home Assistant | Python   | Daikin Model/Adapter         |
 |----------------|----------|------------------------------|
-| **2026.3.1+** | **3.14.2+** | DAIKIN ES.DKNWSERVER (Cloud) |
+| **2026.10.4+** | **3.14.2+** | DAIKIN ES.DKNWSERVER (Cloud) |
 
 *Other Airzone or Daikin adapters may not be supported.*
 
@@ -185,12 +185,15 @@ A: See [info.md](./info.md).
 
 ## 🧪 Reproducible tests and development
 
-The locked test baseline runs on **Python 3.14.7**, with
+The locked test baseline runs on **Python 3.14.10**, with
 **Home Assistant 2026.10.4** and
 `pytest-homeassistant-custom-component==0.13.375`.
 All test and lint dependencies (including transitives) are recorded in
-`uv.lock`. This is the **test baseline**, not a change to the minimum
-supported Home Assistant version (**2026.3.1**).
+`uv.lock`. Home Assistant 2026.10.4 is also the **minimum supported version**
+for the next release built from this source. Installations running older Home
+Assistant versions must upgrade HA before installing that release; earlier
+published DKN releases keep their own version-specific compatibility metadata.
+This deliberate breaking change does not rename entities or migrate config entries.
 
 Install [uv](https://docs.astral.sh/uv/), then run:
 
@@ -215,18 +218,7 @@ unbounded `requirements_test.txt` was removed to prevent conflicting
 dependency resolution. The release ZIP still contains only
 `custom_components/airzoneclouddaikin`.
 
-The **required** [minimum HA compatibility workflow](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-minimum-compatibility.yml) runs the same complete pytest suite under an independently hash-locked **Home Assistant 2026.3.1 / PHACC 0.13.317** environment; the ordinary test workflow keeps the separately locked **HA 2026.10.4 / PHACC 0.13.375** baseline. Both use **Python 3.14.7** and run on every PR and push to main. Each job reports installed versions and distinguishes installation errors from test regressions.
-
-**Minimum supported version adjustment (2026.3.0 → 2026.3.1):**
-PHACC did not publish a release for HA 2026.3.0; its earliest exact-compatible 2026.3 harness is **0.13.317 for HA 2026.3.1**. Keeping a truthful, fully testable minimum therefore requires the one-patch floor adjustment; see [roadmap #109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109). Python 3.15 is not currently part of the supported HA 3.14 test environment; do not mistake a newer interpreter's availability for validated HA support.
-
-The minimum environment is installed in a **separate virtualenv** from the main `uv.lock`, using `.github/requirements/minimum-ha.txt` with required hashes. To reproduce it locally, on Python 3.14.7:
-
-```sh
-uv venv --python 3.14.7 .venv-minimum-ha
-uv pip sync --python .venv-minimum-ha/bin/python --require-hashes .github/requirements/minimum-ha.txt
-PYTHONPATH=. .venv-minimum-ha/bin/python -m pytest -q
-```
+The **required** [locked HA test workflow](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/tests.yml) exercises Home Assistant 2026.10.4 / PHACC 0.13.375 on Python 3.14.10. Because the supported minimum and locked baseline now coincide, the former separate HA 2026.3.1 test job and its independent hash-lock have been removed to avoid running the same suite twice. CI checks that `hacs.json` agrees with the locked Home Assistant test version. If the locked baseline advances while the minimum stays at 2026.10.4, that check intentionally fails until an independently locked minimum-version test is restored and the guard is updated to verify that test harness. Python 3.15 remains unvalidated for this HA/PHACC harness.
 
 A **separate [daily Home Assistant compatibility canary](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-compatibility-canary.yml)** runs at **04:47 UTC** and can be launched manually. It selects the newest **stable, non-yanked** HA version with a matching stable `pytest-homeassistant-custom-component` release, skips HA prereleases and reports when the harness trails the latest stable HA. It installs the selected pair in an isolated virtual environment and runs the **same full pytest suite**, with no credentials or DKN cloud access. Canary failures reveal compatibility problems but **do not block PR CI, update `uv.lock`, or trigger automatic dependency updates**. It runs on the pinned Python 3.14 baseline; if a future HA requires another Python version, the installation failure will be visible rather than silently widening support.
 
@@ -247,9 +239,7 @@ The incremental gates are **74% global**, **65% climate**, **75% API** and
 The normal locked **current-HA** test workflow runs pytest-cov and uploads
 `coverage.json` and `coverage.xml` as a downloadable GitHub Actions artifact.
 Its GitHub Step Summary shows per-module statement counts and flags regressions
-below incremental, evidence-based floors. The independently hash-locked minimum-HA
-workflow still runs the **same full suite** without needing pytest-cov (to avoid
-unreviewed changes to its fixed dependency graph). Run locally with:
+below incremental, evidence-based floors. Run locally with:
 
 ```sh
 uv lock --check

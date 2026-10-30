@@ -1,7 +1,7 @@
 """Read pytest-cov's JSON output and enforce evidence-based coverage floors.
 
-Only the current locked HA job runs pytest-cov. Minimum-HA tests stay isolated
-and still exercise the entire suite without installing additional tooling.
+The supported minimum HA matches the locked test baseline. The daily canary
+independently probes the latest compatible stable HA/PHACC pair.
 """
 
 from __future__ import annotations
