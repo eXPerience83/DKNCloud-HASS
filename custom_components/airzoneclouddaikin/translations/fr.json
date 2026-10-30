@@ -53,6 +53,9 @@
     },
     "machine_not_ready": {
       "message": "Machine DKN non prête (423)"
+    },
+    "event_failed": {
+      "message": "La commande DKN a échoué (HTTP {status})."
     }
   },
   "issues": {

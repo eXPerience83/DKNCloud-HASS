@@ -53,6 +53,9 @@
     },
     "machine_not_ready": {
       "message": "DKN-Gerät nicht bereit (423)"
+    },
+    "event_failed": {
+      "message": "DKN-Befehl fehlgeschlagen (HTTP {status})."
     }
   },
   "issues": {
