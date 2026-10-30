@@ -59,6 +59,9 @@
     },
     "invalid_number_range": {
       "message": "O valor tem de estar entre {minimum} e {maximum}, em incrementos de {step}."
+    },
+    "fan_only_unsupported": {
+      "message": "Este dispositivo DKN não suporta o modo apenas ventilação."
     }
   },
   "issues": {

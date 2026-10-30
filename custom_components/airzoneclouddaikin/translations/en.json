@@ -59,6 +59,9 @@
     },
     "invalid_number_range": {
       "message": "Value must be between {minimum} and {maximum}, in steps of {step}."
+    },
+    "fan_only_unsupported": {
+      "message": "Fan-only mode is not supported by this DKN device."
     }
   },
   "issues": {
