@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.airzoneclouddaikin.const import DOMAIN
 from custom_components.airzoneclouddaikin.number import (
@@ -116,3 +117,107 @@ async def test_unoccupied_cool_max_payload_is_root_level(
     await entity.async_set_native_value(28)
 
     assert api.calls == [("dev1", {"max_temp_unoccupied": 28})]
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "value"),
+    [
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 12),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 22),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 28, 24),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 28, 34),
+    ],
+)
+async def test_unoccupied_limit_boundaries_are_written_unchanged(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    entity_cls: type[Any],
+    field: str,
+    initial: int,
+    value: int,
+) -> None:
+    """Both documented boundaries remain writable without a silent clamp."""
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+
+    await entity.async_set_native_value(value)
+
+    assert api.calls == [("dev1", {field: value})]
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "invalid"),
+    [
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 11),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 23),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 16.5),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 28, 23),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 28, 35),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 28, 28.5),
+    ],
+)
+async def test_unoccupied_limit_rejects_invalid_writes_without_backend_calls(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    entity_cls: type[Any],
+    field: str,
+    initial: int,
+    invalid: float,
+) -> None:
+    """Rejected writes produce a translated error and no DKN command."""
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await entity.async_set_native_value(invalid)
+
+    assert exc_info.value.translation_domain == DOMAIN
+    assert exc_info.value.translation_key == "invalid_number_range"
+    assert exc_info.value.translation_placeholders == {
+        "minimum": str(entity._native_min),
+        "maximum": str(entity._native_max),
+        "step": "1",
+    }
+    assert api.calls == []
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "backend_value"),
+    [
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 23.5),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 22.5),
+    ],
+)
+def test_unoccupied_read_keeps_unexpected_backend_values(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    entity_cls: type[Any],
+    field: str,
+    backend_value: float,
+) -> None:
+    """Backend telemetry is readable even outside write limits or steps."""
+    entity, _api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: backend_value}
+    )
+
+    assert entity.native_value == backend_value
+
+
+@pytest.mark.asyncio
+async def test_sleep_timer_keeps_existing_clamp_semantics(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+) -> None:
+    """The unoccupied validation does not alter the independent sleep timer."""
+    entity, api = _make_entity(
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30},
+    )
+
+    await entity.async_set_native_value(500)
+
+    assert api.calls == [("dev1", {"sleep_time": 120})]

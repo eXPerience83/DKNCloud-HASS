@@ -56,6 +56,9 @@
     },
     "event_failed": {
       "message": "DKN-Befehl fehlgeschlagen (HTTP {status})."
+    },
+    "invalid_number_range": {
+      "message": "Wert muss zwischen {minimum} und {maximum} liegen, in Schritten von {step}."
     }
   },
   "issues": {
