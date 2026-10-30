@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.5.0a3] - 2026-10-30
+
+> **Alpha preview for Home Assistant 2026.11 validation.**
+> This is not a stable release. The supported minimum for this candidate is
+> **Home Assistant 2026.10.4**; Python 3.14 is required by that HA runtime.
+
+### Breaking compatibility
+- Raised the minimum supported Home Assistant from 2026.3.1 to **2026.10.4**.
+  Earlier published integration releases retain their own compatibility policy.
+- The supported-minimum CI suite is now the independently locked HA 2026.10.4
+  test baseline, with a guard against advancing the baseline silently.
+
+### Fixed
+- Display reported backend HVAC modes 6 and 7 as combined heat/cool states,
+  using cold-side readback for 6 and heat-side readback for 7. Treat both as
+  display-only; neither mode is offered as a selectable P2 command.
+- Require both an advertised P2=4 capability and the explicit experimental
+  opt-in before offering or sending HEAT_COOL. Unsupported requests cannot
+  power on the equipment or change the occupancy preset.
+- Recognize reported P2=8 as ventilation without writing P2=8. Select
+  ventilation with P2=3 only when advertised; a deliberate selection while
+  reporting mode 8 can normalize the device to P2=3.
+- Reject unsupported ventilation selections before power-on or preset changes,
+  with localized errors.
+- Validate unoccupied device temperature limits (heat 12–22 °C, cool
+  24–34 °C, step 1) on write without altering unexpected backend readings.
+- Localize generic event HTTP errors without exposing backend response data.
+- Harden diagnostic identifier redaction.
+
+### Improved
+- Adopt typed `ConfigEntry.runtime_data` for API/coordinator access from all
+  entity platforms while retaining auxiliary state during the lifecycle migration.
+- Use typed Home Assistant `Platform` values and bulk platform setup/unload,
+  including safe handling of partially failed unloads.
+- Add and validate Marketplace-compatible integration packaging, repository
+  metadata, local brand assets and the climate/air-conditioning category.
+- Reproducible locked test/tooling environment; improve coverage for climate,
+  device state, API errors, lifecycle, packaging and privacy.
+- Add stable-only compatibility canary and review-only baseline maintenance.
+
+### Known limitations / testing
+- External device state synchronization is still under investigation (#101,
+  PR #102). The experimental refresh worker is **not** included.
+- Password-change reauthentication requires further real-account validation (#105).
+- Backend mode 6/7 writes remain disabled pending a supported-device contract.
+- The exact Home Assistant 2026.11 prerelease frontend and Marketplace install
+  must be checked manually; passing HA 2026.10.4 CI does not establish that.
+- See `docs/ha-2026.11-beta-smoke.md` for safe device testing and rollback.
+
 ## [0.5.0a2] - 2026-06-27
 
 ### Changed
