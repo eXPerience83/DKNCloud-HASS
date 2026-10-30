@@ -321,7 +321,6 @@ async def test_ventilation_selection_normalizes_reported_eight_to_three(
     )
 
 
-
 @pytest.mark.parametrize(
     ("requested_mode", "bitmask"),
     [
