@@ -252,8 +252,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 modes.append(HVACMode.DRY)
             return modes
 
-        # Do not expose FAN_ONLY without a confirmed P2=3 capability.
-        modes.extend([HVACMode.COOL, HVACMode.HEAT, HVACMode.DRY])
+        # Missing or malformed capabilities grant no permission to select a
+        # mode. Reported HVAC telemetry is still displayed separately.
         return modes
 
     # ---- Presets (HA) ----------------------------------------------------
@@ -620,6 +620,17 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         elif hvac_mode not in HVAC_TO_MODE:
             _LOGGER.debug("Ignoring unsupported HVAC mode: %s", hvac_mode)
             return
+        else:
+            # HA services can be called with modes not offered by the selector.
+            # Reject unadvertised P2 codes before power or preset changes.
+            mode_code = int(HVAC_TO_MODE[hvac_mode])
+            if not self._supports_p2_value(mode_code):
+                _LOGGER.debug(
+                    "Ignoring set_hvac_mode=%s: P2=%s not advertised",
+                    hvac_mode,
+                    mode_code,
+                )
+                return
 
         await self._ensure_occupied_before_active_action("set_hvac_mode")
 

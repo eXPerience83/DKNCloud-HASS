@@ -33,6 +33,24 @@ def _make_climate(
     return entity
 
 
+@pytest.mark.parametrize("bitmask", ["", "invalid", None])
+def test_unknown_mode_capabilities_are_not_offered_for_selection(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    bitmask: str | None,
+) -> None:
+    """Without a valid bitmask, preserve telemetry but fail closed for selections."""
+    entity = _make_climate(
+        hass,
+        dummy_coordinator_factory,
+        {"name": "Zone", "modes": bitmask, "mode": "1", "power": "1"},
+        heat_cool_opt_in=True,
+    )
+
+    assert entity.hvac_mode is HVACMode.COOL
+    assert entity.hvac_modes == [HVACMode.OFF]
+
+
 def test_heat_cool_hidden_without_device_support(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
