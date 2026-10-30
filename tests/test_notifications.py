@@ -185,6 +185,8 @@ async def test_setup_unload_smoke_with_fake_snapshot(
     bucket = hass.data[DOMAIN][entry.entry_id]
     assert bucket["coordinator"].data == {"dev1": sample_device}
     assert bucket["api"] is setup_api_class.instances[-1]
+    assert entry.runtime_data.api is bucket["api"]
+    assert entry.runtime_data.coordinator is bucket["coordinator"]
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()

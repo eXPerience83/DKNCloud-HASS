@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import Mock
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.airzoneclouddaikin import sensor
+from custom_components.airzoneclouddaikin import AirzoneRuntimeData, sensor
 from custom_components.airzoneclouddaikin.config_flow import CONF_EXPOSE_PII
 from custom_components.airzoneclouddaikin.const import DOMAIN
 
@@ -23,7 +24,7 @@ async def test_async_setup_entry_removes_orphan_pii_entities_only(
     entry = dkn_config_entry_factory(options={CONF_EXPOSE_PII: False})
     entry.add_to_hass(hass)
     coordinator = dummy_coordinator_factory({})
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
+    entry.runtime_data = AirzoneRuntimeData(api=Mock(), coordinator=coordinator)
 
     registry = er.async_get(hass)
     pii_mac = registry.async_get_or_create(
