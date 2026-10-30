@@ -359,6 +359,29 @@ async def test_send_event_maps_423_machine_not_ready() -> None:
     assert exc_info.value.translation_key == "machine_not_ready"
 
 
+@pytest.mark.parametrize("status", [403, 500])
+@pytest.mark.asyncio
+async def test_send_event_maps_unexpected_status_to_translated_error(status: int) -> None:
+    """Other /events errors expose a localizable status without raw response data."""
+    api = AirzoneAPI(
+        username="user@example.com",
+        password="secret",
+        session=AsyncMock(spec_set=ClientSession),
+    )
+    api._authed_request_with_retries = AsyncMock(
+        side_effect=_client_response_error(status=status)
+    )
+
+    with pytest.raises(HomeAssistantError) as exc_info:
+        await api.send_event({"event": "payload"})
+
+    error = exc_info.value
+    assert error.translation_domain == "airzoneclouddaikin"
+    assert error.translation_key == "event_failed"
+    assert error.translation_placeholders == {"status": str(status)}
+    assert error.__suppress_context__ is True
+
+
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
 async def test_nonretryable_errors_are_propagated_exactly_once(
     monkeypatch: pytest.MonkeyPatch,
