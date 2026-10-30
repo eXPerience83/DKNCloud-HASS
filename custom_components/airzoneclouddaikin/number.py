@@ -13,6 +13,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
+from .airzone_api import AirzoneAPI
 from .helpers import (
     acquire_device_lock,
     build_device_info,
