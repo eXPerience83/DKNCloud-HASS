@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from unittest.mock import Mock
 
 import pytest
 from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from multidict import CIMultiDict
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from yarl import URL
@@ -93,24 +92,41 @@ async def test_devices_without_server_id_use_normalized_mac_fallback(
     assert "unknown" not in str(data)
 
 
-async def test_fetch_installations_401_requests_reauth_once(
+async def test_fetch_installations_401_requests_native_reauth(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Auth failure triggers HA reauth and is never silently treated as offline."""
+    """A 401 is an authentication failure, not a generic update failure."""
     entry = dkn_config_entry_factory()
     entry.add_to_hass(hass)
-    reauth = Mock()
-    monkeypatch.setattr(integration, "_request_reauth_once", reauth)
 
     class FakeAPI:
         async def fetch_installations(self) -> None:
             raise _auth_failure()
 
-    with pytest.raises(UpdateFailed, match="401"):
+    with pytest.raises(ConfigEntryAuthFailed, match="401"):
         await integration._async_update_data(hass, entry, FakeAPI())
-    reauth.assert_called_once_with(hass, entry)
+
+
+async def test_fetch_devices_401_uses_native_auth_failure_even_if_other_succeeds(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+) -> None:
+    """One installation rejecting the token invalidates the full snapshot."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+
+    class FakeAPI:
+        async def fetch_installations(self) -> list[dict[str, str]]:
+            return [{"installation_id": "bad"}, {"installation_id": "good"}]
+
+        async def fetch_devices(self, installation: str) -> list[dict[str, str]]:
+            if installation == "bad":
+                raise _auth_failure()
+            return [{"id": "dev-1", "scenary": "occupied"}]
+
+    with pytest.raises(ConfigEntryAuthFailed, match="401"):
+        await integration._async_update_data(hass, entry, FakeAPI())
 
 
 async def test_fetch_devices_cancellation_is_not_swallowed(

@@ -37,7 +37,10 @@ from aiohttp import (
     ClientSession,
     ClientTimeout,
 )
+from aiohttp.client_reqrep import RequestInfo
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from multidict import CIMultiDict
+from yarl import URL
 
 from .const import (
     API_DEVICES,
@@ -175,9 +178,17 @@ class AirzoneAPI:
                 "HTTP %s %s failed with status %s",
                 method,
                 spath,
-                getattr(cre, "status", "unknown"),
+                cre.status,
             )
-            raise
+            # aiohttp includes the full request URL (with user_email and
+            # user_token) in ClientResponseError.__str__. Never propagate it.
+            safe_url = URL(f"{BASE_URL.rstrip('/')}{spath}")
+            safe_request = RequestInfo(safe_url, method, CIMultiDict(), safe_url)
+            retry_after = cre.headers.get("Retry-After") if cre.headers else None
+            headers = {"Retry-After": retry_after} if retry_after else None
+            raise ClientResponseError(
+                safe_request, history=(), status=cre.status, headers=headers
+            ) from None
         except ClientConnectorError:
             _LOGGER.debug("HTTP %s %s connection error", method, spath)
             raise

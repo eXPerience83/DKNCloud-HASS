@@ -204,27 +204,25 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Ask only for password; refresh the token; never persist password."""
-        # Resolve entry
-        entry = None
-        entry_id = self.context.get("entry_id")
-        if entry_id:
-            entry = self.hass.config_entries.async_get_entry(entry_id)
-        if entry is None:
-            # Fallback: if a single entry exists, use it
-            entries = self.hass.config_entries.async_entries(DOMAIN)
-            if len(entries) == 1:
-                entry = entries[0]
-        if entry is None:
+        """Refresh the token for the exact entry without persisting the password."""
+        entry = self._get_reauth_entry()
+        stored_username = entry.data.get(CONF_USERNAME)
+        username = stored_username.strip() if isinstance(stored_username, str) else ""
+        if not username:
             return self.async_abort(reason="reauth_failed")
 
-        username = entry.data.get(CONF_USERNAME)
         schema = vol.Schema({vol.Required(CONF_PASSWORD): cv.string})
 
-        if user_input is None:
+        def show_form(errors: dict[str, str]) -> FlowResult:
             return self.async_show_form(
-                step_id="reauth_confirm", data_schema=schema, errors={}
+                step_id="reauth_confirm",
+                data_schema=schema,
+                description_placeholders={CONF_USERNAME: username},
+                errors=errors,
             )
+
+        if user_input is None:
+            return show_form({})
 
         try:
             from .airzone_api import AirzoneAPI
@@ -239,15 +237,9 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         try:
             login_ret = await asyncio.wait_for(api.login(), timeout=60.0)
         except TimeoutError:
-            return self.async_show_form(
-                step_id="reauth_confirm", data_schema=schema, errors={"base": "timeout"}
-            )
+            return show_form({"base": "timeout"})
         except Exception:
-            return self.async_show_form(
-                step_id="reauth_confirm",
-                data_schema=schema,
-                errors={"base": "cannot_connect"},
-            )
+            return show_form({"base": "cannot_connect"})
         finally:
             try:
                 api.clear_password()
@@ -259,17 +251,21 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             token = login_ret
 
         if not isinstance(token, str) or not token.strip():
-            return self.async_show_form(
-                step_id="reauth_confirm",
-                data_schema=schema,
-                errors={"base": "invalid_auth"},
-            )
+            return show_form({"base": "invalid_auth"})
 
-        # Merge options, preserving unknown keys
+        # The listener reloads a successfully set-up entry. If reauth was
+        # triggered before the first setup finished, no listener exists yet.
+        # No listener exists after a failed initial setup. A fresh login can
+        # also return the same token, in which case HA fires no update listeners.
+        needs_reload = not entry.update_listeners or token == entry.options.get(
+            "user_token"
+        )
         new_opts = dict(entry.options)
         new_opts["user_token"] = token
-        self.hass.config_entries.async_update_entry(entry, options=new_opts)
-        return self.async_abort(reason="reauth_successful")
+        result = self.async_update_and_abort(entry, options=new_opts)
+        if needs_reload:
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return result
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):

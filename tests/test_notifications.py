@@ -13,6 +13,7 @@ from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from multidict import CIMultiDict
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -718,13 +719,10 @@ async def test_async_update_data_401_from_one_installation_triggers_reauth(
                 raise _client_response_error(401)
             return [{"id": "dev-ok", "name": "Unit OK", "scenary": "home"}]
 
-    with pytest.raises(UpdateFailed, match=r"Authentication required \(401\)"):
+    with pytest.raises(ConfigEntryAuthFailed, match=r"Authentication required \(401\)"):
         await integration._async_update_data(hass, entry, DummyAPI())
 
-    await hass.async_block_till_done()
-
-    bucket = hass.data[DOMAIN][entry.entry_id]
-    assert bucket["reauth_requested"] is True
+    assert "reauth_requested" not in hass.data[DOMAIN][entry.entry_id]
 
 
 @pytest.mark.asyncio

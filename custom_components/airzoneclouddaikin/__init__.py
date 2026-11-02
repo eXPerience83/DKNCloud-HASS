@@ -19,7 +19,7 @@ from typing import Any
 
 from aiohttp import ClientResponseError
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -136,33 +136,14 @@ def _backend_power_is_off(device: dict[str, Any]) -> bool:
         return False
 
 
-def _request_reauth_once(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Trigger reauth flow once per entry and mark the entry bucket."""
-
-    bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
-    if bucket.get("reauth_requested"):
-        return
-
-    bucket["reauth_requested"] = True
-    _LOGGER.warning("Authentication expired; opening reauth flow.")
-    hass.async_create_task(
-        hass.config_entries.flow.async_init(
-            DOMAIN,
-            context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
-            data=dict(entry.data),
-        )
-    )
-
-
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     """Coordinator that aggregates installations and exposes device data.
 
     ``data`` is a mapping of device IDs (Airzone or MAC) to device dicts as
     returned by the API, refreshed on the coordinator interval. The coordinator
-    owns the ``AirzoneAPI`` instance used across platforms, triggers reauth if a
-    401 is encountered, and drives notification refresh scheduling. Per-entry
-    buckets under ``hass.data[DOMAIN][entry_id]`` hold auxiliary state such as
-    reauth flags and notification templates.
+    owns the ``AirzoneAPI`` instance used across platforms. Home Assistant
+    handles reauthentication on HTTP 401. Per-entry buckets hold auxiliary
+    state such as notification templates.
     """
 
     api: AirzoneAPI
@@ -238,7 +219,7 @@ async def _async_update_data(
 ) -> dict[str, dict[str, Any]]:
     """Fetch and aggregate device data.
 
-    - On 401, open a reauth flow (once) and raise UpdateFailed (entities unavailable).
+    - On 401, raise ConfigEntryAuthFailed so Home Assistant handles reauth.
     """
     try:
         domain_bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
@@ -341,8 +322,7 @@ async def _async_update_data(
             last_devices_by_inst[inst_id] = inst_device_ids
 
         if auth_error:
-            _request_reauth_once(hass, entry)
-            raise UpdateFailed("Authentication required (401)")
+            raise ConfigEntryAuthFailed("Authentication required (401)")
 
         had_prior_snapshot = bool(domain_bucket.get("has_successful_snapshot", False))
         if had_non_auth_install_errors and not had_prior_snapshot:
@@ -402,13 +382,12 @@ async def _async_update_data(
 
     except asyncio.CancelledError:
         raise
-    except UpdateFailed:
+    except UpdateFailed, ConfigEntryAuthFailed:
         raise
     except ClientResponseError as cre:
         status = cre.status
         if cre.status == 401:
-            _request_reauth_once(hass, entry)
-            raise UpdateFailed("Authentication required (401)") from None
+            raise ConfigEntryAuthFailed("Authentication required (401)") from None
         raise UpdateFailed(f"Failed to update Airzone data: HTTP {status}") from None
     except Exception as err:  # noqa: BLE001
         raise UpdateFailed(
@@ -551,7 +530,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     opts = entry.options
 
     session = async_get_clientsession(hass)
-    username = cfg.get(CONF_USERNAME)
+    raw_username = cfg.get(CONF_USERNAME)
+    username = raw_username.strip() if isinstance(raw_username, str) else ""
+    if not username:
+        raise ConfigEntryAuthFailed("Account identity required; reauth triggered")
 
     # Read token exclusively from options (no fallback to data).
     token = opts.get("user_token")
@@ -573,6 +555,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         hass,
         _LOGGER,
         name="airzone_data",
+        config_entry=entry,
         update_method=lambda: _async_update_data(hass, entry, api),
         update_interval=timedelta(seconds=scan_interval),
     )
@@ -593,10 +576,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             supports_heat_cool = None
 
     bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
-    prev_flag = bool(bucket.get("reauth_requested", False))
     bucket["api"] = api
     bucket["coordinator"] = coordinator
-    bucket["reauth_requested"] = prev_flag
     bucket["scan_interval"] = scan_interval
     bucket["notify_strings"] = await _async_prepare_notify_strings(hass)
     bucket["heat_cool_supported"] = supports_heat_cool
