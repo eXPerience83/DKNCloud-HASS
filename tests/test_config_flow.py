@@ -368,6 +368,37 @@ async def test_reauth_with_listener_does_not_schedule_second_reload(
     assert login_api_class.instances[-1].cleared_password is True
 
 
+async def test_reauth_unchanged_token_still_schedules_reload(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+    fake_token: str,
+    scheduled_reauth_reloads: list[str],
+) -> None:
+    """HA does not notify listeners when the new token equals the saved token."""
+    entry = dkn_config_entry_factory(options={"user_token": fake_token})
+    entry.add_to_hass(hass)
+    update_events: list[str] = []
+
+    async def on_update(_hass: HomeAssistant, updated: MockConfigEntry) -> None:
+        update_events.append(updated.entry_id)
+
+    entry.add_update_listener(on_update)
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert scheduled_reauth_reloads == [entry.entry_id]
+    assert update_events == []
+    assert entry.options["user_token"] == fake_token
+    assert login_api_class.instances[-1].cleared_password is True
+
+
 async def test_reauth_invalid_password_preserves_old_token(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
