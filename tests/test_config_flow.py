@@ -345,7 +345,10 @@ async def test_reauth_invalid_password_preserves_old_token(
 
 @pytest.mark.parametrize(
     ("login_failure", "expected_error"),
-    [(TimeoutError(), "timeout"), (RuntimeError("backend unavailable"), "cannot_connect")],
+    [
+        (TimeoutError(), "timeout"),
+        (RuntimeError("backend unavailable"), "cannot_connect"),
+    ],
 )
 async def test_reauth_transient_login_failure_preserves_old_token(
     hass: HomeAssistant,
