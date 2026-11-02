@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       ref:
@@ -15,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: lint-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -50,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           uv lock --check
-          uv sync --locked --only-group release
+          uv sync --locked --only-group lint
 
       - name: Report toolchain
         shell: bash
@@ -60,7 +61,7 @@ jobs:
           import importlib.metadata as m
           import sys
           print("Python:", sys.version)
-          for name in ("homeassistant", "pytest-homeassistant-custom-component", "pytest", "pytest-asyncio", "ruff"):
+          for name in ("ruff",):
               print(f"{name}: {m.version(name)}")
           PY
           uv --version
