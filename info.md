@@ -37,6 +37,13 @@
 - Body: `{"email":"...","password":"..."}`
 - **Success codes observed:** 200, 201
 
+**Home Assistant integration behavior (not a backend contract):** Reauthentication
+uses the account email already stored on the exact config entry, strips legacy
+leading/trailing whitespace before sending the login request, and saves only
+the new token in the existing entry options. The password is never persisted.
+Empty or missing stored identities do not trigger login requests; invalid
+credentials, timeouts and connectivity failures have distinct form errors.
+
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
 - Returns a list of relations; **use `installation_id`** (not the relation `id`) to query devices.
