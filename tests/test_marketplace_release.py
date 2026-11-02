@@ -145,6 +145,7 @@ def test_invalid_json_manifest_fails(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Duplicate"):
         validate_zip(archive, hacs)
 
+
 def test_public_display_name_consistency() -> None:
     """Keep the public name aligned without changing the internal domain."""
     project_root = Path(__file__).resolve().parent.parent
