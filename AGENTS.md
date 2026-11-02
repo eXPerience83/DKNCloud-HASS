@@ -19,6 +19,21 @@
   The CI Python interpreter stays on the approved 3.14 patch series; advancing
   to Python 3.15 needs separate Home Assistant/PHACC compatibility review.
 
+## GitHub Actions security
+- Pin external GitHub Actions to audited full 40-character commit SHAs, with a
+  trailing version comment for maintainability. Use the same SHA set as the
+  corresponding reviewed Pollen Levels workflows when appropriate; validate
+  every change rather than following floating branches or tags in CI.
+- `workflow-security.yml` runs actionlint (with ShellCheck) and zizmor on PRs,
+  main, and manual dispatch. Review all findings before merging; avoid blanket
+  suppressions.
+- Use the minimum GITHUB_TOKEN permissions per workflow or job. Keep checkout
+  `persist-credentials: false` unless a narrowly scoped, documented write
+  operation requires otherwise. Do not expose secrets to untrusted PR code.
+- Preserve DKN-specific package validation and HA/PHACC updater protections.
+  Release workflow redesign is tracked in #141 and is not part of security
+  baseline refactoring.
+
 ## Release & API boundaries
 - Do not change the integration version or changelog entries unless explicitly requested.
 - Do not rename entities, alter `unique_id` patterns, or modify translation keys unless explicitly requested.
