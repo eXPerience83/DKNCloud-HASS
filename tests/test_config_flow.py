@@ -206,6 +206,7 @@ async def test_reauth_flow_success_updates_token(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
+    assert result["description_placeholders"] == {CONF_USERNAME: entry.data[CONF_USERNAME]}
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_PASSWORD: fake_password}
@@ -217,6 +218,156 @@ async def test_reauth_flow_success_updates_token(
     assert entry.options["hidden_key"] == "keep-me"
     assert entry.options[CONF_SCAN_INTERVAL] == 10
     assert entry.options[CONF_EXPOSE_PII] is False
+    assert login_api_class.instances[-1].cleared_password is True
+    assert login_api_class.instances[-1].username == entry.data[CONF_USERNAME]
+    assert CONF_PASSWORD not in entry.data
+    assert CONF_PASSWORD not in entry.options
+    assert login_api_class.instances[-1].password is None
+
+
+@pytest.mark.parametrize(
+    "stored_username",
+    ["  User@Example.Com  ", "\tuser@example.com\n"],
+)
+async def test_reauth_trims_legacy_stored_email_only_for_login(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+    stored_username: str,
+) -> None:
+    """Legacy whitespace must not reach login or rewrite stored entry identity."""
+    entry = dkn_config_entry_factory(
+        data={CONF_USERNAME: stored_username},
+        options={"user_token": "old-token", "extra": "preserve"},
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["description_placeholders"] == {
+        CONF_USERNAME: stored_username.strip()
+    }
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert login_api_class.instances[-1].username == stored_username.strip()
+    assert entry.data[CONF_USERNAME] == stored_username
+    assert entry.options["extra"] == "preserve"
+    assert login_api_class.instances[-1].cleared_password is True
+
+
+@pytest.mark.parametrize(
+    "entry_data",
+    [{}, {CONF_USERNAME: None}, {CONF_USERNAME: ""}, {CONF_USERNAME: "   "}],
+)
+async def test_reauth_missing_stored_identity_aborts_without_login(
+    hass: HomeAssistant,
+    login_api_class: type[LoginAirzoneAPI],
+    entry_data: dict[str, Any],
+) -> None:
+    """An absent or empty identity must not be passed to the DKN login API."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="legacy-missing-identity",
+        title="Legacy",
+        data=entry_data,
+        options={"user_token": "old-token"},
+        version=2,
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_failed"
+    assert not login_api_class.instances
+    assert entry.options["user_token"] == "old-token"
+
+
+async def test_reauth_updates_only_requested_entry(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+    fake_token: str,
+) -> None:
+    """Reauth must not fall back to a different account when multiple exist."""
+    first = dkn_config_entry_factory(
+        entry_id="first", email="first@example.com", token="first-token"
+    )
+    second = dkn_config_entry_factory(
+        entry_id="second", email="second@example.com", token="second-old-token"
+    )
+    first.add_to_hass(hass)
+    second.add_to_hass(hass)
+
+    result = await second.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert login_api_class.instances[-1].username == "second@example.com"
+    assert first.options["user_token"] == "first-token"
+    assert second.options["user_token"] == fake_token
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 2
+
+
+async def test_reauth_invalid_password_preserves_old_token(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+) -> None:
+    """Invalid credentials are distinct from a transient backend failure."""
+    entry = dkn_config_entry_factory(options={"user_token": "old-token"})
+    entry.add_to_hass(hass)
+    login_api_class.login_result = False
+
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert result["description_placeholders"] == {
+        CONF_USERNAME: entry.data[CONF_USERNAME]
+    }
+    assert entry.options["user_token"] == "old-token"
+    assert login_api_class.instances[-1].cleared_password is True
+
+
+@pytest.mark.parametrize(
+    ("login_failure", "expected_error"),
+    [(TimeoutError(), "timeout"), (RuntimeError("backend unavailable"), "cannot_connect")],
+)
+async def test_reauth_transient_login_failure_preserves_old_token(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+    login_failure: Exception,
+    expected_error: str,
+) -> None:
+    """Timeout and backend errors remain distinguishable and do not change options."""
+    entry = dkn_config_entry_factory(options={"user_token": "old-token"})
+    entry.add_to_hass(hass)
+    login_api_class.login_result = login_failure
+
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": expected_error}
+    assert entry.options["user_token"] == "old-token"
     assert login_api_class.instances[-1].cleared_password is True
 
 
