@@ -1,4 +1,4 @@
-"""DKN Cloud for HASS integration setup.
+"""DKN Cloud for Home Assistant integration setup.
 
 Key points in this revision:
 - Power switch delegates to the climate entity, inheriting away auto-exit and
@@ -522,7 +522,7 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
-    """Set up DKN Cloud for HASS from a config entry."""
+    """Set up DKN Cloud for Home Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
     bucket.setdefault("sleep_tracking", {})
@@ -860,7 +860,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
     _LOGGER.info(
-        "DKN Cloud for HASS configured (scan_interval=%ss; token from options).",
+        "DKN Cloud for Home Assistant configured (scan_interval=%ss; token from options).",
         scan_interval,
     )
     return True

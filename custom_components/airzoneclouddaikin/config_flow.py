@@ -1,4 +1,4 @@
-"""Config & Options flow for DKN Cloud for HASS.
+"""Config & Options flow for DKN Cloud for Home Assistant.
 
 What this delivers
 ------------------
