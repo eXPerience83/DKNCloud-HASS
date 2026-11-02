@@ -109,6 +109,29 @@ async def test_login_posts_to_sign_in_and_sets_token(
 
 
 @pytest.mark.asyncio
+async def test_http_401_redacts_token_from_exception(
+    socket_enabled: None, aiohttp_server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No propagated HTTP error may disclose query-string credentials."""
+    async def handler(_request: web.Request) -> web.Response:
+        return web.Response(status=401)
+
+    await _serve_api(
+        aiohttp_server, monkeypatch, "GET", API_INSTALLATION_RELATIONS, handler
+    )
+    async with ClientSession() as session:
+        api = AirzoneAPI("secret-email@example.com", session, token="secret-token")
+        with pytest.raises(ClientResponseError) as exc_info:
+            await api.fetch_installations()
+
+    assert exc_info.value.status == 401
+    assert "secret-email@example.com" not in str(exc_info.value)
+    assert "secret-token" not in str(exc_info.value)
+    assert "secret-email@example.com" not in repr(exc_info.value)
+    assert "secret-token" not in repr(exc_info.value)
+    assert "user_token" not in str(exc_info.value)
+
+
 async def test_login_handles_unauthorized() -> None:
     """Unauthorized login should return False and leave the token empty."""
     api = AirzoneAPI(
