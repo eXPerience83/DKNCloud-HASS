@@ -253,10 +253,15 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not isinstance(token, str) or not token.strip():
             return show_form({"base": "invalid_auth"})
 
-        # The existing update listener reloads the entry when options change.
+        # The listener reloads a successfully set-up entry. If reauth was
+        # triggered before the first setup finished, no listener exists yet.
+        needs_reload = not entry.update_listeners
         new_opts = dict(entry.options)
         new_opts["user_token"] = token
-        return self.async_update_and_abort(entry, options=new_opts)
+        result = self.async_update_and_abort(entry, options=new_opts)
+        if needs_reload:
+            self.hass.config_entries.async_schedule_reload(entry.entry_id)
+        return result
 
 
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
