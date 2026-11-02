@@ -1,4 +1,4 @@
-"""Sensors for DKN Cloud for HASS (Airzone Cloud).
+"""Sensors for DKN Cloud for Home Assistant (Airzone Cloud).
 
 0.4.0 metadata consistency:
 - device_info now returns a DeviceInfo object (aligned with other platforms).

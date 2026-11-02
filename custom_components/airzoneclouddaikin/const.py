@@ -1,4 +1,4 @@
-"""Constants for DKN Cloud for HASS integration.
+"""Constants for DKN Cloud for Home Assistant integration.
 
 This file includes API endpoints and basic configuration constants.
 """

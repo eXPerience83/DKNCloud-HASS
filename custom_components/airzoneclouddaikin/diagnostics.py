@@ -1,4 +1,4 @@
-"""Diagnostics for DKN Cloud for HASS (Airzone Cloud).
+"""Diagnostics for DKN Cloud for Home Assistant (Airzone Cloud).
 
 Goal:
 - Keep diagnostics useful for troubleshooting while protecting user privacy.
