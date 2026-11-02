@@ -258,6 +258,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         new_opts["user_token"] = token
         return self.async_update_and_abort(entry, options=new_opts)
 
+
 class AirzoneOptionsFlow(config_entries.OptionsFlow):
     """Options flow that preserves hidden keys (like user_token)."""
 
