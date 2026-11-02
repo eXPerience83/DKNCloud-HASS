@@ -17,9 +17,13 @@ WORKFLOW = ROOT / ".github/workflows/release.yml"
 
 def _metadata_code() -> str:
     text = WORKFLOW.read_text(encoding="utf-8")
-    step = text.split("      - name: Validate integration metadata and derive tag\n", 1)[1]
+    step = text.split(
+        "      - name: Validate integration metadata and derive tag\n", 1
+    )[1]
     step = step.split("      - name: Validate derived release tag\n", 1)[0]
-    source = step.split("          python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+    source = step.split("          python - <<'PY'\n", 1)[1].split("\n          PY", 1)[
+        0
+    ]
     return textwrap.dedent(source)
 
 
@@ -63,7 +67,9 @@ def _run(tmp_path: Path, version: str, changelog: str, **updates: str):
         ("0.6.0", "false"),
     ],
 )
-def test_manifest_derives_release_tag(tmp_path: Path, version: str, channel: str) -> None:
+def test_manifest_derives_release_tag(
+    tmp_path: Path, version: str, channel: str
+) -> None:
     result, output = _run(tmp_path, version, version)
     assert result.returncode == 0, result.stderr
     assert output.read_text(encoding="utf-8").splitlines() == [
@@ -87,14 +93,18 @@ def test_malformed_versions_rejected(tmp_path: Path, version: str) -> None:
 
 def test_published_tag_or_prerelease_mismatch_rejected(tmp_path: Path) -> None:
     bad_tag, _ = _run(
-        tmp_path, "0.5.0a5", "0.5.0a5",
+        tmp_path,
+        "0.5.0a5",
+        "0.5.0a5",
         EVENT_MODE="published-fallback",
         EVENT_TAG="v0.5.0a4",
         EVENT_PRERELEASE="true",
     )
     assert bad_tag.returncode != 0
     bad_flag, _ = _run(
-        tmp_path, "0.5.0a5", "0.5.0a5",
+        tmp_path,
+        "0.5.0a5",
+        "0.5.0a5",
         EVENT_MODE="published-fallback",
         EVENT_TAG="v0.5.0a5",
         EVENT_PRERELEASE="false",
