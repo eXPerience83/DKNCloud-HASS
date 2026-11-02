@@ -5,7 +5,7 @@ on:
     types: [published]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.event.release.tag_name || github.ref_name }}
@@ -14,21 +14,24 @@ concurrency:
 jobs:
   package-and-upload:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.release.tag_name }}
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version-file: .python-version
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version-file: pyproject.toml
           enable-cache: true
@@ -94,10 +97,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/validate_marketplace_release.py airzoneclouddaikin.zip --expected-release-tag "${{ github.event.release.tag_name }}"
+          python scripts/validate_marketplace_release.py airzoneclouddaikin.zip --expected-release-tag "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
 
       - name: Upload ZIP to release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           files: airzoneclouddaikin.zip
           overwrite_files: true
