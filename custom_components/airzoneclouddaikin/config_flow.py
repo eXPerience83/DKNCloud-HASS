@@ -257,9 +257,8 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # triggered before the first setup finished, no listener exists yet.
         # No listener exists after a failed initial setup. A fresh login can
         # also return the same token, in which case HA fires no update listeners.
-        needs_reload = (
-            not entry.update_listeners
-            or token == entry.options.get("user_token")
+        needs_reload = not entry.update_listeners or (
+            token == entry.options.get("user_token")
         )
         new_opts = dict(entry.options)
         new_opts["user_token"] = token
