@@ -1,4 +1,4 @@
-"""Binary sensor platform for DKN Cloud for HASS (Airzone Cloud).
+"""Binary sensor platform for DKN Cloud for Home Assistant (Airzone Cloud).
 
 0.4.0 metadata consistency:
 - Pass MAC via DeviceInfo.connections using CONNECTION_NETWORK_MAC.

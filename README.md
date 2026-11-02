@@ -1,7 +1,9 @@
-# ❄️ DKN Cloud for HASS
+# ❄️ DKN Cloud for Home Assistant
 
 **Control your Daikin Airzone Cloud (dkn.airzonecloud.com) HVAC systems natively from Home Assistant.**  
 Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnostics, and temperature at your fingertips.
+
+> **Unofficial integration:** This community-maintained Home Assistant integration is not affiliated with or endorsed by Daikin or Airzone. It connects to the DKN Cloud service using your existing account.
 
 <!-- Badges -->
 [![GitHub Release](https://img.shields.io/github/v/release/eXPerience83/DKNCloud-HASS)](https://github.com/eXPerience83/DKNCloud-HASS/releases)
@@ -77,14 +79,14 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 ### Home Assistant 2026.11+ — built-in Marketplace (recommended)
 1. Open **Settings → Marketplace** in Home Assistant (no separate HACS installation).
-2. Find **DKN Cloud for HASS** in the integration catalog and install it.
-3. Follow any restart prompt, then open **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for HASS**.
+2. Find **DKN Cloud for Home Assistant** in the integration catalog and install it.
+3. Follow any restart prompt, then open **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for Home Assistant**.
 
 [![Open the DKN Cloud repository in Home Assistant Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration)
 
 ### Home Assistant 2026.10.4–2026.10.x — HACS
-1. Open **HACS → Integrations**, search for **DKN Cloud for HASS**, and install.
-2. Restart if prompted, then add **DKN Cloud for HASS** under **Settings → Devices & Services**.
+1. Open **HACS → Integrations**, search for **DKN Cloud for Home Assistant**, and install.
+2. Restart if prompted, then add **DKN Cloud for Home Assistant** under **Settings → Devices & Services**.
 
 The [existing HACS link](https://my.home-assistant.io/redirect/hacs_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration) also forwards to Marketplace from HA 2026.11 onward. Existing HACS-installed integrations are migrated by Home Assistant. Both use the same `hacs.json` and GitHub release ZIP.
 
@@ -99,7 +101,7 @@ The [existing HACS link](https://my.home-assistant.io/redirect/hacs_repository/?
 
 ## 🔧 Configuration
 
-After installation, go to **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for HASS**.  
+After installation, go to **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for Home Assistant**.  
 Enter your Airzone Cloud **username** and **password**.
 
 **Optional parameters:**

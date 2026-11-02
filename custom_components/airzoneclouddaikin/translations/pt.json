@@ -1,5 +1,5 @@
 {
-  "title": "DKN Cloud for HASS",
+  "title": "DKN Cloud for Home Assistant",
   "config": {
     "step": {
       "user": {

@@ -1,4 +1,4 @@
-# DKN Cloud for HASS — Technical Reference
+# DKN Cloud for Home Assistant — Technical Reference
 
 > **Scope:** Single source of truth for the DKN (Airzone Cloud) backend behavior that the Home Assistant integration relies on.  
 > **Evidence:** Verified via the official DKN Cloud UI (web/mobile) behavior and observed backend responses from manual/API tests.  

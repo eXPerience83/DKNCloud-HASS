@@ -1,5 +1,5 @@
 {
-  "name": "DKN Cloud for HASS",
+  "name": "DKN Cloud for Home Assistant",
   "content_in_root": false,
   "render_readme": true,
   "homeassistant": "2026.10.4",
