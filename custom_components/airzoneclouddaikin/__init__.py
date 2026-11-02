@@ -141,7 +141,9 @@ class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
 
     ``data`` is a mapping of device IDs (Airzone or MAC) to device dicts as
     returned by the API, refreshed on the coordinator interval. The coordinator
-    owns the ``AirzoneAPI`` instance used across platforms, lets HA handle a 401, and drives notification refresh scheduling. Per-entry
+    owns the ``AirzoneAPI`` instance used across platforms. Home Assistant
+    handles reauthentication on HTTP 401. Per-entry buckets hold auxiliary
+    state such as notification templates.
     buckets under ``hass.data[DOMAIN][entry_id]`` hold auxiliary state such as
     notification templates.
     """
