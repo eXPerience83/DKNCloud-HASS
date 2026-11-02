@@ -382,7 +382,7 @@ async def _async_update_data(
 
     except asyncio.CancelledError:
         raise
-    except (UpdateFailed, ConfigEntryAuthFailed):
+    except UpdateFailed, ConfigEntryAuthFailed:
         raise
     except ClientResponseError as cre:
         status = cre.status
