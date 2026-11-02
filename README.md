@@ -208,7 +208,14 @@ uv run --locked --no-sync ruff format --check .
 ```
 
 The `test` group contains the Home Assistant test harness, `lint`
-contains Ruff, and `release` combines both groups. `pytest-asyncio` is
+contains Ruff, and `release` combines both groups.
+CI keeps each job focused: **Lint** installs only the locked Ruff tooling;
+**Tests** runs the locked Home Assistant/PHACC harness with coverage gates;
+**Package Test** builds and checks the installable integration-root ZIP
+without re-running the tests. The release workflow retains its separate
+full validation before uploading an asset. GitHub Actions security checks
+run actionlint (including ShellCheck) and zizmor, with dependencies pinned
+and least-privilege tokens. `pytest-asyncio` is
 installed **transitively** at the exact version required by PHACC; it must
 not be upgraded separately because PHACC pins it for its HA test stack.
 Renovate only proposes PyPI updates after the **same 3-day maturity delay**

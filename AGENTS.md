@@ -34,6 +34,20 @@
   Release workflow redesign is tracked in #141 and is not part of security
   baseline refactoring.
 
+## CI workflow responsibilities
+- Keep Lint on the locked `lint` group (Ruff only); Tests uses the locked
+  `test` group and owns the HA/PHACC full test suite and coverage gates.
+- Package Test is intentionally limited to building and validating the exact
+  `airzoneclouddaikin.zip` archive. Do not duplicate the full test suite or
+  install the HA harness in that workflow; the PR's Tests job covers it.
+- Retain a fully validated release path and DKN's Marketplace package
+  contract; release changes must be coordinated with #141.
+- Prefer `pull_request` scoped to `main` and concurrency keys using the
+  workflow and PR number (or `github.ref`) to avoid cross-fork collisions.
+- Preserve the separate scheduled/manual latest-HA canary and reviewed
+  baseline updater; do not add a duplicate minimum-HA lane while the pinned
+  minimum equals the tested HA version.
+
 ## Release & API boundaries
 - Do not change the integration version or changelog entries unless explicitly requested.
 - Do not rename entities, alter `unique_id` patterns, or modify translation keys unless explicitly requested.
