@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
-from homeassistant.config_entries import ConfigEntryState, SOURCE_REAUTH
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntryState
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
