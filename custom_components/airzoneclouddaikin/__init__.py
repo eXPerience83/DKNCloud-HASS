@@ -144,8 +144,6 @@ class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     owns the ``AirzoneAPI`` instance used across platforms. Home Assistant
     handles reauthentication on HTTP 401. Per-entry buckets hold auxiliary
     state such as notification templates.
-    buckets under ``hass.data[DOMAIN][entry_id]`` hold auxiliary state such as
-    notification templates.
     """
 
     api: AirzoneAPI
