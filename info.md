@@ -38,11 +38,18 @@
 - **Success codes observed:** 200, 201
 
 **Home Assistant integration behavior (not a backend contract):** Reauthentication
-uses the account email already stored on the exact config entry, strips legacy
-leading/trailing whitespace before sending the login request, and saves only
-the new token in the existing entry options. The password is never persisted.
-Empty or missing stored identities do not trigger login requests; invalid
-credentials, timeouts and connectivity failures have distinct form errors.
+uses the existing config-entry email, strips legacy whitespace for both login
+and authenticated runtime calls, and saves only the new token in entry options.
+The password is never persisted. Missing identity aborts reauthentication
+without contacting DKN; invalid credentials, timeouts and connectivity failures
+remain distinct. An HTTP 401 on authenticated reads raises
+`ConfigEntryAuthFailed` for native Home Assistant reauthentication. On success,
+Home Assistant reloads the entry and constructs a fresh API client with the
+new token. If the entry was never fully loaded or DKN returns the same token,
+the flow explicitly schedules a reload; otherwise the update listener does so.
+The integration does not retain its own persistent reauth-request flag.
+All propagated HTTP errors strip credentials and device identifiers from
+request URLs before reaching Home Assistant logs.
 
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
