@@ -113,6 +113,7 @@ async def test_http_401_redacts_token_from_exception(
     socket_enabled: None, aiohttp_server, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """No propagated HTTP error may disclose query-string credentials."""
+
     async def handler(_request: web.Request) -> web.Response:
         return web.Response(status=401)
 
