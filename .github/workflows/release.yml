@@ -97,7 +97,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/validate_marketplace_release.py airzoneclouddaikin.zip --expected-release-tag "${{ github.event.release.tag_name }}"
+          python scripts/validate_marketplace_release.py airzoneclouddaikin.zip --expected-release-tag "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
 
       - name: Upload ZIP to release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
