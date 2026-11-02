@@ -65,6 +65,8 @@
 
 ## Integration Architecture
 - This repository hosts the custom integration **DKN Cloud for Home Assistant**, distributed through **HACS / Home Assistant Marketplace**.
+- Use **DKN Cloud for Home Assistant** in the integration manifest, HACS metadata, all translation root titles, and current documentation. Identify the project as an **unofficial integration** and retain the README's independence and trademark disclaimer.
+- Keep the Daikin manufacturer icons previously approved for this integration unchanged. The display name must not alter the `airzoneclouddaikin` domain, existing unique IDs, repository name, or ZIP archive name.
 - Preserve the current coordinator-driven architecture under `custom_components/airzoneclouddaikin` when extending functionality. Study the existing setup (`__init__.py`, platform files, and helpers) and mirror their async patterns, error handling, and notification logic.
 - When implementing features, align with Home Assistant best practices (ConfigEntry setup, `DataUpdateCoordinator`, platform separation) and avoid introducing blocking I/O in the event loop.
 

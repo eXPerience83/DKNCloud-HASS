@@ -14,7 +14,7 @@ from scripts.validate_marketplace_release import REQUIRED, validate_zip
 DOMAIN = "airzoneclouddaikin"
 MANIFEST = {
     "domain": DOMAIN,
-    "name": "DKN Cloud for HASS",
+    "name": "DKN Cloud for Home Assistant",
     "categories": ["climate.heat_pumps_air_conditioning"],
     "config_flow": True,
     "issue_tracker": "https://github.com/eXPerience83/DKNCloud-HASS/issues",
@@ -34,7 +34,7 @@ def _create_zip(
     hacs.write_text(
         json.dumps(
             {
-                "name": "DKN Cloud for HASS",
+                "name": "DKN Cloud for Home Assistant",
                 "content_in_root": False,
                 "homeassistant": "2026.10.4",
                 "zip_release": True,
@@ -144,3 +144,17 @@ def test_invalid_json_manifest_fails(tmp_path: Path) -> None:
         zf.writestr("manifest.json", b"{broken")
     with pytest.raises(ValueError, match="Duplicate"):
         validate_zip(archive, hacs)
+
+def test_public_display_name_consistency() -> None:
+    """Keep the public name aligned without changing the internal domain."""
+    project_root = Path(__file__).resolve().parent.parent
+    component = project_root / "custom_components" / DOMAIN
+    manifest = json.loads((component / "manifest.json").read_text(encoding="utf-8"))
+    hacs = json.loads((project_root / "hacs.json").read_text(encoding="utf-8"))
+
+    assert manifest["domain"] == DOMAIN
+    assert manifest["name"] == hacs["name"] == "DKN Cloud for Home Assistant"
+    assert hacs["filename"] == "airzoneclouddaikin.zip"
+    for translation_path in sorted((component / "translations").glob("*.json")):
+        translation = json.loads(translation_path.read_text(encoding="utf-8"))
+        assert translation["title"] == manifest["name"]
