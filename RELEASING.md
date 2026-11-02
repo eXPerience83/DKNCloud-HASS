@@ -37,14 +37,18 @@ not intended to rebuild old historical DKN snapshots with obsolete tooling.
 
 1. Open **Actions → Release → Run workflow**.
 2. Select **main** as the workflow branch.
-3. Leave `release_ref` blank to select the current `main` commit, or enter
+3. For a validation-only rehearsal, set **`dry_run=true`**. This executes
+   the validation/build/digest steps but **skips tag and draft creation**.
+   After reviewing the workflow artifact, run again with `dry_run=false`
+   to prepare the draft.
+4. Leave `release_ref` blank to select the current `main` commit, or enter
    a same-repository branch, tag or full 40-character commit SHA. Forks,
    pull-request pseudo-refs, abbreviated SHA and Git revision expressions
    are rejected. A selected SHA must be reachable via a repository branch/tag.
-4. Run it. The **read-only validation job** selects an immutable commit,
+5. Run it. The **read-only validation job** selects an immutable commit,
    checks metadata, locks and tests, builds `airzoneclouddaikin.zip`, checks
    its installable ZIP-root layout and calculates its SHA-256.
-5. The separate, **write-scoped finalization job** checks the artifact digest,
+6. Unless `dry_run=true`, the separate **write-scoped finalization job** checks the artifact digest,
    existing tag target and release state. If safe, it creates or reuses the
    matching tag and creates/updates **only a draft**.
 

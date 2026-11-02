@@ -113,6 +113,8 @@ def test_published_tag_or_prerelease_mismatch_rejected(tmp_path: Path) -> None:
 def test_release_draft_only_and_immutable_published_assets() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "workflow_dispatch:" in workflow and "release_ref:" in workflow
+    assert "dry_run:" in workflow
+    assert "inputs.dry_run != true" in workflow
     assert "refs/heads/main" in workflow
     assert "github.workflow_sha" in workflow
     assert "contents: read" in workflow and "contents: write" in workflow
