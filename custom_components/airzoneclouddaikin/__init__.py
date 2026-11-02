@@ -805,8 +805,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     cancel = async_call_later(
                         hass,
                         ONLINE_BANNER_TTL_SEC,
-                        lambda _now, _nid=nid_online: persistent_notification.async_dismiss(
-                            hass, _nid
+                        lambda _now, _nid=nid_online: (
+                            persistent_notification.async_dismiss(hass, _nid)
                         ),
                     )
                     if callable(cancel):
