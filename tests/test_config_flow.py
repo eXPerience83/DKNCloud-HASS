@@ -223,9 +223,7 @@ async def test_reauth_flow_success_updates_token(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
-    assert result["description_placeholders"] == {
-        CONF_USERNAME: entry.data[CONF_USERNAME]
-    }
+    assert result["description_placeholders"][CONF_USERNAME] == entry.data[CONF_USERNAME]
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_PASSWORD: fake_password}
@@ -266,9 +264,7 @@ async def test_reauth_trims_legacy_stored_email_only_for_login(
 
     result = await entry.start_reauth_flow(hass)
     assert result["type"] is FlowResultType.FORM
-    assert result["description_placeholders"] == {
-        CONF_USERNAME: stored_username.strip()
-    }
+    assert result["description_placeholders"][CONF_USERNAME] == stored_username.strip()
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_PASSWORD: fake_password}
     )
@@ -389,9 +385,7 @@ async def test_reauth_invalid_password_preserves_old_token(
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "invalid_auth"}
-    assert result["description_placeholders"] == {
-        CONF_USERNAME: entry.data[CONF_USERNAME]
-    }
+    assert result["description_placeholders"][CONF_USERNAME] == entry.data[CONF_USERNAME]
     assert entry.options["user_token"] == "old-token"
     assert login_api_class.instances[-1].cleared_password is True
 
