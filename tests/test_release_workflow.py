@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import sys
@@ -40,7 +39,6 @@ def _run(tmp_path: Path, version: str, changelog: str, **updates: str):
     )
     output = tmp_path / "output"
     env = {
-        **os.environ,
         "GITHUB_OUTPUT": str(output),
         "EVENT_MODE": "prepare",
         "EVENT_TAG": "",
