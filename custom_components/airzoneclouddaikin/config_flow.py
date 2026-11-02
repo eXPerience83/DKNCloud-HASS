@@ -255,7 +255,12 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # The listener reloads a successfully set-up entry. If reauth was
         # triggered before the first setup finished, no listener exists yet.
-        needs_reload = not entry.update_listeners
+        # No listener exists after a failed initial setup. A fresh login can
+        # also return the same token, in which case HA fires no update listeners.
+        needs_reload = (
+            not entry.update_listeners
+            or token == entry.options.get("user_token")
+        )
         new_opts = dict(entry.options)
         new_opts["user_token"] = token
         result = self.async_update_and_abort(entry, options=new_opts)
