@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections.abc import Callable
 from json import JSONDecodeError
 from typing import Any
 
@@ -78,6 +79,7 @@ class AirzoneAPI:
         self._session = session
         self._token: str | None = token
         self._cooldown_until: float = 0.0
+        self.on_write_auth_failure: Callable[[], None] | None = None
 
     def __repr__(self) -> str:
         """Return a safe representation that never leaks secrets."""
@@ -156,6 +158,7 @@ class AirzoneAPI:
         timeout = ClientTimeout(total=REQUEST_TIMEOUT)
         spath = self._safe_path(path)
 
+        safe_error: Exception
         try:
             async with self._session.request(
                 method, url, params=params, json=json, headers=headers, timeout=timeout
@@ -186,15 +189,19 @@ class AirzoneAPI:
             safe_request = RequestInfo(safe_url, method, CIMultiDict(), safe_url)
             retry_after = cre.headers.get("Retry-After") if cre.headers else None
             headers = {"Retry-After": retry_after} if retry_after else None
-            raise ClientResponseError(
+            safe_error = ClientResponseError(
                 safe_request, history=(), status=cre.status, headers=headers
-            ) from None
+            )
         except ClientConnectorError:
             _LOGGER.debug("HTTP %s %s connection error", method, spath)
             raise
         except TimeoutError:
             _LOGGER.debug("HTTP %s %s timed out", method, spath)
-            raise
+            safe_error = TimeoutError("Cloud request timed out")
+
+        # Raise *outside* the except block: 'from None' suppresses display but
+        # keeps the original secret-bearing exception accessible as __context__.
+        raise safe_error
 
     async def _authed_request_with_retries(
         self,
@@ -227,8 +234,13 @@ class AirzoneAPI:
             except ClientResponseError as cre:
                 status = cre.status or 0
 
-                # 401 → let coordinator handle reauth
+                # Reads are managed by the coordinator. Commands need to open
+                # native HA reauth themselves: a service exception alone does
+                # not ask Home Assistant to start a reauth flow.
                 if status == 401:
+                    if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+                        if self.on_write_auth_failure is not None:
+                            self.on_write_auth_failure()
                     raise
 
                 # Backoff for 429 and 5xx (transient errors)
@@ -325,9 +337,15 @@ class AirzoneAPI:
             params=params,
         )
         if isinstance(resp, dict) and "installation_relations" in resp:
-            return resp.get("installation_relations")
-        if isinstance(resp, list):
-            return resp
+            relations = resp["installation_relations"]
+        else:
+            relations = resp
+        # An HTTP 200 with a malformed list is not a successful snapshot.
+        # Keep the contract focused on the item type, not optional fields.
+        if isinstance(relations, list) and all(
+            isinstance(relation, dict) for relation in relations
+        ):
+            return relations
         return None
 
     async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
@@ -385,9 +403,14 @@ class AirzoneAPI:
         """
         params = self._auth_params() | {"format": "json"}
         path = f"{API_DEVICES}/{device_id}"
-        return await self._authed_request_with_retries(
-            "PUT", path, params=params, json=payload
-        )
+        try:
+            return await self._authed_request_with_retries(
+                "PUT", path, params=params, json=payload
+            )
+        except ClientResponseError as cre:
+            if cre.status == 401:
+                raise ConfigEntryAuthFailed("Authentication failed") from None
+            raise
 
     async def async_set_scenary(self, device_id: str, scenary: str) -> Any:
         """Set device scenary using the canonical device fields endpoint."""

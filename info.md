@@ -42,14 +42,20 @@ uses the existing config-entry email, strips legacy whitespace for both login
 and authenticated runtime calls, and saves only the new token in entry options.
 The password is never persisted. Missing identity aborts reauthentication
 without contacting DKN; invalid credentials, timeouts and connectivity failures
-remain distinct. An HTTP 401 on authenticated reads raises
-`ConfigEntryAuthFailed` for native Home Assistant reauthentication. On success,
-Home Assistant reloads the entry and constructs a fresh API client with the
-new token. If the entry was never fully loaded or DKN returns the same token,
+remain distinct. A successful login is followed by a bounded authenticated
+`GET /installation_relations` before the new token is saved: an HTTP 401 is
+rejected, a transient failure leaves the old token untouched, and an empty
+valid installation list is allowed. An HTTP 401 on authenticated reads raises
+`ConfigEntryAuthFailed` for native Home Assistant reauthentication. For
+authenticated device writes (`POST /events` and `PUT /devices/{id}`), a 401
+also starts native reauthentication for the specific entry, since HA does not
+automatically launch reauth from an entity service error. On success, Home
+Assistant reloads the entry and constructs a fresh API client with the new
+token. If the entry was never fully loaded or DKN returns the same token,
 the flow explicitly schedules a reload; otherwise the update listener does so.
 The integration does not retain its own persistent reauth-request flag.
-All propagated HTTP errors strip credentials and device identifiers from
-request URLs before reaching Home Assistant logs.
+Propagated HTTP errors strip credentials and device identifiers from request
+URLs, including hidden exception context, before reaching HA consumers.
 
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
@@ -401,3 +407,21 @@ Commonly used fields:
 - Confirm behavior of P2=4 (HEAT_COOL/AUTO) across more installations before enabling by default.
 - Confirm exact allowed ranges/encodings for slats (P9/P10/P19/P20) on at least one model.
 - Confirm whether devices that do not support Auto fan (0) fall back to a manual speed (observed fallback: 1) rather than persisting 0 or returning an error.
+
+Installation validation accepts a bare list or an `installation_relations` list
+whose elements are objects (dictionaries). Non-list payloads or lists with
+non-object elements are invalid responses, not proof of token validity;
+reauthentication preserves the existing token and reports cloud unavailability.
+An empty list remains valid. During normal coordinator refresh an invalid
+installation response raises UpdateFailed rather than treating the account as
+empty and discarding the last good device snapshot.
+
+Transport timeouts are re-raised as a generic `TimeoutError` outside the raw
+exception handler. aiohttp connection timeouts can contain authenticated URLs;
+the sanitized error retains timeout retry semantics without the raw error chain.
+
+Reauthentication delegates reload only to the registered integration update
+listener. Unrelated listeners do not suppress the explicit reload fallback.
+
+Write-side reauthentication callbacks are cleared on entry unload and only
+start flows for loaded entries while Home Assistant is not stopping.

@@ -6,11 +6,15 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from aiohttp import ClientResponseError
+from aiohttp.client_reqrep import RequestInfo
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from multidict import CIMultiDict
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from yarl import URL
 
 from custom_components.airzoneclouddaikin import airzone_api
 from custom_components.airzoneclouddaikin.config_flow import (
@@ -31,6 +35,7 @@ class LoginAirzoneAPI:
     instances: list[LoginAirzoneAPI] = []
     login_result: bool | str | Exception = True
     token_value: str = "login-token"
+    installations_result: Any = []
 
     def __init__(
         self,
@@ -61,6 +66,13 @@ class LoginAirzoneAPI:
         self.token = ""
         return False
 
+    async def fetch_installations(self) -> Any:
+        """Return a valid or deliberately malformed authenticated response."""
+        result = self.installations_result
+        if isinstance(result, Exception):
+            raise result
+        return result
+
     def clear_password(self) -> None:
         """Mark password cleanup."""
         self.cleared_password = True
@@ -76,6 +88,7 @@ def login_api_class(
     LoginAirzoneAPI.instances = []
     LoginAirzoneAPI.login_result = True
     LoginAirzoneAPI.token_value = fake_token
+    LoginAirzoneAPI.installations_result = []
     monkeypatch.setattr(airzone_api, "AirzoneAPI", LoginAirzoneAPI)
     return LoginAirzoneAPI
 
@@ -339,14 +352,14 @@ async def test_reauth_updates_only_requested_entry(
     assert scheduled_reauth_reloads == [second.entry_id]
 
 
-async def test_reauth_with_listener_does_not_schedule_second_reload(
+async def test_reauth_with_unrelated_listener_still_schedules_reload(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
     login_api_class: type[LoginAirzoneAPI],
     fake_password: str,
     scheduled_reauth_reloads: list[str],
 ) -> None:
-    """A loaded entry's update listener should handle its own single reload."""
+    """An unrelated listener cannot substitute for the integration reload."""
     entry = dkn_config_entry_factory(options={"user_token": "old-token"})
     entry.add_to_hass(hass)
     update_events: list[str] = []
@@ -363,7 +376,7 @@ async def test_reauth_with_listener_does_not_schedule_second_reload(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
-    assert scheduled_reauth_reloads == []
+    assert scheduled_reauth_reloads == [entry.entry_id]
     assert update_events == [entry.entry_id]
     assert login_api_class.instances[-1].cleared_password is True
 
@@ -397,6 +410,106 @@ async def test_reauth_unchanged_token_still_schedules_reload(
     assert update_events == []
     assert entry.options["user_token"] == fake_token
     assert login_api_class.instances[-1].cleared_password is True
+
+
+def _reauth_http_error(status: int) -> ClientResponseError:
+    """Create a synthetic HTTP response without live credentials."""
+    url = URL("https://example.invalid/installation_relations")
+    return ClientResponseError(
+        RequestInfo(url, "GET", CIMultiDict(), url), history=(), status=status
+    )
+
+
+@pytest.mark.parametrize(
+    ("validation_result", "expected_error"),
+    [
+        (_reauth_http_error(401), "invalid_auth"),
+        (_reauth_http_error(503), "cannot_connect"),
+        (TimeoutError(), "timeout"),
+        (RuntimeError("temporary backend problem"), "cannot_connect"),
+        (None, "cannot_connect"),
+    ],
+)
+async def test_reauth_rejects_unverified_token_without_mutating_entry(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+    validation_result: Exception | None,
+    expected_error: str,
+    scheduled_reauth_reloads: list[str],
+) -> None:
+    """A successful login alone must not persist a token that cannot fetch data."""
+    entry = dkn_config_entry_factory(
+        options={"user_token": "old-token", "preserve-setting": "yes"}
+    )
+    entry.add_to_hass(hass)
+    login_api_class.installations_result = validation_result
+    flow = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": expected_error}
+    assert entry.options["user_token"] == "old-token"
+    assert entry.options["preserve-setting"] == "yes"
+    assert scheduled_reauth_reloads == []
+    assert login_api_class.instances[-1].cleared_password is True
+
+
+@pytest.mark.parametrize(
+    "malformed_installations",
+    [False, {}, "not-an-installation-list", 42],
+    ids=["boolean", "object", "string", "number"],
+)
+async def test_reauth_rejects_malformed_installations_without_mutating_entry(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+    malformed_installations: Any,
+    scheduled_reauth_reloads: list[str],
+) -> None:
+    """A successful login must not accept a non-list installation response."""
+    entry = dkn_config_entry_factory(
+        options={"user_token": "old-token", "preserve-setting": "yes"}
+    )
+    entry.add_to_hass(hass)
+    login_api_class.installations_result = malformed_installations
+
+    flow = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+    assert entry.options["user_token"] == "old-token"
+    assert entry.options["preserve-setting"] == "yes"
+    assert scheduled_reauth_reloads == []
+    assert login_api_class.instances[-1].cleared_password is True
+
+
+async def test_reauth_accepts_valid_token_with_zero_installations(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    login_api_class: type[LoginAirzoneAPI],
+    fake_password: str,
+    fake_token: str,
+    scheduled_reauth_reloads: list[str],
+) -> None:
+    """A legitimate account without installations still passes a successful GET."""
+    entry = dkn_config_entry_factory(options={"user_token": "old-token"})
+    entry.add_to_hass(hass)
+    login_api_class.installations_result = []
+    flow = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        flow["flow_id"], user_input={CONF_PASSWORD: fake_password}
+    )
+    assert result["reason"] == "reauth_successful"
+    assert entry.options["user_token"] == fake_token
+    assert scheduled_reauth_reloads == [entry.entry_id]
 
 
 async def test_reauth_invalid_password_preserves_old_token(

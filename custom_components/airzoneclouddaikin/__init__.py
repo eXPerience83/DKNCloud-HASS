@@ -19,7 +19,7 @@ from typing import Any
 
 from aiohttp import ClientResponseError
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -232,6 +232,10 @@ async def _async_update_data(
 
         data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
+        # Malformed installation responses are transient failures, not an
+        # authoritative empty account: preserve the last good device snapshot.
+        if relations is None:
+            raise UpdateFailed("Invalid installation relations response")
 
         installation_ids: list[str] = []
         for rel in relations or []:
@@ -546,6 +550,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
     # Runtime API: token-only
     api = AirzoneAPI(username, session, password=None, token=token)
+
+    # Commands do not run inside the coordinator's refresh task. Trigger
+    # native reauth directly if a write returns 401 (HA de-duplicates flows).
+    def request_write_reauth() -> None:
+        if not hass.is_stopping and entry.state is ConfigEntryState.LOADED:
+            entry.async_start_reauth_if_available(hass)
+
+    api.on_write_auth_failure = request_write_reauth
+    entry.async_on_unload(lambda: setattr(api, "on_write_auth_failure", None))
 
     scan_interval = int(opts.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
     # Runtime clamp for safety even if UI guardrails are bypassed.

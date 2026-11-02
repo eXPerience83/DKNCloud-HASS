@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from aiohttp import ClientResponseError, ClientSession, web
 from aiohttp.client_reqrep import RequestInfo
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from multidict import CIMultiDict
 from yarl import URL
 
@@ -131,6 +131,89 @@ async def test_http_401_redacts_token_from_exception(
     assert "secret-email@example.com" not in repr(exc_info.value)
     assert "secret-token" not in repr(exc_info.value)
     assert "user_token" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("status", "method", "path"),
+    [
+        (401, "GET", API_INSTALLATION_RELATIONS),
+        (429, "GET", API_INSTALLATION_RELATIONS),
+        (503, "PUT", "/devices/secret-device-id"),
+        (401, "POST", API_EVENTS),
+    ],
+)
+async def test_http_errors_have_no_secret_exception_chain(
+    socket_enabled: None,
+    aiohttp_server,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    method: str,
+    path: str,
+) -> None:
+    """HTTP errors keep statuses but not a hidden raw credential-bearing cause."""
+
+    async def handler(_request: web.Request) -> web.Response:
+        return web.Response(status=status, headers={"Retry-After": "7"})
+
+    await _serve_api(aiohttp_server, monkeypatch, method, path, handler)
+    async with ClientSession() as session:
+        api = AirzoneAPI("hidden@example.com", session, token="hidden-token")
+        with pytest.raises(ClientResponseError) as captured:
+            await api._request(
+                method,
+                path,
+                params={"user_email": api._username, "user_token": api.token},
+            )
+
+    error = captured.value
+    assert error.status == status
+    assert error.headers["Retry-After"] == "7"
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert "hidden@example.com" not in str(error)
+    assert "hidden-token" not in repr(error)
+    assert "secret-device-id" not in str(error)
+
+
+@pytest.mark.parametrize("operation", ["event", "device"])
+async def test_write_401_invokes_native_reauth_callback(
+    operation: str,
+) -> None:
+    """Write auth failures trigger native reauth immediately without GET polling."""
+    api = AirzoneAPI(
+        "user@example.com",
+        AsyncMock(spec=ClientSession),
+        token="expired-token",
+    )
+    callback = Mock()
+    api.on_write_auth_failure = callback
+    api._request = AsyncMock(side_effect=_client_response_error(401))
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        if operation == "event":
+            await api.send_event({"event": {"option": "P1", "value": "1"}})
+        else:
+            await api.put_device_fields("fake-id", {"sleep_time": 1})
+
+    callback.assert_called_once_with()
+    api._request.assert_awaited_once()
+
+
+async def test_read_401_does_not_duplicate_coordinator_reauth() -> None:
+    """The coordinator, not the HTTP client, initiates reauth on read failure."""
+    api = AirzoneAPI(
+        "user@example.com",
+        AsyncMock(spec=ClientSession),
+        token="expired-token",
+    )
+    callback = Mock()
+    api.on_write_auth_failure = callback
+    api._request = AsyncMock(side_effect=_client_response_error(401))
+
+    with pytest.raises(ClientResponseError, match="401"):
+        await api.fetch_installations()
+
+    callback.assert_not_called()
 
 
 async def test_login_handles_unauthorized() -> None:
@@ -482,3 +565,44 @@ async def test_real_client_204_reply_returns_empty_body(
     async with ClientSession() as session:
         api = AirzoneAPI("user@example.com", session, token="tok")
         assert await api._request("DELETE", "/devices/dev1") == ""
+
+
+@pytest.mark.parametrize(
+    "relations",
+    [
+        False,
+        {},
+        "backend error",
+        1,
+        [False],
+        [{"installation_id": "site-A"}, None],
+    ],
+)
+async def test_installations_rejects_non_list_envelope(monkeypatch, relations):
+    """Malformed HTTP 200 envelopes must not validate a renewed token."""
+    api, _ = _make_api(monkeypatch, [{"installation_relations": relations}])
+    api._token = "synthetic-token"
+    assert await api.fetch_installations() is None
+
+
+async def test_real_aiohttp_connection_timeout_redacts_url(monkeypatch):
+    """Exercise aiohttp's URL-bearing connection timeout without network I/O."""
+    from aiohttp import TCPConnector
+
+    async def timeout_connect(*args, **kwargs):
+        raise TimeoutError("synthetic transport failure")
+
+    monkeypatch.setattr(TCPConnector, "connect", timeout_connect)
+    async with ClientSession() as session:
+        api = AirzoneAPI("hidden@example.com", session, token="hidden-token")
+        with pytest.raises(TimeoutError) as captured:
+            await api._request(
+                "GET",
+                API_INSTALLATION_RELATIONS,
+                params={"user_email": api._username, "user_token": api.token},
+            )
+    error = captured.value
+    assert "hidden-token" not in str(error)
+    assert "hidden@example.com" not in repr(error)
+    assert error.__context__ is None
+    assert error.__cause__ is None

@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 import voluptuous as vol
+from aiohttp import ClientResponseError
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.data_entry_flow import FlowResult
@@ -253,12 +254,31 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not isinstance(token, str) or not token.strip():
             return show_form({"base": "invalid_auth"})
 
-        # The listener reloads a successfully set-up entry. If reauth was
-        # triggered before the first setup finished, no listener exists yet.
-        # No listener exists after a failed initial setup. A fresh login can
-        # also return the same token, in which case HA fires no update listeners.
-        needs_reload = not entry.update_listeners or token == entry.options.get(
-            "user_token"
+        # A token-shaped login response is not proof that the cloud accepts it.
+        # Validate one authenticated read before persisting the replacement.
+        try:
+            installations = await asyncio.wait_for(
+                api.fetch_installations(), timeout=30.0
+            )
+        except TimeoutError:
+            return show_form({"base": "timeout"})
+        except ClientResponseError as err:
+            if err.status == 401:
+                return show_form({"base": "invalid_auth"})
+            return show_form({"base": "cannot_connect"})
+        except Exception:  # noqa: BLE001
+            return show_form({"base": "cannot_connect"})
+        # The backend contract is a list (including []). A malformed 200
+        # response must not make HA persist an unverified replacement token.
+        if not isinstance(installations, list):
+            return show_form({"base": "cannot_connect"})
+
+        # Only our listener guarantees a runtime rebuild. Other listeners may
+        # observe options without reloading; unchanged options fire none.
+        from . import _update_listener
+
+        needs_reload = _update_listener not in entry.update_listeners or (
+            token == entry.options.get("user_token")
         )
         new_opts = dict(entry.options)
         new_opts["user_token"] = token
