@@ -9,9 +9,8 @@ import pytest
 from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.const import CONF_USERNAME
-from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from multidict import CIMultiDict
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from yarl import URL
