@@ -23,9 +23,9 @@ def _make_climate(
     """Instantiate an AirzoneClimate with a lightweight coordinator."""
     entry_id = "entry"
     device_id = "device"
-    hass.data.setdefault(DOMAIN, {}).setdefault(entry_id, {})[
-        "heat_cool_opt_in"
-    ] = heat_cool_opt_in
+    hass.data.setdefault(DOMAIN, {}).setdefault(entry_id, {})["heat_cool_opt_in"] = (
+        heat_cool_opt_in
+    )
 
     coordinator = dummy_coordinator_factory({device_id: device_snapshot})
     entity = AirzoneClimate(coordinator, entry_id, device_id)

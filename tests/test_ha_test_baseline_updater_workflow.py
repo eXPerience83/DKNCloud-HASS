@@ -50,7 +50,7 @@ def test_artifact_and_base_checks_prevent_unvalidated_publication() -> None:
         "validate-lock",
         "uv run --locked --no-sync python -m pytest",
         "uv run --locked --no-sync ruff check .",
-        "uv run --locked --no-sync black --check .",
+        "uv run --locked --no-sync ruff format --check .",
         "artifacts/download",
     ):
         if requirement == "artifacts/download":

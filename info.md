@@ -213,8 +213,8 @@ Notes:
 Some backend fields and writes are effectively split into “cold-side” vs “heat-side” fan channels:
 
 ```py
-cold_modes = {1, 3, 4, 5, 6}   # COOL, VENTILATE, HEAT_COOL, DRY, cool-air
-heat_modes = {2, 7, 8}         # HEAT, heat-air, (ventilate alias)
+cold_modes = {1, 3, 4, 5, 6}  # COOL, VENTILATE, HEAT_COOL, DRY, cool-air
+heat_modes = {2, 7, 8}  # HEAT, heat-air, (ventilate alias)
 ```
 
 Practical guidance for the integration:

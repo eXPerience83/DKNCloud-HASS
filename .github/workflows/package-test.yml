@@ -53,7 +53,7 @@ jobs:
           import importlib.metadata as m
           import sys
           print("Python:", sys.version)
-          for name in ("homeassistant", "pytest-homeassistant-custom-component", "pytest", "pytest-asyncio", "black", "ruff"):
+          for name in ("homeassistant", "pytest-homeassistant-custom-component", "pytest", "pytest-asyncio", "ruff"):
               print(f"{name}: {m.version(name)}")
           PY
           uv --version
@@ -70,11 +70,11 @@ jobs:
           set -euo pipefail
           uv run --locked --no-sync ruff check .
 
-      - name: Black validation
+      - name: Ruff format validation
         shell: bash
         run: |
           set -euo pipefail
-          uv run --locked --no-sync black --check .
+          uv run --locked --no-sync ruff format --check .
 
       - name: Run tests
         shell: bash

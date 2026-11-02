@@ -2,10 +2,9 @@
 
 ## Tooling
 - Tooling (CI, lint, format) runs on **Python 3.14**. The `pyproject.toml` targets packaging/tooling and also pins `requires-python = ">=3.14"`. All code under `custom_components/airzoneclouddaikin/` targets Python 3.14+, matching the Home Assistant 2026.10.4 minimum supported release.
-- Format code with Black (line length 88, target-version `py314`), using the exact version pinned in `pyproject.toml` and `uv.lock`.
-- Lint and sort imports with Ruff targeting `py314`, using the exact version pinned in `pyproject.toml` and `uv.lock`.
+- Format code and lint/sort imports with Ruff (line length 88, target-version `py314`), using the exact version pinned in `pyproject.toml` and `uv.lock`.
 - For local fixes, run `uv run --locked ruff check --fix --select I .` and then `uv run --locked ruff check .`.
-- Run `uv run --locked black .` (or a narrower path) to format code; CI checks with `black --check`.
+- Run `uv run --locked ruff format .` (or a narrower path) to format code; CI checks with `ruff format --check`.
 - The test harness runs on the exact Python 3.14 patch in `.python-version` and uses the locked pytest version required by PHACC.
 - This project uses Python 3.14 syntax intentionally. PEP 758 allows multiple
   exceptions without parentheses when no `as` clause is present (e.g.
@@ -76,5 +75,5 @@
   - `uv lock --check` — ensure `pyproject.toml` and `uv.lock` agree.
   - `uv sync --locked --only-group release` — install the pinned lint and test environment.
   - `uv run --locked --no-sync ruff check .` — lint and import ordering.
-  - `uv run --locked --no-sync black --check .` — formatting verification.
+  - `uv run --locked --no-sync ruff format --check .` — formatting verification.
   - `uv run --locked --no-sync python -m pytest -q` — unit tests.

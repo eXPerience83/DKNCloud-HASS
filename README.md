@@ -204,11 +204,11 @@ uv lock --check
 uv sync --locked --only-group release
 uv run --locked --no-sync python -m pytest -q
 uv run --locked --no-sync ruff check .
-uv run --locked --no-sync black --check .
+uv run --locked --no-sync ruff format --check .
 ```
 
 The `test` group contains the Home Assistant test harness, `lint`
-contains Black and Ruff, and `release` combines both. `pytest-asyncio` is
+contains Ruff, and `release` combines both groups. `pytest-asyncio` is
 installed **transitively** at the exact version required by PHACC; it must
 not be upgraded separately because PHACC pins it for its HA test stack.
 Renovate only proposes PyPI updates after the **same 3-day maturity delay**
@@ -272,7 +272,7 @@ and hardware-gated [#102](https://github.com/eXPerience83/DKNCloud-HASS/pull/102
 
 A **[daily reviewed baseline updater](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-test-baseline-updater.yml)** checks the stable, non-yanked HA/PHACC pair at **06:43 UTC**, independently of the daily compatibility canary. It derives the maturity policy from the existing `[tool.uv].exclude-newer = "3 days"` setting, **requires both HA and PHACC releases to age at least three days**, and never upgrades only one side of an exact-match harness pair. No prerelease or yanked build is promoted; PHACC lag is reported without claiming the latest HA was tested.
 
-When a pair is mature, the updater tests a **proposed** `pyproject.toml` + `uv.lock` in an isolated validation job: the delta must be confined to the HA/PHACC dependency graph, `uv lock --check`, the full pytest suite, Ruff and Black must pass. Only then may a separate narrowly permissioned job open **one review-only PR**. Its artifact is hash-verified, its branch is unique per version pair, and it rejects duplicate PRs, failed validation and a moved `main`. **No automerge** or automatic release is enabled, and `.github/requirements/minimum-ha.*`, `hacs.json` and runtime integration code remain untouched. With manual **Run workflow**, `publish=false` performs a read-only dry run; selecting `publish=true` may propose a PR only when run from `main`.
+When a pair is mature, the updater tests a **proposed** `pyproject.toml` + `uv.lock` in an isolated validation job: the delta must be confined to the HA/PHACC dependency graph, `uv lock --check`, the full pytest suite, Ruff lint and Ruff format must pass. Only then may a separate narrowly permissioned job open **one review-only PR**. Its artifact is hash-verified, its branch is unique per version pair, and it rejects duplicate PRs, failed validation and a moved `main`. **No automerge** or automatic release is enabled, and `.github/requirements/minimum-ha.*`, `hacs.json` and runtime integration code remain untouched. With manual **Run workflow**, `publish=false` performs a read-only dry run; selecting `publish=true` may propose a PR only when run from `main`.
 
 The existing baseline remains pinned until that PR is reviewed and merged; published Marketplace packages are not changed by this automation. Python 3.15 forward-compatibility and further regression coverage remain separate [roadmap #109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109) tasks.
 
@@ -282,7 +282,7 @@ PRs for features, **translations**, and fixes are welcome!
 
 - Open issues and PRs in [GitHub Issues](https://github.com/eXPerience83/DKNCloud-HASS/issues)  
 - For **translations**: contribute keys under `translations/` per HA guidelines  
-- Follow the code style enforced by **Ruff** and **Black** (see CI)
+- Follow the code style enforced by **Ruff** (see CI)
 
 ---
 
