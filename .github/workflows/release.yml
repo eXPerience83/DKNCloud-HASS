@@ -237,11 +237,11 @@ jobs:
           if not isinstance(manifest, dict) or manifest.get("domain") != "airzoneclouddaikin":
               raise SystemExit("Unexpected integration manifest domain")
           version = manifest.get("version")
-          pattern = r"(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:(?:a|b|rc)(?:0|[1-9][0-9]*))?"
+          pattern = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:(?:a|b|rc)(?:0|[1-9][0-9]*))?"
           if not isinstance(version, str) or not re.fullmatch(pattern, version):
               raise SystemExit("Invalid manifest version; use X.Y.Z, X.Y.ZaN, X.Y.ZbN, or X.Y.ZrcN")
           changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          first = re.search(r"^## \\[([^\\]]+)\\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$", changelog, re.MULTILINE)
+          first = re.search(r"^## \[([^\]]+)\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$", changelog, re.MULTILINE)
           if first is None or first.group(1) != version:
               raise SystemExit("First CHANGELOG.md heading must match integration version")
           # pyproject.toml has an intentionally independent development-tooling version.
@@ -253,7 +253,7 @@ jobs:
               if published not in {"true", "false"} or (published == "true") != prerelease:
                   raise SystemExit("Published release prerelease setting mismatches manifest")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
-              output.write(f"version={version}\\ntag=v{version}\\nprerelease={str(prerelease).lower()}\\n")
+              output.write(f"version={version}\ntag=v{version}\nprerelease={str(prerelease).lower()}\n")
           PY
 
       - name: Validate derived release tag
