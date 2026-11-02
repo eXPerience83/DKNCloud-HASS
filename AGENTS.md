@@ -48,6 +48,18 @@
   baseline updater; do not add a duplicate minimum-HA lane while the pinned
   minimum equals the tested HA version.
 
+## Release procedure
+- Follow `RELEASING.md` and #141. Draft preparation is automated; publication
+  is always manual and requires a maintainer's review.
+- The integration version is taken from the manifest and the first changelog
+  heading. `pyproject.toml` tracks separate development tooling; do not
+  synchronize its version to the manifest without a tooling reason.
+- Release must be dispatched from `main`, while `release_ref` selects a
+  verified same-repository commit. Validate with locked Python, Ruff, tests,
+  and the DKN Marketplace ZIP validator. Only finalization has write scope.
+- Never overwrite published ZIP assets or move published tags. Preserve
+  `v0.4.8` and `v0.5.0a4`; verify alpha/beta/RC status before publication.
+
 ## Release & API boundaries
 - Do not change the integration version or changelog entries unless explicitly requested.
 - Do not rename entities, alter `unique_id` patterns, or modify translation keys unless explicitly requested.

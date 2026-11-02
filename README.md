@@ -185,6 +185,16 @@ A: See [info.md](./info.md).
 
 ---
 
+## 📦 Publishing releases
+
+Maintainers: follow **[RELEASING.md](./RELEASING.md)** for draft-first release
+preparation, exact source selection, validation, manual publication, prerelease
+settings, HACS/Marketplace verification, and recovery. The **Release** Action
+creates a validated draft; it never automatically publishes it. The integration
+version comes from `manifest.json`, independently of `pyproject.toml`.
+
+---
+
 ## 🧪 Reproducible tests and development
 
 The locked test baseline runs on **Python 3.14.10**, with
