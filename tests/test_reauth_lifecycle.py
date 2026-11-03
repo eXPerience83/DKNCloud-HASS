@@ -464,6 +464,122 @@ async def test_malformed_relations_during_refresh_preserves_last_good_snapshot(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.mark.parametrize("invalid_devices", [{}, {"devices": None}])
+async def test_real_http_malformed_devices_preserves_per_installation_snapshot(
+    hass: HomeAssistant,
+    socket_enabled: None,
+    aiohttp_server,
+    monkeypatch: pytest.MonkeyPatch,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    sample_device: dict[str, Any],
+    invalid_devices: dict[str, Any],
+) -> None:
+    """An invalid device response must preserve only the failed site's state."""
+    cloud: dict[str, Any] = {"site_a_reply": None, "site_b_name": "Unit B"}
+
+    async def installations(_request: web.Request) -> web.Response:
+        return web.json_response(
+            {"installation_relations": [
+                {"installation_id": "site-A"}, {"installation_id": "site-B"}
+            ]}
+        )
+
+    async def devices(request: web.Request) -> web.Response:
+        site = request.query["installation_id"]
+        if site == "site-A":
+            if cloud["site_a_reply"] is not None:
+                return web.json_response(cloud["site_a_reply"])
+            return web.json_response(
+                {"devices": [dict(sample_device, id="dev-a", name="Unit A")]}
+            )
+        return web.json_response(
+            {"devices": [
+                dict(sample_device, id="dev-b", name=cloud["site_b_name"])
+            ]}
+        )
+
+    app = web.Application()
+    app.router.add_get(API_INSTALLATION_RELATIONS, installations)
+    app.router.add_get(API_DEVICES, devices)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    entry = dkn_config_entry_factory(token="synthetic-token")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data.coordinator
+    assert set(coordinator.data) == {"dev-a", "dev-b"}
+
+    cloud["site_a_reply"] = invalid_devices
+    cloud["site_b_name"] = "Unit B updated"
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert coordinator.last_update_success is True
+    assert set(coordinator.data) == {"dev-a", "dev-b"}
+    assert coordinator.data["dev-a"]["name"] == "Unit A"
+    assert coordinator.data["dev-b"]["name"] == "Unit B updated"
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["last_update_had_install_errors"] is True
+    assert bucket["failed_installations_last_update"] == {"site-A"}
+    assert set(bucket["last_data"]) == {"dev-a", "dev-b"}
+
+    cloud["site_a_reply"] = {"devices": [dict(sample_device, id="dev-a", name="A2")]}
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert coordinator.data["dev-a"]["name"] == "A2"
+    assert bucket["last_update_had_install_errors"] is False
+
+    # A valid empty devices list, unlike an invalid payload, clears site A.
+    cloud["site_a_reply"] = {"devices": []}
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert set(coordinator.data) == {"dev-b"}
+    assert bucket["last_update_had_install_errors"] is False
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("invalid_devices", [{}, {"devices": None}])
+async def test_real_http_malformed_devices_fails_initial_snapshot(
+    hass: HomeAssistant,
+    socket_enabled: None,
+    aiohttp_server,
+    monkeypatch: pytest.MonkeyPatch,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    invalid_devices: dict[str, Any],
+) -> None:
+    """A bad initial HTTP 200 snapshot must not be considered setup success."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    async def installations(_request: web.Request) -> web.Response:
+        return web.json_response(
+            {"installation_relations": [{"installation_id": "site-A"}]}
+        )
+
+    async def devices(_request: web.Request) -> web.Response:
+        return web.json_response(invalid_devices)
+
+    app = web.Application()
+    app.router.add_get(API_INSTALLATION_RELATIONS, installations)
+    app.router.add_get(API_DEVICES, devices)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    entry = dkn_config_entry_factory(token="synthetic-token")
+    entry.add_to_hass(hass)
+    api = airzone_api.AirzoneAPI(
+        "user@example.com", async_get_clientsession(hass), token="synthetic-token"
+    )
+    with pytest.raises(UpdateFailed, match="partial installation refresh"):
+        await integration._async_update_data(hass, entry, api)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    assert bucket["has_successful_snapshot"] is False if (
+        "has_successful_snapshot" in bucket
+    ) else "last_data" not in bucket
+    assert bucket["last_update_had_install_errors"] is True
+
+
 @pytest.mark.parametrize("transition", ["unload", "reload"])
 async def test_delayed_write_401_cannot_reauth_retired_entry(
     hass: HomeAssistant,
