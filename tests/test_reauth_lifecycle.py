@@ -479,9 +479,12 @@ async def test_real_http_malformed_devices_preserves_per_installation_snapshot(
 
     async def installations(_request: web.Request) -> web.Response:
         return web.json_response(
-            {"installation_relations": [
-                {"installation_id": "site-A"}, {"installation_id": "site-B"}
-            ]}
+            {
+                "installation_relations": [
+                    {"installation_id": "site-A"},
+                    {"installation_id": "site-B"},
+                ]
+            }
         )
 
     async def devices(request: web.Request) -> web.Response:
@@ -493,9 +496,7 @@ async def test_real_http_malformed_devices_preserves_per_installation_snapshot(
                 {"devices": [dict(sample_device, id="dev-a", name="Unit A")]}
             )
         return web.json_response(
-            {"devices": [
-                dict(sample_device, id="dev-b", name=cloud["site_b_name"])
-            ]}
+            {"devices": [dict(sample_device, id="dev-b", name=cloud["site_b_name"])]}
         )
 
     app = web.Application()
@@ -574,9 +575,8 @@ async def test_real_http_malformed_devices_fails_initial_snapshot(
     with pytest.raises(UpdateFailed, match="partial installation refresh"):
         await integration._async_update_data(hass, entry, api)
     bucket = hass.data[DOMAIN][entry.entry_id]
-    assert bucket["has_successful_snapshot"] is False if (
-        "has_successful_snapshot" in bucket
-    ) else "last_data" not in bucket
+    assert bucket.get("has_successful_snapshot", False) is False
+    assert "last_data" not in bucket
     assert bucket["last_update_had_install_errors"] is True
 
 
