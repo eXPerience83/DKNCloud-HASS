@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import traceback
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from aiohttp import ClientResponseError, ClientSession, web
+from aiohttp import ClientOSError, ClientResponseError, ClientSession, web
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from multidict import CIMultiDict
@@ -606,3 +607,89 @@ async def test_real_aiohttp_connection_timeout_redacts_url(monkeypatch):
     assert "hidden@example.com" not in repr(error)
     assert error.__context__ is None
     assert error.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", API_EVENTS),
+        ("PUT", f"{API_DEVICES}/private-device-id"),
+    ],
+)
+async def test_real_aiohttp_broken_body_write_redacts_transport_error(
+    socket_enabled: None,
+    aiohttp_server,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    path: str,
+) -> None:
+    """A transport failure while sending JSON must not retain the full URL."""
+    from aiohttp.payload import JsonPayload
+
+    async def handler(request: web.Request) -> web.Response:
+        await request.read()
+        return web.json_response({"ok": True})
+
+    await _serve_api(aiohttp_server, monkeypatch, method, path, handler)
+
+    async def fail_body_write(self, writer, content_length) -> None:
+        raise OSError(32, "synthetic broken pipe")
+
+    monkeypatch.setattr(JsonPayload, "write_with_length", fail_body_write)
+    async with ClientSession() as session:
+        api = AirzoneAPI("private@example.com", session, token="private-token")
+        callback = Mock()
+        api.on_write_auth_failure = callback
+        with pytest.raises(ClientOSError) as captured:
+            if method == "POST":
+                await api.send_event({"event": {"option": "P1", "value": "1"}})
+            else:
+                await api.put_device_fields("private-device-id", {"sleep_time": 5})
+
+    error = captured.value
+    assert error.errno == 32
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    representation = (
+        str(error) + repr(error) + "".join(traceback.format_exception(error))
+    )
+    for secret in ("private@example.com", "private-token", "private-device-id"):
+        assert secret not in representation
+    callback.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"devices": None}, {"devices": False}, {"devices": {}}, {"devices": [False]}],
+)
+async def test_devices_rejects_malformed_http_200(
+    socket_enabled: None,
+    aiohttp_server,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, Any],
+) -> None:
+    """An HTTP 200 without a list of device objects is not an empty account."""
+    async def handler(_request: web.Request) -> web.Response:
+        return web.json_response(payload)
+
+    await _serve_api(aiohttp_server, monkeypatch, "GET", API_DEVICES, handler)
+    async with ClientSession() as session:
+        api = AirzoneAPI("user@example.com", session, token="token")
+        assert await api.fetch_devices("site-A") is None
+
+
+@pytest.mark.parametrize("payload", [[], {"devices": []}])
+async def test_devices_accepts_valid_empty_http_list(
+    socket_enabled: None,
+    aiohttp_server,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: list[Any] | dict[str, Any],
+) -> None:
+    """A valid empty device list must still clear an installation snapshot."""
+    async def handler(_request: web.Request) -> web.Response:
+        return web.json_response(payload)
+
+    await _serve_api(aiohttp_server, monkeypatch, "GET", API_DEVICES, handler)
+    async with ClientSession() as session:
+        api = AirzoneAPI("user@example.com", session, token="token")
+        assert await api.fetch_devices("site-A") == []
