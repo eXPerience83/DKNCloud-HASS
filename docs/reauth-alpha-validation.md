@@ -11,9 +11,14 @@ does not prove a real DKN server invalidates old tokens after changing a passwor
 2. Confirm DKN Cloud's official app works and its backend is healthy.
    Record HA version, integration version, UTC start time, and account scope
    without exposing account/device identifiers.
-3. Enable Home Assistant's prerelease channel and install the explicitly
-   approved test alpha. Do **not** delete/re-add the integration to test
-   reauthentication: that would bypass the scenario under investigation.
+3. Install the explicitly approved **integration** test alpha (not a Home
+   Assistant Core beta). On HA 2026.10.x, open this repository in HACS,
+   select the three-dot menu, then Download/Redownload and choose the approved
+   release under **Need a different version?** On HA 2026.11 or later, open
+   Settings > Marketplace, select this repository, enable its **Pre-release**
+   option and install the approved version. HA 2026.11 compatibility still
+   requires separate validation. Do **not** delete/re-add the integration:
+   that would bypass the reauthentication scenario under investigation.
 4. Never attach unredacted diagnostics, URLs with `user_token`, passwords,
    email addresses, MAC/PIN, HAR traces, or raw HTTP request bodies.
 
