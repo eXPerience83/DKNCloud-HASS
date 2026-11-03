@@ -610,7 +610,6 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
     assert entry.options["hidden_key"] == "keep-me"
 
 
-
 @pytest.mark.parametrize("invalid_value", [9, 31, "not-a-number"])
 async def test_options_scan_interval_rejects_invalid_values(
     hass: HomeAssistant,
@@ -634,15 +633,10 @@ async def test_options_scan_interval_rejects_invalid_values(
     assert CONF_SCAN_INTERVAL in exc_info.value.path
 
     # Check the flow handler itself, not only the client-side schema.
-    invalid_result = await flow.async_step_init(
-        {CONF_SCAN_INTERVAL: invalid_value}
-    )
+    invalid_result = await flow.async_step_init({CONF_SCAN_INTERVAL: invalid_value})
     assert invalid_result["type"] is FlowResultType.FORM
-    assert invalid_result["errors"] == {
-        CONF_SCAN_INTERVAL: "invalid_scan_interval"
-    }
+    assert invalid_result["errors"] == {CONF_SCAN_INTERVAL: "invalid_scan_interval"}
     assert dict(entry.options) == original_options
-
 
 
 def test_options_flow_recomputes_heat_cool_when_cached_none(
