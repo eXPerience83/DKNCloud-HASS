@@ -266,7 +266,10 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if err.status == 401:
                 return show_form({"base": "invalid_auth"})
             return show_form({"base": "cannot_connect"})
-        except Exception:  # noqa: BLE001
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug(
+                "Reauth installation validation failed: %s", type(err).__name__
+            )
             return show_form({"base": "cannot_connect"})
         # The backend contract is a list (including []). A malformed 200
         # response must not make HA persist an unverified replacement token.
