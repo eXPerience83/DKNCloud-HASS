@@ -307,7 +307,9 @@ async def _async_update_data(
             if devices is None:
                 had_non_auth_install_errors = True
                 failed_installations.add(inst_id)
-                _LOGGER.debug("Skipping an installation due to invalid devices response.")
+                _LOGGER.debug(
+                    "Skipping an installation due to invalid devices response."
+                )
                 continue
             inst_device_ids: set[str] = set()
             for dev in devices or []:
