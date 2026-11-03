@@ -218,9 +218,18 @@ async def test_real_http_reauth_recovers_ha_and_preserves_entity_registry(
     )
     entry.add_to_hass(hass)
 
+    registry_ids: set[str] | None = None
     if initially_loaded:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+        # Capture identity before the first token expiry, not after recovery.
+        registry_ids = {
+            entity.unique_id
+            for entity in er.async_entries_for_config_entry(
+                er.async_get(hass), entry.entry_id
+            )
+        }
+        assert registry_ids
 
     cloud.update(token="token-1", password="password-1")
     if initially_loaded:
@@ -229,7 +238,6 @@ async def test_real_http_reauth_recovers_ha_and_preserves_entity_registry(
         await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    registry_ids: set[str] | None = None
     for generation in (1, 2):
         if generation == 2:
             cloud.update(token="token-2", password="password-2")
