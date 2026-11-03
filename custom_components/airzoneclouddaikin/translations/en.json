@@ -45,6 +45,9 @@
           "sleep_timeout_enabled": "Treat expired sleep as 'Home' and clean backend scenary"
         }
       }
+    },
+    "error": {
+      "invalid_scan_interval": "Scan interval must be between 10 and 30 seconds."
     }
   },
   "exceptions": {
