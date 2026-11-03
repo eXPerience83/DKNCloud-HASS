@@ -194,18 +194,16 @@ async def async_migrate_entry(
 
             if duplicates:
                 _LOGGER.warning(
-                    "Config entry %s skipped unique_id migration because %s is already in use.",
+                    "Config entry %s skipped unique_id migration because the normalized ID is already in use.",
                     config_entry.entry_id,
-                    normalized,
                 )
             else:
                 hass.config_entries.async_update_entry(
                     config_entry, unique_id=normalized
                 )
                 _LOGGER.info(
-                    "Migrated config entry %s to unique_id %s.",
+                    "Migrated config entry %s to a normalized unique_id.",
                     config_entry.entry_id,
-                    normalized,
                 )
 
     if config_entry.version != target_version:
@@ -303,6 +301,14 @@ async def _async_update_data(
                 continue
 
             devices = result
+            # None indicates an invalid HTTP 200 device payload, not zero
+            # devices. Handle it like an installation fetch failure so an
+            # existing snapshot is retained and initial setup fails safely.
+            if devices is None:
+                had_non_auth_install_errors = True
+                failed_installations.add(inst_id)
+                _LOGGER.debug("Skipping an installation due to invalid devices response.")
+                continue
             inst_device_ids: set[str] = set()
             for dev in devices or []:
                 dev_id = dev.get("id")
