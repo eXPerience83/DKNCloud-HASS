@@ -920,7 +920,6 @@ async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
     await hass.async_block_till_done()
 
 
-
 @pytest.mark.asyncio
 async def test_options_heat_cool_toggle_reloads_without_identity_changes(
     hass: HomeAssistant,
@@ -988,7 +987,6 @@ async def test_options_heat_cool_toggle_reloads_without_identity_changes(
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
-
 
 
 @pytest.mark.parametrize("failure", [False, RuntimeError("unload failed")])
