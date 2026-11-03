@@ -57,6 +57,38 @@ The integration does not retain its own persistent reauth-request flag.
 Propagated HTTP errors strip credentials and device identifiers from request
 URLs, including hidden exception context, before reaching HA consumers.
 
+### Integration safeguards (not a backend contract)
+
+Installation validation accepts a bare list or an `installation_relations` list
+whose elements are objects (dictionaries). Non-list payloads or lists with
+non-object elements are invalid responses, not proof of token validity;
+reauthentication preserves the existing token and reports cloud unavailability.
+An empty list remains valid. During normal coordinator refresh an invalid
+installation response raises `UpdateFailed` rather than treating the account as
+empty and discarding the last good device snapshot.
+
+Device snapshots accept a bare list or a `devices` list of objects. A valid
+`[]` means no devices, but malformed HTTP 200 responses (including missing or
+null `devices`) are treated as installation refresh failures. The coordinator
+preserves the previous devices for failed installations while accepting healthy
+updates from other installations; an invalid first snapshot fails setup.
+
+Transport timeouts are re-raised as a generic `TimeoutError` outside the raw
+exception handler. aiohttp connection timeouts can contain authenticated URLs;
+the sanitized error retains timeout retry semantics without the raw error chain.
+An interrupted JSON body upload can similarly produce a URL-bearing
+`ClientOSError`. The integration propagates a sanitized transport exception
+of the same type, without its original message or exception chain and without
+automatically retrying a potentially submitted device write.
+
+Reauthentication delegates reload only to the registered integration update
+listener. Unrelated listeners do not suppress the explicit reload fallback.
+
+Write-side reauthentication callbacks are cleared on entry unload and only
+start flows for loaded entries while Home Assistant is not stopping.
+Migration logs do not include normalized account email addresses; persisted
+config-entry identifiers remain unchanged.
+
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
 - Returns a list of relations; **use `installation_id`** (not the relation `id`) to query devices.
@@ -408,20 +440,3 @@ Commonly used fields:
 - Confirm exact allowed ranges/encodings for slats (P9/P10/P19/P20) on at least one model.
 - Confirm whether devices that do not support Auto fan (0) fall back to a manual speed (observed fallback: 1) rather than persisting 0 or returning an error.
 
-Installation validation accepts a bare list or an `installation_relations` list
-whose elements are objects (dictionaries). Non-list payloads or lists with
-non-object elements are invalid responses, not proof of token validity;
-reauthentication preserves the existing token and reports cloud unavailability.
-An empty list remains valid. During normal coordinator refresh an invalid
-installation response raises UpdateFailed rather than treating the account as
-empty and discarding the last good device snapshot.
-
-Transport timeouts are re-raised as a generic `TimeoutError` outside the raw
-exception handler. aiohttp connection timeouts can contain authenticated URLs;
-the sanitized error retains timeout retry semantics without the raw error chain.
-
-Reauthentication delegates reload only to the registered integration update
-listener. Unrelated listeners do not suppress the explicit reload fallback.
-
-Write-side reauthentication callbacks are cleared on entry unload and only
-start flows for loaded entries while Home Assistant is not stopping.
