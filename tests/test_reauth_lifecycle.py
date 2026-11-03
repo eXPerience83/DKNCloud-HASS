@@ -218,13 +218,13 @@ async def test_real_http_reauth_recovers_ha_and_preserves_entity_registry(
     )
     entry.add_to_hass(hass)
 
-    registry_ids: set[str] | None = None
+    registry_ids: set[tuple[str, str, str | None]] | None = None
     if initially_loaded:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         # Capture identity before the first token expiry, not after recovery.
         registry_ids = {
-            entity.unique_id
+            (entity.unique_id, entity.entity_id, entity.device_id)
             for entity in er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
             )
@@ -268,7 +268,7 @@ async def test_real_http_reauth_recovers_ha_and_preserves_entity_registry(
         assert ("devices", "user@example.com", cloud["token"]) in reads
 
         current_ids = {
-            entity.unique_id
+            (entity.unique_id, entity.entity_id, entity.device_id)
             for entity in er.async_entries_for_config_entry(
                 er.async_get(hass), entry.entry_id
             )
