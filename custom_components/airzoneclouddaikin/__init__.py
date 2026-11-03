@@ -19,7 +19,7 @@ from typing import Any
 
 from aiohttp import ClientResponseError
 from homeassistant.components import persistent_notification
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -194,18 +194,16 @@ async def async_migrate_entry(
 
             if duplicates:
                 _LOGGER.warning(
-                    "Config entry %s skipped unique_id migration because %s is already in use.",
+                    "Config entry %s skipped unique_id migration because the normalized ID is already in use.",
                     config_entry.entry_id,
-                    normalized,
                 )
             else:
                 hass.config_entries.async_update_entry(
                     config_entry, unique_id=normalized
                 )
                 _LOGGER.info(
-                    "Migrated config entry %s to unique_id %s.",
+                    "Migrated config entry %s to a normalized unique_id.",
                     config_entry.entry_id,
-                    normalized,
                 )
 
     if config_entry.version != target_version:
@@ -232,6 +230,10 @@ async def _async_update_data(
 
         data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
+        # Malformed installation responses are transient failures, not an
+        # authoritative empty account: preserve the last good device snapshot.
+        if relations is None:
+            raise UpdateFailed("Invalid installation relations response")
 
         installation_ids: list[str] = []
         for rel in relations or []:
@@ -299,6 +301,16 @@ async def _async_update_data(
                 continue
 
             devices = result
+            # None indicates an invalid HTTP 200 device payload, not zero
+            # devices. Handle it like an installation fetch failure so an
+            # existing snapshot is retained and initial setup fails safely.
+            if devices is None:
+                had_non_auth_install_errors = True
+                failed_installations.add(inst_id)
+                _LOGGER.debug(
+                    "Skipping an installation due to invalid devices response."
+                )
+                continue
             inst_device_ids: set[str] = set()
             for dev in devices or []:
                 dev_id = dev.get("id")
@@ -546,6 +558,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
     # Runtime API: token-only
     api = AirzoneAPI(username, session, password=None, token=token)
+
+    # Commands do not run inside the coordinator's refresh task. Trigger
+    # native reauth directly if a write returns 401 (HA de-duplicates flows).
+    def request_write_reauth() -> None:
+        if not hass.is_stopping and entry.state is ConfigEntryState.LOADED:
+            entry.async_start_reauth_if_available(hass)
+
+    api.on_write_auth_failure = request_write_reauth
+    entry.async_on_unload(lambda: setattr(api, "on_write_auth_failure", None))
 
     scan_interval = int(opts.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
     # Runtime clamp for safety even if UI guardrails are bypassed.
