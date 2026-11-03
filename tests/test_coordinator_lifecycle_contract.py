@@ -169,6 +169,33 @@ async def test_legacy_entry_migration_normalizes_unique_id_only(
     assert dict(entry.options) == original_options
 
 
+@pytest.mark.parametrize("duplicate", [False, True])
+async def test_migration_logs_never_expose_normalized_account_email(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    caplog: pytest.LogCaptureFixture,
+    duplicate: bool,
+) -> None:
+    """Both successful and duplicate migration logs omit the account identity."""
+    if duplicate:
+        existing = dkn_config_entry_factory(
+            email="account@example.com", unique_id="account@example.com"
+        )
+        existing.add_to_hass(hass)
+
+    entry = dkn_config_entry_factory(
+        email=" Account@Example.Com ",
+        unique_id="legacy-id",
+        version=1,
+    )
+    entry.add_to_hass(hass)
+    with caplog.at_level("INFO", logger=integration.__name__):
+        assert await integration.async_migrate_entry(hass, entry)
+    assert entry.unique_id == ("legacy-id" if duplicate else "account@example.com")
+    assert "account@example.com" not in caplog.text.lower()
+    assert "account@ex" not in caplog.text.lower()
+
+
 async def test_legacy_entry_without_username_does_not_invent_identity(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
