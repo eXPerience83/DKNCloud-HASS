@@ -207,8 +207,9 @@ class AirzoneAPI:
             _LOGGER.debug("HTTP %s %s timed out", method, spath)
             safe_error = TimeoutError("Cloud request timed out")
 
-        # Raise *outside* the except block: 'from None' suppresses display but
-        # keeps the original secret-bearing exception accessible as __context__.
+        # Raise *outside* the except blocks so Python records no implicit
+        # __context__. The original secret-bearing exception is not reachable
+        # from the sanitized error. Do not move this raise into a handler.
         raise safe_error
 
     async def _authed_request_with_retries(
