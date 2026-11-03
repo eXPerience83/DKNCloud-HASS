@@ -669,6 +669,7 @@ async def test_devices_rejects_malformed_http_200(
     payload: dict[str, Any],
 ) -> None:
     """An HTTP 200 without a list of device objects is not an empty account."""
+
     async def handler(_request: web.Request) -> web.Response:
         return web.json_response(payload)
 
@@ -686,6 +687,7 @@ async def test_devices_accepts_valid_empty_http_list(
     payload: list[Any] | dict[str, Any],
 ) -> None:
     """A valid empty device list must still clear an installation snapshot."""
+
     async def handler(_request: web.Request) -> web.Response:
         return web.json_response(payload)
 
