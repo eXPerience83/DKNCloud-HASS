@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+import voluptuous as vol
 from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.config_entries import SOURCE_USER
@@ -607,6 +608,41 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
     assert entry.options[CONF_SLEEP_TIMEOUT_ENABLED] is True
     assert entry.options["user_token"] == fake_token
     assert entry.options["hidden_key"] == "keep-me"
+
+
+
+@pytest.mark.parametrize("invalid_value", [9, 31, "not-a-number"])
+async def test_options_scan_interval_rejects_invalid_values(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    invalid_value: Any,
+) -> None:
+    """A bad interval must not be accepted or overwrite stored options."""
+    entry = dkn_config_entry_factory(
+        options={CONF_SCAN_INTERVAL: 10, "preserve-me": "untouched"}
+    )
+    entry.add_to_hass(hass)
+    original_options = dict(entry.options)
+
+    # The options form exposes the same bound checks to HA's form renderer.
+    flow = AirzoneOptionsFlow(entry)
+    flow.hass = hass
+    form = await flow.async_step_init()
+    assert form["type"] is FlowResultType.FORM
+    with pytest.raises(vol.Invalid) as exc_info:
+        form["data_schema"]({CONF_SCAN_INTERVAL: invalid_value})
+    assert CONF_SCAN_INTERVAL in exc_info.value.path
+
+    # Check the flow handler itself, not only the client-side schema.
+    invalid_result = await flow.async_step_init(
+        {CONF_SCAN_INTERVAL: invalid_value}
+    )
+    assert invalid_result["type"] is FlowResultType.FORM
+    assert invalid_result["errors"] == {
+        CONF_SCAN_INTERVAL: "invalid_scan_interval"
+    }
+    assert dict(entry.options) == original_options
+
 
 
 def test_options_flow_recomputes_heat_cool_when_cached_none(
