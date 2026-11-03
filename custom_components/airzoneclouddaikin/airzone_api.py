@@ -34,6 +34,7 @@ from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
+    ClientOSError,
     ClientResponseError,
     ClientSession,
     ClientTimeout,
@@ -195,6 +196,13 @@ class AirzoneAPI:
         except ClientConnectorError:
             _LOGGER.debug("HTTP %s %s connection error", method, spath)
             raise
+        except ClientOSError as err:
+            # aiohttp can embed the authenticated request URL in this exception
+            # when sending a JSON body fails (including the device path).
+            # Keep the transport error type/errno without its sensitive text.
+            _LOGGER.debug("HTTP %s %s transport error", method, spath)
+            error_number = err.errno if isinstance(err.errno, int) else 0
+            safe_error = ClientOSError(error_number, "Cloud transport error")
         except TimeoutError:
             _LOGGER.debug("HTTP %s %s timed out", method, spath)
             safe_error = TimeoutError("Cloud request timed out")
@@ -360,9 +368,14 @@ class AirzoneAPI:
             params=params,
         )
         if isinstance(resp, dict) and "devices" in resp:
-            return resp.get("devices")
-        if isinstance(resp, list):
-            return resp
+            devices = resp["devices"]
+        else:
+            devices = resp
+        # A malformed success body is not an authoritative empty snapshot.
+        if isinstance(devices, list) and all(
+            isinstance(device, dict) for device in devices
+        ):
+            return devices
         return None
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
