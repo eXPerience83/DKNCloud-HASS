@@ -346,11 +346,26 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
                 errors={},
             )
 
+        # Validate the submitted interval as well as the form schema, because
+        # options steps may be called directly without frontend validation.
+        try:
+            scan_interval = _options_schema(defaults)(
+                {
+                    CONF_SCAN_INTERVAL: user_input.get(
+                        CONF_SCAN_INTERVAL, defaults[CONF_SCAN_INTERVAL]
+                    )
+                }
+            )[CONF_SCAN_INTERVAL]
+        except vol.Invalid:
+            return self.async_show_form(
+                step_id="init",
+                data_schema=_options_schema(defaults),
+                errors={CONF_SCAN_INTERVAL: "invalid_scan_interval"},
+            )
+
         # Merge with existing options; never drop `user_token`
         next_opts = dict(self._entry.options)
-        next_opts[CONF_SCAN_INTERVAL] = int(
-            user_input.get(CONF_SCAN_INTERVAL, defaults[CONF_SCAN_INTERVAL])
-        )
+        next_opts[CONF_SCAN_INTERVAL] = scan_interval
         next_opts[CONF_EXPOSE_PII] = bool(
             user_input.get(CONF_EXPOSE_PII, defaults[CONF_EXPOSE_PII])
         )
