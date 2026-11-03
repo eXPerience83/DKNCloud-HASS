@@ -179,7 +179,9 @@ async def test_migration_logs_never_expose_normalized_account_email(
     """Both successful and duplicate migration logs omit the account identity."""
     if duplicate:
         existing = dkn_config_entry_factory(
-            email="account@example.com", unique_id="account@example.com"
+            entry_id="already-configured",
+            email="account@example.com",
+            unique_id="account@example.com",
         )
         existing.add_to_hass(hass)
 
