@@ -644,7 +644,7 @@ async def test_real_aiohttp_broken_body_write_redacts_transport_error(
             if method == "POST":
                 await api.send_event({"event": {"option": "P1", "value": "1"}})
             else:
-                await api.put_device_fields("private-device-id", {"sleep_time": 5})
+                await api.put_device_fields(path.rsplit("/", 1)[-1], {"sleep_time": 5})
 
     error = captured.value
     assert error.errno == 32
