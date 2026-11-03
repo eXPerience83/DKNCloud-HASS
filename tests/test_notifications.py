@@ -12,10 +12,10 @@ import pytest
 from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.const import CONF_USERNAME
-from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import entity_registry as er
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from multidict import CIMultiDict
 from pytest_homeassistant_custom_component.common import MockConfigEntry
