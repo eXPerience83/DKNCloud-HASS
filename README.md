@@ -172,7 +172,7 @@ Enter your Airzone Cloud **username** and **password**.
 A: Use **climate presets** on the climate entity (`preset_modes`: `home`, `away`, `sleep`) and the service **`climate.set_preset_mode`**. This supersedes the legacy `select.scenary` entity.
 
 **Q: Will HEAT_COOL (API label “heat-cold-auto”) be supported?**
-A: Yes — it is available as an **opt-in experimental** mode. When enabled, the integration uses **P7** for the single setpoint and **P3** for fan commands, using the integration's documented cold-channel routing. Compatibility still depends on the device bitmask and firmware.
+A: Yes — it is available as an **opt-in experimental** mode. When enabled on a device that advertises support, setpoint and fan commands are currently sent via **P7** and **P3**, respectively. This behavior has not been broadly verified on real devices and may vary with the model or firmware.
 
 **Q: Will there be an automatic fan speed?**  
 A: Planned/experimental. It will adapt fan speed (e.g., **P3/P4**) to the **ΔT** with **1 °C** thresholds and **hysteresis**, only in **HEAT/COOL**.
