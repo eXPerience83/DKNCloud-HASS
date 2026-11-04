@@ -1,8 +1,8 @@
 # DKN Cloud for Home Assistant — Technical Reference
 
 > **Scope:** Single source of truth for the DKN (Airzone Cloud) backend behavior that the Home Assistant integration relies on.  
-> **Evidence:** Verified via the official DKN Cloud UI (web/mobile) behavior and observed backend responses from manual/API tests.  
-> **Goal:** Be precise, conservative when behavior varies by device/firmware, and clearly separate **backend contract** vs **UI constraints**.
+> **Scope of evidence:** Documented request/response formats and device behavior; applicability may vary with the installation and firmware.  
+> **Goal:** Clearly distinguish API responses, client-facing constraints, and conservative Home Assistant policies.
 
 ---
 
@@ -26,7 +26,7 @@
 - `Accept: application/json, text/plain, */*`
 - `Content-Type: application/json;charset=UTF-8` (for JSON writes)
 - `X-Requested-With: XMLHttpRequest`
-- `User-Agent: <browser-like UA>` (optional but helps match the official UI)
+- `User-Agent: <browser-like UA>` (optional; keep HTTP client headers consistent)
 
 ---
 
@@ -106,7 +106,7 @@ config-entry identifiers remain unchanged.
 - **Response body:** 204 responses typically include an empty body; clients should
   treat empty JSON/text bodies as `None`/`""` and still consider the request
   successful.
-- **Canonical payload shapes (aligned to the official UI):**
+- **Payload shapes used by this integration:**
   - `scenary` is sent **nested** under `device`.
   - Most other “simple fields” are sent **root-level** (top-level JSON).
 
@@ -128,7 +128,7 @@ config-entry identifiers remain unchanged.
 { "max_temp_unoccupied": 28 }
 ```
 
-> The backend may accept alternative shapes for some fields, but the integration should use the canonical shapes above to align with the official UI.
+> Alternative payload shapes may work in some environments. Use the documented shapes above for consistent integration behavior.
 
 ### Real-time control — `POST /events`
 
@@ -219,9 +219,9 @@ curl -sS --compressed \
 
 ---
 
-## 4) HVAC Modes (P2) — Mapping, Classification, and UI Equivalences
+## 4) HVAC Modes (P2) — Mapping, Classification, and Display Equivalences
 
-### 4.1 P2 value → label (as presented in the official UI)
+### 4.1 P2 value → normalized display label
 
 | P2 | Label (UI) | Notes |
 |:--:|-----------|------|
@@ -259,9 +259,9 @@ Practical guidance for the integration:
 - **Fan speed writes:**  
   - If `mode ∈ cold_modes` → write via **P3** and read `cold_speed` (when fan control is applicable).  
   - If `mode ∈ heat_modes` → write via **P4** and read `heat_speed` (when fan control is applicable).
-- **Applicability caveat:** even if a mode belongs to a routing set, the official UI may not expose **fan or setpoint** controls in that mode:
+- **Applicability caveat:** membership in a routing set does not imply that **fan or setpoint** controls are available or appropriate in that mode:
   - **FAN_ONLY / VENTILATE (P2=3 or alias 8):** no setpoints; **fan control is exposed** (speed/auto depending on device support).
-  - **DRY / DEHUMIDIFY (P2=5):** no setpoints; **fan control is typically not exposed** in the official UI.
+  - **DRY / DEHUMIDIFY (P2=5):** no setpoints; **fan control is typically unavailable**.
 - To stay conservative, the integration should actively write fan speeds in modes where fan control is exposed and known to be effective (**COOL, HEAT, and FAN_ONLY/VENTILATE**), and avoid forcing fan writes in **DRY/DEHUMIDIFY**. For **HEAT_COOL**, only allow fan writes when explicitly enabled and validated for the installation.
 
 ### 4.4 Observed “alias” / stabilization behavior (important)
@@ -309,7 +309,7 @@ Known values:
 - `"vacant"`
 - `"sleep"`
 
-**Common UI behavior (important):** when the unit is `"vacant"`, the official UI often switches it to `"occupied"` before applying user actions (mode changes, fan changes, slats changes, etc.).  
+**Control-flow compatibility:** some clients change `"vacant"` to `"occupied"` before user-initiated actions (mode, fan, slats, etc.).  
 This means integrations should be prepared for `vacant → occupied` writes in the flow of normal control.
 
 **Canonical write**
@@ -362,7 +362,7 @@ Fields:
 
 ### 7.2 Setpoints (P7/P8) and ranges
 
-- **UI range:** 16.0..32.0 °C (commonly displayed in the official UI).
+- **Common client-facing range:** 16.0..32.0 °C.
 - **Out-of-range note:** some environments may accept out-of-range writes via the API, but the physical unit and/or backend may clamp or reject them. Treat out-of-range acceptance as **non-contractual**.
 
 ### 7.3 Setpoint availability by mode
@@ -383,12 +383,12 @@ Fields:
 
 ### 8.2 Auto fan (P3/P4 value `"0"`)
 
-- The official UI supports a **real Auto fan** mode on some devices/firmwares:
+- Some devices/firmware versions support a **real Auto fan** mode:
   - Write `"0"` to P3 (cool-type) or P4 (heat-type).
 - Auto fan availability is device/firmware dependent.
 
-**UI heuristic (non-contractual):** some clients only display “Auto” when firmware information suggests support (e.g., firmware ending in a digit > 2).  
-Treat this as a UI heuristic; **the backend contract is simply whether the device accepts/stores `"0"` for P3/P4**.
+**Non-contractual heuristic:** firmware identifiers are not reliable proof of Auto fan availability.  
+The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 
 **Future optional feature (integration):**
 - A separate, opt-in *virtual* “Auto Fan” can be implemented for devices that **do not** support real Auto (heuristic control). This is **not** the same as device Auto and must be clearly labeled/opt-in.
@@ -407,7 +407,7 @@ Treat this as a UI heuristic; **the backend contract is simply whether the devic
 
 ## 10) Backend Robustness Expectations (Integration)
 
-- Use canonical payload shapes (§2) to align with the official UI.
+- Use the documented payload shapes (§2) for consistent integration writes.
 - Treat **any 2xx** from `/events` as success; do not assume immediate state reflects the write.
 - Prefer device snapshots (`GET /devices?...`) for verification and diagnostics.
 
