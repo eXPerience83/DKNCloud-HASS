@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 from typing import Any
 
@@ -98,7 +97,6 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
     _native_min: int
     _native_max: int
     _native_step: int
-    _payload_wrapped: bool = True
     _reject_invalid_unoccupied_write: bool = False
 
     def __init__(
@@ -108,13 +106,12 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         api: AirzoneAPI,
         entry_id: str,
         device_id: str,
-        unique_suffix: str,
     ) -> None:
         super().__init__(coordinator)
         self._api = api
         self._entry_id = entry_id
         self._device_id = device_id
-        self._attr_unique_id = f"{device_id}_{unique_suffix}"
+        self._attr_unique_id = f"{device_id}_{self._field_name}"
         self._attr_mode = NumberMode.SLIDER
         self._attr_entity_category = EntityCategory.CONFIG
         self._attr_native_min_value = self._native_min
@@ -185,20 +182,11 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         if current is not None and current == ivalue:
             return
 
-        payload: dict[str, Any] = (
-            {"device": {self._field_name: ivalue}}
-            if self._payload_wrapped
-            else {self._field_name: ivalue}
-        )
+        payload: dict[str, Any] = {self._field_name: ivalue}
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            try:
-                await self._api.put_device_fields(self._device_id, payload)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                raise
+            await self._api.put_device_fields(self._device_id, payload)
 
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, self._field_name, ivalue
@@ -216,28 +204,11 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
     _native_min = _SLEEP_MIN
     _native_max = _SLEEP_MAX
     _native_step = _SLEEP_STEP
-    _payload_wrapped = False
 
     _attr_has_entity_name = True
     _attr_name = "Sleep time"
     _attr_icon = "mdi:power-sleep"
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES  # UI: 'min'
-
-    def __init__(
-        self,
-        *,
-        coordinator: AirzoneCoordinator,
-        api: AirzoneAPI,
-        entry_id: str,
-        device_id: str,
-    ) -> None:
-        super().__init__(
-            coordinator=coordinator,
-            api=api,
-            entry_id=entry_id,
-            device_id=device_id,
-            unique_suffix="sleep_time",
-        )
 
 
 class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
@@ -248,28 +219,11 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     _native_min = _UNOCC_HEAT_MIN
     _native_max = _UNOCC_HEAT_MAX
     _native_step = _UNOCC_STEP
-    _payload_wrapped = False
 
     _attr_has_entity_name = True
     _attr_name = "Unoccupied Heat Temp"
     _attr_icon = "mdi:home-thermometer-outline"
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-
-    def __init__(
-        self,
-        *,
-        coordinator: AirzoneCoordinator,
-        api: AirzoneAPI,
-        entry_id: str,
-        device_id: str,
-    ) -> None:
-        super().__init__(
-            coordinator=coordinator,
-            api=api,
-            entry_id=entry_id,
-            device_id=device_id,
-            unique_suffix="min_temp_unoccupied",
-        )
 
 
 class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
@@ -280,25 +234,8 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     _native_min = _UNOCC_COOL_MIN
     _native_max = _UNOCC_COOL_MAX
     _native_step = _UNOCC_STEP
-    _payload_wrapped = False
 
     _attr_has_entity_name = True
     _attr_name = "Unoccupied Cool Temp"
     _attr_icon = "mdi:snowflake-thermometer"
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-
-    def __init__(
-        self,
-        *,
-        coordinator: AirzoneCoordinator,
-        api: AirzoneAPI,
-        entry_id: str,
-        device_id: str,
-    ) -> None:
-        super().__init__(
-            coordinator=coordinator,
-            api=api,
-            entry_id=entry_id,
-            device_id=device_id,
-            unique_suffix="max_temp_unoccupied",
-        )
