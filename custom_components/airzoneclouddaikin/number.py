@@ -211,7 +211,6 @@ class DKNSleepTimeNumber(_BaseDKNNumber):
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES  # UI: 'min'
 
 
-
 class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     """Number entity to control unoccupied heat min temperature (°C)."""
 
@@ -227,7 +226,6 @@ class DKNUnoccupiedHeatMinNumber(_BaseDKNNumber):
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
 
-
 class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     """Number entity to control unoccupied cool max temperature (°C)."""
 
@@ -241,4 +239,3 @@ class DKNUnoccupiedCoolMaxNumber(_BaseDKNNumber):
     _attr_name = "Unoccupied Cool Temp"
     _attr_icon = "mdi:snowflake-thermometer"
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-
