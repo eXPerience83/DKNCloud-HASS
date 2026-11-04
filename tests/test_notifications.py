@@ -13,7 +13,9 @@ from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
+from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
 from multidict import CIMultiDict
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -22,6 +24,8 @@ from yarl import URL
 import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin.config_flow import CONF_SCAN_INTERVAL
 from custom_components.airzoneclouddaikin.const import (
+    CONF_ENABLE_HEAT_COOL,
+    CONF_SLEEP_TIMEOUT_ENABLED,
     DOMAIN,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
@@ -902,18 +906,104 @@ async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
         devices_by_installation={"site-1": [sample_device]},
     )
     previous = hass.data[DOMAIN][entry.entry_id]["api"]
-    hass.config_entries.async_update_entry(
-        entry, options={**entry.options, CONF_SCAN_INTERVAL: 20}
+    token = entry.options["user_token"]
+
+    # Exercise the actual HA options manager, not only an internal entry update.
+    form = await hass.config_entries.options.async_init(entry.entry_id)
+    assert form["type"] is FlowResultType.FORM
+    result = await hass.config_entries.options.async_configure(
+        form["flow_id"], user_input={CONF_SCAN_INTERVAL: 20}
     )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
     bucket = hass.data[DOMAIN][entry.entry_id]
+    assert entry.options[CONF_SCAN_INTERVAL] == 20
+    assert entry.options["user_token"] == token
     assert bucket["api"] is not previous
     assert bucket["scan_interval"] == 20
+    assert bucket["coordinator"].update_interval == timedelta(seconds=20)
     assert bucket["coordinator"].data["dev1"]["id"] == "dev1"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+
+
+@pytest.mark.asyncio
+async def test_options_heat_cool_toggle_reloads_without_identity_changes(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    setup_api_class: type[FakeSetupAPI],
+    sample_device: dict[str, Any],
+) -> None:
+    """A real HA options flow rebuilds the runtime and retains entity identities."""
+    entry = dkn_config_entry_factory(options={"preserve-me": "untouched"})
+    await _setup_entry(
+        hass,
+        entry,
+        setup_api_class,
+        installations=[{"installation_id": "site-1"}],
+        devices_by_installation={"site-1": [sample_device]},
+    )
+
+    def registry_snapshot() -> set[tuple[str, str, str | None]]:
+        return {
+            (entity.unique_id, entity.entity_id, entity.device_id)
+            for entity in er.async_entries_for_config_entry(
+                er.async_get(hass), entry.entry_id
+            )
+        }
+
+    original_ids = registry_snapshot()
+    assert original_ids
+    climate_ids = [
+        entity_id
+        for unique_id, entity_id, _device_id in original_ids
+        if unique_id.endswith("_climate")
+    ]
+    assert len(climate_ids) == 1
+
+    def selectable_modes() -> list[str]:
+        state = hass.states.get(climate_ids[0])
+        assert state is not None
+        return state.attributes["hvac_modes"]
+
+    assert "heat_cool" not in selectable_modes()
+    original_token = entry.options["user_token"]
+
+    for enabled in (True, False):
+        previous_api = entry.runtime_data.api
+        form = await hass.config_entries.options.async_init(entry.entry_id)
+        assert form["type"] is FlowResultType.FORM
+        result = await hass.config_entries.options.async_configure(
+            form["flow_id"],
+            user_input={
+                CONF_SCAN_INTERVAL: 10,
+                CONF_ENABLE_HEAT_COOL: enabled,
+                CONF_SLEEP_TIMEOUT_ENABLED: False,
+            },
+        )
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        await hass.async_block_till_done()
+
+        assert entry.options[CONF_ENABLE_HEAT_COOL] is enabled
+        assert entry.options["user_token"] == original_token
+        assert entry.options["preserve-me"] == "untouched"
+        assert entry.runtime_data.api is not previous_api
+        assert hass.data[DOMAIN][entry.entry_id]["heat_cool_opt_in"] is enabled
+        assert registry_snapshot() == original_ids
+        assert ("heat_cool" in selectable_modes()) is enabled
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    # Setup, both option-driven reloads and unload must never write to HVAC.
+    # Guard all three API generations, not only the currently active instance.
+    assert len(setup_api_class.instances) == 3
+    for api in setup_api_class.instances:
+        api.send_event.assert_not_called()
+        api.put_device_fields.assert_not_called()
+        api.async_set_scenary.assert_not_called()
 
 
 @pytest.mark.parametrize("failure", [False, RuntimeError("unload failed")])

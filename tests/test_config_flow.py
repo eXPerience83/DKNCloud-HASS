@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+import voluptuous as vol
 from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.config_entries import SOURCE_USER
@@ -607,6 +608,57 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
     assert entry.options[CONF_SLEEP_TIMEOUT_ENABLED] is True
     assert entry.options["user_token"] == fake_token
     assert entry.options["hidden_key"] == "keep-me"
+
+
+@pytest.mark.parametrize("invalid_value", [9, 31, "not-a-number"])
+async def test_options_scan_interval_rejects_invalid_values(
+    hass: HomeAssistant,
+    dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    invalid_value: Any,
+) -> None:
+    """A bad interval must not be accepted or overwrite stored options."""
+    entry = dkn_config_entry_factory(
+        options={CONF_SCAN_INTERVAL: 10, "preserve-me": "untouched"}
+    )
+    entry.add_to_hass(hass)
+    original_options = dict(entry.options)
+
+    # The options form exposes the same bound checks to HA's form renderer.
+    flow = AirzoneOptionsFlow(entry)
+    flow.hass = hass
+    form = await flow.async_step_init()
+    assert form["type"] is FlowResultType.FORM
+    with pytest.raises(vol.Invalid) as exc_info:
+        form["data_schema"]({CONF_SCAN_INTERVAL: invalid_value})
+    assert CONF_SCAN_INTERVAL in exc_info.value.path
+
+    # Keep other unsaved selections visible when retrying the invalid interval.
+    invalid_result = await flow.async_step_init(
+        {
+            CONF_SCAN_INTERVAL: invalid_value,
+            CONF_EXPOSE_PII: True,
+            CONF_ENABLE_HEAT_COOL: True,
+            CONF_SLEEP_TIMEOUT_ENABLED: True,
+        }
+    )
+    assert invalid_result["type"] is FlowResultType.FORM
+    assert invalid_result["errors"] == {CONF_SCAN_INTERVAL: "invalid_scan_interval"}
+    assert dict(entry.options) == original_options
+
+    # HA reconstructs the form from schema defaults when displaying the error.
+    retry_defaults = invalid_result["data_schema"]({})
+    assert retry_defaults[CONF_SCAN_INTERVAL] == 10
+    for option in (CONF_EXPOSE_PII, CONF_ENABLE_HEAT_COOL, CONF_SLEEP_TIMEOUT_ENABLED):
+        assert retry_defaults[option] is True
+
+    # A corrected submission must apply those choices without dropping hidden keys.
+    corrected = await flow.async_step_init({**retry_defaults, CONF_SCAN_INTERVAL: 20})
+    assert corrected["type"] is FlowResultType.CREATE_ENTRY
+    assert corrected["data"][CONF_SCAN_INTERVAL] == 20
+    for option in (CONF_EXPOSE_PII, CONF_ENABLE_HEAT_COOL, CONF_SLEEP_TIMEOUT_ENABLED):
+        assert corrected["data"][option] is True
+    assert corrected["data"]["user_token"] == original_options["user_token"]
+    assert corrected["data"]["preserve-me"] == "untouched"
 
 
 def test_options_flow_recomputes_heat_cool_when_cached_none(

@@ -45,6 +45,9 @@
           "sleep_timeout_enabled": "Abgelaufenen Sleep als 'Home' behandeln und Backend-Szenario bereinigen"
         }
       }
+    },
+    "error": {
+      "invalid_scan_interval": "Das Aktualisierungsintervall muss zwischen 10 und 30 Sekunden liegen."
     }
   },
   "exceptions": {
