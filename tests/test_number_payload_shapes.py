@@ -65,6 +65,52 @@ def _make_entity(
     return entity, api
 
 
+@pytest.mark.parametrize(
+    ("entity_cls", "field"),
+    [
+        (DKNSleepTimeNumber, "sleep_time"),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied"),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied"),
+    ],
+)
+def test_number_entity_unique_ids_remain_unchanged(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    entity_cls: type[Any],
+    field: str,
+) -> None:
+    """Inheriting the shared constructor must preserve registered entity IDs."""
+    entity, _api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: 30}
+    )
+
+    assert entity.unique_id == f"dev1_{field}"
+
+
+@pytest.mark.asyncio
+async def test_failed_number_write_preserves_backend_state(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+) -> None:
+    """A failed write must propagate without applying an optimistic value."""
+    entity, api = _make_entity(
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30},
+    )
+
+    async def reject_write(_device_id: str, _payload: dict[str, Any]) -> None:
+        raise RuntimeError("Backend write failed")
+
+    api.put_device_fields = reject_write
+
+    with pytest.raises(RuntimeError, match="Backend write failed"):
+        await entity.async_set_native_value(40)
+
+    assert entity.native_value == 30
+
+
 @pytest.mark.asyncio
 async def test_sleep_time_payload_is_root_level(
     hass: HomeAssistant,
