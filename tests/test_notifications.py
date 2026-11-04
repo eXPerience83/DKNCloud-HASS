@@ -997,6 +997,14 @@ async def test_options_heat_cool_toggle_reloads_without_identity_changes(
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
 
+    # Setup, both option-driven reloads and unload must never write to HVAC.
+    # Guard all three API generations, not only the currently active instance.
+    assert len(setup_api_class.instances) == 3
+    for api in setup_api_class.instances:
+        api.send_event.assert_not_called()
+        api.put_device_fields.assert_not_called()
+        api.async_set_scenary.assert_not_called()
+
 
 @pytest.mark.parametrize("failure", [False, RuntimeError("unload failed")])
 async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
