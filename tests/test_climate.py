@@ -230,7 +230,7 @@ def test_auto_telemetry_aliases_use_correct_cold_or_heat_fields(
     maximum: float,
     fan: str,
 ) -> None:
-    """DKN APK uses P7/P3 fields for 6, but P8/P4 fields for 7."""
+    """Reported mode 6 reads cold-side fields; mode 7 reads heat-side fields."""
     entity = _make_climate(
         hass,
         dummy_coordinator_factory,
