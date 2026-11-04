@@ -632,11 +632,35 @@ async def test_options_scan_interval_rejects_invalid_values(
         form["data_schema"]({CONF_SCAN_INTERVAL: invalid_value})
     assert CONF_SCAN_INTERVAL in exc_info.value.path
 
-    # Check the flow handler itself, not only the client-side schema.
-    invalid_result = await flow.async_step_init({CONF_SCAN_INTERVAL: invalid_value})
+    # Keep other unsaved selections visible when retrying the invalid interval.
+    invalid_result = await flow.async_step_init(
+        {
+            CONF_SCAN_INTERVAL: invalid_value,
+            CONF_EXPOSE_PII: True,
+            CONF_ENABLE_HEAT_COOL: True,
+            CONF_SLEEP_TIMEOUT_ENABLED: True,
+        }
+    )
     assert invalid_result["type"] is FlowResultType.FORM
     assert invalid_result["errors"] == {CONF_SCAN_INTERVAL: "invalid_scan_interval"}
     assert dict(entry.options) == original_options
+
+    # HA reconstructs the form from schema defaults when displaying the error.
+    retry_defaults = invalid_result["data_schema"]({})
+    assert retry_defaults[CONF_SCAN_INTERVAL] == 10
+    for option in (CONF_EXPOSE_PII, CONF_ENABLE_HEAT_COOL, CONF_SLEEP_TIMEOUT_ENABLED):
+        assert retry_defaults[option] is True
+
+    # A corrected submission must apply those choices without dropping hidden keys.
+    corrected = await flow.async_step_init(
+        {**retry_defaults, CONF_SCAN_INTERVAL: 20}
+    )
+    assert corrected["type"] is FlowResultType.CREATE_ENTRY
+    assert corrected["data"][CONF_SCAN_INTERVAL] == 20
+    for option in (CONF_EXPOSE_PII, CONF_ENABLE_HEAT_COOL, CONF_SLEEP_TIMEOUT_ENABLED):
+        assert corrected["data"][option] is True
+    assert corrected["data"]["user_token"] == original_options["user_token"]
+    assert corrected["data"]["preserve-me"] == "untouched"
 
 
 def test_options_flow_recomputes_heat_cool_when_cached_none(
