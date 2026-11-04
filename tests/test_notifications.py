@@ -906,14 +906,23 @@ async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
         devices_by_installation={"site-1": [sample_device]},
     )
     previous = hass.data[DOMAIN][entry.entry_id]["api"]
-    hass.config_entries.async_update_entry(
-        entry, options={**entry.options, CONF_SCAN_INTERVAL: 20}
+    token = entry.options["user_token"]
+
+    # Exercise the actual HA options manager, not only an internal entry update.
+    form = await hass.config_entries.options.async_init(entry.entry_id)
+    assert form["type"] is FlowResultType.FORM
+    result = await hass.config_entries.options.async_configure(
+        form["flow_id"], user_input={CONF_SCAN_INTERVAL: 20}
     )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
     bucket = hass.data[DOMAIN][entry.entry_id]
+    assert entry.options[CONF_SCAN_INTERVAL] == 20
+    assert entry.options["user_token"] == token
     assert bucket["api"] is not previous
     assert bucket["scan_interval"] == 20
+    assert bucket["coordinator"].update_interval == timedelta(seconds=20)
     assert bucket["coordinator"].data["dev1"]["id"] == "dev1"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
