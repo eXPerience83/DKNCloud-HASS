@@ -652,9 +652,7 @@ async def test_options_scan_interval_rejects_invalid_values(
         assert retry_defaults[option] is True
 
     # A corrected submission must apply those choices without dropping hidden keys.
-    corrected = await flow.async_step_init(
-        {**retry_defaults, CONF_SCAN_INTERVAL: 20}
-    )
+    corrected = await flow.async_step_init({**retry_defaults, CONF_SCAN_INTERVAL: 20})
     assert corrected["type"] is FlowResultType.CREATE_ENTRY
     assert corrected["data"][CONF_SCAN_INTERVAL] == 20
     for option in (CONF_EXPOSE_PII, CONF_ENABLE_HEAT_COOL, CONF_SLEEP_TIMEOUT_ENABLED):
