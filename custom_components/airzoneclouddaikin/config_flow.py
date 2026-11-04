@@ -357,9 +357,26 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
                 }
             )[CONF_SCAN_INTERVAL]
         except vol.Invalid:
+            # Rebuild the error form with the submitted toggles, not the saved
+            # options, so fixing the interval does not discard other edits.
+            retry_defaults = {
+                **defaults,
+                CONF_EXPOSE_PII: bool(
+                    user_input.get(CONF_EXPOSE_PII, defaults[CONF_EXPOSE_PII])
+                ),
+                CONF_ENABLE_HEAT_COOL: bool(
+                    user_input.get(CONF_ENABLE_HEAT_COOL, current_heat_cool)
+                ),
+                CONF_SLEEP_TIMEOUT_ENABLED: bool(
+                    user_input.get(
+                        CONF_SLEEP_TIMEOUT_ENABLED,
+                        defaults[CONF_SLEEP_TIMEOUT_ENABLED],
+                    )
+                ),
+            }
             return self.async_show_form(
                 step_id="init",
-                data_schema=_options_schema(defaults),
+                data_schema=_options_schema(retry_defaults),
                 errors={CONF_SCAN_INTERVAL: "invalid_scan_interval"},
             )
 
