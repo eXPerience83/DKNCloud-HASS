@@ -7,7 +7,9 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.helpers.service import entity_service_call
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 
 from custom_components.airzoneclouddaikin.const import DOMAIN
@@ -96,19 +98,21 @@ async def test_successful_climate_proxy_does_not_use_p1_fallback(
     assert entity._climate_entity_id == "climate.device"
 
 
+@pytest.mark.parametrize("climate_state", [None, STATE_UNAVAILABLE])
 @pytest.mark.parametrize(
     ("service", "power"),
     [("turn_on", "0"), ("turn_off", "1")],
 )
 @pytest.mark.asyncio
-async def test_registry_only_climate_entity_uses_p1_fallback(
+async def test_inactive_climate_entity_uses_real_p1_fallback(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
     monkeypatch: pytest.MonkeyPatch,
     service: str,
     power: str,
+    climate_state: str | None,
 ) -> None:
-    """A registry-only Climate entity must produce a real direct P1 write."""
+    """HA must not silently swallow P1 with absent or restored Climate state."""
     entity = _make_switch(
         hass,
         dummy_coordinator_factory,
@@ -119,17 +123,16 @@ async def test_registry_only_climate_entity_uses_p1_fallback(
         "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
         lambda *_args, **_kwargs: None,
     )
-    delegated: list[str] = []
+    if climate_state is not None:
+        hass.states.async_set("climate.device", climate_state, {"restored": True})
 
-    async def silent_service(_call: Any) -> None:
-        delegated.append(service)
+    async def dispatch_climate_service(call: Any) -> None:
+        await entity_service_call(hass, {}, f"async_{call.service}", call)
 
-    hass.services.async_register("climate", service, silent_service)
-    assert hass.states.get("climate.device") is None
+    hass.services.async_register("climate", service, dispatch_climate_service)
 
     await getattr(entity, f"async_{service}")()
 
-    assert delegated == []
     entity.coordinator.api.send_event.assert_awaited_once_with(
         {
             "event": {
