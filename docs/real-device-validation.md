@@ -31,7 +31,9 @@ source and result names, plus bounded numeric timing and safe HVAC fields.
 Run from the repository root using Python 3.14 (or `py -3.14` on Windows):
 
 ```bash
-python scripts/manual_device_evidence.py start --variant main --ha-version 2026.10.4
+# Example target only: replace this value with the HA version actually tested.
+HA_VERSION="2026.11.0"
+python scripts/manual_device_evidence.py start --variant main --ha-version "$HA_VERSION"
 # Substitute the generated name below for RUN_NAME.
 python scripts/manual_device_evidence.py record --run RUN_NAME --case official_app --checkpoint action --source official_app --result pass
 python scripts/manual_device_evidence.py record --run RUN_NAME --case official_app --checkpoint snapshot_after --source backend_snapshot --result pass --elapsed-seconds 18 --mode cool --setpoint-c 24
@@ -80,8 +82,8 @@ rather than claiming it happened.
 | `offline_recovery` | If safe, disconnect/reconnect device/network; observe cloud outages separately | Time to disconnected and recovered UI state |
 | `options` | Change and restore polling/notification options | Config persists through reload; hidden token/options retained |
 | `reauth` | In a planned maintenance window, test expiry/password change | Reauth must retain the same entry and existing options; #105 remains independently tracked |
-| `marketplace_install` | On a tested HA 2026.11 build, install from native Marketplace | Pending until supported HA/PHACC and real Marketplace test |
-| `hacs_upgrade` | Test HACS-to-Marketplace update in a backed-up instance | Pending until supported HA 2026.11 test |
+| `marketplace_install` | On HA 2026.11 stable, install from native Marketplace | Pending until a **real Marketplace test** is recorded; the official 2026.11 test harness is tracked separately |
+| `hacs_upgrade` | Test HACS-to-Marketplace migration in a backed-up HA 2026.11 instance | Pending until a **real migrated-installation test** is recorded |
 
 Follow `info.md` for backend contracts. Do not force unsupported fan Auto,
 P2 aliases or out-of-range setpoints. An HTTP success does not establish that
@@ -114,4 +116,6 @@ A merged docs/recorder PR makes the **protocol and safe evidence preparation**
 available, but does **not** complete the physical-device validation. Keep
 roadmap #109's hardware checklist and Marketplace #121's installation and
 HA 2026.11 compatibility gates open until corresponding actual tests are run.
+Use the [stable HA 2026.11 smoke checklist](./ha-2026.11-smoke.md) for the
+current target; this recorder alone does not prove compatibility.
 There is no release or minimum-HA change in this work.
