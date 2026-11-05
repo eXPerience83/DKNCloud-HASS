@@ -14,7 +14,9 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
+from .commands import modmaquina_payload
 from .const import DOMAIN
+from .device_state import power_is_on
 from .helpers import (
     acquire_device_lock,
     async_auto_exit_sleep_if_needed,
@@ -81,18 +83,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     def _backend_power_is_on(self) -> bool:
         """Return backend-reported power (ignore optimistic)."""
-        power = self._device.get("power")
-        s = str(power).strip().lower()
-        if s in ("1", "on", "true", "yes"):
-            return True
-        if s in ("0", "off", "false", "no", "", "none"):
-            return False
-        if isinstance(power, bool):
-            return power
-        try:
-            return bool(int(power))
-        except Exception:  # noqa: BLE001
-            return False
+        return power_is_on(self._device.get("power"))
 
     def _resolve_climate_entity_id(self) -> str | None:
         """Resolve the sibling climate entity via the entity registry."""
@@ -126,14 +117,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         if api is None:
             _LOGGER.error("API not attached to coordinator; cannot send command.")
             return
-        payload = {
-            "event": {
-                "cgi": "modmaquina",
-                "device_id": self._device_id,
-                "option": option,
-                "value": value,
-            }
-        }
+        payload = modmaquina_payload(self._device_id, option, value)
         _LOGGER.debug("Sending event %s=%s for %s", option, value, self._device_id)
         try:
             await api.send_event(payload)

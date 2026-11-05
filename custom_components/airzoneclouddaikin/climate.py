@@ -15,10 +15,12 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
+from .commands import modmaquina_payload
 from .const import (
     CONF_ENABLE_HEAT_COOL,
     DOMAIN,
 )
+from .device_state import power_is_on, preset_to_scenary, scenary_to_preset
 from .helpers import (
     acquire_device_lock,
     async_auto_exit_sleep_if_needed,
@@ -132,17 +134,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def _device_power_on(self) -> bool:
         """Normalize backend/optimistic power to bool."""
         p = self._overlay_value("power", self._device.get("power"))
-        s = str(p).strip().lower()
-        if s in ("1", "on", "true", "yes"):
-            return True
-        if s in ("0", "off", "false", "no", "", "none"):
-            return False
-        if isinstance(p, bool):
-            return p
-        try:
-            return bool(int(p))
-        except Exception:
-            return False
+        return power_is_on(p)
 
     def _backend_mode_code(self) -> str | None:
         raw = self._overlay_value("mode", self._device.get("mode"))
@@ -194,30 +186,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return HVACMode.OFF
         return MODE_TO_HVAC[code]
 
-    # ---- Preset/scenary mapping -----------------------------------------
-
-    @staticmethod
-    def _scenary_to_preset(scenary: str | None) -> str | None:
-        s = (scenary or "").strip().lower()
-        if s == "occupied":
-            return "home"
-        if s == "vacant":
-            return "away"
-        if s == "sleep":
-            return "sleep"
-        return None
-
-    @staticmethod
-    def _preset_to_scenary(preset: str) -> str | None:
-        p = (preset or "").strip().lower()
-        if p == "home":
-            return "occupied"
-        if p == "away":
-            return "vacant"
-        if p == "sleep":
-            return "sleep"
-        return None
-
     # ---- Device info -----------------------------------------------------
 
     @property
@@ -268,7 +236,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             "scenary"
         )
         scen = self._overlay_value("scenary", scenary_base)
-        return self._scenary_to_preset(str(scen) if scen is not None else None)
+        return scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Map HA preset → backend scenary and write via put_device_fields()."""
@@ -282,7 +250,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         if current == preset_mode:
             return
 
-        scenary = self._preset_to_scenary(preset_mode)
+        scenary = preset_to_scenary(preset_mode)
         if not scenary:
             _LOGGER.debug("Unsupported preset -> scenary mapping: %s", preset_mode)
             return
@@ -718,14 +686,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.error("API handle missing in coordinator; cannot send_event")
             return
 
-        payload = {
-            "event": {
-                "cgi": "modmaquina",
-                "device_id": self._device_id,
-                "option": option,
-                "value": value,
-            }
-        }
+        payload = modmaquina_payload(self._device_id, option, value)
         try:
             await api.send_event(payload)
         except asyncio.CancelledError:

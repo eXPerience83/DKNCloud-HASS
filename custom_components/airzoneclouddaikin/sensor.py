@@ -31,6 +31,7 @@ from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
 from .const import DOMAIN
+from .device_state import scenary_to_preset
 from .helpers import build_device_info, device_supports_heat_cool, parse_float
 
 _LOGGER = logging.getLogger(__name__)
@@ -433,12 +434,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
 
             # NOTE: For unknown scenary values we return the raw backend string on purpose,
             # since this is a diagnostic sensor and we want full visibility for debugging.
-            mapping = {
-                "occupied": "home",
-                "vacant": "away",
-                "sleep": "sleep",
-            }
-            return mapping.get(scen, scen)
+            return scenary_to_preset(scen) or scen
 
         # Whether fan modes are normalized (low/medium/high) or numeric (1..N)
         if self._attribute == "fan_modes_normalized":
