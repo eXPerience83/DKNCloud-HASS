@@ -16,7 +16,8 @@ from custom_components.airzoneclouddaikin.device_state import (
 
 def test_modmaquina_payload_preserves_canonical_event_shape_and_value_type() -> None:
     """The common builder must preserve original event nesting and numeric types."""
-    assert modmaquina_payload("dev1", "P1", 1) == {
+    payload = modmaquina_payload("dev1", "P1", 1)
+    assert payload == {
         "event": {
             "cgi": "modmaquina",
             "device_id": "dev1",
@@ -24,6 +25,7 @@ def test_modmaquina_payload_preserves_canonical_event_shape_and_value_type() -> 
             "value": 1,
         }
     }
+    assert type(payload["event"]["value"]) is int
     assert modmaquina_payload("dev1", "P7", "23.0")["event"]["value"] == "23.0"
 
 
