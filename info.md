@@ -147,6 +147,15 @@ config-entry identifiers remain unchanged.
 - **Success codes observed:** 200, 201, 204  
   Treat **any 2xx** as success.
 
+**Home Assistant switch delegation (integration policy, not a backend guarantee):**
+Power switches prefer the sibling Climate entity's `turn_on`/`turn_off`
+service while it has an active HA state. If a Climate registry entry remains
+but no HA state exists (for example, after disabling the Climate entity),
+the switch uses its direct `P1` command fallback instead of assuming that a
+successful service dispatch means a command reached the device. The fallback
+retains the existing power idempotency and optimistic-state handling.
+Transport-level event payloads remain unchanged.
+
 
 ### Curl examples (copy/paste templates)
 
