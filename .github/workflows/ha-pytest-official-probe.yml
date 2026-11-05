@@ -1,0 +1,127 @@
+# Experimental read-only HA 2026.11 first-party pytest harness probe.
+# Keep this PR-only: not part of required main CI, the daily stable canary,
+# the baseline updater, or any release workflow. Do not merge this experiment.
+name: HA 2026.11 official pytest harness (experiment)
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/ha-pytest-official-probe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ha-pytest-official-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  official-harness-probe:
+    # Only review first-party branches; no secrets or write credentials.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      UV_NO_CACHE: "1"
+      # An isolated beta probe may test a recent prerelease. The locked
+      # production baseline retains its 3-day maturity gate unchanged.
+      UV_EXCLUDE_NEWER: "false"
+      HA_PROBE_VERSION: "2026.11.0b6"
+      OFFICIAL_PYTEST_VERSION: "2026.11.0b6"
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up supported Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: false
+
+      - name: Create an isolated disposable environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          probe_venv="$RUNNER_TEMP/ha-official-pytest-probe"
+          uv venv --python "$(command -v python)" "$probe_venv"
+          printf 'PROBE_PYTHON=%s\n' "$probe_venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Install matching official HA and pytest beta packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip install --python "$PROBE_PYTHON" \
+            "homeassistant==$HA_PROBE_VERSION" \
+            "pytest-homeassistant==$OFFICIAL_PYTEST_VERSION" \
+            "pytest-cov==7.1.0" \
+            "aiointercept==1.0.0"
+          "$PROBE_PYTHON" - <<'PY'
+          from importlib.metadata import version
+          import os
+
+          expected = os.environ["HA_PROBE_VERSION"]
+          assert version("homeassistant") == expected
+          assert version("pytest-homeassistant") == os.environ["OFFICIAL_PYTEST_VERSION"]
+          print("Official paired test harness:", expected)
+          PY
+
+      - name: Adapt PHACC-only test imports in disposable checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PROBE_PYTHON" - <<'PY'
+          from pathlib import Path
+
+          changed = []
+          for path in sorted(Path("tests").rglob("*.py")):
+              original = path.read_text(encoding="utf-8")
+              updated = original.replace(
+                  "pytest_homeassistant_custom_component",
+                  "pytest_homeassistant",
+              )
+              if updated != original:
+                  path.write_text(updated, encoding="utf-8")
+                  changed.append(str(path))
+          assert len(changed) == 7, (
+              f"Unexpected PHACC import migration scope: {changed}"
+          )
+          print("Temporary test import changes:", *changed, sep="\n- ")
+          PY
+          # Changes above are ephemeral and never committed or included in a
+          # release; the real migration needs its own reviewed lockfile/CI PR.
+
+      - name: Run the full DKN suite with official beta fixtures
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONPATH: "."
+        run: |
+          set -euo pipefail
+          # Official README requires disabling the standalone respx plugin.
+          "$PROBE_PYTHON" -m pytest -q -ra -p no:respx -p no:cacheprovider
+
+      - name: Explain experiment scope
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Experimental official Home Assistant pytest harness"
+            echo ""
+            echo "- HA beta: `$HA_PROBE_VERSION`"
+            echo "- Official pytest beta: `$OFFICIAL_PYTEST_VERSION`"
+            echo "- Target: DKN test compatibility only (no runtime/backend credentials)"
+            echo "- Did **not** modify pyproject.toml, uv.lock, hacs.json, or the minimum version"
+            echo "- Did **not** certify Home Assistant 2026.11 stable or real devices"
+            echo "- Do **not** merge this experimental workflow into main"
+            echo "- Tracking: #163 and #109; release gate: #121"
+          } >> "$GITHUB_STEP_SUMMARY"
