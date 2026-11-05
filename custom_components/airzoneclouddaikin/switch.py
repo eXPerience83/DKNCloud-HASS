@@ -180,48 +180,58 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
     # -----------------------------
     # Write operations
     # -----------------------------
+    async def _async_delegate_climate_power(self, service: str) -> bool:
+        """Return True if the sibling climate entity handled the power command."""
+        climate_eid = self._resolve_climate_entity_id()
+        if not climate_eid:
+            return False
+
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                service,
+                {"entity_id": climate_eid},
+                blocking=True,
+                context=self.context,
+            )
+            return True
+        except TimeoutError:
+            _LOGGER.debug(
+                "Climate proxy %s timed out for %s; falling back to P1",
+                service,
+                climate_eid,
+            )
+        except ServiceNotFound:
+            _LOGGER.warning(
+                "Climate entity %s not found; decoupling and falling back to P1",
+                climate_eid,
+            )
+            self._climate_entity_id = None
+        except HomeAssistantError as err:
+            _LOGGER.debug(
+                "Climate proxy %s failed transiently for %s (%s); "
+                "falling back to P1",
+                service,
+                climate_eid,
+                err,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Unexpected error in climate proxy %s for %s: %s; "
+                "falling back to P1",
+                service,
+                climate_eid,
+                err,
+                exc_info=True,
+            )
+            self._climate_entity_id = None
+
+        return False
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the device delegating to the climate entity when possible."""
-
-        climate_eid = self._resolve_climate_entity_id()
-        if climate_eid:
-            try:
-                await self.hass.services.async_call(
-                    "climate",
-                    "turn_on",
-                    {"entity_id": climate_eid},
-                    blocking=True,
-                    context=self.context,
-                )
-                return
-            except TimeoutError:
-                _LOGGER.debug(
-                    "Climate proxy turn_on timed out for %s; falling back to P1",
-                    climate_eid,
-                )
-            except ServiceNotFound:
-                _LOGGER.warning(
-                    "Climate entity %s not found; decoupling and falling back to P1",
-                    climate_eid,
-                )
-                self._climate_entity_id = None
-            except HomeAssistantError as err:
-                _LOGGER.debug(
-                    "Climate proxy turn_on failed transiently for %s (%s); "
-                    "falling back to P1",
-                    climate_eid,
-                    err,
-                )
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Unexpected error in climate proxy turn_on for %s: %s; "
-                    "falling back to P1",
-                    climate_eid,
-                    err,
-                    exc_info=True,
-                )
-                self._climate_entity_id = None
-
+        if await self._async_delegate_climate_power("turn_on"):
+            return
         await self._fallback_turn_on()
 
     async def _fallback_turn_on(self) -> None:
@@ -251,46 +261,8 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the device delegating to the climate entity when possible."""
-
-        climate_eid = self._resolve_climate_entity_id()
-        if climate_eid:
-            try:
-                await self.hass.services.async_call(
-                    "climate",
-                    "turn_off",
-                    {"entity_id": climate_eid},
-                    blocking=True,
-                    context=self.context,
-                )
-                return
-            except TimeoutError:
-                _LOGGER.debug(
-                    "Climate proxy turn_off timed out for %s; falling back to P1",
-                    climate_eid,
-                )
-            except ServiceNotFound:
-                _LOGGER.warning(
-                    "Climate entity %s not found; decoupling and falling back to P1",
-                    climate_eid,
-                )
-                self._climate_entity_id = None
-            except HomeAssistantError as err:
-                _LOGGER.debug(
-                    "Climate proxy turn_off failed transiently for %s (%s); "
-                    "falling back to P1",
-                    climate_eid,
-                    err,
-                )
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Unexpected error in climate proxy turn_off for %s: %s; "
-                    "falling back to P1",
-                    climate_eid,
-                    err,
-                    exc_info=True,
-                )
-                self._climate_entity_id = None
-
+        if await self._async_delegate_climate_power("turn_off"):
+            return
         await self._fallback_turn_off()
 
     async def _fallback_turn_off(self) -> None:
