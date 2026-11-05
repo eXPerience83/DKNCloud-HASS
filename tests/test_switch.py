@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.core import Context, HomeAssistant
@@ -103,32 +104,43 @@ async def test_successful_climate_proxy_does_not_use_p1_fallback(
 async def test_registry_only_climate_entity_uses_p1_fallback(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    monkeypatch: pytest.MonkeyPatch,
     service: str,
     power: str,
 ) -> None:
-    """A stale registry ID must not suppress P1 when no Climate state exists."""
+    """A registry-only Climate entity must produce a real direct P1 write."""
     entity = _make_switch(
         hass,
         dummy_coordinator_factory,
         {"id": "dev1", "name": "Zone", "power": power},
     )
+    entity.coordinator.api = AsyncMock()
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        lambda *_args, **_kwargs: None,
+    )
     delegated: list[str] = []
-    fallback: list[str] = []
 
     async def silent_service(_call: Any) -> None:
         delegated.append(service)
 
-    async def fake_fallback() -> None:
-        fallback.append(service)
-
     hass.services.async_register("climate", service, silent_service)
-    setattr(entity, f"_fallback_{service}", fake_fallback)
     assert hass.states.get("climate.device") is None
 
     await getattr(entity, f"async_{service}")()
 
-    assert fallback == [service]
     assert delegated == []
+    entity.coordinator.api.send_event.assert_awaited_once_with(
+        {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": "dev1",
+                "option": "P1",
+                "value": 1 if service == "turn_on" else 0,
+            }
+        }
+    )
+    assert entity.is_on is (service == "turn_on")
     assert entity._climate_entity_id == "climate.device"
 
 
