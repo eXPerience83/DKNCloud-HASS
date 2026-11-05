@@ -209,16 +209,14 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             self._climate_entity_id = None
         except HomeAssistantError as err:
             _LOGGER.debug(
-                "Climate proxy %s failed transiently for %s (%s); "
-                "falling back to P1",
+                "Climate proxy %s failed transiently for %s (%s); falling back to P1",
                 service,
                 climate_eid,
                 err,
             )
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
-                "Unexpected error in climate proxy %s for %s: %s; "
-                "falling back to P1",
+                "Unexpected error in climate proxy %s for %s: %s; falling back to P1",
                 service,
                 climate_eid,
                 err,
