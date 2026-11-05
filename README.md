@@ -4,10 +4,11 @@
 
 > **Unofficial integration:** Community-maintained; not affiliated with or endorsed by Daikin or Airzone. A working DKN Cloud account and internet connectivity are required.
 
-[![Latest release](https://img.shields.io/github/v/release/eXPerience83/DKNCloud-HASS)](https://github.com/eXPerience83/DKNCloud-HASS/releases)
+**[Releases](https://github.com/eXPerience83/DKNCloud-HASS/releases)** · **[MIT license](./LICENSE)**
+
 [![HACS validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml)
+
 [![hassfest validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml)
-[![License](https://img.shields.io/github/license/eXPerience83/DKNCloud-HASS)](./LICENSE)
 
 ![DKN Cloud in Home Assistant](./screenshot.png)
 
