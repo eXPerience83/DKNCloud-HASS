@@ -149,8 +149,9 @@ config-entry identifiers remain unchanged.
 
 **Home Assistant switch delegation (integration policy, not a backend guarantee):**
 Power switches prefer the sibling Climate entity's `turn_on`/`turn_off`
-service while it has an active HA state. If a Climate registry entry remains
-but no HA state exists (for example, after disabling the Climate entity),
+service while it has an active, usable HA state. If a Climate registry entry
+remains but its HA state is missing or `unavailable` (for example, after
+disabling the entity or when a restored state has no active Climate instance),
 the switch uses its direct `P1` command fallback instead of assuming that a
 successful service dispatch means a command reached the device. The fallback
 retains the existing power idempotency and optimistic-state handling.
