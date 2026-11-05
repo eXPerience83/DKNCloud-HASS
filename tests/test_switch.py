@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.helpers.service import entity_service_call
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
+from homeassistant.helpers.service import entity_service_call
 
 from custom_components.airzoneclouddaikin.const import DOMAIN
 from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
