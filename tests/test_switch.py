@@ -54,6 +54,71 @@ def _register_failing_climate_service(
     hass.services.async_register("climate", service, failing_service_call)
 
 
+@pytest.mark.parametrize(
+    ("service", "power"),
+    [("turn_on", "0"), ("turn_off", "1")],
+)
+@pytest.mark.asyncio
+async def test_successful_climate_proxy_does_not_use_p1_fallback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    service: str,
+    power: str,
+) -> None:
+    """Both power commands delegate exactly once when the climate service works."""
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": power},
+    )
+    delegated: list[str] = []
+
+    async def successful_service(call: Any) -> None:
+        delegated.append(call.data["entity_id"])
+
+    async def unexpected_fallback() -> None:
+        pytest.fail("Successful climate delegation must not issue direct P1")
+
+    hass.services.async_register("climate", service, successful_service)
+    setattr(entity, f"_fallback_{service}", unexpected_fallback)
+
+    await getattr(entity, f"async_{service}")()
+
+    assert delegated == ["climate.device"]
+    assert entity._climate_entity_id == "climate.device"
+
+
+@pytest.mark.parametrize(
+    ("service", "power"),
+    [("turn_on", "0"), ("turn_off", "1")],
+)
+@pytest.mark.asyncio
+async def test_missing_climate_proxy_calls_p1_fallback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    service: str,
+    power: str,
+) -> None:
+    """Both power commands still use direct fallback without a climate entity."""
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": power},
+    )
+    entity._climate_entity_id = None
+    calls: list[str] = []
+
+    async def fake_fallback() -> None:
+        calls.append(service)
+
+    setattr(entity, f"_fallback_{service}", fake_fallback)
+
+    await getattr(entity, f"async_{service}")()
+
+    assert calls == [service]
+    assert entity._climate_entity_id is None
+
+
 @pytest.mark.asyncio
 async def test_turn_on_timeout_keeps_proxy_and_calls_fallback(
     hass: HomeAssistant,
