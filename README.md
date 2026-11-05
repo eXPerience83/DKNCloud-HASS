@@ -77,20 +77,31 @@ Optimized for the "DAIKIN ES.DKNWSERVER Wi-Fi adapter" — climate, fan, diagnos
 
 ## ⚙️ Installation
 
-### Home Assistant 2026.11+ — built-in Marketplace (recommended)
+### Home Assistant 2026.11+ — built-in Marketplace
+Home Assistant 2026.11.0 introduced the built-in Marketplace. The installation
+path below is official, but **DKN Cloud has not yet completed its full
+2026.11 compatibility suite or real-device smoke test**. See the
+[2026.11 validation checklist](./docs/ha-2026.11-smoke.md) before claiming
+that a new DKN release is verified on this HA version.
+
 1. Open **Settings → Marketplace** in Home Assistant (no separate HACS installation).
 2. Find **DKN Cloud for Home Assistant** in the integration catalog and install it.
 3. Follow any restart prompt, then open **Settings → Devices & Services → Add Integration** and search for **DKN Cloud for Home Assistant**.
 
 [![Open the DKN Cloud repository in Home Assistant Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration)
 
-### Home Assistant 2026.10.4–2026.10.x — HACS
+### Home Assistant 2026.10.4–2026.10.x — legacy HACS installation
 1. Open **HACS → Integrations**, search for **DKN Cloud for Home Assistant**, and install.
 2. Restart if prompted, then add **DKN Cloud for Home Assistant** under **Settings → Devices & Services**.
 
 The [existing HACS link](https://my.home-assistant.io/redirect/hacs_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration) also forwards to Marketplace from HA 2026.11 onward. Existing HACS-installed integrations are migrated by Home Assistant. Both use the same `hacs.json` and GitHub release ZIP.
 
-**Release availability:** `v0.5.0a2` is a **pre-release** and is available only to users who opt into pre-releases; the regular stable channel does not automatically receive this alpha. Do not treat CI success as real-device validation or a stable release.
+**Release availability (November 2026):** `v0.5.0a4` is the most recent
+**published alpha**, available to users opting into pre-releases; `v0.4.8`
+remains the latest stable DKN release. The current `main` branch contains
+additional fixes **not included in those published versions**. Do not treat
+CI success as real-device validation or publish a new alpha without a separate
+release decision.
 
 [![Start configuring DKN Cloud in Home Assistant](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=airzoneclouddaikin)
 
@@ -151,11 +162,15 @@ Enter your Airzone Cloud **username** and **password**.
 
 ## 🧪 Compatibility
 
-| Home Assistant | Python   | Daikin Model/Adapter         |
-|----------------|----------|------------------------------|
-| **2026.10.4+** | **3.14.2+** | DAIKIN ES.DKNWSERVER (Cloud) |
+| Home Assistant | Status | Installation |
+|----------------|--------|--------------|
+| **2026.10.4** | **Minimum supported**; locked CI tests with Python 3.14.10 | HACS |
+| **2026.11.0** | **Target**; full automated suite and real-device smoke pending | Built-in Marketplace |
 
-*Other Airzone or Daikin adapters may not be supported.*
+The supported Python runtime begins at **3.14.2**; the reproducible CI uses
+**3.14.10**. The target model is **DAIKIN ES.DKNWSERVER (Cloud)**; other
+Airzone or Daikin adapters may not be supported. Availability of Marketplace
+does not, by itself, prove integration compatibility with HA 2026.11.
 
 ---
 
@@ -207,6 +222,19 @@ Assistant versions must upgrade HA before installing that release; earlier
 published DKN releases keep their own version-specific compatibility metadata.
 This deliberate breaking change does not rename entities or migrate config entries.
 
+**Next target: Home Assistant 2026.11.0.** The core release is stable, but the
+current locked test suite still targets HA 2026.10.4. HA is introducing the
+official `pytest-homeassistant` package to supersede the older
+`pytest-homeassistant-custom-component` (PHACC) harness. As checked on
+**2026-11-05**, the matching official stable test package was not yet
+published because of an [upstream PyPI publishing issue](https://github.com/home-assistant/core/issues/190470).
+Do not interpret a successful HA 2026.10.4 test run or an older compatibility
+canary as HA 2026.11 validation. Any new test harness must be evaluated
+**separately** and the supported minimum must remain 2026.10.4 until explicitly
+changed, with independent minimum-version tests if the locked baseline advances.
+Track the migration under [#109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109)
+and the real-device/Marketplace gate under [#121](https://github.com/eXPerience83/DKNCloud-HASS/issues/121).
+
 Install [uv](https://docs.astral.sh/uv/), then run:
 
 ```sh
@@ -240,6 +268,8 @@ dependency resolution. The release ZIP still contains only
 The **required** [locked HA test workflow](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/tests.yml) exercises Home Assistant 2026.10.4 / PHACC 0.13.375 on Python 3.14.10. Because the supported minimum and locked baseline now coincide, the former separate HA 2026.3.1 test job and its independent hash-lock have been removed to avoid running the same suite twice. CI checks that `hacs.json` agrees with the locked Home Assistant test version. If the locked baseline advances while the minimum stays at 2026.10.4, that check intentionally fails until an independently locked minimum-version test is restored and the guard is updated to verify that test harness. Python 3.15 remains unvalidated for this HA/PHACC harness.
 
 A **separate [daily Home Assistant compatibility canary](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/ha-compatibility-canary.yml)** runs at **04:47 UTC** and can be launched manually. It selects the newest **stable, non-yanked** HA version with a matching stable `pytest-homeassistant-custom-component` release, skips HA prereleases and reports when the harness trails the latest stable HA. It installs the selected pair in an isolated virtual environment and runs the **same full pytest suite**, with no credentials or DKN cloud access. Canary failures reveal compatibility problems but **do not block PR CI, update `uv.lock`, or trigger automatic dependency updates**. It runs on the pinned Python 3.14 baseline; if a future HA requires another Python version, the installation failure will be visible rather than silently widening support.
+This existing canary/updater still selects the legacy PHACC package; it does
+not validate HA 2026.11 against the new official `pytest-homeassistant` harness.
 
 ### DKN-specific coverage and regression testing
 
