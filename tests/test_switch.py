@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 
 from custom_components.airzoneclouddaikin.const import DOMAIN
@@ -52,6 +52,7 @@ def _register_failing_climate_service(
         raise error
 
     hass.services.async_register("climate", service, failing_service_call)
+    hass.states.async_set("climate.device", "off")
 
 
 @pytest.mark.parametrize(
@@ -71,10 +72,15 @@ async def test_successful_climate_proxy_does_not_use_p1_fallback(
         dummy_coordinator_factory,
         {"id": "dev1", "name": "Zone", "power": power},
     )
+    originating_context = Context()
+    entity.context = originating_context
     delegated: list[str] = []
+    propagated_context_ids: list[str] = []
+    hass.states.async_set("climate.device", "off")
 
     async def successful_service(call: Any) -> None:
         delegated.append(call.data["entity_id"])
+        propagated_context_ids.append(call.context.id)
 
     async def unexpected_fallback() -> None:
         pytest.fail("Successful climate delegation must not issue direct P1")
@@ -85,6 +91,45 @@ async def test_successful_climate_proxy_does_not_use_p1_fallback(
     await getattr(entity, f"async_{service}")()
 
     assert delegated == ["climate.device"]
+    assert propagated_context_ids == [originating_context.id]
+    assert entity._climate_entity_id == "climate.device"
+
+
+
+@pytest.mark.parametrize(
+    ("service", "power"),
+    [("turn_on", "0"), ("turn_off", "1")],
+)
+@pytest.mark.asyncio
+async def test_registry_only_climate_entity_uses_p1_fallback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    service: str,
+    power: str,
+) -> None:
+    """A stale registry ID must not suppress P1 when no Climate state exists."""
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": power},
+    )
+    delegated: list[str] = []
+    fallback: list[str] = []
+
+    async def silent_service(_call: Any) -> None:
+        delegated.append(service)
+
+    async def fake_fallback() -> None:
+        fallback.append(service)
+
+    hass.services.async_register("climate", service, silent_service)
+    setattr(entity, f"_fallback_{service}", fake_fallback)
+    assert hass.states.get("climate.device") is None
+
+    await getattr(entity, f"async_{service}")()
+
+    assert fallback == [service]
+    assert delegated == []
     assert entity._climate_entity_id == "climate.device"
 
 
