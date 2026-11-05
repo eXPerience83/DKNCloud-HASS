@@ -186,6 +186,15 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         if not climate_eid:
             return False
 
+        # Disabled or removed Climate entities may remain in the entity registry.
+        # Calling their HA service can succeed without executing a handler.
+        if self.hass.states.get(climate_eid) is None:
+            _LOGGER.debug(
+                "Climate entity %s has no active state; falling back to P1",
+                climate_eid,
+            )
+            return False
+
         try:
             await self.hass.services.async_call(
                 "climate",
