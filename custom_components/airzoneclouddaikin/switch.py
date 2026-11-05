@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import entity_registry as er
@@ -186,11 +187,12 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         if not climate_eid:
             return False
 
-        # Disabled or removed Climate entities may remain in the entity registry.
-        # Calling their HA service can succeed without executing a handler.
-        if self.hass.states.get(climate_eid) is None:
+        # Disabled or restored-unavailable Climate entities can retain a registry
+        # entry while an HA service call succeeds without reaching an entity.
+        climate_state = self.hass.states.get(climate_eid)
+        if climate_state is None or climate_state.state == STATE_UNAVAILABLE:
             _LOGGER.debug(
-                "Climate entity %s has no active state; falling back to P1",
+                "Climate entity %s has no usable state; falling back to P1",
                 climate_eid,
             )
             return False
