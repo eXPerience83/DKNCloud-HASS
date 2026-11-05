@@ -95,7 +95,6 @@ async def test_successful_climate_proxy_does_not_use_p1_fallback(
     assert entity._climate_entity_id == "climate.device"
 
 
-
 @pytest.mark.parametrize(
     ("service", "power"),
     [("turn_on", "0"), ("turn_off", "1")],
