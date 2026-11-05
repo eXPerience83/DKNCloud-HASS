@@ -6,8 +6,6 @@
 
 **[Releases](https://github.com/eXPerience83/DKNCloud-HASS/releases)** · **[MIT license](./LICENSE)**
 
-[![HACS validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/validate.yml)
-
 [![hassfest validation](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml/badge.svg)](https://github.com/eXPerience83/DKNCloud-HASS/actions/workflows/hassfest.yml)
 
 ![DKN Cloud in Home Assistant](./screenshot.png)
@@ -25,24 +23,15 @@ Some features depend on your device and firmware. Experimental `HEAT_COOL` contr
 
 ## Installation
 
-**Minimum supported Home Assistant version: 2026.10.4.** Home Assistant **2026.11** introduces the built-in Marketplace, but **DKN Cloud's complete 2026.11 test suite and real-device validation are still pending**. Marketplace availability does not mean that compatibility has been verified. See the [validation checklist](./docs/ha-2026.11-smoke.md).
+Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**. DKN Cloud's complete HA 2026.11 automated compatibility suite and real-device smoke test are **still pending**; appearing in Marketplace does not by itself verify compatibility. See the [validation checklist](./docs/ha-2026.11-smoke.md).
 
-### Home Assistant 2026.11+ — built-in Marketplace
+### Install with Marketplace
 
 1. Open **Settings → Marketplace** in Home Assistant.
 2. Find **DKN Cloud for Home Assistant** and install it.
 3. Restart if prompted, then go to **Settings → Devices & Services → Add Integration** and select **DKN Cloud for Home Assistant**.
 
 [![Open in Home Assistant Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration)
-
-### Home Assistant 2026.10.4–2026.10.x — HACS
-
-1. Open **HACS → Integrations**, search for **DKN Cloud for Home Assistant**, and install it.
-2. Restart if prompted and add the integration under **Settings → Devices & Services**.
-
-[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration)
-
-Existing HACS installations are migrated to Marketplace by Home Assistant 2026.11. For an advanced manual installation, copy `custom_components/airzoneclouddaikin/` into `<config>/custom_components/` and restart.
 
 **Published versions:** Check [GitHub Releases](https://github.com/eXPerience83/DKNCloud-HASS/releases) for the stable release and optional prereleases. Code on `main` can contain changes **not yet published**; passing CI is not a real-device compatibility certification.
 
