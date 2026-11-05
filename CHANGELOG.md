@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.5.0a5] - 2026-11-05
+
+> **Experimental alpha for DKN Cloud for Home Assistant. Not a stable release.**
+> Minimum supported Home Assistant: **2026.10.4** (Python 3.14).
+> Home Assistant **2026.11.0 stable and its built-in Marketplace have not yet
+> completed real-device acceptance testing**; do not advertise certified
+> 2026.11 compatibility on the strength of CI alone.
+> **Back up Home Assistant before installing**, especially when upgrading an
+> existing configuration entry. The new alpha is optional and should be
+> selected explicitly in HACS/Marketplace; retain a tested rollback path.
+> Published `v0.5.0a4` and stable `v0.4.8` remain unchanged.
+
+### Added
+- Introduce a validated, draft-first GitHub Release workflow with immutable
+  source selection, locked tests, installable ZIP validation, SHA-256 checks,
+  safe tag/release handling and manual publication only (#141, #151).
+- Add an Actions workflow-security gate (actionlint, ShellCheck, zizmor) and
+  expanded regression coverage for auth, failed API writes, malformed
+  snapshots, release packaging and cross-platform entity behavior (#148, #144).
+
+### Changed
+- Rename the visible integration to **DKN Cloud for Home Assistant** in HACS,
+  the Home Assistant manifest, and six translations; prominently identify it
+  as an unofficial community integration. Keep approved Daikin assets,
+  `airzoneclouddaikin` domain and existing entity identifiers unchanged (#146).
+- Replace Black with Ruff formatting and align GitHub Actions with Pollen
+  Levels: pinned external Actions, least-privilege permissions, streamlined
+  lint/tests/package jobs, reproducible dependencies and security checks
+  (#147, #148, #150).
+- Consolidate duplicate number payload paths, DKN event builders, Climate
+  and Switch power handling, and shared entity-state/preset helpers while
+  retaining existing backend command contracts and unique IDs (#158, #159,
+  #160).
+- Refresh installation and compatibility documentation for Home Assistant
+  2026.11's Marketplace without raising the HA 2026.10.4 minimum or changing
+  the locked PHACC 0.13.375 test baseline (#162).
+
+### Fixed
+- Restore Home Assistant native reauthentication after credential changes;
+  validate replacement tokens against authenticated installations and safely
+  handle write-side 401 responses, concurrent flows and entry reloads
+  (#142, #144).
+- Reject malformed backend device snapshots without replacing healthy cached
+  state; preserve healthy installations during partial failures and protect
+  sensitive values in errors and migration logs (#144).
+- Validate the configured scan interval and test entry reload behavior for the
+  experimental HEAT_COOL option (#59).
+- Restore direct P1 power-switch fallback when the related Climate entity is
+  missing, disabled or `unavailable`, instead of treating a no-op dispatch as
+  success; retain the existing command format and HA service context (#160).
+
+### Security
+- Prevent sensitive data from leaking through failed HTTP writes, auth errors,
+  snapshot parsing and migration logging (#144).
+- Pin external GitHub Actions to reviewed SHAs and apply explicit privilege
+  and injection protections, including the release workflow (#148, #151).
+
+> **Known limitations / acceptance still pending:** Device-state freshness
+> after changes in the official app remains under investigation (#101/#102);
+> real-account password-change reauthentication still needs field validation
+> (#105); HEAT_COOL remains experimental and capability-gated (#154).
+> Real-device and Marketplace checks on HA 2026.11 are tracked in #121.
+> The official `pytest-homeassistant==2026.11.0` publishing incident
+> (upstream #190470) affects optional future test-harness migration (#163),
+> **not** DKN's current HA 2026.10.4/PHACC release checks.
+
 ## [0.5.0a4] - 2026-10-30
 
 > **Alpha candidate for Home Assistant 2026.11 beta testing.** Not stable.
