@@ -94,7 +94,9 @@ def frozen_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path,
         encoding="utf-8",
     )
     lock_file.write_text(
-        "".join(_compiled_record(name, version) for name, version in _FROZEN_PINS.items()),
+        "".join(
+            _compiled_record(name, version) for name, version in _FROZEN_PINS.items()
+        ),
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -118,7 +120,9 @@ def test_rejects_duplicate_frozen_pin(frozen_files: tuple[Path, Path]) -> None:
 def test_rejects_non_exact_frozen_pin(frozen_files: tuple[Path, Path]) -> None:
     input_file, _ = frozen_files
     input_file.write_text(
-        input_file.read_text(encoding="utf-8").replace("pytest==9.0.3", "pytest>=9.0.3"),
+        input_file.read_text(encoding="utf-8").replace(
+            "pytest==9.0.3", "pytest>=9.0.3"
+        ),
         encoding="utf-8",
     )
     with pytest.raises(MinimumPolicyError, match="Invalid fixed minimum input"):
@@ -128,7 +132,9 @@ def test_rejects_non_exact_frozen_pin(frozen_files: tuple[Path, Path]) -> None:
 def test_rejects_drifted_frozen_pin(frozen_files: tuple[Path, Path]) -> None:
     input_file, _ = frozen_files
     input_file.write_text(
-        input_file.read_text(encoding="utf-8").replace("packaging==26.3", "packaging==26.4"),
+        input_file.read_text(encoding="utf-8").replace(
+            "packaging==26.3", "packaging==26.4"
+        ),
         encoding="utf-8",
     )
     with pytest.raises(MinimumPolicyError, match="Minimum input pins must match"):
@@ -169,7 +175,8 @@ def test_rejects_hashless_lock(frozen_files: tuple[Path, Path]) -> None:
             line
             for line in lock_file.read_text(encoding="utf-8").splitlines()
             if not line.lstrip().startswith("--hash=sha256:")
-        ) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
     with pytest.raises(MinimumPolicyError, match="SHA-256 hash"):
