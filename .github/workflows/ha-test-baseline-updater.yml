@@ -122,6 +122,7 @@ jobs:
               "- official pytest-homeassistant mature at: `" + .official_mature_at + "`",
               "- Pair mature at: `" + .mature_at + "`",
               "- Upstream lag: " + (if .selected_homeassistant == .latest_homeassistant then "none" else "official pytest-homeassistant does not yet support the latest stable HA" end),
+              "- Official releases skipped (unavailable/yanked HA): " + (if (.skipped_unavailable_official | length) > 0 then (.skipped_unavailable_official | join(", ")) else "none" end),
               "- Publication: " + (if .status == "update" then "only after lock validation, tests, lint and PR safety checks" else "no PR proposed" end),
               "",
               "No automerge. Minimum HA remains hash-locked at 2026.11.0 and independently tested; newer reviewed harness baselines must not silently raise it."
@@ -196,6 +197,7 @@ jobs:
               "- Home Assistant mature at: `" + .homeassistant_mature_at + "`",
               "- official pytest-homeassistant mature at: `" + .official_mature_at + "`",
               "- Configured cooldown: `" + (.cooldown_days | tostring) + " days`",
+              "- Official releases skipped (unavailable/yanked HA): " + (if (.skipped_unavailable_official | length) > 0 then (.skipped_unavailable_official | join(", ")) else "none" end),
               "- Lock command: `uv lock --upgrade-package homeassistant --upgrade-package pytest-homeassistant`",
               "- Lock-delta validation: passed; only Home Assistant, official pytest-homeassistant, and allowed local dependency specifiers changed.",
               "- Full pytest: `__PYTEST_RESULT__`", "- Supported HA minimum remains at the independently tested 2026.11.0 baseline; updating it requires a separate explicit decision.",

@@ -93,6 +93,12 @@ jobs:
                   print(f"{name}={value}", file=stream)
 
           aligned = selection["latest_homeassistant"] == selection["selected_homeassistant"]
+          skipped_unavailable = selection["skipped_unavailable_official"]
+          if skipped_unavailable:
+              print(
+                  "::warning title=Official pytest with unavailable Home Assistant::"
+                  + ", ".join(skipped_unavailable)
+              )
           if not aligned:
               print(
                   "::warning title=Home Assistant harness lag::"
@@ -110,6 +116,8 @@ jobs:
               "- Latest stable HA covered: " + ("**yes**" if aligned else "**no — official pytest-homeassistant lag**"),
               "- Newer official pytest-homeassistant releases targeting prerelease HA: "
               + (", ".join(selection["skipped_prerelease_official"]) or "none"),
+              "- Official releases skipped because HA is unavailable/yanked: "
+              + (", ".join(skipped_unavailable) or "none"),
               "",
               "This is an informational scheduled/manual check, not the locked PR baseline.",
               "",
