@@ -22,14 +22,14 @@ source = {{ registry = "https://pypi.org/simple" }}{dependency_block}
 def _lock(
     *,
     ha: str,
-    phacc: str,
+    official: str,
     ha_dependencies: tuple[str, ...],
-    phacc_dependencies: tuple[str, ...],
+    official_dependencies: tuple[str, ...],
     packages: tuple[tuple[str, str, tuple[str, ...]], ...],
 ) -> str:
     records = [
         _package("homeassistant", ha, *ha_dependencies),
-        _package("pytest-homeassistant-custom-component", phacc, *phacc_dependencies),
+        _package("pytest-homeassistant", official, *official_dependencies),
     ]
     records.extend(
         _package(name, version, *dependencies)
@@ -43,11 +43,11 @@ source = {{ virtual = "." }}
 [package.dev-dependencies]
 release = [
     {{ name = "homeassistant" }},
-    {{ name = "pytest-homeassistant-custom-component" }},
+    {{ name = "pytest-homeassistant" }},
 ]
 test = [
     {{ name = "homeassistant" }},
-    {{ name = "pytest-homeassistant-custom-component" }},
+    {{ name = "pytest-homeassistant" }},
 ]
 
 [package.metadata]
@@ -55,11 +55,11 @@ test = [
 [package.metadata.requires-dev]
 release = [
     {{ name = "homeassistant", specifier = "=={ha}" }},
-    {{ name = "pytest-homeassistant-custom-component", specifier = "=={phacc}" }},
+    {{ name = "pytest-homeassistant", specifier = "=={official}" }},
 ]
 test = [
     {{ name = "homeassistant", specifier = "=={ha}" }},
-    {{ name = "pytest-homeassistant-custom-component", specifier = "=={phacc}" }},
+    {{ name = "pytest-homeassistant", specifier = "=={official}" }},
 ]
 """)
     header = """version = 1
@@ -73,9 +73,9 @@ requires-python = ">=3.14"
 def _monthly_pair() -> tuple[str, str]:
     before = _lock(
         ha="2026.8.3",
-        phacc="0.13.357",
+        official="0.13.357",
         ha_dependencies=("shared", "removed"),
-        phacc_dependencies=("homeassistant", "coverage"),
+        official_dependencies=("homeassistant", "coverage"),
         packages=(
             ("shared", "1.0", ("nested",)),
             ("nested", "1.0", ()),
@@ -86,9 +86,9 @@ def _monthly_pair() -> tuple[str, str]:
     )
     after = _lock(
         ha="2026.9.3",
-        phacc="0.13.366",
+        official="0.13.366",
         ha_dependencies=("shared", "added"),
-        phacc_dependencies=("homeassistant", "coverage"),
+        official_dependencies=("homeassistant", "coverage"),
         packages=(
             ("shared", "2.0", ("nested",)),
             ("nested", "2.0", ()),

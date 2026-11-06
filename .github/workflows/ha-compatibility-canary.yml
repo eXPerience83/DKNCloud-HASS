@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           uv pip install --python "$CANARY_PYTHON" "packaging==26.3"
 
-      - name: Select latest non-yanked stable HA/PHACC pair
+      - name: Select latest non-yanked stable HA/OFFICIAL pair
         shell: bash
         run: |
           set -euo pipefail
@@ -67,9 +67,9 @@ jobs:
               selection = json.load(stream)
           fields = {
               "LATEST_HA": selection["latest_homeassistant"],
-              "LATEST_PHACC": selection["latest_phacc"],
+              "LATEST_OFFICIAL": selection["latest_official"],
               "SELECTED_HA": selection["selected_homeassistant"],
-              "SELECTED_PHACC": selection["selected_phacc"],
+              "SELECTED_OFFICIAL": selection["selected_official"],
           }
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
               for name, value in fields.items():
@@ -80,19 +80,19 @@ jobs:
               print(
                   "::warning title=Home Assistant harness lag::"
                   f"Latest stable HA {selection['latest_homeassistant']} is not yet "
-                  f"supported by PHACC; testing HA {selection['selected_homeassistant']} "
-                  f"with PHACC {selection['selected_phacc']} instead."
+                  f"supported by OFFICIAL; testing HA {selection['selected_homeassistant']} "
+                  f"with OFFICIAL {selection['selected_official']} instead."
               )
           summary = [
               "## Latest Home Assistant compatibility canary",
               "",
               f"- Latest non-yanked stable HA: `{selection['latest_homeassistant']}`",
-              f"- Latest stable PHACC release: `{selection['latest_phacc']}`",
+              f"- Latest stable OFFICIAL release: `{selection['latest_official']}`",
               f"- Selected HA: `{selection['selected_homeassistant']}`",
-              f"- Selected PHACC: `{selection['selected_phacc']}`",
-              "- Latest stable HA covered: " + ("**yes**" if aligned else "**no — PHACC lag**"),
-              "- Newer PHACC releases targeting prerelease HA: "
-              + (", ".join(selection["skipped_prerelease_phacc"]) or "none"),
+              f"- Selected OFFICIAL: `{selection['selected_official']}`",
+              "- Latest stable HA covered: " + ("**yes**" if aligned else "**no — OFFICIAL lag**"),
+              "- Newer OFFICIAL releases targeting prerelease HA: "
+              + (", ".join(selection["skipped_prerelease_official"]) or "none"),
               "",
               "This is an informational scheduled/manual check, not the locked PR baseline.",
               "",
@@ -109,7 +109,7 @@ jobs:
         run: |
           set -euo pipefail
           uv pip install --python "$CANARY_PYTHON" \
-            "pytest-homeassistant-custom-component==$SELECTED_PHACC"
+            "pytest-homeassistant==$SELECTED_OFFICIAL"
 
       - name: Verify installed versions and report environment
         shell: bash
@@ -124,7 +124,7 @@ jobs:
 
           names = (
               "homeassistant",
-              "pytest-homeassistant-custom-component",
+              "pytest-homeassistant",
               "pytest",
               "pytest-asyncio",
               "packaging",
@@ -132,14 +132,14 @@ jobs:
           versions = {name: meta.version(name) for name in names}
           if versions["homeassistant"] != os.environ["SELECTED_HA"]:
               raise SystemExit("Installed Home Assistant does not match the selected version")
-          if versions["pytest-homeassistant-custom-component"] != os.environ["SELECTED_PHACC"]:
-              raise SystemExit("Installed PHACC does not match the selected version")
+          if versions["pytest-homeassistant"] != os.environ["SELECTED_OFFICIAL"]:
+              raise SystemExit("Installed OFFICIAL does not match the selected version")
           requires_ha = exact_homeassistant_requirement(
-              meta.requires("pytest-homeassistant-custom-component")
+              meta.requires("pytest-homeassistant")
           )
           if requires_ha != versions["homeassistant"]:
               raise SystemExit(
-                  f"PHACC requires HA {requires_ha}, but installed HA is {versions['homeassistant']}"
+                  f"OFFICIAL requires HA {requires_ha}, but installed HA is {versions['homeassistant']}"
               )
           rows = [
               "### Resolved test environment",

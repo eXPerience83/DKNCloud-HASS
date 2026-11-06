@@ -15,7 +15,7 @@
       "internalChecksFilter": "strict"
     },
     {
-      "description": "Keep GitHub Actions Python on the Home Assistant/PHACC-validated 3.14 patch series; review new minor versions explicitly.",
+      "description": "Keep GitHub Actions Python on the Home Assistant/official pytest-validated 3.14 patch series; review new minor versions explicitly.",
       "matchManagers": [
         "pyenv"
       ],
@@ -25,10 +25,10 @@
       "allowedVersions": "/^3\\.14\\.\\d+$/"
     },
     {
-      "description": "Home Assistant and PHACC must advance together via the reviewed baseline updater (roadmap #109 phase 4). pytest-asyncio is a PHACC-owned exact transitive pin.",
+      "description": "Home Assistant and the official pytest-homeassistant harness must advance together via the reviewed baseline updater (roadmap #109 phase 4). pytest-asyncio is owned by the official harness.",
       "matchPackageNames": [
         "homeassistant",
-        "pytest-homeassistant-custom-component",
+        "pytest-homeassistant",
         "pytest",
         "pytest-asyncio"
       ],
