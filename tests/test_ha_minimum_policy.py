@@ -80,16 +80,11 @@ _FROZEN_PINS = {
 
 
 def _compiled_record(name: str, version: str) -> str:
-    return (
-        f"{name}=={version} {chr(92)}\n"
-        f"    --hash=sha256:{'0' * 64}\n"
-    )
+    return f"{name}=={version} {chr(92)}\n    --hash=sha256:{'0' * 64}\n"
 
 
 @pytest.fixture
-def frozen_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[Path, Path]:
+def frozen_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     requirements = tmp_path / ".github" / "requirements"
     requirements.mkdir(parents=True)
     input_file = requirements / "minimum-ha.in"
@@ -158,7 +153,7 @@ def test_rejects_homeassistant_suffix_false_positive(
     _, lock_file = frozen_files
     lock_file.write_text(
         lock_file.read_text(encoding="utf-8").replace(
-            _compiled_record("homeassistant", "2026.11.0"), ""
+            _compiled_record("homeassistant", "2026.11.0"), "", 1
         ),
         encoding="utf-8",
     )
