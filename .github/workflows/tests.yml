@@ -38,31 +38,53 @@ jobs:
             pyproject.toml
             uv.lock
 
-      - name: Check minimum HA matches locked test baseline
+      - name: Check HA minimum and first-party harness policy
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           import json
+          import re
           import tomllib
           from pathlib import Path
 
-          minimum = json.loads(Path("hacs.json").read_text(encoding="utf-8"))["homeassistant"]
           project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-          ha_specs = [
-              spec.removeprefix("homeassistant==")
-              for spec in project["dependency-groups"]["test"]
-              if isinstance(spec, str) and spec.startswith("homeassistant==")
-          ]
-          if len(ha_specs) != 1:
-              raise SystemExit("Expected exactly one pinned homeassistant test dependency")
-          if minimum != ha_specs[0]:
-              raise SystemExit(
-                  f"Supported HA minimum {minimum} differs from locked test HA {ha_specs[0]}. "
-                  "Update the supported minimum and locked baseline together, "
-                  "or explicitly review and document a support-floor increase."
-              )
-          print(f"Verified supported HA minimum and test baseline: {minimum}")
+          requirements = project["dependency-groups"]["test"]
+
+          def unique_pin(package):
+              prefix = f"{package}=="
+              matches = [item.removeprefix(prefix) for item in requirements
+                         if isinstance(item, str) and item.startswith(prefix)]
+              if len(matches) != 1:
+                  raise SystemExit(f"Expected one exact {package} pin")
+              return matches[0]
+
+          minimum = json.loads(Path("hacs.json").read_text(encoding="utf-8"))["homeassistant"]
+          locked = unique_pin("homeassistant")
+          harness = unique_pin("pytest-homeassistant")
+          if harness != locked:
+              raise SystemExit(f"Official pytest harness {harness} must match HA {locked}")
+          if any(isinstance(item, str) and "pytest-homeassistant-custom-component" in item
+                 for item in requirements):
+              raise SystemExit("Legacy PHACC dependency is forbidden")
+
+          def stable_parts(value):
+              if re.fullmatch(r"\d{4}\.\d{1,2}\.\d+", value) is None:
+                  raise SystemExit(f"Expected a stable Home Assistant version: {value}")
+              return tuple(int(part) for part in value.split("."))
+
+          if stable_parts(locked) < stable_parts(minimum):
+              raise SystemExit(f"Tested HA {locked} is older than supported minimum {minimum}")
+          inputs = {}
+          for line in Path(".github/requirements/minimum-ha.in").read_text(
+              encoding="utf-8"
+          ).splitlines():
+              if line and not line.startswith("#"):
+                  package, version = line.split("==", 1)
+                  inputs[package] = version
+          if inputs.get("homeassistant") != minimum or inputs.get("pytest-homeassistant") != minimum:
+              raise SystemExit("Independent minimum HA fixture pins must match hacs.json")
+          print(f"Minimum HA {minimum}; locked tested HA + official harness {locked}")
           PY
 
       - name: Verify locked test environment

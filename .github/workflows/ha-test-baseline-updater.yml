@@ -113,18 +113,18 @@ jobs:
               "## HA baseline updater",
               "",
               "- Status: `" + .status + "`",
-              "- Current baseline: HA `" + .current_homeassistant + "`, OFFICIAL `" + .current_official + "`",
-              "- Selected stable pair: HA `" + .selected_homeassistant + "`, OFFICIAL `" + .selected_official + "`",
+              "- Current baseline: HA `" + .current_homeassistant + "`, official pytest-homeassistant `" + .current_official + "`",
+              "- Selected stable pair: HA `" + .selected_homeassistant + "`, official pytest-homeassistant `" + .selected_official + "`",
               "- Latest available stable HA: `" + .latest_homeassistant + "`",
-              "- Latest available OFFICIAL: `" + .latest_official + "`",
+              "- Latest available official pytest-homeassistant: `" + .latest_official + "`",
               "- Maturity gate: `" + (.cooldown_days | tostring) + " days`",
               "- HA mature at: `" + .homeassistant_mature_at + "`",
-              "- OFFICIAL mature at: `" + .official_mature_at + "`",
+              "- official pytest-homeassistant mature at: `" + .official_mature_at + "`",
               "- Pair mature at: `" + .mature_at + "`",
-              "- Upstream lag: " + (if .selected_homeassistant == .latest_homeassistant then "none" else "OFFICIAL does not yet support the latest stable HA" end),
+              "- Upstream lag: " + (if .selected_homeassistant == .latest_homeassistant then "none" else "official pytest-homeassistant does not yet support the latest stable HA" end),
               "- Publication: " + (if .status == "update" then "only after lock validation, tests, lint and PR safety checks" else "no PR proposed" end),
               "",
-              "No automerge. CI requires the support floor to match the selected HA version; future upgrades require coordinated minimum changes."
+              "No automerge. Minimum HA remains hash-locked at 2026.11.0 and independently tested; newer reviewed harness baselines must not silently raise it."
             ] | join("\n")
           ' "$plan_path" >> "$GITHUB_STEP_SUMMARY"
 
@@ -194,11 +194,11 @@ jobs:
               "- Old pair: `homeassistant==" + .current_homeassistant + "`, `pytest-homeassistant==" + .current_official + "`",
               "- New pair: `homeassistant==" + .selected_homeassistant + "`, `pytest-homeassistant==" + .selected_official + "`",
               "- Home Assistant mature at: `" + .homeassistant_mature_at + "`",
-              "- OFFICIAL mature at: `" + .official_mature_at + "`",
+              "- official pytest-homeassistant mature at: `" + .official_mature_at + "`",
               "- Configured cooldown: `" + (.cooldown_days | tostring) + " days`",
               "- Lock command: `uv lock --upgrade-package homeassistant --upgrade-package pytest-homeassistant`",
-              "- Lock-delta validation: passed; only Home Assistant, OFFICIAL, and allowed local dependency specifiers changed.",
-              "- Full pytest: `__PYTEST_RESULT__`", "- Future HA baseline updates must also coordinate the supported minimum to avoid an unsupported mismatch.",
+              "- Lock-delta validation: passed; only Home Assistant, official pytest-homeassistant, and allowed local dependency specifiers changed.",
+              "- Full pytest: `__PYTEST_RESULT__`", "- Supported HA minimum remains at the independently tested 2026.11.0 baseline; updating it requires a separate explicit decision.",
               "- Ruff lint and Ruff format checks: passed.",
               "- No automerge is enabled.",
               "- This PR was created with the repository `GITHUB_TOKEN`; a repository writer must select **Approve workflows to run** for CI."
@@ -336,9 +336,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml uv.lock
-          git commit -m "chore(deps): propose reviewed HA/OFFICIAL test baseline"
+          git commit -m "chore(deps): propose reviewed HA/official pytest-homeassistant test baseline"
           gh auth setup-git
           git push origin "HEAD:refs/heads/$branch"
           gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
-            --title "chore(deps): propose compatible HA/OFFICIAL test baseline" \
+            --title "chore(deps): propose compatible HA/official pytest-homeassistant test baseline" \
             --body-file "$RUNNER_TEMP/pr-body-final.md"

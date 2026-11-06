@@ -45,8 +45,8 @@
 - Prefer `pull_request` scoped to `main` and concurrency keys using the
   workflow and PR number (or `github.ref`) to avoid cross-fork collisions.
 - Preserve the separate scheduled/manual latest-HA canary and reviewed
-  baseline updater; do not add a duplicate minimum-HA lane while the pinned
-  minimum equals the tested HA version.
+  baseline updater, and the independent hash-locked minimum-HA workflow.
+  Keep the 2026.11.0 minimum protected when the main test baseline advances.
 
 ## Release procedure
 - Follow `RELEASING.md` and #141. Draft preparation is automated; publication

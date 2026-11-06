@@ -33,8 +33,25 @@
         "pytest-asyncio"
       ],
       "enabled": false
+    },
+    {
+      "description": "Freeze independently hash-locked HA 2026.11.0 minimum test environment; manual support-floor changes only.",
+      "matchFileNames": [
+        ".github/requirements/minimum-ha.in",
+        ".github/requirements/minimum-ha.txt"
+      ],
+      "enabled": false
     }
   ],
   "dependencyDashboard": true,
-  "internalChecksFilter": "strict"
+  "internalChecksFilter": "strict",
+  "timezone": "Europe/Madrid",
+  "automerge": false,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 4am on Monday"
+    ],
+    "groupName": "uv.lock maintenance"
+  }
 }

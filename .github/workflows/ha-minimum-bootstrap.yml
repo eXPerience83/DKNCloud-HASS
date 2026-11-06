@@ -1,0 +1,76 @@
+name: Temporary minimum-HA lock bootstrap (remove after verification)
+
+on:
+  push:
+    branches:
+      - chore/ha-2026-11-official-pytest
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.repository == 'eXPerience83/DKNCloud-HASS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+      - name: Generate independent hash-locked minimum requirements
+        env:
+          UV_EXCLUDE_NEWER: "false"
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip compile .github/requirements/minimum-ha.in \
+            --python 3.14.10 --generate-hashes \
+            --output-file .github/requirements/minimum-ha.txt
+          uv venv --python "$(command -v python)" "$RUNNER_TEMP/min-ha"
+          uv pip sync --python "$RUNNER_TEMP/min-ha/bin/python" \
+            --require-hashes .github/requirements/minimum-ha.txt
+          PYTHONPATH=. "$RUNNER_TEMP/min-ha/bin/python" -m pytest -q -ra -p no:cacheprovider
+      - name: Verify latest stable canary and baseline planner (read-only)
+        env:
+          UV_EXCLUDE_NEWER: "false"
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python "$(command -v python)" "$RUNNER_TEMP/live-ha"
+          uv pip install --python "$RUNNER_TEMP/live-ha/bin/python" "packaging==26.3"
+          "$RUNNER_TEMP/live-ha/bin/python" scripts/select_ha_harness.py > "$RUNNER_TEMP/selection.json"
+          "$RUNNER_TEMP/live-ha/bin/python" - "$RUNNER_TEMP/selection.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          result = json.loads(Path(sys.argv[1]).read_text())
+          assert result["selected_homeassistant"] == result["selected_official"], result
+          assert result["selected_homeassistant"] >= "2026.11.0", result
+          print(result)
+          PY
+          HA="$(jq -r '.selected_homeassistant' "$RUNNER_TEMP/selection.json")"
+          OFFICIAL="$(jq -r '.selected_official' "$RUNNER_TEMP/selection.json")"
+          uv pip install --python "$RUNNER_TEMP/live-ha/bin/python" \
+            "homeassistant==$HA" "pytest-homeassistant==$OFFICIAL" "aiointercept==1.0.0"
+          PYTHONPATH=. "$RUNNER_TEMP/live-ha/bin/python" -m pytest -q -ra -p no:cacheprovider
+          "$RUNNER_TEMP/live-ha/bin/python" scripts/ha_test_baseline_updater.py plan > "$RUNNER_TEMP/plan.json"
+          cat "$RUNNER_TEMP/plan.json"
+      - name: Commit independently validated minimum lock
+        env:
+          GH_TOKEN: \${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add .github/requirements/minimum-ha.txt
+          git diff --cached --quiet && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test(ci): lock minimum HA 2026.11 official pytest dependency hashes"
+          gh auth setup-git
+          git push origin HEAD:chore/ha-2026-11-official-pytest

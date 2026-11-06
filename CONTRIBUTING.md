@@ -7,7 +7,7 @@
 - Do not add or rely on a `strings.json` file; translation updates should flow from `en.json` to the other language files.
 - Do not introduce `%key:` translation references in this custom repository.
 - Preserve the existing coordinator-driven architecture and avoid introducing blocking I/O in the event loop.
-- The official `pytest-homeassistant` harness replaces PHACC for HA 2026.11. Both the integration minimum and test baseline advance together; no 2026.10.4 compatibility lane remains. Renovate retains the three-day maturity window. See the [HA 2026.11 smoke checklist](./docs/ha-2026.11-smoke.md).
+- The official `pytest-homeassistant` harness replaces PHACC for HA 2026.11. The independent hash-locked minimum test lane stays on 2026.11.0 even when the current test baseline advances. Only deliberately change the support floor; no 2026.10.4 compatibility lane remains. Renovate retains the three-day maturity window. See the [HA 2026.11 smoke checklist](./docs/ha-2026.11-smoke.md).
 - Before submitting changes, run:
   - `uv lock --check` — verify the committed lockfile.
   - `uv sync --locked --only-group release` — install the locked test/lint environment.
