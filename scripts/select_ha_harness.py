@@ -85,7 +85,9 @@ def exact_homeassistant_requirement(requires_dist: object) -> str:
     requirements: list[Requirement] = []
     for requirement_text in requires_dist:
         if not isinstance(requirement_text, str):
-            raise SelectionError("OFFICIAL metadata has an invalid dependency requirement")
+            raise SelectionError(
+                "OFFICIAL metadata has an invalid dependency requirement"
+            )
         try:
             requirement = Requirement(requirement_text)
         except InvalidRequirement as err:
@@ -123,9 +125,7 @@ def select_stable_harness(
     latest_homeassistant = latest_stable_release(
         homeassistant_metadata, "Home Assistant"
     )
-    latest_official = latest_stable_release(
-        official_metadata, "pytest-homeassistant"
-    )
+    latest_official = latest_stable_release(official_metadata, "pytest-homeassistant")
     stable_homeassistant = {
         release
         for _, release in _stable_releases(homeassistant_metadata, "Home Assistant")
@@ -140,7 +140,9 @@ def select_stable_harness(
         metadata = official_release_metadata(official_version)
         info = metadata.get("info")
         if not isinstance(info, Mapping):
-            raise SelectionError(f"OFFICIAL {official_version} metadata has no info mapping")
+            raise SelectionError(
+                f"OFFICIAL {official_version} metadata has no info mapping"
+            )
         homeassistant_version = exact_homeassistant_requirement(
             info.get("requires_dist")
         )
@@ -166,7 +168,9 @@ def select_stable_harness(
             skipped_prerelease_official=tuple(skipped_prerelease_official),
         )
 
-    raise SelectionError("PyPI returned no eligible stable official pytest/Home Assistant pair")
+    raise SelectionError(
+        "PyPI returned no eligible stable official pytest/Home Assistant pair"
+    )
 
 
 def fetch_pypi_metadata(
@@ -206,9 +210,7 @@ def main() -> None:
     selection = select_stable_harness(
         homeassistant_metadata,
         official_metadata,
-        lambda version: fetch_pypi_metadata(
-            "pytest-homeassistant", version
-        ),
+        lambda version: fetch_pypi_metadata("pytest-homeassistant", version),
     )
     sys.stdout.write(json.dumps(asdict(selection), sort_keys=True) + "\n")
 
