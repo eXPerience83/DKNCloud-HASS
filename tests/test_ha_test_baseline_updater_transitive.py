@@ -72,8 +72,8 @@ requires-python = ">=3.14"
 
 def _monthly_pair() -> tuple[str, str]:
     before = _lock(
-        ha="2026.8.3",
-        official="0.13.357",
+        ha="2026.11.0",
+        official="2026.11.0",
         ha_dependencies=("shared", "removed"),
         official_dependencies=("homeassistant", "coverage"),
         packages=(
@@ -85,8 +85,8 @@ def _monthly_pair() -> tuple[str, str]:
         ),
     )
     after = _lock(
-        ha="2026.9.3",
-        official="0.13.366",
+        ha="2026.12.0",
+        official="2026.12.0",
         ha_dependencies=("shared", "added"),
         official_dependencies=("homeassistant", "coverage"),
         packages=(
@@ -104,7 +104,7 @@ def test_target_derived_monthly_graph_movement_passes() -> None:
     """Target descendants may update, appear, disappear, and change recursively."""
     before, after = _monthly_pair()
 
-    validate_lock_delta(before, after, "2026.9.3", "0.13.366")
+    validate_lock_delta(before, after, "2026.12.0", "2026.12.0")
 
 
 def test_unrelated_package_addition_still_fails() -> None:
@@ -113,7 +113,7 @@ def test_unrelated_package_addition_still_fails() -> None:
     after += "\n" + _package("unrelated-added", "1.0")
 
     with pytest.raises(UpdaterError, match="package set changed"):
-        validate_lock_delta(before, after, "2026.9.3", "0.13.366")
+        validate_lock_delta(before, after, "2026.12.0", "2026.12.0")
 
 
 def test_unrelated_existing_package_movement_still_fails() -> None:
@@ -126,4 +126,4 @@ def test_unrelated_existing_package_movement_still_fails() -> None:
     )
 
     with pytest.raises(UpdaterError, match="unrelated"):
-        validate_lock_delta(before, after, "2026.9.3", "0.13.366")
+        validate_lock_delta(before, after, "2026.12.0", "2026.12.0")

@@ -73,7 +73,9 @@ def plan_minimum(pyproject: dict[str, Any], hacs: dict[str, Any]) -> MinimumPlan
     return MinimumPlan(
         minimum_homeassistant=MINIMUM_HOMEASSISTANT,
         current_homeassistant=current,
-        run_minimum=current != MINIMUM_HOMEASSISTANT,
+        # The hash-locked minimum has independent transitive versions: same HA
+        # and pytest pins do not imply equivalence to uv.lock.
+        run_minimum=True,
     )
 
 

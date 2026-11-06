@@ -16,28 +16,28 @@ from scripts.ha_test_baseline_updater import (
 )
 from scripts.select_ha_harness import HarnessSelection
 
-NOW = datetime(2026, 8, 30, tzinfo=UTC)
+NOW = datetime(2026, 12, 30, tzinfo=UTC)
 
 
 def _project(cooldown: str = "3 days") -> dict[str, object]:
     return {
         "dependency-groups": {
             "test": [
-                "pytest-homeassistant==0.13.357",
-                "homeassistant==2026.8.3",
+                "pytest-homeassistant==2026.11.0",
+                "homeassistant==2026.11.0",
             ]
         },
         "tool": {"uv": {"exclude-newer": cooldown}},
     }
 
 
-def _selection(ha: str = "2026.8.3", official: str = "0.13.357") -> HarnessSelection:
+def _selection(ha: str = "2026.11.0", official: str = "2026.11.0") -> HarnessSelection:
     return HarnessSelection(
         latest_homeassistant=ha,
         latest_official=official,
         selected_homeassistant=ha,
         selected_official=official,
-        skipped_prerelease_official=("0.13.360",),
+        skipped_prerelease_official=("2026.11.0b1",),
     )
 
 
@@ -54,8 +54,8 @@ def _release(uploaded: datetime, *, yanked: bool = False) -> dict[str, object]:
 
 def _plan(
     *,
-    ha: str = "2026.8.3",
-    official: str = "0.13.357",
+    ha: str = "2026.11.0",
+    official: str = "2026.11.0",
     ha_uploaded: datetime = NOW - timedelta(days=4),
     official_uploaded: datetime = NOW - timedelta(days=4),
 ) -> BaselinePlan:
@@ -75,7 +75,7 @@ def test_baseline_already_current_is_a_noop() -> None:
 
 def test_mature_newer_stable_pair_is_an_update() -> None:
     """A newer pair becomes eligible only after both release gates mature."""
-    plan = _plan(ha="2026.9.0", official="0.13.400")
+    plan = _plan(ha="2026.12.0", official="2026.12.0")
 
     assert plan.status == "update"
     assert plan.mature_at == (NOW - timedelta(days=1)).isoformat()
@@ -84,14 +84,14 @@ def test_mature_newer_stable_pair_is_an_update() -> None:
 def test_candidate_younger_than_cooldown_is_not_updated() -> None:
     """A new selected pair stays in cooldown until the common maturity instant."""
     assert (
-        _plan(ha="2026.9.0", official="0.13.400", ha_uploaded=NOW).status == "cooldown"
+        _plan(ha="2026.12.0", official="2026.12.0", ha_uploaded=NOW).status == "cooldown"
     )
 
 
 def test_ha_mature_but_official_young_is_cooldown() -> None:
     """OFFICIAL's release timestamp independently protects the pair."""
     assert (
-        _plan(ha="2026.9.0", official="0.13.400", official_uploaded=NOW).status
+        _plan(ha="2026.12.0", official="2026.12.0", official_uploaded=NOW).status
         == "cooldown"
     )
 
@@ -99,7 +99,7 @@ def test_ha_mature_but_official_young_is_cooldown() -> None:
 def test_official_mature_but_ha_young_is_cooldown() -> None:
     """Home Assistant's release timestamp independently protects the pair."""
     assert (
-        _plan(ha="2026.9.0", official="0.13.400", ha_uploaded=NOW).status == "cooldown"
+        _plan(ha="2026.12.0", official="2026.12.0", ha_uploaded=NOW).status == "cooldown"
     )
 
 
@@ -107,7 +107,7 @@ def test_manual_override_only_waives_pair_release_age() -> None:
     """Manual waiver promotes a newer pair without skipping its basic safety checks."""
     plan = make_plan(
         _project(),
-        _selection("2026.9.0", "0.13.400"),
+        _selection("2026.12.0", "2026.12.0"),
         _release(NOW),
         _release(NOW),
         NOW,
@@ -135,7 +135,7 @@ def test_manual_override_rejects_downgrade() -> None:
     with pytest.raises(UpdaterError, match="downgrade"):
         make_plan(
             _project(),
-            _selection("2026.8.2", "0.13.356"),
+            _selection("2026.10.4", "2026.10.4"),
             _release(NOW),
             _release(NOW),
             NOW,
@@ -226,10 +226,10 @@ def test_malformed_cooldown_fails(cooldown: object) -> None:
 def test_downgrade_candidate_fails() -> None:
     """The normal baseline updater never moves either direct pin backward."""
     with pytest.raises(UpdaterError, match="downgrade"):
-        _plan(ha="2026.8.2")
+        _plan(ha="2026.10.4", official="2026.10.4")
 
 
-def _update_plan(*, ha: str = "2026.9.0", official: str = "0.13.400") -> BaselinePlan:
+def _update_plan(*, ha: str = "2026.12.0", official: str = "2026.12.0") -> BaselinePlan:
     return _plan(ha=ha, official=official)
 
 
@@ -238,13 +238,13 @@ def _pyproject() -> str:
 
 [dependency-groups]
 test = [
-    "pytest-homeassistant==0.13.357",
-    "homeassistant==2026.8.3",
+    "pytest-homeassistant==2026.11.0",
+    "homeassistant==2026.11.0",
 ]
 
 [tool.uv]
 exclude-newer = "3 days"
-# Home Assistant 2026.8.3 requires Python 3.14.2+, while CI itself uses the
+# Home Assistant 2026.11.0 requires Python 3.14.2+, while CI itself uses the
 # exact patch from .python-version. Keep the lock within the supported 3.14 line.
 """
 
@@ -253,27 +253,40 @@ def test_pyproject_updates_exact_two_pins_preserving_other_comments() -> None:
     """The text update keeps unrelated configuration bytes intact."""
     updated = update_pyproject(_pyproject(), _update_plan())
 
-    assert '"homeassistant==2026.9.0"' in updated
-    assert '"pytest-homeassistant==0.13.400"' in updated
-    assert "# Home Assistant 2026.8.3 requires Python 3.14.2+" in updated
+    assert '"homeassistant==2026.12.0"' in updated
+    assert '"pytest-homeassistant==2026.12.0"' in updated
+    assert "# Home Assistant 2026.11.0 requires Python 3.14.2+" in updated
     assert "# Tooling aligned to the Home Assistant 2026.5" in updated
 
 
-def test_pyproject_leaves_ha_comment_when_only_official_changes() -> None:
-    """A same-HA harness update must not touch the nearby HA compatibility note."""
-    plan = _update_plan(ha="2026.8.3", official="0.13.400")
-    updated = update_pyproject(_pyproject(), plan)
+def test_official_only_version_change_rejected_by_minimum_policy() -> None:
+    """The updater must not propose a test baseline that CI will reject."""
+    with pytest.raises(UpdaterError, match="exact matching stable release"):
+        _update_plan(ha="2026.11.0", official="2026.12.0")
 
-    assert "# Home Assistant 2026.8.3 requires Python 3.14.2+" in updated
+
+@pytest.mark.parametrize(
+    ("ha", "official"),
+    [
+        ("2026.12.0", "2026.12.0.post1"),
+        ("2026.12.0", "2026.12.1"),
+        ("2026.12.0b1", "2026.12.0b1"),
+    ],
+)
+def test_unpromotable_selected_harness_pair_rejected(
+    ha: str, official: str
+) -> None:
+    with pytest.raises(UpdaterError, match="exact matching stable release"):
+        _plan(ha=ha, official=official)
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        _pyproject().replace('"homeassistant==2026.8.3",\n', ""),
+        _pyproject().replace('"homeassistant==2026.11.0",\n', ""),
         _pyproject().replace(
-            '    "homeassistant==2026.8.3",\n',
-            '    "homeassistant==2026.8.3",\n    "homeassistant==2026.8.3",\n',
+            '    "homeassistant==2026.11.0",\n',
+            '    "homeassistant==2026.11.0",\n    "homeassistant==2026.11.0",\n',
         ),
     ],
 )
@@ -338,15 +351,15 @@ test = [
 
 
 def _valid_locks() -> tuple[str, str]:
-    return _lock(ha="2026.8.3", official="0.13.357"), _lock(
-        ha="2026.9.0", official="0.13.400"
+    return _lock(ha="2026.11.0", official="2026.11.0"), _lock(
+        ha="2026.12.0", official="2026.12.0"
     )
 
 
 def test_allowed_ha_official_and_local_specifier_movement_passes() -> None:
     """The intended direct record and local requirement metadata update is accepted."""
     before, after = _valid_locks()
-    validate_lock_delta(before, after, "2026.9.0", "0.13.400")
+    validate_lock_delta(before, after, "2026.12.0", "2026.12.0")
 
 
 @pytest.mark.parametrize(
@@ -382,23 +395,23 @@ def test_unrelated_lock_movement_fails(transform: object, match: str) -> None:
     """No unrelated package record change is acceptable to publication."""
     before, after = _valid_locks()
     with pytest.raises(UpdaterError, match=match):
-        validate_lock_delta(before, transform(after), "2026.9.0", "0.13.400")
+        validate_lock_delta(before, transform(after), "2026.12.0", "2026.12.0")
 
 
 @pytest.mark.parametrize(
     ("after", "match"),
     [
         (
-            _lock(ha="2026.9.0", official="0.13.400", local_version="5.0.0"),
+            _lock(ha="2026.12.0", official="2026.12.0", local_version="5.0.0"),
             "version or source",
         ),
         (
-            _lock(ha="2026.9.0", official="0.13.400", source='virtual = "elsewhere"'),
+            _lock(ha="2026.12.0", official="2026.12.0", source='virtual = "elsewhere"'),
             "version or source",
         ),
         (
-            _lock(ha="2026.9.0", official="0.13.400").replace(
-                'specifier = "==2026.9.0"', 'specifier = ">=2026.9.0"'
+            _lock(ha="2026.12.0", official="2026.12.0").replace(
+                'specifier = "==2026.12.0"', 'specifier = ">=2026.12.0"'
             ),
             "target specifier",
         ),
@@ -408,11 +421,11 @@ def test_unexpected_local_dkncloud_hass_movement_fails(after: str, match: str) -
     """Only the two direct local dependency specifiers may change."""
     before, _ = _valid_locks()
     with pytest.raises(UpdaterError, match=match):
-        validate_lock_delta(before, after, "2026.9.0", "0.13.400")
+        validate_lock_delta(before, after, "2026.12.0", "2026.12.0")
 
 
 def test_wrong_resulting_harness_versions_fail() -> None:
     """Target records must lock exactly to the selected stable pair."""
     before, after = _valid_locks()
     with pytest.raises(UpdaterError, match="homeassistant"):
-        validate_lock_delta(before, after, "2026.9.1", "0.13.400")
+        validate_lock_delta(before, after, "2026.12.1", "2026.12.0")

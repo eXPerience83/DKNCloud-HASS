@@ -25,11 +25,11 @@ def _project(ha: str = "2026.11.0", official: str = "2026.11.0") -> dict:
     }
 
 
-def test_exact_current_minimum_skips_duplicate_full_suite() -> None:
+def test_exact_current_minimum_still_runs_independent_hash_locked_suite() -> None:
     result = plan_minimum(_project(), {"homeassistant": "2026.11.0"})
     assert result.minimum_homeassistant == "2026.11.0"
     assert result.current_homeassistant == "2026.11.0"
-    assert result.run_minimum is False
+    assert result.run_minimum is True
 
 
 def test_newer_current_baseline_requires_independent_minimum_suite() -> None:

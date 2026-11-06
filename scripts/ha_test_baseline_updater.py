@@ -175,6 +175,19 @@ def make_plan(
         selected_official = Version(selection.selected_official)
     except InvalidVersion as err:
         raise UpdaterError("baseline or selected version is invalid") from err
+    # The supported minimum policy permits only matching calendar-stable pins.
+    # An official post-release or HA-target mismatch is not promotable,
+    # regardless of whether its PyPI metadata and cooldown are otherwise valid.
+    stable_pair = re.compile(r"\d{4}\.\d{1,2}\.\d+")
+    if (
+        selection.selected_homeassistant != selection.selected_official
+        or stable_pair.fullmatch(selection.selected_homeassistant) is None
+        or stable_pair.fullmatch(selection.selected_official) is None
+    ):
+        raise UpdaterError(
+            "selected Home Assistant and official pytest must have one exact "
+            "matching stable release version"
+        )
     if selected_ha < current_ha or selected_official < current_official:
         raise UpdaterError("selected stable harness pair would downgrade the baseline")
 

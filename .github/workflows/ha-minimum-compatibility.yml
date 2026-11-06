@@ -38,18 +38,16 @@ jobs:
           set -euo pipefail
           python scripts/ha_minimum_policy.py --github-output "$GITHUB_OUTPUT"
 
-      - name: No duplicate minimum suite if locked baseline is the minimum
-        if: ${{ steps.floor.outputs.run_minimum == 'false' }}
+      - name: Confirm independent minimum graph validation
         shell: bash
         run: |
           {
             echo "## HA minimum compatibility"
-            echo "HA 2026.11.0 is already covered by mandatory locked tests."
-            echo "No redundant full suite; frozen minimum input/hash lock policy verified."
+            echo "The 2026.11.0 hash-locked dependency graph is independently installed and tested."
+            echo "The main uv.lock graph is not assumed equivalent, even when HA versions match."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up uv
-        if: ${{ steps.floor.outputs.run_minimum == 'true' }}
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version-file: pyproject.toml
@@ -61,7 +59,6 @@ jobs:
           cache-suffix: minimum-ha
 
       - name: Create minimum Home Assistant environment
-        if: ${{ steps.floor.outputs.run_minimum == 'true' }}
         shell: bash
         env:
           UV_EXCLUDE_NEWER: "false"
@@ -74,7 +71,6 @@ jobs:
           printf 'MINIMUM_PYTHON=%s\n' "$minimum_venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Verify and report minimum environment
-        if: ${{ steps.floor.outputs.run_minimum == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -154,7 +150,6 @@ jobs:
           PY
 
       - name: Run full test suite and coverage gates on minimum HA
-        if: ${{ steps.floor.outputs.run_minimum == 'true' }}
         shell: bash
         env:
           HA_MINIMUM_COMPATIBILITY: "1"
