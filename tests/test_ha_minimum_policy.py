@@ -54,6 +54,8 @@ def test_rejects_accidental_support_floor_bump() -> None:
 
 def test_rejects_legacy_phacc() -> None:
     p = _project()
-    p["dependency-groups"]["test"].append("pytest-homeassistant-custom-component==0.13.375")
+    p["dependency-groups"]["test"].append(
+        "pytest-homeassistant-custom-component==0.13.375"
+    )
     with pytest.raises(MinimumPolicyError, match="PHACC"):
         plan_minimum(p, {"homeassistant": "2026.11.0"})

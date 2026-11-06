@@ -105,9 +105,7 @@ def verify_frozen_minimum_inputs() -> None:
         raise MinimumPolicyError(
             "Minimum input pins must match the audited 2026.11.0 SHA-256 lock"
         )
-    compiled = Path(".github/requirements/minimum-ha.txt").read_text(
-        encoding="utf-8"
-    )
+    compiled = Path(".github/requirements/minimum-ha.txt").read_text(encoding="utf-8")
     for name, version in expected.items():
         if f"{name}=={version} " not in compiled:
             raise MinimumPolicyError(f"Missing frozen minimum lock record: {name}")
