@@ -59,7 +59,7 @@ jobs:
           if minimum != ha_specs[0]:
               raise SystemExit(
                   f"Supported HA minimum {minimum} differs from locked test HA {ha_specs[0]}. "
-                  "Restore a separate pinned minimum-HA harness and update this guard before advancing the baseline, "
+                  "Update the supported minimum and locked baseline together, "
                   "or explicitly review and document a support-floor increase."
               )
           print(f"Verified supported HA minimum and test baseline: {minimum}")
@@ -81,7 +81,7 @@ jobs:
           import sys
           import os
           rows = ["## Locked Home Assistant test baseline", "", f"- Python: `{sys.version.split()[0]}`"]
-          for name in ("homeassistant", "pytest-homeassistant-custom-component", "pytest", "pytest-asyncio", "aiointercept"):
+          for name in ("homeassistant", "pytest-homeassistant", "pytest", "pytest-asyncio", "aiointercept"):
               rows.append(f"- {name}: `{m.version(name)}`")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
               f.write("\n".join(rows) + "\n")

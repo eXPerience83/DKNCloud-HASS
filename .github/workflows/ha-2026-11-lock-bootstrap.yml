@@ -1,0 +1,54 @@
+name: One-off Home Assistant 2026.11 lock bootstrap
+
+on:
+  push:
+    branches:
+      - chore/ha-2026-11-official-pytest
+
+permissions:
+  contents: write
+
+jobs:
+  generate-lock:
+    if: github.repository == 'eXPerience83/DKNCloud-HASS'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+      - name: Resolve and validate matching official harness
+        shell: bash
+        env:
+          UV_EXCLUDE_NEWER: "false"
+        run: |
+          set -euo pipefail
+          uv lock --upgrade-package homeassistant --upgrade-package pytest-homeassistant
+          uv lock --check
+          uv sync --locked --only-group release
+          uv run --locked --no-sync python -m pytest -q
+          uv run --locked --no-sync ruff check .
+          uv run --locked --no-sync ruff format --check .
+      - name: Commit verified lock
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- pyproject.toml
+          git add uv.lock
+          if git diff --cached --quiet; then
+            echo "Lockfile already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deps): lock official HA 2026.11 pytest harness"
+          gh auth setup-git
+          git push origin HEAD:chore/ha-2026-11-official-pytest
