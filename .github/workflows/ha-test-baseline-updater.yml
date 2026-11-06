@@ -102,8 +102,8 @@ jobs:
           planner_venv="$RUNNER_TEMP/ha-test-baseline-planner"
           # Planner dependencies are isolated and pinned independently of
           # the integration's runtime, test group and uv.lock mutations.
-          # The version must exist as one resolved package in the committed
-          # lockfile, but is NOT added to the test group's direct pins.
+          # Resolve the exact version from the committed, reviewed lockfile;
+          # it is NOT added to the test group's direct pins.
           packaging_requirement="$(python - <<'PY'
           from pathlib import Path
           import tomllib
@@ -113,8 +113,10 @@ jobs:
           if len(records) != 1:
               raise SystemExit("Expected exactly one packaging record in uv.lock")
           version = records[0]["version"]
-          if version != "26.3":
-              raise SystemExit(f"Planner packaging version needs review: {version}")
+          # Follow the exact previously reviewed uv.lock version. A vetted
+          # Renovate lock-maintenance PR may update this transitive helper.
+          if not isinstance(version, str) or not version:
+              raise SystemExit("Planner packaging version is missing or invalid")
           print(f"packaging=={version}")
           PY
           )"

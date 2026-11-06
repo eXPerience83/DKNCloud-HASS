@@ -63,11 +63,25 @@ jobs:
           print(f"AIOINTERCEPT_REQUIREMENT={found[0]}")
           PY
 
-      - name: Install metadata selector dependency
+      - name: Install selector dependency at the reviewed lockfile version
         shell: bash
         run: |
           set -euo pipefail
-          uv pip install --python "$CANARY_PYTHON" "packaging==26.3"
+          packaging_requirement="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
+          records = [item for item in lock["package"] if item["name"] == "packaging"]
+          if len(records) != 1:
+              raise SystemExit("Expected exactly one packaging version in uv.lock")
+          version = records[0]["version"]
+          if not isinstance(version, str) or not version:
+              raise SystemExit("Locked packaging version is missing or invalid")
+          print(f"packaging=={version}")
+          PY
+          )"
+          uv pip install --python "$CANARY_PYTHON" "$packaging_requirement"
 
       - name: Select latest non-yanked stable HA and official pytest pair
         shell: bash
