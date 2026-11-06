@@ -33,6 +33,7 @@ jobs:
           uv lock --check
           uv sync --locked --only-group release
           uv run --locked --no-sync python -m pytest -q
+          uv run --locked --no-sync ruff format scripts/select_ha_harness.py scripts/ha_test_baseline_updater.py tests/test_ha_test_baseline_updater.py
           uv run --locked --no-sync ruff check .
           uv run --locked --no-sync ruff format --check .
       - name: Commit verified lock
@@ -42,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           git diff --exit-code -- pyproject.toml
-          git add uv.lock
+          git add uv.lock scripts/select_ha_harness.py scripts/ha_test_baseline_updater.py tests/test_ha_test_baseline_updater.py
           if git diff --cached --quiet; then
             echo "Lockfile already current."
             exit 0
