@@ -148,6 +148,40 @@ async def test_active_sleep_temperature_and_fan_preserve_scenary(
     climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
 
 
+async def test_active_sleep_hvac_mode_change_does_not_exit_scenary(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing supported HVAC mode while awake in Sleep keeps the active scene."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="2",
+        power="1",
+        scenary="sleep",
+    )
+    # Execute the actual Sleep guard, not the test helper's default stub.
+    monkeypatch.setattr(
+        climate_module,
+        "async_auto_exit_sleep_if_needed",
+        async_auto_exit_sleep_if_needed,
+    )
+
+    await entity.async_set_hvac_mode(HVACMode.COOL)
+
+    api.put_device_fields.assert_not_awaited()
+    events = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert [event["option"] for event in events] == ["P2"]
+    assert [event["value"] for event in events] == ["1"]
+    assert entity.preset_mode == "sleep"
+
+
 async def test_explicit_home_then_sleep_emits_distinct_scenary_writes(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
