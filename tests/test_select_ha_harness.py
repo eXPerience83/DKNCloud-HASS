@@ -170,9 +170,7 @@ def test_unavailable_newer_target_falls_back_and_reports(
     assert selection.latest_official == "0.13.357"
     assert selection.selected_official == "0.13.356"
     assert selection.selected_homeassistant == "2026.8.2"
-    assert selection.skipped_unavailable_official == (
-        "0.13.357 (HA 2026.8.3)",
-    )
+    assert selection.skipped_unavailable_official == ("0.13.357 (HA 2026.8.3)",)
 
 
 @pytest.mark.parametrize(
