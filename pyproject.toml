@@ -25,6 +25,7 @@ release = [
 ]
 
 [tool.uv]
+# renovate: datasource=github-releases depName=astral-sh/uv
 required-version = "==0.13.6"
 default-groups = []
 # Avoid adopting newly published transitive dependencies immediately.

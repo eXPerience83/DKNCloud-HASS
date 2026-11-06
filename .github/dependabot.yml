@@ -1,0 +1,19 @@
+# Renovate owns routine dependency updates; Dependabot remains for
+# security alerting without duplicate version-update pull requests.
+# The HA/official pytest pair is managed by the reviewed daily updater.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "homeassistant"
+      - dependency-name: "pytest-homeassistant"
+      - dependency-name: "pytest"
+      - dependency-name: "pytest-asyncio"
+      - dependency-name: "uv"

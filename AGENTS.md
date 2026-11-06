@@ -47,6 +47,11 @@
 - Preserve the separate scheduled/manual latest-HA canary and reviewed
   baseline updater, and the independent hash-locked minimum-HA workflow.
   Keep the 2026.11.0 minimum protected when the main test baseline advances.
+- Maintain the documented main ruleset requirements, including the independent
+  `minimum-compatibility` job when it is required. A repository administrator
+  must activate GitHub settings; a JSON blueprint alone does not enforce them.
+- The manual updater `override_cooldown` is only a reasoned single-run bypass of
+  the HA/pytest package maturity window; it must never bypass checks or PR review.
 
 ## Release procedure
 - Follow `RELEASING.md` and #141. Draft preparation is automated; publication
