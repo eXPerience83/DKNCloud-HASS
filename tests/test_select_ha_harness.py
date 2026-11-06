@@ -8,8 +8,8 @@ from scripts.select_ha_harness import (
     HarnessSelection,
     SelectionError,
     exact_homeassistant_requirement,
-    latest_stable_release,
     is_core_repository_url,
+    latest_stable_release,
     select_stable_harness,
 )
 
