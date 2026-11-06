@@ -46,13 +46,44 @@ jobs:
           uv venv --python "$(command -v python)" "$canary_venv"
           printf 'CANARY_PYTHON=%s\n' "$canary_venv/bin/python" >> "$GITHUB_ENV"
 
-      - name: Install metadata selector dependency
+      - name: Read pinned auxiliary test dependencies
         shell: bash
         run: |
           set -euo pipefail
-          uv pip install --python "$CANARY_PYTHON" "packaging==26.3"
+          python - <<'PY' >> "$GITHUB_ENV"
+          import tomllib
+          from pathlib import Path
 
-      - name: Select latest non-yanked stable HA/PHACC pair
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          requirements = project["dependency-groups"]["test"]
+          found = [item for item in requirements
+                   if isinstance(item, str) and item.startswith("aiointercept==")]
+          if len(found) != 1:
+              raise SystemExit("Expected one exactly pinned aiointercept requirement")
+          print(f"AIOINTERCEPT_REQUIREMENT={found[0]}")
+          PY
+
+      - name: Install selector dependency at the reviewed lockfile version
+        shell: bash
+        run: |
+          set -euo pipefail
+          packaging_requirement="$(python - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
+          records = [item for item in lock["package"] if item["name"] == "packaging"]
+          if len(records) != 1:
+              raise SystemExit("Expected exactly one packaging version in uv.lock")
+          version = records[0]["version"]
+          if not isinstance(version, str) or not version:
+              raise SystemExit("Locked packaging version is missing or invalid")
+          print(f"packaging=={version}")
+          PY
+          )"
+          uv pip install --python "$CANARY_PYTHON" "$packaging_requirement"
+
+      - name: Select latest non-yanked stable HA and official pytest pair
         shell: bash
         run: |
           set -euo pipefail
@@ -67,32 +98,40 @@ jobs:
               selection = json.load(stream)
           fields = {
               "LATEST_HA": selection["latest_homeassistant"],
-              "LATEST_PHACC": selection["latest_phacc"],
+              "LATEST_OFFICIAL": selection["latest_official"],
               "SELECTED_HA": selection["selected_homeassistant"],
-              "SELECTED_PHACC": selection["selected_phacc"],
+              "SELECTED_OFFICIAL": selection["selected_official"],
           }
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as stream:
               for name, value in fields.items():
                   print(f"{name}={value}", file=stream)
 
           aligned = selection["latest_homeassistant"] == selection["selected_homeassistant"]
+          skipped_unavailable = selection["skipped_unavailable_official"]
+          if skipped_unavailable:
+              print(
+                  "::warning title=Official pytest with unavailable Home Assistant::"
+                  + ", ".join(skipped_unavailable)
+              )
           if not aligned:
               print(
                   "::warning title=Home Assistant harness lag::"
                   f"Latest stable HA {selection['latest_homeassistant']} is not yet "
-                  f"supported by PHACC; testing HA {selection['selected_homeassistant']} "
-                  f"with PHACC {selection['selected_phacc']} instead."
+                  f"supported by official pytest-homeassistant; testing HA {selection['selected_homeassistant']} "
+                  f"with official pytest-homeassistant {selection['selected_official']} instead."
               )
           summary = [
               "## Latest Home Assistant compatibility canary",
               "",
               f"- Latest non-yanked stable HA: `{selection['latest_homeassistant']}`",
-              f"- Latest stable PHACC release: `{selection['latest_phacc']}`",
+              f"- Latest stable official pytest-homeassistant release: `{selection['latest_official']}`",
               f"- Selected HA: `{selection['selected_homeassistant']}`",
-              f"- Selected PHACC: `{selection['selected_phacc']}`",
-              "- Latest stable HA covered: " + ("**yes**" if aligned else "**no — PHACC lag**"),
-              "- Newer PHACC releases targeting prerelease HA: "
-              + (", ".join(selection["skipped_prerelease_phacc"]) or "none"),
+              f"- Selected official pytest-homeassistant: `{selection['selected_official']}`",
+              "- Latest stable HA covered: " + ("**yes**" if aligned else "**no — official pytest-homeassistant lag**"),
+              "- Newer official pytest-homeassistant releases targeting prerelease HA: "
+              + (", ".join(selection["skipped_prerelease_official"]) or "none"),
+              "- Official releases skipped because HA is unavailable/yanked: "
+              + (", ".join(skipped_unavailable) or "none"),
               "",
               "This is an informational scheduled/manual check, not the locked PR baseline.",
               "",
@@ -109,7 +148,10 @@ jobs:
         run: |
           set -euo pipefail
           uv pip install --python "$CANARY_PYTHON" \
-            "pytest-homeassistant-custom-component==$SELECTED_PHACC"
+            "homeassistant==$SELECTED_HA" \
+            "pytest-homeassistant==$SELECTED_OFFICIAL" \
+            "$AIOINTERCEPT_REQUIREMENT"
+          uv pip check --python "$CANARY_PYTHON"
 
       - name: Verify installed versions and report environment
         shell: bash
@@ -120,29 +162,46 @@ jobs:
           import os
           import subprocess
 
-          from scripts.select_ha_harness import exact_homeassistant_requirement
+          from scripts.select_ha_harness import (
+              exact_homeassistant_requirement,
+              is_core_repository_url,
+          )
 
           names = (
               "homeassistant",
-              "pytest-homeassistant-custom-component",
+              "pytest-homeassistant",
               "pytest",
               "pytest-asyncio",
+              "aiointercept",
               "packaging",
           )
           versions = {name: meta.version(name) for name in names}
+          installed_names = {
+              dist.metadata["Name"].lower().replace("_", "-")
+              for dist in meta.distributions()
+          }
+          if "pytest-homeassistant-custom-component" in installed_names:
+              raise SystemExit("Legacy PHACC cannot coexist with official pytest")
+          urls = meta.metadata("pytest-homeassistant").get_all("Project-URL") or []
+          if not any(is_core_repository_url(url.split(",", 1)[-1].strip()) for url in urls):
+              raise SystemExit("Official pytest metadata lacks canonical Core repository URL")
+          if versions["aiointercept"] != os.environ["AIOINTERCEPT_REQUIREMENT"].split("==", 1)[1]:
+              raise SystemExit("Installed aiointercept differs from pinned test dependency")
           if versions["homeassistant"] != os.environ["SELECTED_HA"]:
               raise SystemExit("Installed Home Assistant does not match the selected version")
-          if versions["pytest-homeassistant-custom-component"] != os.environ["SELECTED_PHACC"]:
-              raise SystemExit("Installed PHACC does not match the selected version")
+          if versions["pytest-homeassistant"] != os.environ["SELECTED_OFFICIAL"]:
+              raise SystemExit("Installed official pytest-homeassistant does not match the selected version")
           requires_ha = exact_homeassistant_requirement(
-              meta.requires("pytest-homeassistant-custom-component")
+              meta.requires("pytest-homeassistant")
           )
           if requires_ha != versions["homeassistant"]:
               raise SystemExit(
-                  f"PHACC requires HA {requires_ha}, but installed HA is {versions['homeassistant']}"
+                  f"official pytest-homeassistant requires HA {requires_ha}, but installed HA is {versions['homeassistant']}"
               )
           rows = [
               "### Resolved test environment",
+              "",
+              "Official pytest self-declared Core repository URL matches canonical syntax; this does not authenticate the publisher.",
               "",
               "| Component | Installed version |",
               "| --- | --- |",

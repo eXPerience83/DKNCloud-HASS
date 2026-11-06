@@ -19,7 +19,7 @@ def isolated_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_record_and_export_only_allowlisted_data() -> None:
     """The ZIP contains exactly validated metadata, observations and summary."""
-    name = evidence.start("pr102", "2026.10.4", "a" * 40)
+    name = evidence.start("pr102", "2026.11.0", "a" * 40)
     evidence.record(name, "official_app", "action", "official_app", "pass", 0)
     evidence.record(
         name,
@@ -55,7 +55,7 @@ def test_record_and_export_only_allowlisted_data() -> None:
 
 
 def test_rejects_free_text_and_sensitive_identifiers() -> None:
-    name = evidence.start("main", "2026.10.4")
+    name = evidence.start("main", "2026.11.0")
     with pytest.raises(ValueError, match="allowlisted"):
         evidence.record(name, "owner@example.com", "action", "tester", "pass")
     with pytest.raises(ValueError, match="allowlisted"):
@@ -63,11 +63,11 @@ def test_rejects_free_text_and_sensitive_identifiers() -> None:
     with pytest.raises(ValueError, match="generated run name"):
         evidence.record("../outside", "setup", "action", "tester", "pass")
     with pytest.raises(ValueError, match="Invalid variant"):
-        evidence.start("owner@example.com", "2026.10.4")
+        evidence.start("owner@example.com", "2026.11.0")
 
 
 def test_export_refuses_tampered_observation() -> None:
-    name = evidence.start("main", "2026.10.4")
+    name = evidence.start("main", "2026.11.0")
     observation = evidence.RUNS / name / "observations.jsonl"
     observation.write_text(
         json.dumps({"email": "owner@example.com"}) + "\n",
@@ -79,7 +79,7 @@ def test_export_refuses_tampered_observation() -> None:
 
 
 def test_export_refuses_tampered_metadata() -> None:
-    name = evidence.start("main", "2026.10.4")
+    name = evidence.start("main", "2026.11.0")
     evidence.record(name, "setup", "verification", "tester", "pass")
     metadata_path = evidence.RUNS / name / "session.json"
     data = json.loads(metadata_path.read_text())
@@ -90,7 +90,7 @@ def test_export_refuses_tampered_metadata() -> None:
 
 
 def test_refuses_empty_run_and_invalid_measurements() -> None:
-    name = evidence.start("main", "2026.10.4")
+    name = evidence.start("main", "2026.11.0")
     with pytest.raises(ValueError, match="No observations"):
         evidence.finish(name)
     with pytest.raises(ValueError, match="Elapsed seconds"):

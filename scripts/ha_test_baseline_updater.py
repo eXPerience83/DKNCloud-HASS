@@ -34,9 +34,9 @@ except ModuleNotFoundError:  # Direct script execution does not add the root pac
     )
 
 HOMEASSISTANT = "homeassistant"
-PHACC = "pytest-homeassistant-custom-component"
+OFFICIAL = "pytest-homeassistant"
 LOCAL_PACKAGE = "dkncloud-hass"
-TARGET_PACKAGES = (HOMEASSISTANT, PHACC)
+TARGET_PACKAGES = (HOMEASSISTANT, OFFICIAL)
 PIN_TEMPLATE = '    "{name}=={version}",'
 COOLDOWN_PATTERN = re.compile(r"^(?P<days>[1-9][0-9]*) days$")
 
@@ -50,17 +50,19 @@ class BaselinePlan:
     """Machine-readable selected pair and promotion decision."""
 
     current_homeassistant: str
-    current_phacc: str
+    current_official: str
     selected_homeassistant: str
-    selected_phacc: str
+    selected_official: str
     latest_homeassistant: str
-    latest_phacc: str
+    latest_official: str
     homeassistant_mature_at: str
-    phacc_mature_at: str
+    official_mature_at: str
     mature_at: str
     cooldown_days: int
-    skipped_prerelease_phacc: tuple[str, ...]
+    skipped_prerelease_official: tuple[str, ...]
     status: str
+    skipped_unavailable_official: tuple[str, ...] = ()
+    cooldown_overridden: bool = False
 
 
 def _exact_test_pins(project: Mapping[str, object]) -> dict[str, str]:
@@ -93,7 +95,9 @@ def _exact_test_pins(project: Mapping[str, object]) -> dict[str, str]:
             raise UpdaterError(f"test dependency {name} must have one exact unique pin")
         pins[name] = specifiers[0].version
     if set(pins) != set(TARGET_PACKAGES):
-        raise UpdaterError("test dependency group must contain exact HA and PHACC pins")
+        raise UpdaterError(
+            "test dependency group must contain exact HA and OFFICIAL pins"
+        )
     return pins
 
 
@@ -154,8 +158,10 @@ def make_plan(
     project: Mapping[str, object],
     selection: HarnessSelection,
     homeassistant_release: Mapping[str, object],
-    phacc_release: Mapping[str, object],
+    official_release: Mapping[str, object],
     now: datetime,
+    *,
+    override_cooldown: bool = False,
 ) -> BaselinePlan:
     """Classify a stable selected pair without performing any file mutation."""
     if now.tzinfo is None or now.utcoffset() is None:
@@ -164,40 +170,58 @@ def make_plan(
     days = cooldown_days(project)
     try:
         current_ha = Version(pins[HOMEASSISTANT])
-        current_phacc = Version(pins[PHACC])
+        current_official = Version(pins[OFFICIAL])
         selected_ha = Version(selection.selected_homeassistant)
-        selected_phacc = Version(selection.selected_phacc)
+        selected_official = Version(selection.selected_official)
     except InvalidVersion as err:
         raise UpdaterError("baseline or selected version is invalid") from err
-    if selected_ha < current_ha or selected_phacc < current_phacc:
+    # The supported minimum policy permits only matching calendar-stable pins.
+    # An official post-release or HA-target mismatch is not promotable,
+    # regardless of whether its PyPI metadata and cooldown are otherwise valid.
+    stable_pair = re.compile(r"\d{4}\.\d{1,2}\.\d+")
+    if (
+        selection.selected_homeassistant != selection.selected_official
+        or stable_pair.fullmatch(selection.selected_homeassistant) is None
+        or stable_pair.fullmatch(selection.selected_official) is None
+    ):
+        raise UpdaterError(
+            "selected Home Assistant and official pytest must have one exact "
+            "matching stable release version"
+        )
+    if selected_ha < current_ha or selected_official < current_official:
         raise UpdaterError("selected stable harness pair would downgrade the baseline")
 
     ha_mature_at = release_mature_at(
         homeassistant_release, HOMEASSISTANT, selection.selected_homeassistant, days
     )
-    phacc_mature_at = release_mature_at(
-        phacc_release, PHACC, selection.selected_phacc, days
+    official_mature_at = release_mature_at(
+        official_release, OFFICIAL, selection.selected_official, days
     )
-    mature_at = max(ha_mature_at, phacc_mature_at)
-    if selected_ha == current_ha and selected_phacc == current_phacc:
+    mature_at = max(ha_mature_at, official_mature_at)
+    if selected_ha == current_ha and selected_official == current_official:
         status = "current"
-    elif now.astimezone(UTC) < mature_at:
+    elif now.astimezone(UTC) < mature_at and not override_cooldown:
         status = "cooldown"
     else:
         status = "update"
+    cooldown_overridden = (
+        status == "update" and override_cooldown and now.astimezone(UTC) < mature_at
+    )
     return BaselinePlan(
         current_homeassistant=pins[HOMEASSISTANT],
-        current_phacc=pins[PHACC],
+        current_official=pins[OFFICIAL],
         selected_homeassistant=selection.selected_homeassistant,
-        selected_phacc=selection.selected_phacc,
+        selected_official=selection.selected_official,
         latest_homeassistant=selection.latest_homeassistant,
-        latest_phacc=selection.latest_phacc,
+        latest_official=selection.latest_official,
         homeassistant_mature_at=ha_mature_at.isoformat(),
-        phacc_mature_at=phacc_mature_at.isoformat(),
+        official_mature_at=official_mature_at.isoformat(),
         mature_at=mature_at.isoformat(),
         cooldown_days=days,
-        skipped_prerelease_phacc=selection.skipped_prerelease_phacc,
+        skipped_prerelease_official=selection.skipped_prerelease_official,
+        skipped_unavailable_official=selection.skipped_unavailable_official,
         status=status,
+        cooldown_overridden=cooldown_overridden,
     )
 
 
@@ -206,7 +230,7 @@ def update_pyproject(text: str, plan: BaselinePlan) -> str:
     if plan.status != "update":
         raise UpdaterError("pyproject mutation requires an update plan")
     replacements = (
-        (PHACC, plan.current_phacc, plan.selected_phacc),
+        (OFFICIAL, plan.current_official, plan.selected_official),
         (HOMEASSISTANT, plan.current_homeassistant, plan.selected_homeassistant),
     )
     result = text
@@ -220,7 +244,7 @@ def update_pyproject(text: str, plan: BaselinePlan) -> str:
     pins = _exact_test_pins(project)
     if pins != {
         HOMEASSISTANT: plan.selected_homeassistant,
-        PHACC: plan.selected_phacc,
+        OFFICIAL: plan.selected_official,
     }:
         raise UpdaterError("updated pyproject pins do not match the selected pair")
     return result
@@ -241,7 +265,7 @@ def _package_groups(lock: Mapping[str, object]) -> dict[str, list[dict[str, obje
 def _target_dependency_closure(
     groups: Mapping[str, list[dict[str, object]]],
 ) -> set[str]:
-    """Return package names reachable from the HA/PHACC records."""
+    """Return package names reachable from the HA/OFFICIAL records."""
     closure: set[str] = set()
     pending = list(TARGET_PACKAGES)
     while pending:
@@ -278,7 +302,7 @@ def _validate_local_record(
     before: list[dict[str, object]],
     after: list[dict[str, object]],
     homeassistant: str,
-    phacc: str,
+    official: str,
 ) -> None:
     if len(before) != 1 or len(after) != 1:
         raise UpdaterError(
@@ -307,7 +331,7 @@ def _validate_local_record(
         raise UpdaterError("unexpected local dkncloud-hass lock metadata movement")
     if set(old_requires) != set(new_requires):
         raise UpdaterError("local dkncloud-hass dependency groups changed")
-    expected = {HOMEASSISTANT: homeassistant, PHACC: phacc}
+    expected = {HOMEASSISTANT: homeassistant, OFFICIAL: official}
     for group in old_requires:
         old_items = old_requires[group]
         new_items = new_requires[group]
@@ -343,7 +367,7 @@ def _validate_local_record(
 
 
 def validate_lock_delta(
-    before_text: str, after_text: str, homeassistant: str, phacc: str
+    before_text: str, after_text: str, homeassistant: str, official: str
 ) -> None:
     """Reject lock movement outside the selected harness dependency graph and pins."""
     before = tomllib.loads(before_text)
@@ -355,12 +379,12 @@ def validate_lock_delta(
     before_groups = _package_groups(before)
     after_groups = _package_groups(after)
     _validate_target_group(after_groups, HOMEASSISTANT, homeassistant)
-    _validate_target_group(after_groups, PHACC, phacc)
+    _validate_target_group(after_groups, OFFICIAL, official)
     _validate_local_record(
         before_groups.get(LOCAL_PACKAGE, []),
         after_groups.get(LOCAL_PACKAGE, []),
         homeassistant,
-        phacc,
+        official,
     )
     target_closure = _target_dependency_closure(
         before_groups
@@ -381,7 +405,12 @@ def _read_plan(path: Path) -> BaselinePlan:
         value = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(value, dict):
             raise TypeError
-        value["skipped_prerelease_phacc"] = tuple(value["skipped_prerelease_phacc"])
+        value["skipped_prerelease_official"] = tuple(
+            value["skipped_prerelease_official"]
+        )
+        value["skipped_unavailable_official"] = tuple(
+            value.get("skipped_unavailable_official", ())
+        )
         return BaselinePlan(**value)
     except (OSError, TypeError, KeyError, json.JSONDecodeError) as err:
         raise UpdaterError("plan JSON is invalid") from err
@@ -391,8 +420,8 @@ def _cmd_plan(args: argparse.Namespace) -> None:
     project = tomllib.loads(args.pyproject.read_text(encoding="utf-8"))
     selection = select_stable_harness(
         fetch_pypi_metadata(HOMEASSISTANT),
-        fetch_pypi_metadata(PHACC),
-        lambda version: fetch_pypi_metadata(PHACC, version),
+        fetch_pypi_metadata(OFFICIAL),
+        lambda version: fetch_pypi_metadata(OFFICIAL, version),
     )
     now = (
         datetime.now(UTC)
@@ -403,8 +432,9 @@ def _cmd_plan(args: argparse.Namespace) -> None:
         project,
         selection,
         fetch_pypi_metadata(HOMEASSISTANT, selection.selected_homeassistant),
-        fetch_pypi_metadata(PHACC, selection.selected_phacc),
+        fetch_pypi_metadata(OFFICIAL, selection.selected_official),
         now,
+        override_cooldown=args.override_cooldown,
     )
     sys.stdout.write(json.dumps(asdict(plan), sort_keys=True) + "\n")
 
@@ -422,7 +452,7 @@ def _cmd_validate_lock(args: argparse.Namespace) -> None:
         args.before.read_text(encoding="utf-8"),
         args.after.read_text(encoding="utf-8"),
         args.homeassistant,
-        args.phacc,
+        args.official,
     )
 
 
@@ -433,6 +463,7 @@ def main() -> None:
     plan = commands.add_parser("plan")
     plan.add_argument("--pyproject", type=Path, default=Path("pyproject.toml"))
     plan.add_argument("--now")
+    plan.add_argument("--override-cooldown", action="store_true")
     plan.set_defaults(func=_cmd_plan)
     update = commands.add_parser("update-pyproject")
     update.add_argument("--plan", type=Path, required=True)
@@ -442,7 +473,7 @@ def main() -> None:
     validate.add_argument("--before", type=Path, required=True)
     validate.add_argument("--after", type=Path, required=True)
     validate.add_argument("--homeassistant", required=True)
-    validate.add_argument("--phacc", required=True)
+    validate.add_argument("--official", required=True)
     validate.set_defaults(func=_cmd_validate_lock)
     args = parser.parse_args()
     try:

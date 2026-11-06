@@ -12,7 +12,7 @@ from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from multidict import CIMultiDict
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 from yarl import URL
 
 import custom_components.airzoneclouddaikin as integration

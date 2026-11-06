@@ -7,6 +7,7 @@ import json
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -20,6 +21,27 @@ PYPI_URL = "https://pypi.org/pypi/{package}{version}/json"
 USER_AGENT = "dkncloud-hass-ha-harness-selector"
 
 
+def is_core_repository_url(value: object) -> bool:
+    """Validate canonical Core URL syntax, not the identity of a PyPI uploader."""
+    if not isinstance(value, str):
+        return False
+    try:
+        url = urllib.parse.urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        url.scheme == "https"
+        and url.netloc.lower() == "github.com"
+        and url.path.rstrip("/")
+        in {
+            "/home-assistant/core",
+            "/home-assistant/core.git",
+        }
+        and not url.query
+        and not url.fragment
+    )
+
+
 class SelectionError(ValueError):
     """Raised when PyPI metadata cannot safely produce a stable harness pair."""
 
@@ -29,10 +51,11 @@ class HarnessSelection:
     """The stable Home Assistant harness versions selected from PyPI metadata."""
 
     latest_homeassistant: str
-    latest_phacc: str
-    selected_phacc: str
+    latest_official: str
+    selected_official: str
     selected_homeassistant: str
-    skipped_prerelease_phacc: tuple[str, ...]
+    skipped_prerelease_official: tuple[str, ...]
+    skipped_unavailable_official: tuple[str, ...] = ()
 
 
 def _stable_releases(
@@ -78,26 +101,28 @@ def latest_stable_release(metadata: Mapping[str, object], package: str) -> str:
 
 
 def exact_homeassistant_requirement(requires_dist: object) -> str:
-    """Return PHACC's exact unconditional Home Assistant requirement."""
+    """Return OFFICIAL's exact unconditional Home Assistant requirement."""
     if not isinstance(requires_dist, Sequence) or isinstance(requires_dist, str):
-        raise SelectionError("PHACC metadata has no requires_dist list")
+        raise SelectionError("OFFICIAL metadata has no requires_dist list")
 
     requirements: list[Requirement] = []
     for requirement_text in requires_dist:
         if not isinstance(requirement_text, str):
-            raise SelectionError("PHACC metadata has an invalid dependency requirement")
+            raise SelectionError(
+                "OFFICIAL metadata has an invalid dependency requirement"
+            )
         try:
             requirement = Requirement(requirement_text)
         except InvalidRequirement as err:
             raise SelectionError(
-                "PHACC metadata has an invalid dependency requirement"
+                "OFFICIAL metadata has an invalid dependency requirement"
             ) from err
         if canonicalize_name(requirement.name) == "homeassistant":
             requirements.append(requirement)
 
     if len(requirements) != 1:
         raise SelectionError(
-            "PHACC must declare exactly one Home Assistant requirement"
+            "OFFICIAL must declare exactly one Home Assistant requirement"
         )
     requirement = requirements[0]
     specifiers = list(requirement.specifier)
@@ -109,38 +134,39 @@ def exact_homeassistant_requirement(requires_dist: object) -> str:
         or specifiers[0].version.endswith(".*")
     ):
         raise SelectionError(
-            "PHACC Home Assistant requirement must be one exact version"
+            "OFFICIAL Home Assistant requirement must be one exact version"
         )
     return specifiers[0].version
 
 
 def select_stable_harness(
     homeassistant_metadata: Mapping[str, object],
-    phacc_metadata: Mapping[str, object],
-    phacc_release_metadata: Callable[[str], Mapping[str, object]],
+    official_metadata: Mapping[str, object],
+    official_release_metadata: Callable[[str], Mapping[str, object]],
 ) -> HarnessSelection:
-    """Select the newest PHACC release that targets a usable stable HA release."""
+    """Select the newest OFFICIAL release that targets a usable stable HA release."""
     latest_homeassistant = latest_stable_release(
         homeassistant_metadata, "Home Assistant"
     )
-    latest_phacc = latest_stable_release(
-        phacc_metadata, "pytest-homeassistant-custom-component"
-    )
+    latest_official = latest_stable_release(official_metadata, "pytest-homeassistant")
     stable_homeassistant = {
         release
         for _, release in _stable_releases(homeassistant_metadata, "Home Assistant")
     }
-    phacc_releases = sorted(
-        _stable_releases(phacc_metadata, "pytest-homeassistant-custom-component"),
+    official_releases = sorted(
+        _stable_releases(official_metadata, "pytest-homeassistant"),
         reverse=True,
     )
-    skipped_prerelease_phacc: list[str] = []
+    skipped_prerelease_official: list[str] = []
+    skipped_unavailable_official: list[str] = []
 
-    for _, phacc_version in phacc_releases:
-        metadata = phacc_release_metadata(phacc_version)
+    for _, official_version in official_releases:
+        metadata = official_release_metadata(official_version)
         info = metadata.get("info")
         if not isinstance(info, Mapping):
-            raise SelectionError(f"PHACC {phacc_version} metadata has no info mapping")
+            raise SelectionError(
+                f"OFFICIAL {official_version} metadata has no info mapping"
+            )
         homeassistant_version = exact_homeassistant_requirement(
             info.get("requires_dist")
         )
@@ -148,25 +174,30 @@ def select_stable_harness(
             parsed_homeassistant = Version(homeassistant_version)
         except InvalidVersion as err:
             raise SelectionError(
-                f"PHACC {phacc_version} targets an invalid Home Assistant version"
+                f"OFFICIAL {official_version} targets an invalid Home Assistant version"
             ) from err
         if parsed_homeassistant.is_prerelease or parsed_homeassistant.is_devrelease:
-            skipped_prerelease_phacc.append(phacc_version)
+            skipped_prerelease_official.append(official_version)
             continue
         if homeassistant_version not in stable_homeassistant:
-            raise SelectionError(
-                f"PHACC {phacc_version} targets unavailable or yanked Home Assistant "
-                f"{homeassistant_version}"
+            # Keep testing an older compatible stable pair, but report the
+            # skipped version instead of silently hiding upstream issues.
+            skipped_unavailable_official.append(
+                f"{official_version} (HA {homeassistant_version})"
             )
+            continue
         return HarnessSelection(
             latest_homeassistant=latest_homeassistant,
-            latest_phacc=latest_phacc,
-            selected_phacc=phacc_version,
+            latest_official=latest_official,
+            selected_official=official_version,
             selected_homeassistant=homeassistant_version,
-            skipped_prerelease_phacc=tuple(skipped_prerelease_phacc),
+            skipped_prerelease_official=tuple(skipped_prerelease_official),
+            skipped_unavailable_official=tuple(skipped_unavailable_official),
         )
 
-    raise SelectionError("PyPI returned no eligible stable PHACC/Home Assistant pair")
+    raise SelectionError(
+        "PyPI returned no eligible stable official pytest/Home Assistant pair"
+    )
 
 
 def fetch_pypi_metadata(
@@ -202,13 +233,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args()
     homeassistant_metadata = fetch_pypi_metadata("homeassistant")
-    phacc_metadata = fetch_pypi_metadata("pytest-homeassistant-custom-component")
+    official_metadata = fetch_pypi_metadata("pytest-homeassistant")
     selection = select_stable_harness(
         homeassistant_metadata,
-        phacc_metadata,
-        lambda version: fetch_pypi_metadata(
-            "pytest-homeassistant-custom-component", version
-        ),
+        official_metadata,
+        lambda version: fetch_pypi_metadata("pytest-homeassistant", version),
     )
     sys.stdout.write(json.dumps(asdict(selection), sort_keys=True) + "\n")
 

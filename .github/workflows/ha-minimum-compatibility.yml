@@ -1,0 +1,168 @@
+name: Minimum Home Assistant Compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "13 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  minimum-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Plan independent minimum test lane
+        id: floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ha_minimum_policy.py --github-output "$GITHUB_OUTPUT"
+
+      - name: Confirm independent minimum graph validation
+        shell: bash
+        run: |
+          {
+            echo "## HA minimum compatibility"
+            echo "The 2026.11.0 hash-locked dependency graph is independently installed and tested."
+            echo "The main uv.lock graph is not assumed equivalent, even when HA versions match."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: |
+            .python-version
+            pyproject.toml
+            .github/requirements/minimum-ha.txt
+          cache-suffix: minimum-ha
+
+      - name: Create minimum Home Assistant environment
+        shell: bash
+        env:
+          UV_EXCLUDE_NEWER: "false"
+        run: |
+          set -euo pipefail
+          minimum_venv="$RUNNER_TEMP/ha-minimum-compatibility-venv"
+          uv venv --python "$(command -v python)" "$minimum_venv"
+          uv pip sync --python "$minimum_venv/bin/python" --require-hashes \
+            .github/requirements/minimum-ha.txt
+          printf 'MINIMUM_PYTHON=%s\n' "$minimum_venv/bin/python" >> "$GITHUB_ENV"
+
+      - name: Verify and report minimum environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip check --python "$MINIMUM_PYTHON"
+          "$MINIMUM_PYTHON" - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import importlib.metadata
+          import os
+          import subprocess
+          from pathlib import Path
+
+          from scripts.ha_minimum_policy import MINIMUM_HOMEASSISTANT
+          from scripts.select_ha_harness import is_core_repository_url
+
+          minimum_input = {}
+          for line in Path(".github/requirements/minimum-ha.in").read_text(
+              encoding="utf-8"
+          ).splitlines():
+              line = line.strip()
+              if not line or line.startswith("#"):
+                  continue
+              name, version = line.split("==", maxsplit=1)
+              minimum_input[name] = version
+
+          expected_names = {
+              "pytest-homeassistant",
+              "homeassistant",
+              "aiointercept",
+              "packaging",
+              "pytest",
+              "pytest-cov",
+          }
+          # Floor, pin uniqueness, pairing, and hash-lock integrity were
+          # already checked by the canonical policy in the planning step.
+          hacs_minimum = MINIMUM_HOMEASSISTANT
+
+          installed = {
+              name: importlib.metadata.version(name)
+              for name in (
+                  *sorted(expected_names),
+                  "pytest",
+                  "pytest-asyncio",
+                  "pytest-cov",
+                  "aiohttp",
+                  "yarl",
+              )
+          }
+          for name, expected in minimum_input.items():
+              if installed[name] != expected:
+                  raise SystemExit(
+                      f"Installed {name} does not match minimum-ha.in: "
+                      f"{installed[name]} != {expected}"
+                  )
+
+          names = {
+              dist.metadata["Name"].lower().replace("_", "-")
+              for dist in importlib.metadata.distributions()
+          }
+          if "pytest-homeassistant-custom-component" in names:
+              raise SystemExit("PHACC must not coexist with official pytest")
+          urls = importlib.metadata.metadata("pytest-homeassistant").get_all("Project-URL") or []
+          if not any(is_core_repository_url(url.split(",", 1)[-1].strip()) for url in urls):
+              raise SystemExit("Official pytest metadata lacks canonical Core repository URL")
+          python_version = subprocess.check_output(
+              [os.environ["MINIMUM_PYTHON"], "--version"], text=True
+          ).strip()
+          uv_version = subprocess.check_output(["uv", "--version"], text=True).strip()
+          print("## Independent minimum Home Assistant 2026.11.0 compatibility")
+          print()
+          print(f"Declared HACS minimum: `{hacs_minimum}`")
+          print()
+          print("| Component | Installed version |")
+          print("| --- | --- |")
+          for name, version in installed.items():
+              print(f"| {name} | `{version}` |")
+          print(f"| Python | `{python_version}` |")
+          print(f"| uv | `{uv_version}` |")
+          PY
+
+      - name: Run full test suite and coverage gates on minimum HA
+        shell: bash
+        env:
+          HA_MINIMUM_COMPATIBILITY: "1"
+          PYTHONDONTWRITEBYTECODE: "1"
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          "$MINIMUM_PYTHON" -m pytest -q -ra -p no:cacheprovider \
+            --cov=custom_components.airzoneclouddaikin \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=json:coverage.json
+          "$MINIMUM_PYTHON" scripts/check_coverage.py \
+            coverage.json --min-total 74.0 \
+            --module-min __init__.py=73.0 \
+            --module-min airzone_api.py=75.0 \
+            --module-min climate.py=65.0

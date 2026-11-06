@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from homeassistant.const import CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.airzoneclouddaikin.config_flow import (
     CONF_EXPOSE_PII,
@@ -21,15 +21,6 @@ from custom_components.airzoneclouddaikin.const import (
     CONF_SLEEP_TIMEOUT_ENABLED,
     DOMAIN,
 )
-
-
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(request: pytest.FixtureRequest) -> None:
-    """Enable loading custom integrations in every Home Assistant harness test."""
-    try:
-        request.getfixturevalue("enable_custom_integrations")
-    except pytest.FixtureLookupError:
-        return
 
 
 @pytest.fixture

@@ -4,12 +4,19 @@ This is maintainer-facing documentation. For installation and user features, sta
 
 ## Supported baseline and compatibility policy
 
-- **Minimum Home Assistant version:** 2026.10.4, as declared in `hacs.json`. Raising the minimum requires a separate, reviewed support-policy change.
-- **Required locked test baseline:** Python **3.14.10**, Home Assistant **2026.10.4**, `pytest-homeassistant-custom-component==0.13.375` (PHACC). All exact development/test dependencies are recorded in `uv.lock`.
-- **Next compatibility target:** Home Assistant **2026.11.0**, including the built-in Marketplace. The official `pytest-homeassistant` harness replaces PHACC upstream, but the 2026.11-compatible official stable package was blocked by an [upstream publishing issue](https://github.com/home-assistant/core/issues/190470) as checked on 2026-11-05. Verify upstream again before migrating: a passing 2026.10.4 suite or legacy PHACC canary does **not** validate 2026.11.
-- **Python 3.15:** Not validated for the current Home Assistant/PHACC stack.
+- **Minimum Home Assistant version:** **2026.11.0** (`hacs.json`). This is a deliberate support-floor change: older Home Assistant versions are not supported by new builds.
+- **Required locked test baseline:** Python **3.14.10**, Home Assistant **2026.11.0**, official `pytest-homeassistant==2026.11.0`. The reviewed `uv.lock` must match exactly. A separate, hash-locked minimum-HA lane is fixed to 2026.11.0 and always executes its full suite, even when the main baseline is also 2026.11.0, because transitive dependency graphs can differ.
+- **Validation:** The 384-test official beta probe passed (#164). Stable HA 2026.11 automated CI qualification and real-device/Marketplace smoke testing are separate gates (#121).
+- **Python 3.15:** Not validated for the current HA 2026.11 harness.
 
-Work on the HA 2026.11 migration is tracked in [#109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109), with the separate [2026.11 compatibility and real-device sign-off checklist](./ha-2026.11-smoke.md) tracked in [#121](https://github.com/eXPerience83/DKNCloud-HASS/issues/121). If the locked HA baseline advances without changing the minimum, restore an independently pinned minimum-version test lane first.
+The migration is tracked in [#109](https://github.com/eXPerience83/DKNCloud-HASS/issues/109) and [#163](https://github.com/eXPerience83/DKNCloud-HASS/issues/163); the independent [HA 2026.11 real-device checklist](./ha-2026.11-smoke.md) is tracked in [#121](https://github.com/eXPerience83/DKNCloud-HASS/issues/121).
+
+## Test compatibility lanes
+
+- **Minimum:** `.github/requirements/minimum-ha.in` and `minimum-ha.txt` pin HA and the official pytest harness at 2026.11.0, with hashes for the complete dependency graph. `.github/workflows/ha-minimum-compatibility.yml` installs and tests the independent locked environment on PRs, main, weekly schedule, and manual dispatch. Only a deliberate support-policy change may regenerate or raise the minimum pins.
+- **Current:** `pyproject.toml` and `uv.lock` are the required release/test baseline and may advance independently, but never below the minimum. `tests.yml` checks matching official HA/harness versions and the minimum policy.
+- **Latest stable canary:** runs daily at 04:47 UTC, selects a published stable HA plus official `pytest-homeassistant` pair from PyPI, installs the pinned auxiliary DKN test dependency (`aiointercept`) and runs the full suite. It reports upstream lag, does not change the repository, and does not validate real hardware.
+- **Reviewed baseline updater:** runs daily at 06:43 UTC, waits at least three days for stable package maturity, validates the lock delta and full tests, and proposes a review-only PR. The independent minimum lane stays at 2026.11.0.
 
 ## Local checks
 
@@ -23,7 +30,7 @@ uv run --locked --no-sync ruff check .
 uv run --locked --no-sync ruff format --check .
 ```
 
-The `test` dependency group contains the Home Assistant test harness; `lint` includes Ruff; `release` includes both. Follow [CONTRIBUTING.md](../CONTRIBUTING.md) for translation rules and contribution guidance. Do not independently upgrade `pytest-asyncio` outside the HA/PHACC dependency pair.
+The `test` dependency group contains the Home Assistant test harness; `lint` includes Ruff; `release` includes both. Follow [CONTRIBUTING.md](../CONTRIBUTING.md) for translation rules and contribution guidance. Do not independently upgrade `pytest-asyncio` outside the official Home Assistant test harness dependency pair.
 
 ## Coverage and DKN regression tests
 
@@ -57,10 +64,13 @@ Tests use **synthetic, deterministic data**, the Home Assistant in-memory harnes
 
 ## CI and dependency maintenance
 
-- **Required CI:** Lint (locked Ruff); Tests (locked HA/PHACC and coverage gates); Package Test (integration-root ZIP layout). The release workflow performs its own full validation. Actionlint/ShellCheck, zizmor, pinned actions and least-privilege tokens are part of workflow hardening.
-- **Daily compatibility canary** ([workflow](../.github/workflows/ha-compatibility-canary.yml), 04:47 UTC): Selects the latest compatible stable HA/PHACC pair available to the legacy harness and runs the full pytest suite in isolation. It reports lag and failures, but does not block PR CI, update the lockfile or validate the new HA 2026.11 official harness.
-- **Daily baseline updater** ([workflow](../.github/workflows/ha-test-baseline-updater.yml), 06:43 UTC): Proposes an update only for a matched stable HA/PHACC pair after the **three-day maturity window**. It validates the proposed dependency delta and may open one **review-only PR**. It does not change `hacs.json`, the minimum-HA test lane or runtime code; no automerge or automatic release.
-- **Renovate:** PyPI updates respect `exclude-newer = "3 days"`. HA and PHACC are managed together, outside ordinary Renovate dependency bumps. Changes to the test harness need independent review.
+- **Required CI:** Lint (locked Ruff); Tests (current locked HA/official pytest harness and coverage gates); **Minimum HA Compatibility** (fixed SHA-256 hash-locked 2026.11.0 policy: full independent suite with coverage on every run, even when both HA version pins coincide); Package Test (integration-root ZIP layout). The release workflow performs its own full validation. Actionlint/ShellCheck, zizmor, pinned actions and least-privilege tokens are part of workflow hardening.
+- **Daily compatibility canary** ([workflow](../.github/workflows/ha-compatibility-canary.yml), 04:47 UTC): Selects the latest matching stable Home Assistant/official pytest pair and runs the full suite in isolation. It reports lag and failures without changing the locked baseline.
+- **Weekly normal baseline and minimum checks**: locked tests run Monday 04:23 UTC; minimum policy runs Monday 05:13 UTC. Both also run on PRs, pushes to main, and manual dispatch.
+- **Daily baseline updater** ([workflow](../.github/workflows/ha-test-baseline-updater.yml), 06:43 UTC): Proposes an update only for a matched stable Home Assistant/official pytest pair after the **three-day maturity window**. It validates the proposed dependency delta and may open one **review-only PR**. It changes only the tested current baseline, while the supported minimum stays 2026.11.0 and is separately protected. No automerge or automatic release.
+- **Manual cooldown waiver:** on the updater's `workflow_dispatch`, `override_cooldown=true` on `main` requires a printable 15–200 character reason and only waives the 72-hour promotion wait for the exact HA/official pytest pair. All other uv transitive maturity limits, full tests, coverage, lint, targeted lock-delta checks and review-only PR behavior remain mandatory. Scheduled runs never waive cooldown.
+- **Branch protection:** DKN's [versioned Protect main ruleset blueprint](./protect-main-ruleset.md) mirrors Pollen Levels required Actions, CodeQL and PR-only admin bypass; repository settings still need a separate administrator activation.
+- **Renovate:** PyPI updates respect a three-day release maturity gate; the reviewed HA/official pytest pair is owned by the daily updater, not Renovate's independent bumping. Weekly `uv.lock` maintenance is review-only, grouped GitHub Actions/security tooling receive 3-day maturity checks, and the fixed minimum-HA input/hash lock are excluded from automatic updates. Dependabot version PRs are disabled to avoid competing bots.
 - **Package boundary:** Release ZIPs contain only `custom_components/airzoneclouddaikin`. The integration version is in its `manifest.json` and is **independent** of the development tooling version in `pyproject.toml`.
 
 For preparing and publishing a version, use [RELEASING.md](../RELEASING.md). Releases are prepared as drafts and published manually; tests passing is not permission to claim hardware compatibility or to publish automatically.

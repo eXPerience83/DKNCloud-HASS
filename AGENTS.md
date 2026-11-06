@@ -1,23 +1,23 @@
 # Repository Guidelines
 
 ## Tooling
-- Tooling (CI, lint, format) runs on **Python 3.14**. The `pyproject.toml` targets packaging/tooling and also pins `requires-python = ">=3.14"`. All code under `custom_components/airzoneclouddaikin/` targets Python 3.14+, matching the Home Assistant 2026.10.4 minimum supported release.
+- Tooling (CI, lint, format) runs on **Python 3.14**. The `pyproject.toml` targets packaging/tooling and also pins `requires-python = ">=3.14"`. All code under `custom_components/airzoneclouddaikin/` targets Python 3.14+, matching the Home Assistant 2026.11.0 minimum supported release.
 - Format code and lint/sort imports with Ruff (line length 88, target-version `py314`), using the exact version pinned in `pyproject.toml` and `uv.lock`.
 - For local fixes, run `uv run --locked ruff check --fix --select I .` and then `uv run --locked ruff check .`.
 - Run `uv run --locked ruff format .` (or a narrower path) to format code; CI checks with `ruff format --check`.
-- The test harness runs on the exact Python 3.14 patch in `.python-version` and uses the locked pytest version required by PHACC.
+- The test harness uses the exact Python 3.14 patch in `.python-version` and the pytest version required by official `pytest-homeassistant`.
 - This project uses Python 3.14 syntax intentionally. PEP 758 allows multiple
   exceptions without parentheses when no `as` clause is present (e.g.
   `except TypeError, ValueError:`). Reviewers must not flag or rewrite this
   syntax for Python 3.13 or earlier compatibility.
-- `homeassistant`, `pytest-homeassistant-custom-component` (PHACC), and `pytest`
-  are a coordinated, exactly pinned test baseline. Update Home Assistant and
-  PHACC through the reviewed baseline updater; never bump pytest independently
-  if PHACC still requires a different exact version.
+- `homeassistant`, `pytest-homeassistant` (official pytest-homeassistant), and `pytest`
+  form a coordinated, exactly pinned test baseline. Update Home Assistant and
+  official pytest-homeassistant through the reviewed baseline updater; never bump pytest independently
+  of the official test harness.
 - `uv.lock` is authoritative: CI uses `uv lock --check` and locked syncs. Preserve
   `exclude-newer = "3 days"` and Renovate's matching minimum-release-age gate.
   The CI Python interpreter stays on the approved 3.14 patch series; advancing
-  to Python 3.15 needs separate Home Assistant/PHACC compatibility review.
+  to Python 3.15 needs separate Home Assistant/official pytest-homeassistant compatibility review.
 
 ## GitHub Actions security
 - Pin external GitHub Actions to audited full 40-character commit SHAs, with a
@@ -30,13 +30,13 @@
 - Use the minimum GITHUB_TOKEN permissions per workflow or job. Keep checkout
   `persist-credentials: false` unless a narrowly scoped, documented write
   operation requires otherwise. Do not expose secrets to untrusted PR code.
-- Preserve DKN-specific package validation and HA/PHACC updater protections.
+- Preserve DKN-specific package validation and HA/official pytest-homeassistant updater protections.
   Release workflow redesign is tracked in #141 and is not part of security
   baseline refactoring.
 
 ## CI workflow responsibilities
 - Keep Lint on the locked `lint` group (Ruff only); Tests uses the locked
-  `test` group and owns the HA/PHACC full test suite and coverage gates.
+  `test` group and owns the HA/official pytest-homeassistant full test suite and coverage gates.
 - Package Test is intentionally limited to building and validating the exact
   `airzoneclouddaikin.zip` archive. Do not duplicate the full test suite or
   install the HA harness in that workflow; the PR's Tests job covers it.
@@ -45,8 +45,13 @@
 - Prefer `pull_request` scoped to `main` and concurrency keys using the
   workflow and PR number (or `github.ref`) to avoid cross-fork collisions.
 - Preserve the separate scheduled/manual latest-HA canary and reviewed
-  baseline updater; do not add a duplicate minimum-HA lane while the pinned
-  minimum equals the tested HA version.
+  baseline updater, and the independent hash-locked minimum-HA workflow.
+  Keep the 2026.11.0 minimum protected when the main test baseline advances.
+- Maintain the documented main ruleset requirements, including the independent
+  `minimum-compatibility` job when it is required. A repository administrator
+  must activate GitHub settings; a JSON blueprint alone does not enforce them.
+- The manual updater `override_cooldown` is only a reasoned single-run bypass of
+  the HA/pytest package maturity window; it must never bypass checks or PR review.
 
 ## Release procedure
 - Follow `RELEASING.md` and #141. Draft preparation is automated; publication

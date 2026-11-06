@@ -3,7 +3,7 @@
 ## [0.5.0a5] - 2026-11-05
 
 > **Experimental alpha for DKN Cloud for Home Assistant. Not a stable release.**
-> Minimum supported Home Assistant: **2026.10.4** (Python 3.14).
+> Minimum supported Home Assistant: **2026.11.0** (Python 3.14).
 > Home Assistant **2026.11.0 stable and its built-in Marketplace have not yet
 > completed real-device acceptance testing**; do not advertise certified
 > 2026.11 compatibility on the strength of CI alone.
@@ -33,9 +33,9 @@
   and Switch power handling, and shared entity-state/preset helpers while
   retaining existing backend command contracts and unique IDs (#158, #159,
   #160).
-- Refresh installation and compatibility documentation for Home Assistant
-  2026.11's Marketplace without raising the HA 2026.10.4 minimum or changing
-  the locked PHACC 0.13.375 test baseline (#162).
+- Refresh documentation for Home Assistant 2026.11's Marketplace (#162).
+- **Breaking change:** Require HA 2026.11.0+ and replace PHACC with the official
+  `pytest-homeassistant==2026.11.0` harness for locked tests (#163).
 
 ### Fixed
 - Restore Home Assistant native reauthentication after credential changes;
@@ -63,8 +63,8 @@
 > (#105); HEAT_COOL remains experimental and capability-gated (#154).
 > Real-device and Marketplace checks on HA 2026.11 are tracked in #121.
 > The official `pytest-homeassistant==2026.11.0` publishing incident
-> (upstream #190470) affects optional future test-harness migration (#163),
-> **not** DKN's current HA 2026.10.4/PHACC release checks.
+> (upstream #190470) was resolved on 2026-11-05. Stable HA 2026.11 CI and
+> real-device/Marketplace acceptance remain separate release gates.
 
 ## [0.5.0a4] - 2026-10-30
 

@@ -8,6 +8,7 @@ from scripts.select_ha_harness import (
     HarnessSelection,
     SelectionError,
     exact_homeassistant_requirement,
+    is_core_repository_url,
     latest_stable_release,
     select_stable_harness,
 )
@@ -17,24 +18,24 @@ def _project(*releases: tuple[str, bool]) -> dict[str, object]:
     return {"releases": {version: [{"yanked": yanked}] for version, yanked in releases}}
 
 
-def _phacc_release(requirements: list[str]) -> dict[str, object]:
+def _official_release(requirements: list[str]) -> dict[str, object]:
     return {"info": {"requires_dist": requirements}}
 
 
 def _select(
     homeassistant_releases: tuple[tuple[str, bool], ...],
-    phacc_releases: tuple[tuple[str, bool], ...],
+    official_releases: tuple[tuple[str, bool], ...],
     requirements: dict[str, list[str]],
 ) -> HarnessSelection:
     return select_stable_harness(
         _project(*homeassistant_releases),
-        _project(*phacc_releases),
-        lambda version: _phacc_release(requirements[version]),
+        _project(*official_releases),
+        lambda version: _official_release(requirements[version]),
     )
 
 
-def test_latest_phacc_targeting_latest_stable_ha_is_selected() -> None:
-    """The current stable PHACC/HA pair is selected."""
+def test_latest_official_targeting_latest_stable_ha_is_selected() -> None:
+    """The current stable OFFICIAL/HA pair is selected."""
     selection = _select(
         (("2026.8.2", False), ("2026.8.3", False)),
         (("0.13.356", False), ("0.13.357", False)),
@@ -43,15 +44,15 @@ def test_latest_phacc_targeting_latest_stable_ha_is_selected() -> None:
         },
     )
 
-    assert selection.selected_phacc == "0.13.357"
+    assert selection.selected_official == "0.13.357"
     assert selection.selected_homeassistant == "2026.8.3"
     assert selection.latest_homeassistant == "2026.8.3"
-    assert selection.latest_phacc == "0.13.357"
+    assert selection.latest_official == "0.13.357"
 
 
 @pytest.mark.parametrize("target", ["2026.9.0b1", "2026.9.0rc1", "2026.9.0.dev0"])
 def test_prerelease_ha_target_is_skipped(target: str) -> None:
-    """PHACC packages targeting beta, RC, and dev Home Assistant are skipped."""
+    """OFFICIAL packages targeting beta, RC, and dev Home Assistant are skipped."""
     selection = _select(
         (("2026.8.3", False), (target, False)),
         (("0.13.357", False), ("0.13.359", False)),
@@ -61,9 +62,9 @@ def test_prerelease_ha_target_is_skipped(target: str) -> None:
         },
     )
 
-    assert selection.selected_phacc == "0.13.357"
+    assert selection.selected_official == "0.13.357"
     assert selection.selected_homeassistant == "2026.8.3"
-    assert selection.skipped_prerelease_phacc == ("0.13.359",)
+    assert selection.skipped_prerelease_official == ("0.13.359",)
 
 
 def test_latest_ha_ahead_of_selected_pair_is_preserved() -> None:
@@ -96,16 +97,16 @@ def test_exact_homeassistant_requirement_is_required() -> None:
             exact_homeassistant_requirement(requirements)
 
 
-def test_yanked_phacc_release_is_ignored() -> None:
-    """A yanked newer PHACC package cannot be selected."""
+def test_yanked_official_release_is_ignored() -> None:
+    """A yanked newer OFFICIAL package cannot be selected."""
     selection = _select(
         (("2026.8.3", False),),
         (("0.13.357", False), ("0.13.358", True)),
         {"0.13.357": ["homeassistant==2026.8.3"]},
     )
 
-    assert selection.latest_phacc == "0.13.357"
-    assert selection.selected_phacc == "0.13.357"
+    assert selection.latest_official == "0.13.357"
+    assert selection.selected_official == "0.13.357"
 
 
 def test_mixed_valid_and_malformed_artifacts_fail() -> None:
@@ -136,11 +137,11 @@ def test_non_list_artifacts_collection_fails() -> None:
 
 
 @pytest.mark.parametrize("homeassistant_releases", [(), (("2026.8.3", True),)])
-def test_unavailable_or_yanked_stable_ha_target_fails(
+def test_unavailable_or_yanked_target_without_fallback_fails(
     homeassistant_releases: tuple[tuple[str, bool], ...],
 ) -> None:
-    """PHACC cannot select a Home Assistant release without usable artifacts."""
-    with pytest.raises(SelectionError, match="no stable|unavailable or yanked"):
+    """No usable HA release must never produce a false-positive selection."""
+    with pytest.raises(SelectionError, match="no stable"):
         _select(
             homeassistant_releases,
             (("0.13.357", False),),
@@ -148,31 +149,83 @@ def test_unavailable_or_yanked_stable_ha_target_fails(
         )
 
 
-def test_missing_stable_ha_target_fails() -> None:
-    """PHACC cannot select a stable HA version absent from PyPI metadata."""
-    with pytest.raises(SelectionError, match="unavailable or yanked"):
-        _select(
-            (("2026.8.2", False),),
-            (("0.13.357", False),),
-            {"0.13.357": ["homeassistant==2026.8.3"]},
-        )
+@pytest.mark.parametrize(
+    "homeassistant_releases",
+    [
+        (("2026.8.2", False),),
+        (("2026.8.2", False), ("2026.8.3", True)),
+    ],
+)
+def test_unavailable_newer_target_falls_back_and_reports(
+    homeassistant_releases: tuple[tuple[str, bool], ...],
+) -> None:
+    """Skipped yanked/missing HA targets are visible while an older pair is used."""
+    selection = _select(
+        homeassistant_releases,
+        (("0.13.356", False), ("0.13.357", False)),
+        {
+            "0.13.357": ["homeassistant==2026.8.3"],
+            "0.13.356": ["homeassistant==2026.8.2"],
+        },
+    )
+    assert selection.latest_official == "0.13.357"
+    assert selection.selected_official == "0.13.356"
+    assert selection.selected_homeassistant == "2026.8.2"
+    assert selection.skipped_unavailable_official == ("0.13.357 (HA 2026.8.3)",)
 
 
-def test_yanked_stable_ha_target_fails() -> None:
-    """PHACC cannot select a yanked stable HA release when another one exists."""
-    with pytest.raises(SelectionError, match="unavailable or yanked"):
+@pytest.mark.parametrize(
+    "homeassistant_releases",
+    [
+        (("2026.8.2", False),),
+        (("2026.8.2", False), ("2026.8.3", True)),
+    ],
+)
+def test_unavailable_target_without_older_official_fails(
+    homeassistant_releases: tuple[tuple[str, bool], ...],
+) -> None:
+    """Without an older compatible pair the selector must fail visibly."""
+    with pytest.raises(SelectionError, match="no eligible stable"):
         _select(
-            (("2026.8.2", False), ("2026.8.3", True)),
+            homeassistant_releases,
             (("0.13.357", False),),
             {"0.13.357": ["homeassistant==2026.8.3"]},
         )
 
 
 def test_no_eligible_stable_pair_fails_clearly() -> None:
-    """A PHACC catalog with only prerelease HA targets fails safely."""
+    """A OFFICIAL catalog with only prerelease HA targets fails safely."""
     with pytest.raises(SelectionError, match="no eligible stable"):
         _select(
             (("2026.8.3", False), ("2026.9.0b1", False)),
             (("0.13.359", False),),
             {"0.13.359": ["homeassistant==2026.9.0b1"]},
         )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/home-assistant/core",
+        "https://github.com/home-assistant/core/",
+        "https://github.com/home-assistant/core.git",
+    ],
+)
+def test_canonical_core_urls_are_recognized(url: str) -> None:
+    assert is_core_repository_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com.attacker.example/home-assistant/core",
+        "https://attacker.example/@github.com/home-assistant/core",
+        "https://evil@github.com/home-assistant/core",
+        "https://github.com/home-assistant/core?next=https://evil.example",
+        "http://github.com/home-assistant/core",
+        "https://github.com/home-assistant/core/other",
+        None,
+    ],
+)
+def test_misleading_core_urls_are_rejected(url: object) -> None:
+    assert not is_core_repository_url(url)

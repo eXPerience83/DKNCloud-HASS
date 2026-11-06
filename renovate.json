@@ -1,12 +1,190 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "helpers:pinGitHubActionDigests",
+    "customManagers:githubActionsVersions"
   ],
-  "rebaseWhen": "behind-base-branch",
+  "dependencyDashboard": true,
+  "timezone": "Europe/Madrid",
+  "schedule": [
+    "* 0-5 * * 1"
+  ],
+  "prConcurrentLimit": 5,
+  "automerge": false,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 4am on Monday"
+    ],
+    "groupName": "uv.lock maintenance"
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^pyproject\\.toml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=github-releases depName=astral-sh/uv\\s+required-version\\s*=\\s*\\\"==(?<currentValue>[^\\\"]+)\\\""
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "astral-sh/uv",
+      "versioningTemplate": "semver-coerced"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github\\/workflows\\/workflow-security\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: shellcheck-release\\s+SHELLCHECK_TAG:\\s*\\\"(?<currentValue>v[^\\\"]+)\\\"\\s+SHELLCHECK_SHA256:\\s*\\\"(?<currentDigest>[0-9a-f]{64})\\\""
+      ],
+      "datasourceTemplate": "github-release-attachments",
+      "depNameTemplate": "koalaman/shellcheck",
+      "versioningTemplate": "semver-coerced"
+    }
+  ],
   "packageRules": [
     {
-      "description": "PyPI updates must satisfy the same 72-hour maturity window as uv exclude-newer = '3 days'; keep artifact generation reproducible.",
+      "description": "Group non-major GitHub Actions updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepTypes": [
+        "action"
+      ],
+      "matchUpdateTypes": [
+        "digest",
+        "patch",
+        "minor"
+      ],
+      "groupName": "GitHub Actions non-major updates",
+      "minimumReleaseAge": "3 days",
+      "internalChecksFilter": "strict"
+    },
+    {
+      "description": "Keep major GitHub Actions updates individually reviewable",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepTypes": [
+        "action"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "minimumReleaseAge": "3 days",
+      "internalChecksFilter": "strict",
+      "automerge": false
+    },
+    {
+      "description": "Delay workflow security tooling updates",
+      "matchDepNames": [
+        "rhysd/actionlint",
+        "zizmor",
+        "koalaman/shellcheck",
+        "go"
+      ],
+      "minimumReleaseAge": "3 days",
+      "internalChecksFilter": "strict"
+    },
+    {
+      "description": "Group non-major workflow security tooling updates",
+      "matchDepNames": [
+        "rhysd/actionlint",
+        "zizmor",
+        "koalaman/shellcheck",
+        "go"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
+      "groupName": "Workflow security tooling"
+    },
+    {
+      "description": "Delay direct validation dependency updates",
+      "matchManagers": [
+        "pep621",
+        "pyenv",
+        "custom.regex"
+      ],
+      "minimumReleaseAge": "3 days",
+      "internalChecksFilter": "strict"
+    },
+    {
+      "description": "Delegate uv.lock release age enforcement to uv",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "lockFileMaintenance"
+      ],
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Keep CI Python on the approved 3.14 patch line",
+      "matchManagers": [
+        "pyenv"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "allowedVersions": "/^3\\.14\\.\\d+$/"
+    },
+    {
+      "description": "Keep the declared Python floor owner-reviewed",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchFileNames": [
+        "pyproject.toml"
+      ],
+      "matchDepNames": [
+        "python"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Ruff updates are reviewed individually",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchPackageNames": [
+        "ruff"
+      ],
+      "groupName": "Ruff",
+      "separateMajorMinor": true
+    },
+    {
+      "description": "uv executable updates are reviewed individually",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "astral-sh/uv"
+      ],
+      "groupName": "uv",
+      "separateMajorMinor": true
+    },
+    {
+      "description": "Group independent generic test tooling updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchPackageNames": [
+        "aiointercept",
+        "packaging"
+      ],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
+      "groupName": "Generic pytest tooling"
+    },
+    {
+      "description": "PyPI updates must retain a verified 72-hour timestamp maturity gate for reproducible uv resolution.",
       "matchDatasources": [
         "pypi"
       ],
@@ -15,26 +193,24 @@
       "internalChecksFilter": "strict"
     },
     {
-      "description": "Keep GitHub Actions Python on the Home Assistant/PHACC-validated 3.14 patch series; review new minor versions explicitly.",
-      "matchManagers": [
-        "pyenv"
+      "description": "The supported 2026.11.0 minimum SHA-256 pin and lock are owner-managed; never refresh them silently.",
+      "matchFileNames": [
+        ".github/requirements/minimum-ha.in",
+        ".github/requirements/minimum-ha.txt"
       ],
-      "matchPackageNames": [
-        "python"
-      ],
-      "allowedVersions": "/^3\\.14\\.\\d+$/"
+      "enabled": false
     },
     {
-      "description": "Home Assistant and PHACC must advance together via the reviewed baseline updater (roadmap #109 phase 4). pytest-asyncio is a PHACC-owned exact transitive pin.",
+      "description": "Home Assistant and the official pytest-homeassistant harness must advance together via the reviewed baseline updater (roadmap #109 phase 4). pytest-asyncio is owned by the official harness.",
       "matchPackageNames": [
         "homeassistant",
-        "pytest-homeassistant-custom-component",
+        "pytest-homeassistant",
         "pytest",
         "pytest-asyncio"
       ],
       "enabled": false
     }
   ],
-  "dependencyDashboard": true,
+  "rebaseWhen": "behind-base-branch",
   "internalChecksFilter": "strict"
 }
