@@ -103,6 +103,46 @@ def test_official_mature_but_ha_young_is_cooldown() -> None:
     )
 
 
+def test_manual_override_only_waives_pair_release_age() -> None:
+    """Manual waiver promotes a newer pair without skipping its basic safety checks."""
+    plan = make_plan(
+        _project(),
+        _selection("2026.9.0", "0.13.400"),
+        _release(NOW),
+        _release(NOW),
+        NOW,
+        override_cooldown=True,
+    )
+    assert plan.status == "update"
+    assert plan.cooldown_overridden is True
+    assert plan.cooldown_days == 3
+
+
+def test_manual_override_does_not_republish_current_pair() -> None:
+    plan = make_plan(
+        _project(),
+        _selection(),
+        _release(NOW),
+        _release(NOW),
+        NOW,
+        override_cooldown=True,
+    )
+    assert plan.status == "current"
+    assert plan.cooldown_overridden is False
+
+
+def test_manual_override_rejects_downgrade() -> None:
+    with pytest.raises(UpdaterError, match="downgrade"):
+        make_plan(
+            _project(),
+            _selection("2026.8.2", "0.13.356"),
+            _release(NOW),
+            _release(NOW),
+            NOW,
+            override_cooldown=True,
+        )
+
+
 def test_latest_non_yanked_artifact_controls_maturity() -> None:
     """A late usable wheel extends the whole release's maturity window."""
     metadata = {

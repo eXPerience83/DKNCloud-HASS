@@ -62,6 +62,7 @@ class BaselinePlan:
     skipped_prerelease_official: tuple[str, ...]
     status: str
     skipped_unavailable_official: tuple[str, ...] = ()
+    cooldown_overridden: bool = False
 
 
 def _exact_test_pins(project: Mapping[str, object]) -> dict[str, str]:
@@ -159,6 +160,8 @@ def make_plan(
     homeassistant_release: Mapping[str, object],
     official_release: Mapping[str, object],
     now: datetime,
+    *,
+    override_cooldown: bool = False,
 ) -> BaselinePlan:
     """Classify a stable selected pair without performing any file mutation."""
     if now.tzinfo is None or now.utcoffset() is None:
@@ -184,10 +187,13 @@ def make_plan(
     mature_at = max(ha_mature_at, official_mature_at)
     if selected_ha == current_ha and selected_official == current_official:
         status = "current"
-    elif now.astimezone(UTC) < mature_at:
+    elif now.astimezone(UTC) < mature_at and not override_cooldown:
         status = "cooldown"
     else:
         status = "update"
+    cooldown_overridden = (
+        status == "update" and override_cooldown and now.astimezone(UTC) < mature_at
+    )
     return BaselinePlan(
         current_homeassistant=pins[HOMEASSISTANT],
         current_official=pins[OFFICIAL],
@@ -202,6 +208,7 @@ def make_plan(
         skipped_prerelease_official=selection.skipped_prerelease_official,
         skipped_unavailable_official=selection.skipped_unavailable_official,
         status=status,
+        cooldown_overridden=cooldown_overridden,
     )
 
 
@@ -414,6 +421,7 @@ def _cmd_plan(args: argparse.Namespace) -> None:
         fetch_pypi_metadata(HOMEASSISTANT, selection.selected_homeassistant),
         fetch_pypi_metadata(OFFICIAL, selection.selected_official),
         now,
+        override_cooldown=args.override_cooldown,
     )
     sys.stdout.write(json.dumps(asdict(plan), sort_keys=True) + "\n")
 
@@ -442,6 +450,7 @@ def main() -> None:
     plan = commands.add_parser("plan")
     plan.add_argument("--pyproject", type=Path, default=Path("pyproject.toml"))
     plan.add_argument("--now")
+    plan.add_argument("--override-cooldown", action="store_true")
     plan.set_defaults(func=_cmd_plan)
     update = commands.add_parser("update-pyproject")
     update.add_argument("--plan", type=Path, required=True)
