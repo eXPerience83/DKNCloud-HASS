@@ -84,7 +84,8 @@ def test_mature_newer_stable_pair_is_an_update() -> None:
 def test_candidate_younger_than_cooldown_is_not_updated() -> None:
     """A new selected pair stays in cooldown until the common maturity instant."""
     assert (
-        _plan(ha="2026.12.0", official="2026.12.0", ha_uploaded=NOW).status == "cooldown"
+        _plan(ha="2026.12.0", official="2026.12.0", ha_uploaded=NOW).status
+        == "cooldown"
     )
 
 
@@ -99,7 +100,8 @@ def test_ha_mature_but_official_young_is_cooldown() -> None:
 def test_official_mature_but_ha_young_is_cooldown() -> None:
     """Home Assistant's release timestamp independently protects the pair."""
     assert (
-        _plan(ha="2026.12.0", official="2026.12.0", ha_uploaded=NOW).status == "cooldown"
+        _plan(ha="2026.12.0", official="2026.12.0", ha_uploaded=NOW).status
+        == "cooldown"
     )
 
 
@@ -273,9 +275,7 @@ def test_official_only_version_change_rejected_by_minimum_policy() -> None:
         ("2026.12.0b1", "2026.12.0b1"),
     ],
 )
-def test_unpromotable_selected_harness_pair_rejected(
-    ha: str, official: str
-) -> None:
+def test_unpromotable_selected_harness_pair_rejected(ha: str, official: str) -> None:
     with pytest.raises(UpdaterError, match="exact matching stable release"):
         _plan(ha=ha, official=official)
 
