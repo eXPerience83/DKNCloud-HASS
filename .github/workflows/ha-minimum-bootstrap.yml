@@ -63,7 +63,7 @@ jobs:
           cat "$RUNNER_TEMP/plan.json"
       - name: Commit independently validated minimum lock
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
