@@ -33,6 +33,7 @@ class HarnessSelection:
     selected_official: str
     selected_homeassistant: str
     skipped_prerelease_official: tuple[str, ...]
+    skipped_unavailable_official: tuple[str, ...] = ()
 
 
 def _stable_releases(
@@ -135,6 +136,7 @@ def select_stable_harness(
         reverse=True,
     )
     skipped_prerelease_official: list[str] = []
+    skipped_unavailable_official: list[str] = []
 
     for _, official_version in official_releases:
         metadata = official_release_metadata(official_version)
@@ -156,16 +158,19 @@ def select_stable_harness(
             skipped_prerelease_official.append(official_version)
             continue
         if homeassistant_version not in stable_homeassistant:
-            raise SelectionError(
-                f"OFFICIAL {official_version} targets unavailable or yanked Home Assistant "
-                f"{homeassistant_version}"
+            # Keep testing an older compatible stable pair, but report the
+            # skipped version instead of silently hiding upstream issues.
+            skipped_unavailable_official.append(
+                f"{official_version} (HA {homeassistant_version})"
             )
+            continue
         return HarnessSelection(
             latest_homeassistant=latest_homeassistant,
             latest_official=latest_official,
             selected_official=official_version,
             selected_homeassistant=homeassistant_version,
             skipped_prerelease_official=tuple(skipped_prerelease_official),
+            skipped_unavailable_official=tuple(skipped_unavailable_official),
         )
 
     raise SelectionError(

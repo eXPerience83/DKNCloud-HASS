@@ -61,6 +61,7 @@ class BaselinePlan:
     cooldown_days: int
     skipped_prerelease_official: tuple[str, ...]
     status: str
+    skipped_unavailable_official: tuple[str, ...] = ()
 
 
 def _exact_test_pins(project: Mapping[str, object]) -> dict[str, str]:
@@ -199,6 +200,7 @@ def make_plan(
         mature_at=mature_at.isoformat(),
         cooldown_days=days,
         skipped_prerelease_official=selection.skipped_prerelease_official,
+        skipped_unavailable_official=selection.skipped_unavailable_official,
         status=status,
     )
 
@@ -385,6 +387,9 @@ def _read_plan(path: Path) -> BaselinePlan:
             raise TypeError
         value["skipped_prerelease_official"] = tuple(
             value["skipped_prerelease_official"]
+        )
+        value["skipped_unavailable_official"] = tuple(
+            value.get("skipped_unavailable_official", ())
         )
         return BaselinePlan(**value)
     except (OSError, TypeError, KeyError, json.JSONDecodeError) as err:
