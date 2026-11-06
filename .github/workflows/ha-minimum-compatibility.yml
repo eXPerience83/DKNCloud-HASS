@@ -81,11 +81,11 @@ jobs:
           uv pip check --python "$MINIMUM_PYTHON"
           "$MINIMUM_PYTHON" - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import importlib.metadata
-          import json
           import os
           import subprocess
           from pathlib import Path
 
+          from scripts.ha_minimum_policy import MINIMUM_HOMEASSISTANT
           from scripts.select_ha_harness import is_core_repository_url
 
           minimum_input = {}
@@ -106,22 +106,9 @@ jobs:
               "pytest",
               "pytest-cov",
           }
-          if set(minimum_input) != expected_names:
-              raise SystemExit(
-                  "Minimum input must contain exactly "
-                  f"{sorted(expected_names)}; found {sorted(minimum_input)}"
-              )
-
-          hacs_minimum = json.loads(
-              Path("hacs.json").read_text(encoding="utf-8")
-          )["homeassistant"]
-          if minimum_input["pytest-homeassistant"] != minimum_input["homeassistant"]:
-              raise SystemExit("Minimum HA and official pytest releases must match")
-          if hacs_minimum != minimum_input["homeassistant"]:
-              raise SystemExit(
-                  "hacs.json Home Assistant minimum does not match minimum-ha.in: "
-                  f"{hacs_minimum} != {minimum_input['homeassistant']}"
-              )
+          # Floor, pin uniqueness, pairing, and hash-lock integrity were
+          # already checked by the canonical policy in the planning step.
+          hacs_minimum = MINIMUM_HOMEASSISTANT
 
           installed = {
               name: importlib.metadata.version(name)

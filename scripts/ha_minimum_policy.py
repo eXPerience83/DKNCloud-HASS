@@ -107,10 +107,17 @@ def verify_frozen_minimum_inputs() -> None:
         )
     compiled = Path(".github/requirements/minimum-ha.txt").read_text(encoding="utf-8")
     for name, version in expected.items():
-        if f"{name}=={version} " not in compiled:
-            raise MinimumPolicyError(f"Missing frozen minimum lock record: {name}")
-    if "--hash=sha256:" not in compiled:
-        raise MinimumPolicyError("Frozen minimum file contains no SHA-256 hashes")
+        # Match the actual package line, never a suffix inside another package
+        # (e.g. "homeassistant" inside "pytest-homeassistant"), and require
+        # an adjacent SHA-256 hash in the uv-compiled record.
+        pattern = (
+            rf"(?m)^{re.escape(name)}=={re.escape(version)}[ \t]+\\[ \t]*\r?\n"
+            r"[ \t]+--hash=sha256:[0-9a-f]{64}(?:[ \t]+\\)?[ \t]*$"
+        )
+        if re.search(pattern, compiled) is None:
+            raise MinimumPolicyError(
+                f"Missing frozen minimum lock record or SHA-256 hash: {name}"
+            )
 
 
 def main() -> None:
