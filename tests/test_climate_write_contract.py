@@ -130,8 +130,12 @@ async def test_active_sleep_temperature_and_fan_preserve_scenary(
 ) -> None:
     """Normal setpoint/fan writes must not cancel an active Sleep session."""
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        mode=mode, power="1", scenary="sleep",
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode=mode,
+        power="1",
+        scenary="sleep",
     )
 
     await entity.async_set_temperature(temperature=23)
@@ -154,8 +158,11 @@ async def test_explicit_home_then_sleep_emits_distinct_scenary_writes(
     This verifies request sequencing only, not whether hardware re-arms its timer.
     """
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        scenary="sleep", power="0",
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        scenary="sleep",
+        power="0",
     )
 
     await entity.async_set_preset_mode("home")
