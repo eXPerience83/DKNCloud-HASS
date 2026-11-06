@@ -7,6 +7,7 @@ import json
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
@@ -18,6 +19,27 @@ from packaging.version import InvalidVersion, Version
 
 PYPI_URL = "https://pypi.org/pypi/{package}{version}/json"
 USER_AGENT = "dkncloud-hass-ha-harness-selector"
+
+
+def is_core_repository_url(value: object) -> bool:
+    """Validate canonical Core URL syntax, not the identity of a PyPI uploader."""
+    if not isinstance(value, str):
+        return False
+    try:
+        url = urllib.parse.urlsplit(value)
+    except ValueError:
+        return False
+    return (
+        url.scheme == "https"
+        and url.netloc.lower() == "github.com"
+        and url.path.rstrip("/")
+        in {
+            "/home-assistant/core",
+            "/home-assistant/core.git",
+        }
+        and not url.query
+        and not url.fragment
+    )
 
 
 class SelectionError(ValueError):

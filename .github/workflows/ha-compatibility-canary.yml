@@ -137,6 +137,7 @@ jobs:
             "homeassistant==$SELECTED_HA" \
             "pytest-homeassistant==$SELECTED_OFFICIAL" \
             "$AIOINTERCEPT_REQUIREMENT"
+          uv pip check --python "$CANARY_PYTHON"
 
       - name: Verify installed versions and report environment
         shell: bash
@@ -147,7 +148,10 @@ jobs:
           import os
           import subprocess
 
-          from scripts.select_ha_harness import exact_homeassistant_requirement
+          from scripts.select_ha_harness import (
+              exact_homeassistant_requirement,
+              is_core_repository_url,
+          )
 
           names = (
               "homeassistant",
@@ -158,6 +162,15 @@ jobs:
               "packaging",
           )
           versions = {name: meta.version(name) for name in names}
+          installed_names = {
+              dist.metadata["Name"].lower().replace("_", "-")
+              for dist in meta.distributions()
+          }
+          if "pytest-homeassistant-custom-component" in installed_names:
+              raise SystemExit("Legacy PHACC cannot coexist with official pytest")
+          urls = meta.metadata("pytest-homeassistant").get_all("Project-URL") or []
+          if not any(is_core_repository_url(url.split(",", 1)[-1].strip()) for url in urls):
+              raise SystemExit("Official pytest metadata lacks canonical Core repository URL")
           if versions["aiointercept"] != os.environ["AIOINTERCEPT_REQUIREMENT"].split("==", 1)[1]:
               raise SystemExit("Installed aiointercept differs from pinned test dependency")
           if versions["homeassistant"] != os.environ["SELECTED_HA"]:
@@ -173,6 +186,8 @@ jobs:
               )
           rows = [
               "### Resolved test environment",
+              "",
+              "Official pytest self-declared Core repository URL matches canonical syntax; this does not authenticate the publisher.",
               "",
               "| Component | Installed version |",
               "| --- | --- |",

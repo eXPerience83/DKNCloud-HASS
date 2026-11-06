@@ -9,6 +9,7 @@ from scripts.select_ha_harness import (
     SelectionError,
     exact_homeassistant_requirement,
     latest_stable_release,
+    is_core_repository_url,
     select_stable_harness,
 )
 
@@ -200,3 +201,31 @@ def test_no_eligible_stable_pair_fails_clearly() -> None:
             (("0.13.359", False),),
             {"0.13.359": ["homeassistant==2026.9.0b1"]},
         )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/home-assistant/core",
+        "https://github.com/home-assistant/core/",
+        "https://github.com/home-assistant/core.git",
+    ],
+)
+def test_canonical_core_urls_are_recognized(url: str) -> None:
+    assert is_core_repository_url(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com.attacker.example/home-assistant/core",
+        "https://attacker.example/@github.com/home-assistant/core",
+        "https://evil@github.com/home-assistant/core",
+        "https://github.com/home-assistant/core?next=https://evil.example",
+        "http://github.com/home-assistant/core",
+        "https://github.com/home-assistant/core/other",
+        None,
+    ],
+)
+def test_misleading_core_urls_are_rejected(url: object) -> None:
+    assert not is_core_repository_url(url)
