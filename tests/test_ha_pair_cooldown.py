@@ -194,8 +194,7 @@ def test_release_guard_uses_trusted_workflow_revision() -> None:
     )
     assert 'git show "$TRUSTED_WORKFLOW_SHA:scripts/ha_pair_cooldown.py"' in workflow
     assert (
-        'python "$RUNNER_TEMP/ha_pair_cooldown_trusted.py" '
-        "check --stable-release-guard"
+        'python "$RUNNER_TEMP/ha_pair_cooldown_trusted.py" check --stable-release-guard'
     ) in workflow
 
 
