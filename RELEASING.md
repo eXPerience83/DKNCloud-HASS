@@ -49,8 +49,9 @@ The initial 2026.11.0 scoped exception expires after **2026-11-08
 13:03:59 UTC**. Remove its two package cutoff entries after the 72-hour
 window, regenerate `uv.lock` with pinned uv **0.13.6**, and verify that
 **no package version, artifact or hash changes**. The reviewed updater can
-propose a normalization-only PR when the pair is mature, preserving all package
-records; a normal mature update also clears previous exceptions. Neither PR
+propose a normalization-only PR once the locked pair matures, even if a newer
+candidate is still cooling. Cleanup preserves all package records; an
+ordinary mature update also clears previous exceptions. Neither PR
 may merge automatically.
 
 Release checks ensure that `pyproject.toml` and `uv.lock` agree on the
