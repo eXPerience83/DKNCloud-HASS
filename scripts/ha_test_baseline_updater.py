@@ -174,6 +174,8 @@ def make_plan(
     now: datetime,
     *,
     override_cooldown: bool = False,
+    current_homeassistant_release: Mapping[str, object] | None = None,
+    current_official_release: Mapping[str, object] | None = None,
 ) -> BaselinePlan:
     """Classify a stable selected pair without performing any file mutation."""
     if now.tzinfo is None or now.utcoffset() is None:
@@ -210,24 +212,44 @@ def make_plan(
         official_release, OFFICIAL, selection.selected_official, days
     )
     mature_at = max(ha_mature_at, official_mature_at)
+    now_utc = now.astimezone(UTC)
+    waived_pair = configured_cutoffs(dict(project))
+    planned_ha = selection.selected_homeassistant
+    planned_official = selection.selected_official
     if selected_ha == current_ha and selected_official == current_official:
-        status = (
-            "normalize"
-            if configured_cutoffs(dict(project)) and now.astimezone(UTC) >= mature_at
-            else "current"
-        )
-    elif now.astimezone(UTC) < mature_at and not override_cooldown:
+        status = "normalize" if waived_pair and now_utc >= mature_at else "current"
+    elif now_utc < mature_at and not override_cooldown:
         status = "cooldown"
+        # A newer pair may still be cooling when the locked pair has matured.
+        # Normalize the existing cutoff instead of postponing cleanup.
+        if (
+            waived_pair
+            and current_homeassistant_release is not None
+            and current_official_release is not None
+        ):
+            current_ha_mature_at = release_mature_at(
+                current_homeassistant_release, HOMEASSISTANT, pins[HOMEASSISTANT], days
+            )
+            current_official_mature_at = release_mature_at(
+                current_official_release, OFFICIAL, pins[OFFICIAL], days
+            )
+            if now_utc >= max(current_ha_mature_at, current_official_mature_at):
+                status = "normalize"
+                planned_ha = pins[HOMEASSISTANT]
+                planned_official = pins[OFFICIAL]
+                ha_mature_at = current_ha_mature_at
+                official_mature_at = current_official_mature_at
+                mature_at = max(ha_mature_at, official_mature_at)
     else:
         status = "update"
     cooldown_overridden = (
-        status == "update" and override_cooldown and now.astimezone(UTC) < mature_at
+        status == "update" and override_cooldown and now_utc < mature_at
     )
     return BaselinePlan(
         current_homeassistant=pins[HOMEASSISTANT],
         current_official=pins[OFFICIAL],
-        selected_homeassistant=selection.selected_homeassistant,
-        selected_official=selection.selected_official,
+        selected_homeassistant=planned_ha,
+        selected_official=planned_official,
         latest_homeassistant=selection.latest_homeassistant,
         latest_official=selection.latest_official,
         homeassistant_mature_at=ha_mature_at.isoformat(),
@@ -514,6 +536,19 @@ def _cmd_plan(args: argparse.Namespace) -> None:
         if args.now is None
         else _parse_upload_time(args.now, "planner", "now")
     )
+    current_releases: dict[str, Mapping[str, object]] = {}
+    pinned = _exact_test_pins(project)
+    if (
+        configured_cutoffs(project)
+        and not args.override_cooldown
+        and pinned[HOMEASSISTANT] != selection.selected_homeassistant
+    ):
+        # Need actual release metadata, not the old cutoff timestamp, to
+        # establish whether the existing pair has finished its cooldown.
+        current_releases = {
+            HOMEASSISTANT: fetch_pypi_metadata(HOMEASSISTANT, pinned[HOMEASSISTANT]),
+            OFFICIAL: fetch_pypi_metadata(OFFICIAL, pinned[OFFICIAL]),
+        }
     plan = make_plan(
         project,
         selection,
@@ -521,6 +556,8 @@ def _cmd_plan(args: argparse.Namespace) -> None:
         fetch_pypi_metadata(OFFICIAL, selection.selected_official),
         now,
         override_cooldown=args.override_cooldown,
+        current_homeassistant_release=current_releases.get(HOMEASSISTANT),
+        current_official_release=current_releases.get(OFFICIAL),
     )
     sys.stdout.write(json.dumps(asdict(plan), sort_keys=True) + "\n")
 
