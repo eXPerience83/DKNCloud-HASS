@@ -1,19 +1,58 @@
-# DKN Cloud main branch ruleset parity (Pollen Levels reference)
+# Effective Actions protection policy
 
-Reference: [Pollen Levels Protect main](https://github.com/eXPerience83/pollenlevels/rules/20281037), verified 2026-11-06; exact job-contexts confirmed against DKN workflows on this branch.
+Verified and activated on 2026-11-07 in both DKN Cloud and Pollen Levels.
+DKN's [main ruleset](https://github.com/eXPerience83/DKNCloud-HASS/rules/26753709)
+is active; the [importable blueprint](./protect-main-ruleset.json) now includes
+CodeQL, after successful hosted Python and Actions analyses. A JSON file alone
+never applies GitHub settings. Recheck the live API after any settings change.
 
-**Status:** Pollen's repository ruleset is active. At inspection DKN Cloud returned **no repository rulesets** via its GitHub API. This versioned [JSON blueprint](./protect-main-ruleset.json) is **not automatically applied** by storing it in Git; a repository administrator must create/import and activate it using [Settings → Rules → Rulesets](https://github.com/eXPerience83/DKNCloud-HASS/settings/rules).
+- Main requires a PR, squash merge, linear history, no deletion/force push, and
+  an up-to-date branch with eight GitHub Actions checks (app ID 15368):
+  `actionlint`, `lint`, `tests`, `validate`, `validate-hacs`, `zizmor`, `package`,
+  `minimum-compatibility`.
+- CodeQL blocks errors and high-or-higher security alerts. Default Setup scans
+  Python and Actions; no duplicate CodeQL workflow is needed.
+- The existing maintainer model has zero mandatory approving reviews and an
+  administrator bypass restricted to PRs. This is not an independent-review
+  guarantee. Maintainers must review the exact checked HEAD and must not use
+  bypass to merge failed or incomplete CI. No workflow may merge its own PR.
+- Default `GITHUB_TOKEN` permission is read; workflow PR approvals are disabled;
+  full action SHA pinning is required by the repository setting. Only draft
+  finalization and the reviewed updater publisher receive explicit write scope.
+- [Release tag rules](./protect-release-tags-ruleset.json) forbid updating or
+  deleting `v*` tags, with no bypass actors. Tag creation remains available only
+  through the reviewed release procedure; the ruleset does not itself restrict
+  who can create a new tag.
+- Native release immutability is enabled for future publications. Existing
+  releases are not retroactively made immutable. Finish draft preparation
+  before manually publishing; no workflow repairs a published asset.
 
-**Before importing the JSON:** read this document and verify that the eight required GitHub Actions jobs report on DKN. The importable JSON intentionally excludes `code_scanning` while CodeQL is not confirmed working. Once CodeQL reports successfully on DKN PRs, an administrator can add its rule manually with the thresholds below. Never activate a CodeQL requirement before that verification.
+## Shared workflow responsibilities
 
-Recommended settings aligned to Pollen:
-- Target: default branch only (`~DEFAULT_BRANCH`), active, prevent deletion and force pushes, require linear history, require PRs, allow only **squash merge**.
-- Required status checks (GitHub Actions, integration ID **15368**, **strict/up-to-date**): `actionlint`, `lint`, `tests`, `validate` (hassfest), `validate-hacs`, `zizmor`, `package`, `minimum-compatibility`.
-- Code scanning (optional follow-up, **not in the importable JSON**): after enabling and verifying CodeQL on DKN PRs, add the `code_scanning` rule with tool `CodeQL`, `security_alerts_threshold: high_or_higher` and `alerts_threshold: errors`. Enabling the rule first can block all merges.
-- Reference review setting: 0 mandatory approvals, but a PR is required; code-owner review off; `require_extra_approval_for_unattributed_changes` true.
-- Bypass: reference has repository administrators (`RepositoryRole` 5) in **pull_request-only** mode. Do not allow direct-push bypass of the core rules. Review which accounts should get the role-based bypass before activation.
-- Check both fresh PR runs and a squash-merge dry-run before enabling enforcement; do not set required contexts that never appear.
+Lint and Tests validate the committed lock; Package Test validates the ZIP
+without repeating the full suite. Workflow Security blocks actionlint/ShellCheck
+and high-severity, medium-or-higher-confidence zizmor findings. hassfest and
+Marketplace validation remain separate required checks. Their SHA-pinned
+wrappers still consume upstream container images; wrapper pinning alone is not
+an immutable transitive image guarantee.
 
-**Separate concepts:** branch-ruleset bypass controls *how changes enter main*. The Home Assistant baseline updater's `override_cooldown` is a **one-run, reasoned manual waiver only for the HA/pytest publication age check**, not a permission to merge despite failed CI or bypass rulesets. Its `workflow_dispatch` requires `main`, an explicit reason, lock validation, full pytest, coverage and lint. It never merges or publishes automatically.
+Minimum Compatibility always installs its frozen SHA-256 graph and tests the
+2026.11.0 support floor independently. The latest-HA canary fresh-resolves in an
+isolated read-only environment and is advisory. The updater proposes reviewed
+PRs with exact official HA/pytest pairs, a global 72-hour cutoff, narrowly
+bounded early exceptions and package-preserving normalization after maturity.
+A writer closes/reopens token-created updater PRs to trigger normal required CI.
 
-Not part of this PR's automated mutation: GitHub repository settings and required CodeQL setup. A ruleset must be activated using an administration-capable GitHub account/app. After activation, verify the required check contexts after #170 lands on main.
+Release runs from main. Other selected snapshots are dry-run rehearsals only;
+draft preparation requires the exact main workflow SHA and successful required
+checks. It validates the release group, Ruff, full coverage, ZIP and digest in
+read scope, then separately finalizes with write scope. Existing draft assets
+are reused by equal digest, never overwritten. Publication remains manual.
+
+Keep Python/uv pins, coverage floors, integration ZIP names and manifest/tooling
+version contracts project-specific. Review equivalent security behavior across
+both repositories when changing shared helpers; do not introduce a floating
+cross-repository reusable workflow or routine minimum-graph updates.
+
+See [GitHub immutable-release documentation](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/establish-provenance-and-integrity/prevent-release-changes)
+and [RELEASING.md](../RELEASING.md).

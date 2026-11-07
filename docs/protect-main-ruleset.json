@@ -1,7 +1,11 @@
 {
-  "name": "Protect main",
-  "target": "branch",
-  "enforcement": "active",
+  "bypass_actors": [
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "pull_request"
+    }
+  ],
   "conditions": {
     "ref_name": {
       "exclude": [],
@@ -10,6 +14,8 @@
       ]
     }
   },
+  "enforcement": "active",
+  "name": "Protect main",
   "rules": [
     {
       "type": "deletion"
@@ -21,24 +27,22 @@
       "type": "required_linear_history"
     },
     {
-      "type": "pull_request",
       "parameters": {
-        "required_approving_review_count": 0,
-        "dismiss_stale_reviews_on_push": false,
-        "required_reviewers": [],
-        "require_code_owner_review": false,
-        "require_last_push_approval": false,
-        "required_review_thread_resolution": false,
-        "require_extra_approval_for_unattributed_changes": true,
         "allowed_merge_methods": [
           "squash"
-        ]
-      }
+        ],
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_extra_approval_for_unattributed_changes": true,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0,
+        "required_review_thread_resolution": false,
+        "required_reviewers": []
+      },
+      "type": "pull_request"
     },
     {
-      "type": "required_status_checks",
       "parameters": {
-        "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           {
@@ -73,15 +77,23 @@
             "context": "minimum-compatibility",
             "integration_id": 15368
           }
+        ],
+        "strict_required_status_checks_policy": true
+      },
+      "type": "required_status_checks"
+    },
+    {
+      "parameters": {
+        "code_scanning_tools": [
+          {
+            "alerts_threshold": "errors",
+            "security_alerts_threshold": "high_or_higher",
+            "tool": "CodeQL"
+          }
         ]
-      }
+      },
+      "type": "code_scanning"
     }
   ],
-  "bypass_actors": [
-    {
-      "actor_id": 5,
-      "actor_type": "RepositoryRole",
-      "bypass_mode": "pull_request"
-    }
-  ]
+  "target": "branch"
 }
