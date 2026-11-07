@@ -130,13 +130,24 @@ def test_release_draft_only_and_immutable_published_assets() -> None:
 
 
 @pytest.mark.parametrize(
-    ("total", "climate", "pytest_exit", "expected_exit"),
-    [(80.0, 80.0, 0, 0), (70.0, 80.0, 0, 1), (80.0, 60.0, 0, 1), (80.0, 80.0, 2, 2)],
+    ("total", "init", "api", "climate", "missing", "pytest_exit", "expected_exit"),
+    [
+        (74.0, 73.0, 75.0, 65.0, False, 0, 0),
+        (73.99, 80.0, 80.0, 80.0, False, 0, 1),
+        (80.0, 72.99, 80.0, 80.0, False, 0, 1),
+        (80.0, 80.0, 74.99, 80.0, False, 0, 1),
+        (80.0, 80.0, 80.0, 64.99, False, 0, 1),
+        (80.0, 80.0, 80.0, 80.0, True, 0, 1),
+        (80.0, 80.0, 80.0, 80.0, False, 2, 2),
+    ],
 )
 def test_release_test_step_enforces_coverage_and_test_failures(
     tmp_path: Path,
     total: float,
+    init: float,
+    api: float,
     climate: float,
+    missing: bool,
     pytest_exit: int,
     expected_exit: int,
 ) -> None:
@@ -182,12 +193,14 @@ def test_release_test_step_enforces_coverage_and_test_failures(
                 }
             }
             for module, percent in (
-                ("__init__.py", 80.0),
-                ("airzone_api.py", 80.0),
+                ("__init__.py", init),
+                ("airzone_api.py", api),
                 ("climate.py", climate),
             )
         },
     }
+    if missing:
+        del report["files"]["custom_components/airzoneclouddaikin/climate.py"]
     (tmp_path / "controlled-coverage.json").write_text(
         json.dumps(report), encoding="utf-8"
     )
