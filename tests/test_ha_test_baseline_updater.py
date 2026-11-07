@@ -432,6 +432,15 @@ def test_wrong_resulting_harness_versions_fail() -> None:
 
 
 
+def _with_standard_options(lock: str) -> str:
+    return lock.replace(
+        "\n[[package]]",
+        '\n[options]\nexclude-newer = "0001-01-01T00:00:00Z"\n'
+        'exclude-newer-span = "P3D"\n\n[[package]]',
+        1,
+    )
+
+
 def _with_cutoffs(lock: str, homeassistant: str, official: str) -> str:
     options = (
         '\n[options]\nexclude-newer = "0001-01-01T00:00:00Z"\n'
@@ -504,6 +513,7 @@ def test_current_pair_can_normalize_after_maturity_without_version_change() -> N
 
 def test_lock_cannot_change_scoped_cutoffs_except_as_plan_authorizes() -> None:
     before, after = _valid_locks()
+    before = _with_standard_options(before)
     plan = make_plan(
         _project(),
         _selection("2026.12.0", "2026.12.0"),
@@ -543,7 +553,9 @@ def test_normalization_rejects_any_package_record_movement() -> None:
         _release(NOW - timedelta(days=4)),
         NOW,
     )
-    after = _lock(ha="2026.11.0", official="2026.11.0")
+    after = _with_standard_options(
+        _lock(ha="2026.11.0", official="2026.11.0")
+    )
     validate_lock_delta(before, after, "2026.11.0", "2026.11.0", plan=plan)
     with pytest.raises(UpdaterError, match="preserve all package records"):
         validate_lock_delta(
