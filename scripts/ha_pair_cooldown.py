@@ -151,7 +151,9 @@ def validate_policy(
             uploaded.append(timestamp.astimezone(UTC))
         cutoff = parse_cutoff(cutoffs[name])
         last = max(uploaded)
-        if not last < cutoff <= last + timedelta(minutes=5) or cutoff > current:
+        # Exactly the next UTC second after the last locked artifact:
+        # a five-minute tolerance could silently authorize an omitted upload.
+        if cutoff_for_upload(last) != cutoffs[name] or cutoff > current:
             raise CooldownPolicyError(f"{name} cutoff exceeds known artifact bounds")
     return cutoffs
 
