@@ -274,7 +274,7 @@ jobs:
               "- Full pytest and statement coverage: `__PYTEST_RESULT__`", "- Supported HA minimum remains at the independently tested 2026.11.0 baseline; updating it requires a separate explicit decision.",
               "- Ruff lint and Ruff format checks: passed.",
               "- No automerge is enabled.",
-              "- This PR was created with the repository `GITHUB_TOKEN`; a repository writer must select **Approve workflows to run** for CI."
+              "- This PR was created with the repository `GITHUB_TOKEN`; a repository writer must close and reopen this PR to trigger required CI before review and merge."
             ] | join("\n")
           ' "$RUNNER_TEMP/plan.json" > "$artifact_dir/pr-body.md"
           cp pyproject.toml uv.lock "$RUNNER_TEMP/plan.json" "$artifact_dir/"
@@ -381,7 +381,7 @@ jobs:
           expected_changes=$'pyproject.toml\nuv.lock'
           actual_changes="$(git diff --name-only | LC_ALL=C sort)"
           test "$actual_changes" = "$expected_changes"
-          jq -Rrs 'split("__PYTEST_RESULT__") | join(env.PYTEST_RESULT)' \
+          jq -Rrs 'split("\n") | map(if . == "- Full pytest and statement coverage: `__PYTEST_RESULT__`" then "- Full pytest and statement coverage: `" + env.PYTEST_RESULT + "`" else . end) | join("\n")' \
             "$artifact_dir/pr-body.md" > "$RUNNER_TEMP/pr-body-final.md"
 
       - name: Publish validated pull request
