@@ -99,7 +99,7 @@ def test_stable_release_rejects_scoped_maturity_exception() -> None:
         ("3 days", "absolute UTC"),
         ("2026-11-05", "absolute UTC"),
         ("2026-11-05T13:04:00+00:00", "absolute UTC"),
-        ("2026-11-05T13:05:00Z", "artifact bounds"),
+        ("2026-11-05T13:10:00Z", "artifact bounds"),
         ("2026-11-05T13:00:00Z", "artifact bounds"),
         ("2026-11-08T13:03:50Z", "artifact bounds"),
     ],
