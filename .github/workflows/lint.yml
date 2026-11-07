@@ -46,6 +46,12 @@ jobs:
             pyproject.toml
             uv.lock
 
+      - name: Validate artifact-bounded cooldown policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ha_pair_cooldown.py check
+
       - name: Verify locked environment
         shell: bash
         run: |
