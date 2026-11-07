@@ -558,3 +558,86 @@ def test_normalization_rejects_any_package_record_movement() -> None:
             "2026.11.0",
             plan=plan,
         )
+
+
+def test_cleanup_current_pair_while_future_pair_is_cooling() -> None:
+    """A newer pair's cooldown must not postpone existing waiver retirement."""
+    project = _project()
+    project["tool"]["uv"]["exclude-newer-package"] = {
+        "homeassistant": "2026-12-25T00:00:01Z",
+        "pytest-homeassistant": "2026-12-25T00:00:01Z",
+    }
+    plan = make_plan(
+        project,
+        _selection("2026.12.0", "2026.12.0"),
+        _release(NOW),
+        _release(NOW),
+        NOW,
+        current_homeassistant_release=_release(NOW - timedelta(days=4)),
+        current_official_release=_release(NOW - timedelta(days=4)),
+    )
+    assert plan.status == "normalize"
+    assert plan.selected_homeassistant == "2026.11.0"
+    assert plan.selected_official == "2026.11.0"
+    assert plan.latest_homeassistant == "2026.12.0"
+    assert plan.cooldown_overridden is False
+    assert plan.mature_at == (NOW - timedelta(days=1)).isoformat()
+
+
+def test_cannot_cleanup_when_current_pair_artifact_is_too_young() -> None:
+    """Check actual current releases, not just a historical fixed cutoff."""
+    project = _project()
+    project["tool"]["uv"]["exclude-newer-package"] = {
+        "homeassistant": "2026-12-25T00:00:01Z",
+        "pytest-homeassistant": "2026-12-25T00:00:01Z",
+    }
+    plan = make_plan(
+        project,
+        _selection("2026.12.0", "2026.12.0"),
+        _release(NOW),
+        _release(NOW),
+        NOW,
+        current_homeassistant_release=_release(NOW - timedelta(days=4)),
+        current_official_release=_release(NOW),
+    )
+    assert plan.status == "cooldown"
+    assert plan.selected_homeassistant == "2026.12.0"
+
+
+def test_future_pair_cleanup_requires_current_release_metadata() -> None:
+    """Without current PyPI artifact ages, the updater fails closed."""
+    project = _project()
+    project["tool"]["uv"]["exclude-newer-package"] = {
+        "homeassistant": "2026-12-25T00:00:01Z",
+        "pytest-homeassistant": "2026-12-25T00:00:01Z",
+    }
+    plan = make_plan(
+        project,
+        _selection("2026.12.0", "2026.12.0"),
+        _release(NOW),
+        _release(NOW),
+        NOW,
+    )
+    assert plan.status == "cooldown"
+
+
+def test_early_manual_promotion_is_not_replaced_with_cleanup() -> None:
+    """An explicitly authorized promotion remains a review-only pair update."""
+    project = _project()
+    project["tool"]["uv"]["exclude-newer-package"] = {
+        "homeassistant": "2026-12-25T00:00:01Z",
+        "pytest-homeassistant": "2026-12-25T00:00:01Z",
+    }
+    plan = make_plan(
+        project,
+        _selection("2026.12.0", "2026.12.0"),
+        _release(NOW),
+        _release(NOW),
+        NOW,
+        override_cooldown=True,
+        current_homeassistant_release=_release(NOW - timedelta(days=4)),
+        current_official_release=_release(NOW - timedelta(days=4)),
+    )
+    assert plan.status == "update"
+    assert plan.cooldown_overridden
+    assert plan.selected_homeassistant == "2026.12.0"
