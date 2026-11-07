@@ -50,8 +50,11 @@
 - Maintain the documented main ruleset requirements, including the independent
   `minimum-compatibility` job when it is required. A repository administrator
   must activate GitHub settings; a JSON blueprint alone does not enforce them.
-- The manual updater `override_cooldown` is only a reasoned single-run bypass of
-  the HA/pytest package maturity window; it must never bypass checks or PR review.
+- The manual updater `override_cooldown` is a reasoned single-run bypass for
+  the exact official HA/pytest pair only. Use absolute, artifact-bounded UTC
+  per-package cutoffs, never `UV_EXCLUDE_NEWER=false` or an open-ended `false`
+  package exemption. Normalize after maturity and reject stable releases while
+  an exception is present. Keep full checks, locked tests and PR review.
 
 ## Release procedure
 - Follow `RELEASING.md` and #141. Draft preparation is automated; publication

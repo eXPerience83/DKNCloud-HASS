@@ -33,6 +33,32 @@ The workflow uses the selected snapshot's pinned Python 3.14, `pyproject.toml`,
 `uv.lock`, full pytest suite, Ruff, and DKN Marketplace ZIP validator. It is
 not intended to rebuild old historical DKN snapshots with obsolete tooling.
 
+## Dependency cooldown and exceptional prerelease validation
+
+The default uv cutoff is `exclude-newer = "3 days"`. For a new supported
+Home Assistant/official pytest test pair, a maintainer may run the reviewed
+baseline updater on `main` with `override_cooldown=true` and a printable
+15–200 character reason. This only waives maturity for the exact compatible
+pair and writes **fixed UTC per-package cutoffs**, bounded to its reviewed PyPI
+artifacts, into the resulting PR's `pyproject.toml` and `uv.lock`. All
+transitive packages retain 72-hour maturity; all lock, test, coverage, lint,
+package and PR review requirements remain in force. There is no global
+`UV_EXCLUDE_NEWER=false` override or release-specific bypass.
+
+The initial 2026.11.0 scoped exception expires after **2026-11-08
+13:03:59 UTC**. Remove its two package cutoff entries after the 72-hour
+window, regenerate `uv.lock` with pinned uv **0.13.6**, and verify that
+**no package version, artifact or hash changes**. The reviewed updater can
+propose a normalization-only PR once the locked pair matures, even if a newer
+candidate is still cooling. Cleanup preserves all package records; an
+ordinary mature update also clears previous exceptions. Neither PR
+may merge automatically.
+
+Release checks ensure that `pyproject.toml` and `uv.lock` agree on the
+cutoffs and reject preparing a stable version while a scoped exception
+remains. Prereleases continue using the existing draft-first checks; approval
+and publication remain manual, with no changes to the published ZIPs.
+
 ## Step 2 — Prepare a draft in GitHub Actions
 
 1. Open **Actions → Release → Run workflow**.
