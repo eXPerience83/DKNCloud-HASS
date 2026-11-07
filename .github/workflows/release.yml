@@ -183,6 +183,18 @@ jobs:
           fi
           printf 'release_commit=%s\n' "$selected_commit" >> "$GITHUB_OUTPUT"
 
+      - name: Preserve cooldown guard from trusted workflow revision
+        if: steps.event.outputs.skip_release != 'true'
+        shell: bash
+        env:
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TRUSTED_WORKFLOW_SHA"
+          git show "$TRUSTED_WORKFLOW_SHA:scripts/ha_pair_cooldown.py" \
+            > "$RUNNER_TEMP/ha_pair_cooldown_trusted.py"
+          test -s "$RUNNER_TEMP/ha_pair_cooldown_trusted.py"
+
       - name: Check out selected snapshot
         if: steps.event.outputs.skip_release != 'true'
         shell: bash
@@ -215,7 +227,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/ha_pair_cooldown.py check --stable-release-guard
+          # Historical snapshots may not contain this reviewed helper.
+          python "$RUNNER_TEMP/ha_pair_cooldown_trusted.py" check --stable-release-guard
 
       - name: Set up locked validation environment
         if: steps.event.outputs.skip_release != 'true'
