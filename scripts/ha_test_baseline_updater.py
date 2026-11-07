@@ -313,6 +313,7 @@ def update_pyproject(text: str, plan: BaselinePlan) -> str:
         raise UpdaterError("updated pyproject does not match reviewed plan")
     return result
 
+
 def _package_groups(lock: Mapping[str, object]) -> dict[str, list[dict[str, object]]]:
     packages = lock.get("package")
     if not isinstance(packages, list):
