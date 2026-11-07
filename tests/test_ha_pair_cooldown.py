@@ -183,3 +183,30 @@ def test_configured_cutoffs_reject_non_exact_global_policy() -> None:
     project["tool"]["uv"]["exclude-newer"] = False
     with pytest.raises(CooldownPolicyError, match="three days|3 days"):
         configured_cutoffs(project)
+
+def test_release_guard_uses_trusted_workflow_revision() -> None:
+    """Historical release snapshots need not contain the new policy helper."""
+    from pathlib import Path
+
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert workflow.index("Preserve cooldown guard from trusted workflow revision") < (
+        workflow.index("Check out selected snapshot")
+    )
+    assert 'git show "$TRUSTED_WORKFLOW_SHA:scripts/ha_pair_cooldown.py"' in workflow
+    assert (
+        'python "$RUNNER_TEMP/ha_pair_cooldown_trusted.py" '
+        "check --stable-release-guard"
+    ) in workflow
+
+
+def test_updater_guards_new_lock_before_sealing() -> None:
+    """Reject cutoffs for omitted PyPI artifacts before building a PR."""
+    from pathlib import Path
+
+    workflow = Path(".github/workflows/ha-test-baseline-updater.yml").read_text(
+        encoding="utf-8"
+    )
+    guard = workflow.index("Validate generated cutoff against actual locked artifacts")
+    seal = workflow.index("Seal validated publication artifact")
+    assert workflow.index("Check generated lock") < guard < seal
+    assert "python scripts/ha_pair_cooldown.py check" in workflow[guard:seal]
