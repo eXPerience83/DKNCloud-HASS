@@ -59,3 +59,25 @@ def test_baseline_pr_ref_sanitizer_is_portable(value: str, expected: str) -> Non
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == expected
+
+
+def test_pytest_summary_replacement_preserves_literal_waiver_reason() -> None:
+    """The user reason may contain the placeholder without being rewritten."""
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    line = next(line.strip() for line in workflow.splitlines() if "jq -Rrs" in line)
+    command = line.removesuffix("\\").rstrip()
+    original = (
+        "- Full pytest and statement coverage: `__PYTEST_RESULT__`\n"
+        "<pre>review __PYTEST_RESULT__ literally</pre>\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        input=original,
+        env={"PATH": "/usr/bin:/bin", "PYTEST_RESULT": "451 passed"},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "- Full pytest and statement coverage: `451 passed`" in result.stdout
+    assert "<pre>review __PYTEST_RESULT__ literally</pre>" in result.stdout

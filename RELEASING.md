@@ -129,3 +129,10 @@ Do not silently overwrite its published artifacts or roll back a tag.
 - [ ] Draft notes and alpha/beta/RC or stable settings are reviewed.
 - [ ] Publish is performed manually after ZIP attachment.
 - [ ] HACS/Marketplace installation and hardware smoke test pass.
+
+### Updater pull-request checks
+
+Updater PRs use `GITHUB_TOKEN`, which does not trigger their normal PR workflows.
+A repository writer must close and reopen the PR to trigger required CI, then
+review the exact checked HEAD before merging. Never bypass required checks.
+Manual waiver reasons are preserved literally in the review artifact.
