@@ -19,6 +19,12 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 try:
+    from scripts.ha_pair_cooldown import (
+        CooldownPolicyError,
+        configured_cutoffs,
+        cutoff_for_upload,
+        validate_policy,
+    )
     from scripts.select_ha_harness import (
         HarnessSelection,
         SelectionError,
@@ -26,6 +32,12 @@ try:
         select_stable_harness,
     )
 except ModuleNotFoundError:  # Direct script execution does not add the root package.
+    from ha_pair_cooldown import (  # type: ignore[no-redef]
+        CooldownPolicyError,
+        configured_cutoffs,
+        cutoff_for_upload,
+        validate_policy,
+    )
     from select_ha_harness import (  # type: ignore[no-redef]
         HarnessSelection,
         SelectionError,
@@ -199,7 +211,11 @@ def make_plan(
     )
     mature_at = max(ha_mature_at, official_mature_at)
     if selected_ha == current_ha and selected_official == current_official:
-        status = "current"
+        status = (
+            "normalize"
+            if configured_cutoffs(dict(project)) and now.astimezone(UTC) >= mature_at
+            else "current"
+        )
     elif now.astimezone(UTC) < mature_at and not override_cooldown:
         status = "cooldown"
     else:
@@ -225,30 +241,73 @@ def make_plan(
     )
 
 
+def _cutoffs_for_plan(plan: BaselinePlan) -> dict[str, str]:
+    """Return the exact artifact-bounded exception for an authorized early pair."""
+    if plan.status != "update" or not plan.cooldown_overridden:
+        return {}
+    return {
+        name: cutoff_for_upload(
+            datetime.fromisoformat(mature_at) - timedelta(days=plan.cooldown_days)
+        )
+        for name, mature_at in (
+            (HOMEASSISTANT, plan.homeassistant_mature_at),
+            (OFFICIAL, plan.official_mature_at),
+        )
+    }
+
+
 def update_pyproject(text: str, plan: BaselinePlan) -> str:
-    """Return the narrowly updated project text or fail on ambiguous source pins."""
-    if plan.status != "update":
-        raise UpdaterError("pyproject mutation requires an update plan")
-    replacements = (
-        (OFFICIAL, plan.current_official, plan.selected_official),
-        (HOMEASSISTANT, plan.current_homeassistant, plan.selected_homeassistant),
-    )
+    """Apply reviewed direct pins and narrowly scoped or normalized uv cutoffs."""
+    if plan.status not in {"update", "normalize"}:
+        raise UpdaterError("pyproject mutation requires an update or normalization")
+    current_cutoffs = configured_cutoffs(tomllib.loads(text))
+    if plan.status == "normalize" and not current_cutoffs:
+        raise UpdaterError("normalization requires an existing package cutoff")
     result = text
-    for name, old_version, new_version in replacements:
-        old = PIN_TEMPLATE.format(name=name, version=old_version)
-        new = PIN_TEMPLATE.format(name=name, version=new_version)
-        if result.count(old) != 1:
-            raise UpdaterError(f"expected one exact {name} pin in pyproject.toml")
-        result = result.replace(old, new, 1)
+    if plan.status == "update":
+        replacements = (
+            (OFFICIAL, plan.current_official, plan.selected_official),
+            (HOMEASSISTANT, plan.current_homeassistant, plan.selected_homeassistant),
+        )
+        for name, old_version, new_version in replacements:
+            old = PIN_TEMPLATE.format(name=name, version=old_version)
+            new = PIN_TEMPLATE.format(name=name, version=new_version)
+            if result.count(old) != 1:
+                raise UpdaterError(f"expected one exact {name} pin in pyproject.toml")
+            result = result.replace(old, new, 1)
+
+    # The exception never changes the default three-day cutoff, and never
+    # waives maturity for any transitive package in the selected HA closure.
+    next_cutoffs = _cutoffs_for_plan(plan)
+    match = re.findall(r"(?m)^exclude-newer-package = .*?\n", result)
+    if len(match) > 1:
+        raise UpdaterError("ambiguous package-level cooldown setting")
+    if next_cutoffs:
+        line = (
+            'exclude-newer-package = { homeassistant = "'
+            + next_cutoffs[HOMEASSISTANT]
+            + '", pytest-homeassistant = "'
+            + next_cutoffs[OFFICIAL]
+            + '" }\n'
+        )
+        if match:
+            result = result.replace(match[0], line, 1)
+        else:
+            marker = 'exclude-newer = "3 days"\n'
+            if result.count(marker) != 1:
+                raise UpdaterError("expected one global three-day cooldown")
+            result = result.replace(marker, marker + line, 1)
+    elif match:
+        result = result.replace(match[0], "", 1)
+
     project = tomllib.loads(result)
     pins = _exact_test_pins(project)
     if pins != {
         HOMEASSISTANT: plan.selected_homeassistant,
         OFFICIAL: plan.selected_official,
-    }:
-        raise UpdaterError("updated pyproject pins do not match the selected pair")
+    } or configured_cutoffs(project) != next_cutoffs:
+        raise UpdaterError("updated pyproject does not match reviewed plan")
     return result
-
 
 def _package_groups(lock: Mapping[str, object]) -> dict[str, list[dict[str, object]]]:
     packages = lock.get("package")
@@ -367,15 +426,36 @@ def _validate_local_record(
 
 
 def validate_lock_delta(
-    before_text: str, after_text: str, homeassistant: str, official: str
+    before_text: str,
+    after_text: str,
+    homeassistant: str,
+    official: str,
+    *,
+    plan: BaselinePlan | None = None,
 ) -> None:
     """Reject lock movement outside the selected harness dependency graph and pins."""
     before = tomllib.loads(before_text)
     after = tomllib.loads(after_text)
     before_top = {key: value for key, value in before.items() if key != "package"}
     after_top = {key: value for key, value in after.items() if key != "package"}
-    if before_top != after_top:
-        raise UpdaterError("uv.lock non-package metadata changed")
+    if plan is None:
+        if before_top != after_top:
+            raise UpdaterError("uv.lock non-package metadata changed")
+    else:
+        if plan.status not in {"update", "normalize"}:
+            raise UpdaterError("lock update needs an update/normalize plan")
+        old_options = dict(before_top.get("options", {}))
+        new_options = dict(after_top.get("options", {}))
+        old_options.pop("exclude-newer-package", None)
+        next_cutoffs = new_options.pop("exclude-newer-package", {})
+        before_top["options"] = old_options
+        after_top["options"] = new_options
+        if before_top != after_top:
+            raise UpdaterError("uv.lock non-package metadata changed")
+        if next_cutoffs != _cutoffs_for_plan(plan):
+            raise UpdaterError("uv.lock package-level cutoff differs from plan")
+        if plan.status == "normalize" and before.get("package") != after.get("package"):
+            raise UpdaterError("normalization must preserve all package records")
     before_groups = _package_groups(before)
     after_groups = _package_groups(after)
     _validate_target_group(after_groups, HOMEASSISTANT, homeassistant)
@@ -418,6 +498,7 @@ def _read_plan(path: Path) -> BaselinePlan:
 
 def _cmd_plan(args: argparse.Namespace) -> None:
     project = tomllib.loads(args.pyproject.read_text(encoding="utf-8"))
+    validate_policy(project, tomllib.loads(Path("uv.lock").read_text(encoding="utf-8")))
     selection = select_stable_harness(
         fetch_pypi_metadata(HOMEASSISTANT),
         fetch_pypi_metadata(OFFICIAL),
@@ -453,6 +534,7 @@ def _cmd_validate_lock(args: argparse.Namespace) -> None:
         args.after.read_text(encoding="utf-8"),
         args.homeassistant,
         args.official,
+        plan=_read_plan(args.plan) if args.plan else None,
     )
 
 
@@ -470,6 +552,7 @@ def main() -> None:
     update.add_argument("--pyproject", type=Path, default=Path("pyproject.toml"))
     update.set_defaults(func=_cmd_update_pyproject)
     validate = commands.add_parser("validate-lock")
+    validate.add_argument("--plan", type=Path)
     validate.add_argument("--before", type=Path, required=True)
     validate.add_argument("--after", type=Path, required=True)
     validate.add_argument("--homeassistant", required=True)
@@ -478,7 +561,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         args.func(args)
-    except (SelectionError, UpdaterError) as err:
+    except (SelectionError, UpdaterError, CooldownPolicyError) as err:
         parser.error(str(err))
 
 
