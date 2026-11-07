@@ -163,11 +163,11 @@ jobs:
               "- Latest available official pytest-homeassistant: `" + .latest_official + "`",
               "- Maturity gate: `" + (.cooldown_days | tostring) + " days`",
               "- Manual cooldown actually waived: `" + (.cooldown_overridden | tostring) + "`",
-              "- Scoped package policy: " + (if .status == "normalize" then "remove expired exception; no package movement" elif .cooldown_overridden then "fixed HA/pytest artifact cutoff only; transitives still mature" else "normal 72h; old exception removed" end),
+              "- Scoped package policy: " + (if .status == "normalize" then "remove matured exception; no package movement" elif .cooldown_overridden then "fixed HA/pytest artifact cutoff only; transitives still mature" elif .status == "update" then "normal 72h; no old exception carried forward" else "no mutation; existing source/lock policy unchanged" end),
               "- HA mature at: `" + .homeassistant_mature_at + "`",
               "- official pytest-homeassistant mature at: `" + .official_mature_at + "`",
               "- Pair mature at: `" + .mature_at + "`",
-              "- Upstream lag: " + (if .selected_homeassistant == .latest_homeassistant then "none" else "official pytest-homeassistant does not yet support the latest stable HA" end),
+              "- Upstream lag: " + (if .status == "normalize" then "existing pair normalized; newer candidate may still be in its 72-hour window" elif .selected_homeassistant == .latest_homeassistant then "none" else "official pytest-homeassistant does not yet support the latest stable HA" end),
               "- Official releases skipped (unavailable/yanked HA): " + (if (.skipped_unavailable_official | length) > 0 then (.skipped_unavailable_official | join(", ")) else "none" end),
               "- Publication: " + (if (.status == "update" or .status == "normalize") then "only after lock validation, tests, lint and PR safety checks" else "no PR proposed" end),
               "",
@@ -237,6 +237,15 @@ jobs:
         run: |
           set -euo pipefail
           uv lock --check
+
+      - name: Validate generated cutoff against actual locked artifacts
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A selected PyPI release may contain artifacts omitted by uv.lock.
+          # Reject inconsistent cutoffs before sealing a proposed update PR.
+          python scripts/ha_pair_cooldown.py check
 
       - name: Seal validated publication artifact
         if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
