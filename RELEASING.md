@@ -68,7 +68,8 @@ and publication remain manual, with no changes to the published ZIPs.
    After reviewing the workflow artifact, run again with `dry_run=false`
    to prepare the draft.
 4. Leave `release_ref` blank to select the current `main` commit, or enter
-   a same-repository branch, tag or full 40-character commit SHA. Forks,
+   the exact workflow main SHA. Other same-repository branches, tags and full
+   40-character SHAs require `dry_run=true`. Forks,
    pull-request pseudo-refs, abbreviated SHA and Git revision expressions
    are rejected. A selected SHA must be reachable via a repository branch/tag.
 5. Run it. The **read-only validation job** selects an immutable commit,
@@ -76,7 +77,7 @@ and publication remain manual, with no changes to the published ZIPs.
    its installable ZIP-root layout and calculates its SHA-256.
 6. Unless `dry_run=true`, the separate **write-scoped finalization job** checks the artifact digest,
    existing tag target and release state. If safe, it creates or reuses the
-   matching tag and creates/updates **only a draft**.
+   matching tag and creates a draft or reuses its identical ZIP.
 
 Do not run preparation against published `v0.5.0a4` on current `main`:
 it will refuse to modify that release. Create a new version first.
@@ -103,20 +104,15 @@ Home Assistant Marketplace, restart Home Assistant, confirm integration
 version and perform smoke tests on a real DKN Cloud device. Passing CI alone
 does not establish real-device functionality.
 
-## Recovery, reruns and emergency fallback
+## Recovery and reruns
 
-Preparation is idempotent for an **unpublished draft**: it may replace its
-ZIP while preserving manually edited release notes. It refuses an already
-published release or a tag pointing to another commit. If draft creation
-fails after the tag was created, rerun the same validated commit to recover.
-Never move or force-update a published tag.
+An unpublished draft's ZIP is reused only when its SHA-256 matches. Missing
+assets may be added; different or unverifiable existing assets fail closed.
+Manually edited notes are preserved. If draft creation fails after tag creation,
+rerun the same validated main snapshot; never move or force-update the tag.
 
-Emergency path: a maintainer can publish a release manually before adding
-the ZIP. The `release: published` handler can validate that tag and attach
-**one missing** `airzoneclouddaikin.zip`; it must not replace an already
-published ZIP or change release metadata. The release is publicly visible
-while this runs, so failure may require immediate maintainer action. Prefer
-draft-first for all routine releases.
+The `release: published` handler is an observer. A missing ZIP fails and requires
+maintainer investigation; it does not upload or repair published artifacts.
 
 To recover from a defective published version, prepare a **new version**.
 Do not silently overwrite its published artifacts or roll back a tag.
