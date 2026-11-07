@@ -48,6 +48,12 @@ jobs:
           python scripts/ha_minimum_policy.py \
             --github-output "$RUNNER_TEMP/ha-minimum-policy.out"
 
+      - name: Validate artifact-bounded cooldown policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ha_pair_cooldown.py check
+
       - name: Verify locked test environment
         shell: bash
         run: |
