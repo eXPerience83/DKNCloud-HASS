@@ -148,7 +148,7 @@ jobs:
             printf 'base_sha=%s\n' "$base_sha"
           } >> "$GITHUB_OUTPUT"
           cp "$plan_path" "$RUNNER_TEMP/plan.json"
-          if [[ "$status" != "current" && "$status" != "cooldown" && "$status" != "update" ]]; then
+          if [[ "$status" != "current" && "$status" != "cooldown" && "$status" != "update" && "$status" != "normalize" ]]; then
             echo "Unexpected updater plan status: $status" >&2
             exit 1
           fi
@@ -163,26 +163,33 @@ jobs:
               "- Latest available official pytest-homeassistant: `" + .latest_official + "`",
               "- Maturity gate: `" + (.cooldown_days | tostring) + " days`",
               "- Manual cooldown actually waived: `" + (.cooldown_overridden | tostring) + "`",
+              "- Scoped package policy: " + (if .status == "normalize" then "remove expired exception; no package movement" elif .cooldown_overridden then "fixed HA/pytest artifact cutoff only; transitives still mature" else "normal 72h; old exception removed" end),
               "- HA mature at: `" + .homeassistant_mature_at + "`",
               "- official pytest-homeassistant mature at: `" + .official_mature_at + "`",
               "- Pair mature at: `" + .mature_at + "`",
               "- Upstream lag: " + (if .selected_homeassistant == .latest_homeassistant then "none" else "official pytest-homeassistant does not yet support the latest stable HA" end),
               "- Official releases skipped (unavailable/yanked HA): " + (if (.skipped_unavailable_official | length) > 0 then (.skipped_unavailable_official | join(", ")) else "none" end),
-              "- Publication: " + (if .status == "update" then "only after lock validation, tests, lint and PR safety checks" else "no PR proposed" end),
+              "- Publication: " + (if (.status == "update" or .status == "normalize") then "only after lock validation, tests, lint and PR safety checks" else "no PR proposed" end),
               "",
               "No automerge. Minimum HA remains hash-locked at 2026.11.0 and independently tested; newer reviewed harness baselines must not silently raise it."
             ] | join("\n")
           ' "$plan_path" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Check initial scoped cooldown policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ha_pair_cooldown.py check
+
       - name: Preserve original lock
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
           cp uv.lock "$RUNNER_TEMP/uv.lock.before"
 
       - name: Update exact test pins
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -190,26 +197,31 @@ jobs:
             --plan "$RUNNER_TEMP/plan.json"
 
       - name: Generate targeted lock update
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
-          uv lock --upgrade-package homeassistant \
-            --upgrade-package pytest-homeassistant
+          if [[ "${{ steps.plan.outputs.status }}" == "normalize" ]]; then
+            uv lock
+          else
+            uv lock --upgrade-package homeassistant \
+              --upgrade-package pytest-homeassistant
+          fi
 
       - name: Validate generated lock delta
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
           "$PLANNER_PYTHON" scripts/ha_test_baseline_updater.py validate-lock \
             --before "$RUNNER_TEMP/uv.lock.before" \
             --after uv.lock \
+            --plan "$RUNNER_TEMP/plan.json" \
             --homeassistant "${{ steps.plan.outputs.homeassistant }}" \
             --official "${{ steps.plan.outputs.official }}"
 
       - name: Check generated working tree scope
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -220,14 +232,14 @@ jobs:
             awk '$2 != "pyproject.toml" && $2 != "uv.lock"')"
 
       - name: Check generated lock
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
           uv lock --check
 
       - name: Seal validated publication artifact
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         id: seal
         shell: bash
         env:
@@ -248,8 +260,8 @@ jobs:
               "- Manual cooldown actually waived: `" + (.cooldown_overridden | tostring) + "`",
               (if .cooldown_overridden then "- Manual waiver justification:\n\n" + $override_reason + "\n" else "- Maturity policy: normal" end),
               "- Official releases skipped (unavailable/yanked HA): " + (if (.skipped_unavailable_official | length) > 0 then (.skipped_unavailable_official | join(", ")) else "none" end),
-              "- Lock command: `uv lock --upgrade-package homeassistant --upgrade-package pytest-homeassistant`",
-              "- Lock-delta validation: passed; only Home Assistant, official pytest-homeassistant, and allowed local dependency specifiers changed.",
+              "- Lock command: " + (if .status == "normalize" then "`uv lock` (metadata-only)" else "`uv lock --upgrade-package homeassistant --upgrade-package pytest-homeassistant`" end),
+              "- Lock-delta validation: passed; scoped cutoff metadata and reviewed HA/pytest dependency closure only.",
               "- Full pytest and statement coverage: `__PYTEST_RESULT__`", "- Supported HA minimum remains at the independently tested 2026.11.0 baseline; updating it requires a separate explicit decision.",
               "- Ruff lint and Ruff format checks: passed.",
               "- No automerge is enabled.",
@@ -265,7 +277,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload sealed publication artifact
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ha-test-baseline-${{ github.run_id }}
@@ -274,7 +286,7 @@ jobs:
           retention-days: 3
 
       - name: Install locked test environment
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -282,7 +294,7 @@ jobs:
           uv pip check --python .venv/bin/python
 
       - name: Run full normal test suite
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         id: tests
         shell: bash
         run: |
@@ -300,7 +312,7 @@ jobs:
           printf 'pytest_result=%s\n' "$result" >> "$GITHUB_OUTPUT"
 
       - name: Verify Ruff lint and format on proposed baseline
-        if: ${{ steps.plan.outputs.status == 'update' }}
+        if: ${{ contains(fromJSON('["update", "normalize"]'), steps.plan.outputs.status) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -310,7 +322,7 @@ jobs:
   publication:
     needs: validation
     if: >-
-      needs.validation.outputs.status == 'update' &&
+      (needs.validation.outputs.status == 'update' || needs.validation.outputs.status == 'normalize') &&
       (github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.publish &&
       github.ref == 'refs/heads/main'))
@@ -370,6 +382,7 @@ jobs:
           BASE_SHA: ${{ needs.validation.outputs.base_sha }}
           HOMEASSISTANT_VERSION: ${{ needs.validation.outputs.homeassistant }}
           OFFICIAL_VERSION: ${{ needs.validation.outputs.official }}
+          PLAN_STATUS: ${{ needs.validation.outputs.status }}
         run: |
           set -euo pipefail
           sanitize_ref() {
@@ -377,7 +390,15 @@ jobs:
           }
           ha="$(printf '%s' "$HOMEASSISTANT_VERSION" | sanitize_ref)"
           official="$(printf '%s' "$OFFICIAL_VERSION" | sanitize_ref)"
-          branch="automation/ha-test-baseline-${ha}-official-${official}"
+          if [[ "$PLAN_STATUS" == "normalize" ]]; then
+            branch="automation/ha-test-baseline-normalize-${ha}"
+            pr_title="chore(deps): normalize mature HA test-pair cooldown"
+            commit_title="chore(deps): remove mature HA/pytest package cutoffs"
+          else
+            branch="automation/ha-test-baseline-${ha}-official-${official}"
+            pr_title="chore(deps): propose compatible HA/official pytest-homeassistant test baseline"
+            commit_title="chore(deps): propose reviewed HA/official pytest-homeassistant test baseline"
+          fi
           git check-ref-format "refs/heads/$branch"
           existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$branch" \
             --state all --json url,state --jq '.[] | "\(.state) \(.url)"')"
@@ -397,9 +418,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml uv.lock
-          git commit -m "chore(deps): propose reviewed HA/official pytest-homeassistant test baseline"
+          git commit -m "$commit_title"
           gh auth setup-git
           git push origin "HEAD:refs/heads/$branch"
           gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$branch" \
-            --title "chore(deps): propose compatible HA/official pytest-homeassistant test baseline" \
+            --title "$pr_title" \
             --body-file "$RUNNER_TEMP/pr-body-final.md"
