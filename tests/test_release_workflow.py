@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -124,3 +127,93 @@ def test_release_draft_only_and_immutable_published_assets() -> None:
     assert "gh release upload" in workflow
     assert "Published release already contains airzoneclouddaikin.zip" in workflow
     assert re.search(r"overwrite_files: true", workflow)  # draft updates only
+
+
+@pytest.mark.parametrize(
+    ("total", "init", "api", "climate", "missing", "pytest_exit", "expected_exit"),
+    [
+        (74.0, 73.0, 75.0, 65.0, False, 0, 0),
+        (73.99, 80.0, 80.0, 80.0, False, 0, 1),
+        (80.0, 72.99, 80.0, 80.0, False, 0, 1),
+        (80.0, 80.0, 74.99, 80.0, False, 0, 1),
+        (80.0, 80.0, 80.0, 64.99, False, 0, 1),
+        (80.0, 80.0, 80.0, 80.0, True, 0, 1),
+        (80.0, 80.0, 80.0, 80.0, False, 2, 2),
+    ],
+)
+def test_release_test_step_enforces_coverage_and_test_failures(
+    tmp_path: Path,
+    total: float,
+    init: float,
+    api: float,
+    climate: float,
+    missing: bool,
+    pytest_exit: int,
+    expected_exit: int,
+) -> None:
+    """Execute the release shell and real coverage checker with controlled pytest."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    step = text.split("      - name: Run locked test suite\n", 1)[1].split(
+        "      - name:", 1
+    )[0]
+    shell = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    shutil.copy(ROOT / "scripts/check_coverage.py", scripts)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv = bin_dir / "uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        + textwrap.dedent("""\
+            import os
+            import sys
+            from pathlib import Path
+
+            args = sys.argv[1:]
+            assert args[:4] == ["run", "--locked", "--no-sync", "python"]
+            args = args[4:]
+            if args[:2] == ["-m", "pytest"]:
+                if "--cov-report=json:coverage.json" in args:
+                    Path("coverage.json").write_bytes(Path("controlled-coverage.json").read_bytes())
+                sys.exit(PYTEST_EXIT)
+            os.execv(sys.executable, [sys.executable, *args])
+            """).replace("PYTEST_EXIT", str(pytest_exit)),
+        encoding="utf-8",
+    )
+    uv.chmod(0o755)
+    report = {
+        "totals": {"percent_covered": total},
+        "files": {
+            f"custom_components/airzoneclouddaikin/{module}": {
+                "summary": {
+                    "percent_covered": percent,
+                    "num_statements": 100,
+                    "missing_lines": 100 - int(percent),
+                }
+            }
+            for module, percent in (
+                ("__init__.py", init),
+                ("airzone_api.py", api),
+                ("climate.py", climate),
+            )
+        },
+    }
+    if missing:
+        del report["files"]["custom_components/airzoneclouddaikin/climate.py"]
+    (tmp_path / "controlled-coverage.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+    result = subprocess.run(
+        ["bash", "-c", shell],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == expected_exit, result.stdout + result.stderr
+    if expected_exit == 1:
+        assert "Coverage gate:" in result.stderr

@@ -315,7 +315,15 @@ jobs:
           PYTHONPATH: .
         run: |
           set -euo pipefail
-          uv run --locked --no-sync python -m pytest -q
+          uv run --locked --no-sync python -m pytest -q \
+            --cov=custom_components.airzoneclouddaikin \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=json:coverage.json
+          uv run --locked --no-sync python scripts/check_coverage.py \
+            coverage.json --min-total 74.0 \
+            --module-min __init__.py=73.0 \
+            --module-min airzone_api.py=75.0 \
+            --module-min climate.py=65.0
 
       - name: Build release ZIP (integration root at ZIP root)
         if: steps.event.outputs.skip_release != 'true'
