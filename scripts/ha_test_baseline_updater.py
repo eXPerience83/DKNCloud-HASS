@@ -302,10 +302,14 @@ def update_pyproject(text: str, plan: BaselinePlan) -> str:
 
     project = tomllib.loads(result)
     pins = _exact_test_pins(project)
-    if pins != {
-        HOMEASSISTANT: plan.selected_homeassistant,
-        OFFICIAL: plan.selected_official,
-    } or configured_cutoffs(project) != next_cutoffs:
+    if (
+        pins
+        != {
+            HOMEASSISTANT: plan.selected_homeassistant,
+            OFFICIAL: plan.selected_official,
+        }
+        or configured_cutoffs(project) != next_cutoffs
+    ):
         raise UpdaterError("updated pyproject does not match reviewed plan")
     return result
 
