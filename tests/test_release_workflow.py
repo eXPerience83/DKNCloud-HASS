@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -124,9 +123,10 @@ def test_release_draft_only_and_immutable_published_assets() -> None:
     assert "draft: true" in workflow
     assert "zip_sha256" in workflow
     assert "scripts/validate_marketplace_release.py" in workflow
-    assert "gh release upload" in workflow
-    assert "Published release already contains airzoneclouddaikin.zip" in workflow
-    assert re.search(r"overwrite_files: true", workflow)  # draft updates only
+    assert "gh release upload" not in workflow
+    assert "automatic repair is forbidden" in workflow
+    assert "overwrite_files: true" not in workflow
+    assert "overwrite_files: false" in workflow
 
 
 @pytest.mark.parametrize(

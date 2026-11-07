@@ -136,3 +136,23 @@ Updater PRs use `GITHUB_TOKEN`, which does not trigger their normal PR workflows
 A repository writer must close and reopen the PR to trigger required CI, then
 review the exact checked HEAD before merging. Never bypass required checks.
 Manual waiver reasons are preserved literally in the review artifact.
+
+## Reviewed main preparation and immutable retries
+
+Dispatch Release from `main`. A non-dry run must select the exact main commit
+that supplied the workflow. Other branch, tag and historical references are
+validation-only (`dry_run=true`). A future beta can therefore be rehearsed by
+exact SHA without creating a tag, draft or published asset. Merge its reviewed
+PR and wait for main CI before preparing its draft.
+
+Immediately before writes, trusted workflow code checks that main has not moved
+and that the latest GitHub Actions results for all eight required jobs on that
+exact SHA are successful. Missing, pending and failed reruns fail closed.
+Release uses no dependency cache. Publication remains a separate manual step;
+wait for the entire workflow to finish before publishing or editing the draft.
+
+ZIP timestamps come from the selected commit. An existing draft ZIP is reused
+only when GitHub reports the same SHA-256; an unverifiable or different asset
+is never overwritten. Published events only check asset presence and cannot
+repair or replace assets. Older tags retain their historical workflow code;
+this policy does not retroactively attest those releases.

@@ -59,6 +59,10 @@ jobs:
               echo "Published release has multiple airzoneclouddaikin.zip assets; inspect manually" >&2
               exit 1
             fi
+            if (( ${#matches[@]} == 0 )); then
+              echo "Published release is missing its validated ZIP; automatic repair is forbidden." >&2
+              exit 1
+            fi
             printf 'event_mode=published-fallback\nselected_ref=refs/tags/%s\nskip_release=%s\n' "$EVENT_TAG" "$( (( ${#matches[@]} == 1 )) && echo true || echo false )" >> "$GITHUB_OUTPUT"
             if (( ${#matches[@]} == 1 )); then
               {
@@ -195,6 +199,19 @@ jobs:
             > "$RUNNER_TEMP/ha_pair_cooldown_trusted.py"
           test -s "$RUNNER_TEMP/ha_pair_cooldown_trusted.py"
 
+      - name: Enforce reviewed main preparation policy
+        if: steps.event.outputs.skip_release != 'true'
+        shell: bash
+        env:
+          SELECTED_COMMIT: ${{ steps.release-commit.outputs.release_commit }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          python scripts/release_main_policy.py
+
       - name: Check out selected snapshot
         if: steps.event.outputs.skip_release != 'true'
         shell: bash
@@ -215,12 +232,7 @@ jobs:
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version-file: pyproject.toml
-          enable-cache: true
-          cache-dependency-glob: |
-            .python-version
-            pyproject.toml
-            uv.lock
-          cache-suffix: release
+          enable-cache: false
 
       - name: Verify bounded cooldown and forbid stable-release exception
         if: steps.event.outputs.skip_release != 'true'
@@ -332,7 +344,8 @@ jobs:
           RELEASE_COMMIT: ${{ steps.release-commit.outputs.release_commit }}
         run: |
           set -euo pipefail
-          git archive --format=zip --output=airzoneclouddaikin.zip \
+          commit_time="$(git show -s --format=%cI "$RELEASE_COMMIT")"
+          git archive --format=zip --mtime="$commit_time" --output=airzoneclouddaikin.zip \
             "${RELEASE_COMMIT}:custom_components/airzoneclouddaikin"
 
       - name: Validate ZIP for HACS / Marketplace
@@ -382,17 +395,18 @@ jobs:
 
   finalize-release:
     needs: validate-release
-    if: needs.validate-release.outputs.skip_release != 'true' && (github.event_name != 'workflow_dispatch' || inputs.dry_run != true)
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run != true && needs.validate-release.outputs.skip_release != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+      checks: read
 
     steps:
-      - name: Check out validated commit
+      - name: Check out trusted finalization policy
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.validate-release.outputs.release_commit }}
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -432,12 +446,26 @@ jobs:
             exit 1
           fi
 
+      - name: Recheck main and required checks before writes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SELECTED_COMMIT: ${{ needs.validate-release.outputs.release_commit }}
+          TRUSTED_WORKFLOW_SHA: ${{ github.workflow_sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          python scripts/release_main_policy.py --finalize
+
       - name: Preflight release state
         if: needs.validate-release.outputs.event_mode == 'prepare'
         id: preflight
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          ZIP_SHA256: ${{ needs.validate-release.outputs.zip_sha256 }}
           RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
           VALIDATED_COMMIT: ${{ needs.validate-release.outputs.release_commit }}
         run: |
@@ -520,7 +548,15 @@ jobs:
                       "match the validated commit"
                   )
 
-          print("release_mode=update")
+          assets = release.get("assets")
+          if not isinstance(assets, list):
+              raise SystemExit("Draft asset list is missing")
+          assets = [asset for asset in assets if asset.get("name") == "airzoneclouddaikin.zip"]
+          if len(assets) > 1:
+              raise SystemExit("Duplicate draft ZIP assets")
+          if assets and (assets[0].get("state") != "uploaded" or assets[0].get("digest") != "sha256:" + os.environ["ZIP_SHA256"]):
+              raise SystemExit("Existing draft ZIP differs or has no verifiable digest; refusing replacement")
+          print("release_mode=reuse" if assets else "release_mode=update")
           print(f"release_url={url}")
           print(f"tag_exists={os.environ['TAG_EXISTS']}")
           print(f"create_tag={str(os.environ['TAG_EXISTS'] != 'true').lower()}")
@@ -566,7 +602,7 @@ jobs:
           prerelease: ${{ needs.validate-release.outputs.prerelease }}
           generate_release_notes: true
           files: airzoneclouddaikin.zip
-          overwrite_files: true
+          overwrite_files: false
           fail_on_unmatched_files: true
 
       - name: Update draft release asset
@@ -578,7 +614,7 @@ jobs:
           draft: true
           prerelease: ${{ needs.validate-release.outputs.prerelease }}
           files: airzoneclouddaikin.zip
-          overwrite_files: true
+          overwrite_files: false
           fail_on_unmatched_files: true
 
       - name: Write release summary
@@ -605,8 +641,10 @@ jobs:
           fi
           if [[ "$RELEASE_MODE" == "new" ]]; then
             release_action="Created a new draft release"
+          elif [[ "$RELEASE_MODE" == "reuse" ]]; then
+            release_action="Reused the identical draft ZIP without modification"
           else
-            release_action="Updated the existing draft release asset"
+            release_action="Added the missing ZIP to the existing draft"
           fi
           {
             echo "## Prepare Release"
@@ -623,27 +661,3 @@ jobs:
             echo
             echo "Next manual step: Review the draft release and publish it from the GitHub Releases page."
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload missing published release ZIP
-        if: needs.validate-release.outputs.event_mode == 'published-fallback'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_ID: ${{ github.event.release.id }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          set -euo pipefail
-          asset_ids="$(mktemp)"
-          trap 'rm -f "$asset_ids"' EXIT
-          gh api --paginate --jq '.[] | select(.name == "airzoneclouddaikin.zip") | .id' \
-            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" > "$asset_ids"
-          mapfile -t matches < "$asset_ids"
-          if (( ${#matches[@]} > 1 )); then
-            echo "Published release has multiple airzoneclouddaikin.zip assets; inspect manually" >&2
-            exit 1
-          fi
-          if (( ${#matches[@]} == 1 )); then
-            echo "Published release already contains airzoneclouddaikin.zip; skipping upload." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          gh release upload "$RELEASE_TAG" airzoneclouddaikin.zip
