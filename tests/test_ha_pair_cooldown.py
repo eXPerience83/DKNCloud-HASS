@@ -132,6 +132,16 @@ def test_rejects_extra_package_or_only_one_member_of_pair() -> None:
         validate_policy(project, lock, now=NOW)
 
 
+def test_empty_package_exception_is_rejected() -> None:
+    """An empty section must not silently survive an updater transition."""
+    project = _project()
+    lock = _lock()
+    project["tool"]["uv"]["exclude-newer-package"] = {}
+    lock["options"]["exclude-newer-package"] = {}
+    with pytest.raises(CooldownPolicyError, match="exact HA/official pytest pair"):
+        validate_policy(project, lock, now=NOW)
+
+
 def test_rejects_source_lock_mismatch_and_false_global_override() -> None:
     lock = _lock()
     lock["options"]["exclude-newer-package"]["homeassistant"] = False
