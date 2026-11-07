@@ -47,7 +47,9 @@ def configured_cutoffs(project: dict[str, Any]) -> dict[str, str]:
     if configured is None:
         return {}
     if not isinstance(configured, dict) or set(configured) != set(PAIR):
-        raise CooldownPolicyError("only the exact HA/official pytest pair may be exempted")
+        raise CooldownPolicyError(
+            "only the exact HA/official pytest pair may be exempted"
+        )
     for value in configured.values():
         parse_cutoff(value)
     return configured
@@ -114,7 +116,10 @@ def validate_policy(
             raise CooldownPolicyError(f"locked {name} version does not match")
         record = records[0]
         source = record.get("source")
-        if not isinstance(source, dict) or source.get("registry") != "https://pypi.org/simple":
+        if (
+            not isinstance(source, dict)
+            or source.get("registry") != "https://pypi.org/simple"
+        ):
             raise CooldownPolicyError(f"{name} must be sourced from PyPI")
         distributions = []
         if "sdist" in record:
@@ -129,7 +134,9 @@ def validate_policy(
         for artifact in distributions:
             if (
                 not isinstance(artifact, dict)
-                or not re.fullmatch(r"sha256:[a-f0-9]{64}", str(artifact.get("hash", "")))
+                or not re.fullmatch(
+                    r"sha256:[a-f0-9]{64}", str(artifact.get("hash", ""))
+                )
                 or not isinstance(artifact.get("upload-time"), str)
             ):
                 raise CooldownPolicyError(f"unknown {name} artifact or hash")
