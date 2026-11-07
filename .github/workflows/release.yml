@@ -345,7 +345,7 @@ jobs:
         run: |
           set -euo pipefail
           commit_time="$(git show -s --format=%cI "$RELEASE_COMMIT")"
-          git archive --format=zip --mtime="$commit_time" --output=airzoneclouddaikin.zip \
+          TZ=UTC git archive --format=zip --mtime="$commit_time" --output=airzoneclouddaikin.zip \
             "${RELEASE_COMMIT}:custom_components/airzoneclouddaikin"
 
       - name: Validate ZIP for HACS / Marketplace
