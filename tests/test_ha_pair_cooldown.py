@@ -82,9 +82,12 @@ def test_known_official_pair_cutoffs_are_valid_and_artifact_bounded() -> None:
 
 
 def test_normal_policy_has_no_exempt_packages() -> None:
-    assert validate_policy(
-        _project(scoped=False), _lock(scoped=False), now=NOW, stable_release=True
-    ) == {}
+    assert (
+        validate_policy(
+            _project(scoped=False), _lock(scoped=False), now=NOW, stable_release=True
+        )
+        == {}
+    )
 
 
 def test_stable_release_rejects_scoped_maturity_exception() -> None:
@@ -169,9 +172,10 @@ def test_rejects_cutoff_after_current_time() -> None:
 
 
 def test_ceil_uploaded_artifact_timestamp_is_one_second() -> None:
-    assert cutoff_for_upload(
-        datetime.fromisoformat("2026-11-05T13:03:49.664+00:00")
-    ) == HA_CUTOFF
+    assert (
+        cutoff_for_upload(datetime.fromisoformat("2026-11-05T13:03:49.664+00:00"))
+        == HA_CUTOFF
+    )
 
 
 def test_configured_cutoffs_reject_non_exact_global_policy() -> None:
