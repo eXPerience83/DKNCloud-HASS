@@ -152,3 +152,9 @@ only when GitHub reports the same SHA-256; an unverifiable or different asset
 is never overwritten. Published events only check asset presence and cannot
 repair or replace assets. Older tags retain their historical workflow code;
 this policy does not retroactively attest those releases.
+
+Before reporting success, finalization rereads the remote draft and all assets
+and requires the validated SHA-256 and prerelease classification. A concurrent
+upload skipped by the action cannot masquerade as a successful validated ZIP.
+Lint always checks the triggering SHA; manual runs select their workflow branch
+without a separate checkout override that could mislabel another commit's check.
