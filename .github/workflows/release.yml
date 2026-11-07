@@ -210,6 +210,13 @@ jobs:
             uv.lock
           cache-suffix: release
 
+      - name: Verify bounded cooldown and forbid stable-release exception
+        if: steps.event.outputs.skip_release != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ha_pair_cooldown.py check --stable-release-guard
+
       - name: Set up locked validation environment
         if: steps.event.outputs.skip_release != 'true'
         shell: bash
