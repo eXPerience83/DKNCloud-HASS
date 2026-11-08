@@ -1,9 +1,57 @@
 # Changelog
 
+## [0.5.0a6] - 2026-11-08
+
+> **Experimental alpha for testing DKN Cloud for Home Assistant; not stable.**
+> **Breaking change:** Minimum Home Assistant **2026.11.0** (Python 3.14).
+> Earlier HA releases must stay on a compatible older DKN release; the
+> published `v0.5.0a5` and stable `v0.4.8` artifacts remain unchanged.
+> Back up Home Assistant and preserve a rollback path before upgrading.
+> Automated compatibility and package checks pass, but **real-device and
+> native Marketplace/HACS migration acceptance remain pending** (#121).
+> Select this prerelease explicitly; it is not a stable compatibility claim.
+
+### Added
+- Independently hash-lock the minimum Home Assistant 2026.11.0 plus official
+  `pytest-homeassistant==2026.11.0` environment and run its full test suite
+  on PRs and `main` without reusing the main `uv.lock` graph (#163, #170).
+- Document and activate protected `main` and release-tag policies, including
+  required CI, CodeQL and immutable release assets (#174, #179).
+
+### Changed
+- **Breaking change:** Raise the Home Assistant minimum from 2026.10.4 to
+  **2026.11.0**, retire PHACC, and migrate the locked integration tests to the
+  matching first-party `pytest-homeassistant` harness (#163, #170).
+- Enforce the standard **72-hour maturity window** for uv dependency locks.
+  Time-limited HA/pytest exceptions were normalized after the artifacts
+  matured; no package versions or hashes changed during cleanup (#175, #184).
+- Make the daily compatibility canary and baseline updater test compatible
+  stable HA/official pytest pairs independently; the updater only opens
+  reviewable PRs, never merging or publishing by itself (#170, #177, #180).
+
+### Fixed
+- Harden release preparation against unreviewed snapshots, concurrent asset
+  changes and duplicate/overwritten ZIPs; require an exact checked `main`
+  commit, locked tests, coverage and a reproducible archive (#176, #178,
+  #181, #182).
+- Ensure the release ZIP's timestamps are independent of the runner timezone
+  and restrict workflow security tooling to mature artifacts (#182, #183).
+
+### Security
+- Require verified main-branch checks before draft creation, constrain
+  release permissions, protect version tags and prevent rewriting published
+  release assets (#178, #179, #181).
+
+> **Known limitations:** Real hardware, native Marketplace installation and
+> HACS migration still require acceptance on HA 2026.11 (#121). App-originated
+> state refresh (#101), real-account reauthentication (#105) and Sleep lifecycle
+> behavior (#171) remain under investigation. HEAT_COOL is experimental and
+> opt-in (#154). CI is synthetic and is not physical-device certification.
+
 ## [0.5.0a5] - 2026-11-05
 
 > **Experimental alpha for DKN Cloud for Home Assistant. Not a stable release.**
-> Minimum supported Home Assistant: **2026.11.0** (Python 3.14).
+> Minimum supported Home Assistant: **2026.10.4** (Python 3.14).
 > Home Assistant **2026.11.0 stable and its built-in Marketplace have not yet
 > completed real-device acceptance testing**; do not advertise certified
 > 2026.11 compatibility on the strength of CI alone.
@@ -33,9 +81,9 @@
   and Switch power handling, and shared entity-state/preset helpers while
   retaining existing backend command contracts and unique IDs (#158, #159,
   #160).
-- Refresh documentation for Home Assistant 2026.11's Marketplace (#162).
-- **Breaking change:** Require HA 2026.11.0+ and replace PHACC with the official
-  `pytest-homeassistant==2026.11.0` harness for locked tests (#163).
+- Refresh installation and compatibility documentation for Home Assistant
+  2026.11's Marketplace without raising the HA 2026.10.4 minimum or changing
+  the locked PHACC 0.13.375 test baseline (#162).
 
 ### Fixed
 - Restore Home Assistant native reauthentication after credential changes;
@@ -63,8 +111,8 @@
 > (#105); HEAT_COOL remains experimental and capability-gated (#154).
 > Real-device and Marketplace checks on HA 2026.11 are tracked in #121.
 > The official `pytest-homeassistant==2026.11.0` publishing incident
-> (upstream #190470) was resolved on 2026-11-05. Stable HA 2026.11 CI and
-> real-device/Marketplace acceptance remain separate release gates.
+> (upstream #190470) affects optional future test-harness migration (#163),
+> **not** DKN's current HA 2026.10.4/PHACC release checks.
 
 ## [0.5.0a4] - 2026-10-30
 
