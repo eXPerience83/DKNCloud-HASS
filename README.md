@@ -23,7 +23,7 @@ Some features depend on your device and firmware. Experimental `HEAT_COOL` contr
 
 ## Installation
 
-Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**. DKN Cloud's complete HA 2026.11 automated compatibility suite and real-device smoke test are **still pending**; appearing in Marketplace does not by itself verify compatibility. See the [validation checklist](./docs/ha-2026.11-smoke.md).
+Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**. Automated checks now pass on the locked HA 2026.11 baseline, including a separate hash-locked minimum-version test suite, but **real-device and native Marketplace/HACS migration acceptance are still pending**. An optional alpha prerelease is not a stable compatibility certification. See the [validation checklist](./docs/ha-2026.11-smoke.md).
 
 ### Install with Marketplace
 
