@@ -429,6 +429,10 @@ Observed behavior:
 Integration policy (recommended):
 - Auto-exit Sleep (sleep → occupied) before HA-driven wake commands so backend state matches user-visible behavior.
 - Optionally (disabled by default): treat long-running Sleep sessions as “home/occupied” in the UI and perform a best-effort one-off backend cleanup write, **only once the backend reports `power=0`**.
+- When the UI displays effective Home but the latest raw backend scenary is still an expired `sleep`, an explicit Home selection must send `occupied` rather than being suppressed as a no-op.
+- To request a fresh Sleep after that stale terminal state, the integration first writes `occupied` and then `sleep` under the device write lock. This matches the observed need for a real Home-to-Sleep transition to re-arm the timer.
+- Background cleanup never uses devices restored from a failed-installation fallback snapshot. Its device write lock must be shared with interactive commands, and the current session and power status must be rechecked after acquiring that lock.
+- The existing ten-minute cleanup grace and the separate HA wake-before-expiry policy are unchanged pending focused real-device tests. HTTP acceptance alone does not prove subsequent cloud readback convergence.
 
 ---
 
