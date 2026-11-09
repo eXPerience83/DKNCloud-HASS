@@ -50,7 +50,7 @@ class PusherClient:
         try:
             result = json.loads(value) if isinstance(value, str) else value
         except ValueError, TypeError:
-            raise PusherProtocolError("Invalid protocol JSON") from None
+            result = None
         if not isinstance(result, dict):
             raise PusherProtocolError("Invalid protocol object")
         return result

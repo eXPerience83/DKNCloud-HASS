@@ -150,6 +150,7 @@ class AirzoneAPI:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        data: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> Any:
         """HTTP request helper (never logs full URLs with secrets)."""
@@ -164,7 +165,13 @@ class AirzoneAPI:
         safe_error: Exception
         try:
             async with self._session.request(
-                method, url, params=params, json=json, headers=headers, timeout=timeout
+                method,
+                url,
+                params=params,
+                json=json,
+                headers=headers,
+                timeout=timeout,
+                **({"data": data} if data is not None else {}),
             ) as resp:
                 resp.raise_for_status()
                 empty_body = resp.status == 204 or resp.content_length == 0
@@ -221,6 +228,7 @@ class AirzoneAPI:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        data: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
         retry: bool = True,
     ) -> Any:
@@ -231,9 +239,8 @@ class AirzoneAPI:
         """
         attempt = 0
         while True:
-            now = self._now()
-            if self._cooldown_until > now:
-                await self._sleep(self._cooldown_until - now)
+            while self._cooldown_until > self._now():
+                await self._sleep(self._cooldown_until - self._now())
 
             try:
                 return await self._request(
@@ -242,6 +249,7 @@ class AirzoneAPI:
                     params=params,
                     json=json,
                     extra_headers=extra_headers,
+                    **({"data": data} if data is not None else {}),
                 )
             except ClientResponseError as cre:
                 status = cre.status or 0
@@ -272,7 +280,9 @@ class AirzoneAPI:
                                 delay = max(delay, seconds)
                         except Exception:  # noqa: BLE001
                             pass
-                        self._cooldown_until = max(self._cooldown_until, now + delay)
+                        self._cooldown_until = max(
+                            self._cooldown_until, self._now() + delay
+                        )
                     if not retry or attempt >= _MAX_RETRIES:
                         raise
                     _LOGGER.debug(
@@ -314,6 +324,24 @@ class AirzoneAPI:
     # --------------------------
     # Public API
     # --------------------------
+    async def authorize_channel(self, socket_id: str, channel: str) -> str:
+        """Authorize a private Channels subscription using the current token."""
+        response = await self._authed_request_with_retries(
+            "POST",
+            "/pusher/auth",
+            data=self._auth_params()
+            | {"socket_id": socket_id, "channel_name": channel},
+            extra_headers={"X-Requested-With": "XMLHttpRequest"},
+            retry=False,
+        )
+        if (
+            not isinstance(response, dict)
+            or not isinstance(response.get("auth"), str)
+            or not response["auth"]
+        ):
+            raise ValueError("Invalid channel authorization response")
+        return response["auth"]
+
     async def request_information(self, device_id: str) -> Any:
         """Request fresh information once; the scheduler owns retry timing."""
         return await self._authed_request_with_retries(
@@ -363,13 +391,16 @@ class AirzoneAPI:
         except Exception:  # noqa: BLE001
             return
 
-    async def fetch_installations(self) -> list[dict[str, Any]] | None:
+    async def fetch_installations(
+        self, *, retry: bool = True
+    ) -> list[dict[str, Any]] | None:
         """GET /installation_relations with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {"format": "json"}
         resp = await self._authed_request_with_retries(
             "GET",
             API_INSTALLATION_RELATIONS,
             params=params,
+            retry=retry,
         )
         if isinstance(resp, dict) and "installation_relations" in resp:
             relations = resp["installation_relations"]

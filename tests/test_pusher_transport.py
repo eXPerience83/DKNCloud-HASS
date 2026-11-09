@@ -115,3 +115,9 @@ async def test_remote_error_never_enters_exception_text():
 def test_invalid_object_has_sanitized_error(value):
     with pytest.raises(PusherProtocolError):
         PusherClient._object(value)
+
+
+def test_invalid_json_exception_has_no_sensitive_decoder_context():
+    with pytest.raises(PusherProtocolError) as error:
+        PusherClient._object("synthetic-sensitive-invalid-json")
+    assert error.value.__context__ is None

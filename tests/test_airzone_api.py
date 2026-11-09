@@ -743,3 +743,70 @@ async def test_information_429_sets_shared_pause_without_retry(monkeypatch):
     assert api._request.await_count == 1
     assert api._cooldown_until == 120
     assert sleeps == []
+
+
+async def test_second_caller_rechecks_extended_shared_cooldown(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 20
+    now = [0.0]
+    monkeypatch.setattr(api, "_now", lambda: now[0])
+
+    async def sleep(delay):
+        sleeps.append(delay)
+        now[0] += delay
+        if len(sleeps) == 1:
+            api._cooldown_until = 50
+
+    monkeypatch.setattr(api, "_sleep", sleep)
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert sleeps == [20, 30]
+    assert now[0] == 50
+
+
+async def test_delayed_429_sets_pause_from_response_time(monkeypatch):
+    api, _ = _make_api(monkeypatch, [])
+    now = [0.0]
+    monkeypatch.setattr(api, "_now", lambda: now[0])
+
+    async def request(*args, **kwargs):
+        now[0] = 35
+        raise _client_response_error(429, {"Retry-After": "120"})
+
+    monkeypatch.setattr(api, "_request", request)
+    with pytest.raises(ClientResponseError):
+        await api.request_information("fake")
+    assert api._cooldown_until == 155
+
+
+async def test_authorization_uses_form_body_without_credential_query(
+    socket_enabled, aiohttp_server, monkeypatch
+):
+    async def handler(request):
+        assert not request.query
+        assert request.content_type == "application/x-www-form-urlencoded"
+        assert dict(await request.post()) == {
+            "user_email": "synthetic@example.invalid",
+            "user_token": "synthetic-token",
+            "socket_id": "1.2",
+            "channel_name": "private-fake",
+        }
+        return web.json_response({"auth": "synthetic-signature"})
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", "/pusher/auth", handler)
+    async with ClientSession() as session:
+        api = AirzoneAPI("synthetic@example.invalid", session, token="synthetic-token")
+        assert (
+            await api.authorize_channel("1.2", "private-fake") == "synthetic-signature"
+        )
+
+
+async def test_second_caller_waits_after_nonretrying_429(monkeypatch):
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"}), {}]
+    )
+    with pytest.raises(ClientResponseError):
+        await api.request_information("fake")
+    assert api._request.await_count == 1
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert sleeps == [120]
+    assert api._request.await_count == 2
