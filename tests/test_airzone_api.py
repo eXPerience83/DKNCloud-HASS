@@ -444,7 +444,7 @@ async def test_async_set_scenary_uses_wrapped_payload() -> None:
     await api.async_set_scenary("123", "sleep")
 
     api.put_device_fields.assert_awaited_once_with(
-        "123", {"device": {"scenary": "sleep"}}
+        "123", {"device": {"scenary": "sleep"}}, retry=True
     )
 
 

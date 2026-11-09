@@ -45,10 +45,11 @@ from .const import (
 )
 from .helpers import (
     acquire_device_lock,
+    async_auto_exit_sleep_if_needed,
     confirm_optimistic,
     device_supports_heat_cool,
     expire_optimistic,
-    optimistic_set,
+    optimistic_set as optimistic_set,
 )
 from .push_adapter import build_verified_adapter
 from .sync_manager import SyncManager
@@ -685,55 +686,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     or getattr(bucket.get("sync_manager"), "_auth_failed", False)
                 ):
                     return
-                scene_revision = bucket.get("scene_revisions", {}).get(dev_id, 0)
-                try:
-                    async with acquire_device_lock(hass, entry.entry_id, dev_id):
-                        current = (coordinator.data or {}).get(dev_id, {})
-                        overlay = (
-                            bucket.get("optimistic", {}).get(dev_id, {}).get("scenary")
-                        )
-                        if bucket.get("scene_revisions", {}).get(
-                            dev_id, 0
-                        ) != scene_revision or (
-                            overlay and overlay.get("value") != SCENARY_SLEEP
-                        ):
-                            # A manual scene supersedes cleanup for this sleep session.
-                            tracking.force_exit_requested = True
-                            continue
-                        if (
-                            bucket.get("closing")
-                            or str(current.get("scenary") or "").strip().lower()
-                            != SCENARY_SLEEP
-                            or not current.get("sleep_expired")
-                        ):
-                            continue
-                        await api.async_set_scenary(dev_id, SCENARY_HOME)
-                except asyncio.CancelledError:
-                    raise
-                except ClientResponseError as cre:
-                    status = cre.status
-                    _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary (HTTP %s).",
-                        status,
-                    )
-                    continue
-                except TimeoutError:
-                    _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary (timeout)",
-                    )
-                    continue
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary (%s)",
-                        type(err).__name__,
-                    )
-                    continue
-
+                await async_auto_exit_sleep_if_needed(
+                    hass,
+                    entry_id=entry.entry_id,
+                    device_id=dev_id,
+                    device=dev,
+                    coordinator=coordinator,
+                    reason="expiry",
+                    is_device_on=lambda: True,
+                    allow_away_handling=False,
+                )
                 tracking.force_exit_requested = True
-                optimistic_set(hass, entry.entry_id, dev_id, "scenary", SCENARY_HOME)
-                if manager := bucket.get("sync_manager"):
-                    manager.request_recovery(dev_id)
-                refresh_needed = True
 
             if refresh_needed and bucket.get("sync_manager") is None:
                 hass.async_create_task(coordinator.async_request_refresh())

@@ -205,7 +205,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     entered, release, cleaned = asyncio.Event(), asyncio.Event(), asyncio.Event()
     writes = []
 
-    async def pending_write(*_):
+    async def pending_write(*_, **kwargs):
         entered.set()
         try:
             if stop is not None:

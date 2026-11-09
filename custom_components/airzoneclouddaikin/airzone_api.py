@@ -516,7 +516,9 @@ class AirzoneAPI:
                 translation_placeholders={"status": str(cre.status)},
             ) from None
 
-    async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
+    async def put_device_fields(
+        self, device_id: str, payload: dict[str, Any], *, retry: bool = True
+    ) -> Any:
         """PUT /devices/{id} with provided payload (retries for 429/5xx).
 
         Canonical method for *all* device field writes (including what used to be "scenary").
@@ -527,14 +529,18 @@ class AirzoneAPI:
         path = f"{API_DEVICES}/{device_id}"
         try:
             return await self._authed_request_with_retries(
-                "PUT", path, params=params, json=payload
+                "PUT", path, params=params, json=payload, retry=retry
             )
         except ClientResponseError as cre:
             if cre.status == 401:
                 raise ConfigEntryAuthFailed("Authentication failed") from None
             raise
 
-    async def async_set_scenary(self, device_id: str, scenary: str) -> Any:
+    async def async_set_scenary(
+        self, device_id: str, scenary: str, *, retry: bool = True
+    ) -> Any:
         """Set device scenary using the canonical device fields endpoint."""
 
-        return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})
+        return await self.put_device_fields(
+            device_id, {"device": {"scenary": scenary}}, retry=retry
+        )

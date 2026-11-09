@@ -82,6 +82,10 @@ def optimistic_set(
 
     optimistic = _optimistic_bucket(hass, entry_id)
     if key == "scenary":
+        if value == SCENARY_SLEEP:
+            _entry_bucket(hass, entry_id).get("sleep_exit_pending", {}).pop(
+                device_id, None
+            )
         revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
         revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})
@@ -314,57 +318,50 @@ async def async_auto_exit_sleep_if_needed(
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
     on_success: Callable[[], None] | None = None,
 ) -> None:
-    """Best-effort auto-exit of sleep (and optionally vacant) scenary.
-
-    NOTE: There is a small window where this helper and the coordinator-level
-    sleep expiry cleanup may both call async_set_scenary(..., SCENARY_HOME) for
-    the same device. The backend should handle this idempotently, and we prefer
-    a redundant write over leaving the device stuck in ``sleep``.
-    """
-
-    raw_scenary = str((device or {}).get("scenary") or "").strip().lower()
-
-    if raw_scenary == SCENARY_VACANT:
-        if allow_away_handling and auto_exit_away is not None:
+    """Serialize sleep exits and never replay an ambiguous scene write."""
+    bucket = _entry_bucket(hass, entry_id)
+    revision = bucket.get("scene_revisions", {}).get(device_id, 0)
+    raw = str(device.get("scenary") or "").lower()
+    if raw == SCENARY_VACANT:
+        if allow_away_handling and auto_exit_away:
             await auto_exit_away(reason)
         return
-
-    if raw_scenary != SCENARY_SLEEP:
-        return
-
-    if not (device or {}).get("sleep_expired") and is_device_on():
-        return
-
-    api = getattr(coordinator, "api", None)
-    if api is None:
-        _LOGGER.debug(
-            "API handle missing; skipping auto-exit sleep before %s on %s",
-            reason,
-            device_id,
-        )
-        return
-
-    lock = acquire_device_lock(hass, entry_id, device_id)
-    async with lock:
+    async with acquire_device_lock(hass, entry_id, device_id):
+        current = (getattr(coordinator, "data", None) or {}).get(device_id, device)
+        overlay = bucket.get("optimistic", {}).get(device_id, {}).get("scenary")
+        pending = bucket.setdefault("sleep_exit_pending", {})
+        if (
+            bucket.get("closing")
+            or hass.is_stopping
+            or bucket.get("scene_revisions", {}).get(device_id, 0) != revision
+            or (overlay and overlay.get("value") != SCENARY_SLEEP)
+            or str(current.get("scenary") or "").lower() != SCENARY_SLEEP
+            or (not current.get("sleep_expired") and is_device_on())
+            or device_id in pending
+        ):
+            return
+        api = getattr(coordinator, "api", None)
+        if api is None:
+            return
+        pending[device_id] = "unverified"
         try:
-            await api.async_set_scenary(device_id, SCENARY_HOME)
+            # No retries: a transport failure may follow acceptance by the server.
+            await api.async_set_scenary(device_id, SCENARY_HOME, retry=False)
         except asyncio.CancelledError:
             raise
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning(
-                "Failed to auto-exit sleep before %s on %s: %s",
-                reason,
-                device_id,
-                err,
-                exc_info=True,
-            )
-            return
-
-        optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
-        if on_success is not None:
-            on_success()
-
-    schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
+        except Exception as error:  # noqa: BLE001
+            _LOGGER.warning("Sleep exit remains unverified (%s)", type(error).__name__)
+        else:
+            pending[device_id] = "accepted"
+            optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
+            if on_success:
+                on_success()
+        finally:
+            if not bucket.get("closing"):
+                if manager := bucket.get("sync_manager"):
+                    manager.request_recovery(device_id)
+                else:
+                    schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
 
 
 def parse_float(value: Any, *, precision: int | None = None) -> float | None:

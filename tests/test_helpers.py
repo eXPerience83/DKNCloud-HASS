@@ -73,7 +73,9 @@ class DummyApi:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    async def async_set_scenary(self, device_id: str, scenary: str) -> None:
+    async def async_set_scenary(
+        self, device_id: str, scenary: str, *, retry=True
+    ) -> None:
         """Record a scenary write."""
         self.calls.append((device_id, scenary))
 
@@ -253,3 +255,51 @@ async def test_entity_expiry_requests_recovery_before_local_maintenance(hass):
     assert optimistic_get(hass, "expiry-test", "fake", "power", "0") == "0"
     expire_optimistic(hass, "expiry-test")
     manager.request_recovery.assert_called_once_with("fake")
+
+
+@pytest.mark.parametrize("manual", [False, True])
+async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
+    """An old decision cannot overwrite a later command or repeat an unknown write."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    device = {"scenary": "sleep", "sleep_expired": True}
+    api = DummyApi()
+    api.async_set_scenary = AsyncMock(side_effect=TimeoutError)
+    coordinator = DummyCoordinator(api)
+    coordinator.data = {"device": device}
+    lock = helpers.acquire_device_lock(hass, "entry", "device")
+    await lock.acquire()
+
+    async def exit_sleep():
+        await async_auto_exit_sleep_if_needed(
+            hass,
+            entry_id="entry",
+            device_id="device",
+            device=device,
+            coordinator=coordinator,
+            reason="test",
+            is_device_on=lambda: False,
+            allow_away_handling=False,
+        )
+
+    task = asyncio.create_task(exit_sleep())
+    await asyncio.sleep(0)
+    if manual:
+        helpers.optimistic_set(hass, "entry", "device", "scenary", "vacant")
+    lock.release()
+    await task
+    if manual:
+        api.async_set_scenary.assert_not_awaited()
+    else:
+        # Old GET scene plus unrelated partial push must not replay HOME.
+        device["local_temp"] = "23"
+        await exit_sleep()
+        api.async_set_scenary.assert_awaited_once_with(
+            "device", "occupied", retry=False
+        )
+        assert (
+            hass.data[DOMAIN]["entry"]["sleep_exit_pending"]["device"] == "unverified"
+        )
+    if cancel := hass.data[DOMAIN]["entry"].get("pending_refresh"):
+        cancel()
