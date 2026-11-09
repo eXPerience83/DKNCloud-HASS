@@ -257,9 +257,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             str(self._device.get("scenary") or "").strip().lower() == "sleep"
             and self._device.get("sleep_expired") is True
         )
-        if current == preset_mode and not (
-            preset_mode == "home" and expired_raw_sleep
-        ):
+        if current == preset_mode and not (preset_mode == "home" and expired_raw_sleep):
             return
 
         scenary = preset_to_scenary(preset_mode)
