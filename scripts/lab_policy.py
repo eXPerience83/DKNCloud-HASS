@@ -1,5 +1,7 @@
 """Disabled-by-default read-only boundary for a supervised integration experiment."""
 
+import time
+
 from aiohttp import ClientSession, TraceConfig
 from yarl import URL
 
@@ -12,6 +14,22 @@ class ReadOnlyPolicy:
         self.installations = frozenset(installations)
         self.app_key = app_key
         self.enabled = enabled
+        self.deadline = time.monotonic() + 300
+        self.counts = {"state": 0, "auth": 0}
+
+    def reserve(self, method, url):
+        """Count attempted HTTP operations before delegation; never refund failures."""
+        if time.monotonic() >= self.deadline:
+            raise PermissionError("Experiment duration exceeded")
+        if len(self.devices) != 1:
+            raise PermissionError("Exactly one device required")
+        category = (
+            "auth" if URL(url).path in {"/users/sign_in", "/pusher/auth"} else "state"
+        )
+        limit = 6 if category == "auth" else 40
+        if self.counts[category] >= limit:
+            raise PermissionError("Experiment quota exceeded")
+        self.counts[category] += 1
 
     def validate(self, method, url, *, params=None, json=None, data=None):
         target = URL(url)
@@ -70,6 +88,8 @@ class ReadOnlyPolicy:
             raise PermissionError("Operation denied")
 
     def validate_socket(self, url):
+        if time.monotonic() >= self.deadline:
+            raise PermissionError("Experiment duration exceeded")
         target = URL(url)
         if (
             target.origin() != URL("wss://ws.pusherapp.com")
@@ -112,6 +132,7 @@ class ProtectedSession:
         self.policy.validate(
             method, url, **{k: kwargs.get(k) for k in ("params", "json", "data")}
         )
+        self.policy.reserve(method, url)
         return self.session.request(method, url, allow_redirects=False, **kwargs)
 
     def ws_connect(self, url, **kwargs):
