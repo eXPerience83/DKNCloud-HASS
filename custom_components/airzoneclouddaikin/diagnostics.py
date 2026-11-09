@@ -1,103 +1,11 @@
-"""Diagnostics for DKN Cloud for Home Assistant (Airzone Cloud).
+"""Allowlisted integration health diagnostics without backend objects."""
 
-Goal:
-- Keep diagnostics useful for troubleshooting while protecting user privacy.
-- Redact sensitive keys that appear in Airzone responses (devices + nested installation).
-- Keep implementation minimal, aligned with the current style (key-based redaction).
-
-Notes:
-- We intentionally do not scrub string *values* (URLs, free text) to stay close to your
-  current approach. If the backend ever injects secrets inside strings, consider adding
-  a value-scrubbing pass in the future.
-"""
-
-from __future__ import annotations
-
-import re
 from typing import Any
 
-from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
-
-# --- Static redaction keys (redacted wherever they appear, nested included) ---
-TO_REDACT = {
-    # Auth & identity
-    "id",
-    "name",
-    "email",
-    "user_email",
-    "password",
-    "authentication_token",
-    "token",
-    "user_token",
-    # Device/installation identifiers
-    "device_id",
-    "mac",
-    "pin",
-    "serial",
-    "uuid",
-    "installation_id",
-    "owner_id",
-    "device_ids",
-    # Installer / ownership contact
-    "installer_email",
-    "installer_phone",
-    # Location / PII
-    "location",
-    "latitude",
-    "longitude",
-    "lat",
-    "lon",
-    "postal_code",
-    "spot_name",
-    "complete_name",
-    "time_zone",
-}
-
-# --- Defensive regex for *keys* (keep minimal, focused) ---
-# Matches are case-insensitive and applied on dict keys only.
-_RE_PATTERNS = [
-    re.compile(r"(^id$|_id$|^name$)", re.IGNORECASE),
-    re.compile(r"token|auth(entication)?|secret|api.?key", re.IGNORECASE),
-    re.compile(r"mail|email", re.IGNORECASE),
-    re.compile(r"\bmac\b|\bpin\b|\buuid\b|\bserial\b", re.IGNORECASE),
-    re.compile(r"lat|lon|gps|coord(?!inator)|location", re.IGNORECASE),
-    re.compile(r"owner(_?id)?|installer|phone|postal|zip", re.IGNORECASE),
-]
-
-
-def _redact_by_regex(obj: Any) -> Any:
-    """Recursively redact any dict key that matches our regex patterns."""
-    if isinstance(obj, dict):
-        out: dict[str, Any] = {}
-        for k, v in obj.items():
-            if any(p.search(k) for p in _RE_PATTERNS):
-                out[k] = "***"
-            else:
-                out[k] = _redact_by_regex(v)
-        return out
-    if isinstance(obj, list):
-        return [_redact_by_regex(x) for x in obj]
-    return obj
-
-
-def _sanitize_devices(devices: Any) -> Any:
-    """Alias device mapping keys and redact direct backend device identifiers."""
-    if not isinstance(devices, dict):
-        return devices
-
-    sanitized: dict[str, Any] = {}
-    ordered_devices = sorted(devices.items(), key=lambda item: str(item[0]))
-    for index, (_, device) in enumerate(ordered_devices, start=1):
-        if isinstance(device, dict):
-            device = dict(device)
-            if "id" in device:
-                device["id"] = "***"
-        sanitized[f"device_{index}"] = device
-    return sanitized
 
 
 async def async_get_config_entry_diagnostics(
@@ -107,38 +15,15 @@ async def async_get_config_entry_diagnostics(
     domain_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     coordinator = domain_data.get("coordinator")
 
-    entry_summary = {
-        "data_keys": sorted(list(entry.data.keys())),  # keys only, never values
-        "options": dict(entry.options),
-        "version": getattr(entry, "version", None),
-    }
-
-    coord_summary = None
+    result = {"entry": {"version": getattr(entry, "version", None)}}
     if coordinator is not None:
-        interval = getattr(coordinator, "update_interval", None)
-        if interval is not None:
-            try:
-                interval = interval.total_seconds()
-            except Exception:  # noqa: BLE001
-                interval = str(interval)
-        coordinator_data = getattr(coordinator, "data", {}) or {}
-        coord_summary = {
-            "last_update_success": getattr(coordinator, "last_update_success", None),
-            "update_interval_seconds": interval,
-            "devices_count": len(coordinator_data),
-            "heat_cool_single_setpoint": True,
-            "heat_cool_routing": "cold(P7,P3)",
-            "devices": _sanitize_devices(coordinator_data),
+        result["coordinator"] = {
+            "devices_count": len(coordinator.data or {}),
+            "last_update_success": coordinator.last_update_success,
         }
-
-    raw = {"entry": entry_summary, "coordinator": coord_summary}
     if manager := domain_data.get("sync_manager"):
-        raw["synchronization"] = manager.diagnostics()
-        raw["synchronization"]["overlays_pending"] = sum(
+        result["synchronization"] = manager.diagnostics()
+        result["synchronization"]["overlays_pending"] = sum(
             len(fields) for fields in domain_data.get("optimistic", {}).values()
         )
-
-    # 1) Known keys
-    redacted = async_redact_data(raw, TO_REDACT)
-    # 2) Defensive regex pass (keys only; values unchanged)
-    return _redact_by_regex(redacted)
+    return result

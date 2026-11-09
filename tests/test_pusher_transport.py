@@ -162,3 +162,58 @@ async def test_authorization_wait_does_not_block_ping_and_is_joined_on_cancel():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert cleaned.is_set()
+
+
+async def test_denied_channel_recovers_without_interrupting_healthy_channel():
+    from aiohttp import ClientResponseError
+
+    c, socket, _, authorize, device, subscription = client([])
+    c._channels = {"private-bad": "bad", "private-good": "good"}
+    retry, healthy, recovered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    queue = asyncio.Queue()
+    await queue.put(
+        frame(
+            "pusher:connection_established",
+            {"socket_id": "1.2", "activity_timeout": 30},
+        )
+    )
+    attempts = []
+
+    async def auth(_, channel):
+        attempts.append(channel)
+        if channel == "private-bad" and attempts.count(channel) == 1:
+            raise ClientResponseError(None, (), status=403)
+        return "synthetic"
+
+    async def wait(_):
+        await retry.wait()
+
+    async def send(payload):
+        if payload["event"] == "pusher:subscribe":
+            channel = payload["data"]["channel"]
+            await queue.put(
+                frame("pusher_internal:subscription_succeeded", {}, channel)
+            )
+            await queue.put(frame("device", {"power": "1"}, channel))
+
+    async def received(device_id, payload):
+        (healthy if device_id == "good" else recovered).set()
+
+    authorize.side_effect = auth
+    c._retry_sleep = wait
+    c._on_device = received
+    socket.send_json.side_effect = send
+    socket.receive.side_effect = queue.get
+    task = asyncio.create_task(c.connect())
+    try:
+        await asyncio.wait_for(healthy.wait(), 2)
+        assert not recovered.is_set()
+        retry.set()
+        await asyncio.wait_for(recovered.wait(), 2)
+        assert attempts.count("private-good") == 1
+        assert ("good", False) not in [
+            call.args for call in subscription.await_args_list
+        ]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

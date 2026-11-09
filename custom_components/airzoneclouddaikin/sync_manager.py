@@ -72,6 +72,7 @@ class SyncManager:
         self._push_error_kind = None
         self._push_error_code = None
         self._last_errors = {}
+        self.channel_errors = {}
         self.touched: dict[str, set[str]] = {}
         self._last_received = dict.fromkeys(initial, clock())
         self._last_event: dict[str, float] = {}
@@ -90,6 +91,9 @@ class SyncManager:
                 sleep=sleep,
                 on_error=lambda error, d=device: self._error(d, error),
                 fallback_recover=lambda d=device: self.recover(d, fallback=True),
+                on_recovery_error=lambda error, d=device: self._error(
+                    d, error, recovery=True
+                ),
             )
             for device in initial
         }
@@ -105,7 +109,7 @@ class SyncManager:
         if self._discover is not None:
             self._tasks.append(asyncio.create_task(self._discover_loop()))
 
-    def _error(self, device: str, error: Exception) -> float:
+    def _error(self, device: str, error: Exception, *, recovery=False) -> float:
         self._last_errors[device] = {
             "age_origin": self._clock(),
             "type": type(error).__name__,
@@ -118,9 +122,10 @@ class SyncManager:
                 self._auth_failed = True
                 self._reauth()
             raise asyncio.CancelledError from None
-        failures = max(
-            self.schedulers[device].status.failures,
-            self._recovery_failures.get(device, 0),
+        failures = (
+            self._recovery_failures.get(device, 0)
+            if recovery
+            else self.schedulers[device].status.failures
         )
         return min(300, 10 * 2 ** min(failures, 5)) * random.uniform(1, 1.2)
 
@@ -138,7 +143,6 @@ class SyncManager:
                     return False
                 if not push_at_start:
                     self._budget.mark_started()
-                self.schedulers[device].status.last_information = self._clock()
                 try:
                     await self._request(device)
                 finally:
@@ -245,7 +249,9 @@ class SyncManager:
             raise
         except Exception as error:
             self._recovery_failures[device] = self._recovery_failures.get(device, 0) + 1
-            self._recovery_due[device] = self._clock() + self._error(device, error)
+            self._recovery_due[device] = self._clock() + self._error(
+                device, error, recovery=True
+            )
             raise
         else:
             self._recovery_failures.pop(device, None)
@@ -428,6 +434,7 @@ class SyncManager:
             "automatic_budget": self._budget.diagnostics(),
             "devices": {
                 f"device_{i}": {
+                    "channel_authorization_error": self.channel_errors.get(d),
                     "mode": (
                         "stopped"
                         if self._stopped
@@ -453,6 +460,12 @@ class SyncManager:
                     "state_age_source": "reported_update_date",
                     "physical_freshness_verified": False,
                     "reception_stale": now - self._last_received[d] >= 60,
+                    "last_evaluation_age": now - s.status.last_evaluation
+                    if s.status.last_evaluation is not None
+                    else None,
+                    "last_acceptance_age": now - s.status.last_acceptance
+                    if s.status.last_acceptance is not None
+                    else None,
                     "last_information_age": now - s.status.last_information
                     if s.status.last_information is not None
                     else None,

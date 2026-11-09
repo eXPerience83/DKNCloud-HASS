@@ -5,7 +5,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from aiohttp import ClientSession
+from aiohttp import ClientResponseError, ClientSession
 from yarl import URL
 
 from .pusher_client import PusherClient, PusherProtocolError
@@ -44,7 +44,15 @@ class DknPushAdapter:
             async with manager._limit:
                 if manager._stopped or manager._auth_failed:
                     raise asyncio.CancelledError
-                return await self._authorize(socket_id, channel)
+                device_id = channel.removeprefix("private-")
+                try:
+                    signature = await self._authorize(socket_id, channel)
+                except ClientResponseError as error:
+                    if error.status == 403:
+                        manager.channel_errors[device_id] = 403
+                    raise
+                manager.channel_errors.pop(device_id, None)
+                return signature
 
         client = PusherClient(
             self._session,

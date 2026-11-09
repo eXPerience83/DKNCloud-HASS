@@ -31,6 +31,7 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     class API:
         def __init__(self, *args, **kwargs):
             self.on_write_auth_failure = None
+            self.suspend = Mock()
             self.request_information = information
             self.authorize_channel = AsyncMock(return_value="synthetic-signature")
 
@@ -194,7 +195,7 @@ async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-@pytest.mark.parametrize("stop", [True, False, None])
+@pytest.mark.parametrize("stop", [True, False, None, "race"])
 async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     hass, monkeypatch, dkn_config_entry_factory, sample_device, stop
 ):
@@ -227,6 +228,17 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     recovery = Mock()
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
     coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+    if stop == "race":
+        lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
+        await lock.acquire()
+        coordinator.async_update_listeners()
+        await asyncio.sleep(0)
+        integration.optimistic_set(hass, entry.entry_id, "dev1", "scenary", "vacant")
+        lock.release()
+        await hass.async_block_till_done()
+        api.async_set_scenary.assert_not_awaited()
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        return
     coordinator.async_update_listeners()
     await asyncio.wait_for(entered.wait(), 5)
     task = bucket["sleep_expiry_task"]

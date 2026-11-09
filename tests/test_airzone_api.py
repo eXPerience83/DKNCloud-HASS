@@ -810,3 +810,39 @@ async def test_second_caller_waits_after_nonretrying_429(monkeypatch):
     await api._authed_request_with_retries("GET", API_DEVICES)
     assert sleeps == [120]
     assert api._request.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "operation", ["information", "devices", "installations", "authorize", "cleanup"]
+)
+async def test_auth_fence_after_cooldown_prevents_wire_send(operation):
+    import asyncio
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered, release = asyncio.Event(), asyncio.Event()
+    active = [True]
+    api.request_allowed = lambda: active[0]
+    api._request = AsyncMock(return_value={})
+    api._cooldown_until = 10
+    api._now = lambda: 0
+
+    async def sleep(_):
+        entered.set()
+        await release.wait()
+        api._cooldown_until = 0
+
+    api._sleep = sleep
+    operations = {
+        "information": lambda: api.request_information("synthetic"),
+        "devices": lambda: api.fetch_devices("synthetic"),
+        "installations": api.fetch_installations,
+        "authorize": lambda: api.authorize_channel("1.2", "private-synthetic"),
+        "cleanup": lambda: api.async_set_scenary("synthetic", "occupied"),
+    }
+    task = asyncio.create_task(operations[operation]())
+    await entered.wait()
+    active[0] = False
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    api._request.assert_not_awaited()

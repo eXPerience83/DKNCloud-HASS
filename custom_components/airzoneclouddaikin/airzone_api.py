@@ -82,7 +82,18 @@ class AirzoneAPI:
         self._session = session
         self._token: str | None = token
         self._cooldown_until: float = 0.0
+        self._suspended = False
+        self.request_allowed = lambda: True
+        self.on_information_started = None
+        self._pending = set()
         self.on_write_auth_failure: Callable[[], None] | None = None
+
+    def suspend(self):
+        """Fence future sends and cancel other pending authenticated operations."""
+        self._suspended = True
+        for task in tuple(self._pending):
+            if task is not asyncio.current_task():
+                task.cancel()
 
     def __repr__(self) -> str:
         """Return a safe representation that never leaks secrets."""
@@ -164,6 +175,14 @@ class AirzoneAPI:
 
         safe_error: Exception
         try:
+            if self._suspended or not self.request_allowed():
+                raise asyncio.CancelledError
+            if (
+                self.on_information_started
+                and isinstance(json, dict)
+                and (event := json.get("event", {})).get("cgi") == "infomaquina"
+            ):
+                self.on_information_started(str(event.get("device_id")))
             async with self._session.request(
                 method,
                 url,
@@ -187,6 +206,8 @@ class AirzoneAPI:
                     return ""
                 return await resp.text()
         except ClientResponseError as cre:
+            if cre.status == 401:
+                self.suspend()
             _LOGGER.debug(
                 "HTTP %s %s failed with status %s",
                 method,
@@ -221,7 +242,31 @@ class AirzoneAPI:
         # from the sanitized error. Do not move this raise into a handler.
         raise safe_error
 
-    async def _authed_request_with_retries(
+    async def _authed_request_with_retries(self, *args, **kwargs):
+        task = asyncio.current_task()
+        self._pending.add(task)
+        try:
+            return await self._authed_request_impl(*args, **kwargs)
+        except asyncio.CancelledError:
+            if (
+                self._suspended
+                and args
+                and (
+                    args[0] == "PUT"
+                    or (
+                        args[0] == "POST"
+                        and args[1] == API_EVENTS
+                        and (kwargs.get("json") or {}).get("event", {}).get("cgi")
+                        != "infomaquina"
+                    )
+                )
+            ):
+                raise ConfigEntryAuthFailed("Entry authentication suspended") from None
+            raise
+        finally:
+            self._pending.discard(task)
+
+    async def _authed_request_impl(
         self,
         method: str,
         path: str,
@@ -242,6 +287,8 @@ class AirzoneAPI:
             while self._cooldown_until > self._now():
                 await self._sleep(self._cooldown_until - self._now())
 
+            if self._suspended or not self.request_allowed():
+                raise asyncio.CancelledError
             try:
                 return await self._request(
                     method,
@@ -258,6 +305,7 @@ class AirzoneAPI:
                 # native HA reauth themselves: a service exception alone does
                 # not ask Home Assistant to start a reauth flow.
                 if status == 401:
+                    self.suspend()
                     if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
                         if self.on_write_auth_failure is not None:
                             self.on_write_auth_failure()

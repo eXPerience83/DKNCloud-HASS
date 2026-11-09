@@ -475,3 +475,10 @@ failures. Information and recovery retries have separate deadlines; successful
 snapshots do not confirm physical freshness or clear information failures.
 Entry shutdown fences and awaits automatic scene cleanup. Channel authorization
 runs separately from socket reception; denied channels trigger bounded reconnect.
+
+Authenticated operations are fenced again after cooldown waits; entry suspension
+cancels pending operations. Automatic scene cleanup shares device write locks.
+Channel authorization failures retry independently without closing healthy channels.
+The automatic request budget enforces spacing only; operation backoff and the
+server-directed cooldown remain separate. Diagnostics export health summaries
+without raw device data or entry options.

@@ -19,6 +19,8 @@ class CycleStatus:
 
     push_active: bool = False
     last_information: float | None = None
+    last_evaluation: float | None = None
+    last_acceptance: float | None = None
     last_success: float | None = None
     failures: int = 0
     next_attempt: float | None = None
@@ -37,6 +39,7 @@ class InformationScheduler:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_error: Callable[[Exception], float],
         fallback_recover=None,
+        on_recovery_error=None,
     ) -> None:
         self.status = CycleStatus()
         self._request = request
@@ -47,6 +50,7 @@ class InformationScheduler:
         self._clock = clock
         self._sleep = sleep
         self._on_error = on_error
+        self._on_recovery_error = on_recovery_error or on_error
         self._task: asyncio.Task[None] | None = None
         self._generation = 0
         self._lock = asyncio.Lock()
@@ -82,12 +86,14 @@ class InformationScheduler:
         """Execute one cycle without overlapping a recovery or another cycle."""
         async with self._lock:
             generation = self._generation
-            self.status.last_information = self._clock()
+            self.status.last_evaluation = self._clock()
             rejected = None
             try:
                 result = None
                 if self._clock() >= self._information_due:
                     result = await self._request()
+                    if result is not False:
+                        self.status.last_acceptance = self._clock()
                     self._information_due = 0
                     self.status.failures = 0
                 if result is False:
@@ -129,7 +135,7 @@ class InformationScheduler:
                             429,
                         }:
                             raise
-                        self._get_due = self._clock() + self._on_error(error)
+                        self._get_due = self._clock() + self._on_recovery_error(error)
                     else:
                         self._get_due = 0
             self.status.last_success = self._clock()

@@ -41,6 +41,7 @@ class PusherClient:
         self._session = session
         self._url = url
         self._channels = dict(channels)
+        self._retry_sleep = asyncio.sleep
         self._authorize = authorize
         self._on_device = on_device
         self._on_subscription = on_subscription
@@ -113,8 +114,9 @@ class PusherClient:
                         activity = float(timeout)
                         established = True
 
-                        async def authorize_channels(socket_id=socket_id):
-                            for channel in self._channels:
+                        async def authorize_channel(channel, socket_id=socket_id):
+                            failures = 0
+                            while True:
                                 try:
                                     signature = await self._authorize(
                                         socket_id, channel
@@ -122,12 +124,14 @@ class PusherClient:
                                 except ClientResponseError as error:
                                     if error.status != 403:
                                         raise
+                                    failures += 1
                                     await self._on_subscription(
                                         self._channels[channel], False
                                     )
-                                    raise PusherProtocolError(
-                                        "Channel authorization denied", 403
-                                    ) from None
+                                    await self._retry_sleep(
+                                        min(300, 30 * 2 ** min(failures - 1, 4))
+                                    )
+                                    continue
                                 if not isinstance(signature, str) or not signature:
                                     raise PusherProtocolError(
                                         "Invalid channel authorization"
@@ -138,8 +142,12 @@ class PusherClient:
                                         "data": {"channel": channel, "auth": signature},
                                     }
                                 )
+                                return
 
-                        authorizations.append(asyncio.create_task(authorize_channels()))
+                        for channel in self._channels:
+                            authorizations.append(
+                                asyncio.create_task(authorize_channel(channel))
+                            )
                         await asyncio.sleep(0)
                     elif event == "pusher:ping":
                         await socket.send_json({"event": "pusher:pong", "data": {}})

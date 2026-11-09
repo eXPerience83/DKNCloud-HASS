@@ -38,10 +38,6 @@ class RequestBudget:
                 )
                 if transient:
                     self._failures += 1
-                    self._next = max(
-                        self._next,
-                        self._clock() + min(300, 10 * 2 ** min(self._failures - 1, 5)),
-                    )
                 raise
             else:
                 self._failures = 0
@@ -61,7 +57,7 @@ class RequestBudget:
             "minimum_interval": 10.0,
             "wait_remaining": wait,
             "failures": self._failures,
-            "backoff_remaining": wait if self._failures else 0.0,
+            "backoff_remaining": 0.0,
         }
 
     def close(self):

@@ -579,6 +579,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
     def request_write_reauth() -> None:
         nonlocal auth_requested
+        api.suspend()
         if manager := bucket.get("sync_manager"):
             manager._auth_failed = True
         if (
@@ -589,6 +590,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             auth_requested = True
             entry.async_start_reauth_if_available(hass)
 
+    api.request_allowed = lambda: (
+        not bucket.get("closing", False)
+        and not getattr(bucket.get("sync_manager"), "_auth_failed", False)
+    )
     api.on_write_auth_failure = request_write_reauth
     entry.async_on_unload(lambda: setattr(api, "on_write_auth_failure", None))
 
@@ -676,7 +681,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 ):
                     return
                 try:
-                    await api.async_set_scenary(dev_id, SCENARY_HOME)
+                    async with acquire_device_lock(hass, entry.entry_id, dev_id):
+                        current = (coordinator.data or {}).get(dev_id, {})
+                        overlay = (
+                            bucket.get("optimistic", {}).get(dev_id, {}).get("scenary")
+                        )
+                        if (
+                            bucket.get("closing")
+                            or current.get("scenary") != SCENARY_SLEEP
+                            or not current.get("sleep_expired")
+                            or (overlay and overlay.get("value") != SCENARY_SLEEP)
+                        ):
+                            continue
+                        await api.async_set_scenary(dev_id, SCENARY_HOME)
                 except asyncio.CancelledError:
                     raise
                 except ClientResponseError as cre:
@@ -994,6 +1011,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             on_topology_change=topology_changed,
         )
         bucket["sync_manager"] = manager
+
+        def information_started(device):
+            if device in manager.schedulers:
+                manager.schedulers[device].status.last_information = manager._clock()
+
+        api.on_information_started = information_started
         coordinator.update_interval = None
         coordinator.update_method = manager.refresh
 
@@ -1010,6 +1033,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
         async def stop_sync(_event):
             bucket["closing"] = True
+            api.suspend()
             _cancel_sleep_expiry_task()
             if task := bucket.get("sleep_expiry_task"):
                 await asyncio.gather(task, return_exceptions=True)
@@ -1076,6 +1100,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
 
     if unload_ok:
         bucket["closing"] = True
+        if api := bucket.get("api"):
+            api.suspend()
         if task := bucket.get("sleep_expiry_task"):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

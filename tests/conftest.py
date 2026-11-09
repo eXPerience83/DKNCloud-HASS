@@ -119,6 +119,10 @@ def sample_devices(sample_device: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 class FakeAirzoneAPI:
+    def suspend(self):
+        """Mirror the entry-lifetime API fence in legacy fixtures."""
+        pass
+
     """Small fake API object for setup/coordinator tests."""
 
     def __init__(

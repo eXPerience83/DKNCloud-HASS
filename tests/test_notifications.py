@@ -34,6 +34,10 @@ from custom_components.airzoneclouddaikin.const import (
 
 
 class FakeSetupAPI:
+    def suspend(self):
+        """Mirror the entry-lifetime API fence in legacy fixtures."""
+        pass
+
     """Fake API used by setup and notification tests."""
 
     installations: list[dict[str, Any]] = []
