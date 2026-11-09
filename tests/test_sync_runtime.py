@@ -179,7 +179,11 @@ async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     discovery = asyncio.create_task(manager._discover())
     await entered.wait()
     api.fetch_installations.reset_mock()
-    manager._auth_failed = True
+    monkeypatch.setattr(entry, "async_start_reauth_if_available", Mock())
+    api.on_write_auth_failure()
+    assert manager._auth_failed
+    api.on_write_auth_failure()
+    entry.async_start_reauth_if_available.assert_called_once_with(hass)
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await discovery

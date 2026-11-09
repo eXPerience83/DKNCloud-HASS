@@ -49,7 +49,8 @@ valid installation list is allowed. An HTTP 401 on authenticated reads raises
 `ConfigEntryAuthFailed` for native Home Assistant reauthentication. For
 authenticated device writes (`POST /events` and `PUT /devices/{id}`), a 401
 also starts native reauthentication for the specific entry, since HA does not
-automatically launch reauth from an entity service error. On success, Home
+automatically launch reauth from an entity service error. An authenticated 401
+suspends automatic synchronization until entry reload. On success, Home
 Assistant reloads the entry and constructs a fresh API client with the new
 token. If the entry was never fully loaded or DKN returns the same token,
 the flow explicitly schedules a reload; otherwise the update listener does so.

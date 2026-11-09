@@ -577,6 +577,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
     def request_write_reauth() -> None:
         nonlocal auth_requested
+        if manager := bucket.get("sync_manager"):
+            manager._auth_failed = True
         if (
             not auth_requested
             and not hass.is_stopping
