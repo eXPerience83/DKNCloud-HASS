@@ -222,3 +222,41 @@ def test_parse_float_unparseable_collections_return_none() -> None:
     """Values that cannot be converted to float must return None."""
     assert parse_float([]) is None
     assert parse_float({}) is None
+
+
+def test_sleep_cleanup_requires_fresh_confirmed_off_and_same_session() -> None:
+    """Expired Sleep must not be cleaned using stale or newly re-armed states."""
+    from datetime import UTC, datetime, timedelta
+
+    from custom_components.airzoneclouddaikin import (
+        SleepTracking,
+        _sleep_cleanup_due,
+    )
+
+    now = datetime.now(UTC)
+    tracking = SleepTracking(
+        last_scenary="sleep", sleep_started_at_utc=now - timedelta(minutes=50)
+    )
+    device = {
+        "scenary": "sleep",
+        "power": "0",
+        "sleep_time": 30,
+        "sleep_expired": True,
+        "sleep_snapshot_fresh": True,
+    }
+    assert _sleep_cleanup_due(device, tracking, now) is True
+
+    device["sleep_snapshot_fresh"] = False
+    assert _sleep_cleanup_due(device, tracking, now) is False
+    device["sleep_snapshot_fresh"] = True
+
+    device["power"] = "1"
+    assert _sleep_cleanup_due(device, tracking, now) is False
+    device["power"] = "0"
+
+    tracking.sleep_started_at_utc = now
+    assert _sleep_cleanup_due(device, tracking, now) is False
+
+    tracking.sleep_started_at_utc = now - timedelta(minutes=50)
+    tracking.force_exit_requested = True
+    assert _sleep_cleanup_due(device, tracking, now) is False
