@@ -112,9 +112,12 @@ def _record_explicit_sleep_started(
     devices = bucket.get("sleep_tracking", {})
     if not isinstance(devices, dict):
         return
-    tracking = devices.setdefault(device_id, SleepTracking())
-    if not isinstance(tracking, SleepTracking):
-        return
+    tracking = devices.get(device_id)
+    if tracking is None:
+        tracking = SleepTracking()
+        devices[device_id] = tracking
+    # Existing sessions can originate from the package module while Climate
+    # imports the compatibility .__init__ module. Preserve either instance.
     tracking.last_scenary = SCENARY_SLEEP
     tracking.sleep_started_at_utc = dt_util.utcnow()
     tracking.force_exit_requested = False
