@@ -1,5 +1,6 @@
 """Run a separate HA daemon with disposable configuration and loopback-only I/O."""
 
+import argparse
 import json
 import os
 import shutil
@@ -7,6 +8,43 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(root))
+
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--protected", action="store_true", help="Run synthetic HTTPS/WSS experiment"
+)
+parser.add_argument(
+    "--protected-real",
+    action="store_true",
+    help="Disabled pending independent acceptance and explicit authorization",
+)
+parser.add_argument(
+    "--protected-case",
+    choices=[
+        "normal",
+        "duration",
+        "quota",
+        "authorization",
+        "get",
+        "cooldown",
+        "redirect",
+        "tls",
+    ],
+    default="normal",
+)
+args = parser.parse_args()
+if args.protected_real:
+    from scripts.protected_lab import REAL_DESTINATIONS_ENABLED
+
+    if not REAL_DESTINATIONS_ENABLED:
+        parser.error("Real destinations disabled")
+    if args.protected_case != "normal":
+        parser.error("Real laboratory does not accept synthetic scenarios")
+    args.protected = True
+component = "protected_ha_lab" if args.protected else "isolated_ha_lab"
 
 root = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(
@@ -21,22 +59,27 @@ with tempfile.TemporaryDirectory(
         ignore=shutil.ignore_patterns("__pycache__"),
     )
     shutil.copytree(
-        root / "scripts/isolated_ha_lab",
-        components / "isolated_ha_lab",
+        root / "scripts" / component,
+        components / component,
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    (components / "isolated_ha_lab/manifest.json").write_text(
+    (components / component / "manifest.json").write_text(
         json.dumps(
             {
-                "domain": "isolated_ha_lab",
+                "domain": component,
                 "name": "Synthetic HA Lab",
                 "version": "1.0.0",
                 "requirements": [],
             }
         )
     )
-    (config / "configuration.yaml").write_text("isolated_ha_lab:\n")
-    environment = dict(os.environ, PYTHONPATH=str(config) + os.pathsep + str(root))
+    (config / "configuration.yaml").write_text(component + ":\n")
+    environment = dict(
+        os.environ,
+        PYTHONPATH=str(config) + os.pathsep + str(root),
+        DKN_LAB_TARGET="real" if args.protected_real else "synthetic",
+        DKN_LAB_CASE=args.protected_case,
+    )
     with (config / "process.log").open("w") as log:
         try:
             result = subprocess.run(
@@ -44,16 +87,15 @@ with tempfile.TemporaryDirectory(
                     sys.executable,
                     str(root / "scripts/isolated_ha_process.py"),
                     str(config),
+                    component,
                 ],
                 env=environment,
-                stdout=log,
-                stderr=log,
-                timeout=360,
+                stdout=subprocess.DEVNULL if args.protected else log,
+                stderr=subprocess.DEVNULL if args.protected else log,
+                timeout=300 if args.protected else 360,
             )
         except subprocess.TimeoutExpired:
-            print(
-                "HA daemon did not finish within 360 seconds; child killed and awaited"
-            )
+            print("HA daemon exceeded the process deadline; child killed and awaited")
             print((config / "process.log").read_text()[-4000:])
             sys.exit(1)
     report = config / "lab-result.json"
@@ -66,6 +108,52 @@ with tempfile.TemporaryDirectory(
     if not report.exists():
         print((config / "process.log").read_text()[-6000:])
         sys.exit(1)
+
+    if args.protected:
+        summary = json.loads(report.read_text())
+        if args.protected_real:
+            sys.exit(
+                0
+                if result.returncode == 0
+                and not summary.get("error")
+                and summary.get("loaded")
+                and summary.get("push_applied")
+                and summary.get("reason") == "duration"
+                and summary.get("session_closed")
+                else 1
+            )
+        expected = {
+            "duration": "duration",
+            "authorization": "duration",
+            "get": "duration",
+            "cooldown": "duration",
+            "quota": "quota",
+            "redirect": "http_security",
+            "tls": "tls_verification",
+        }
+        if args.protected_case != "normal":
+            sys.exit(
+                0
+                if result.returncode == 0
+                and summary.get("reason") == expected[args.protected_case]
+                and summary.get("backend_control_writes") == 0
+                and summary.get("session_closed")
+                and summary.get("server_closed")
+                else 1
+            )
+
+        sys.exit(
+            0
+            if result.returncode == 0
+            and not summary.get("error")
+            and summary.get("push_applied")
+            and summary.get("internal_write_blocked")
+            and summary.get("reason") == "forbidden_operation"
+            and summary.get("backend_control_writes") == 0
+            and summary.get("session_closed")
+            and summary.get("server_closed")
+            else 1
+        )
 
     if report.exists():
         summary = json.loads(report.read_text())

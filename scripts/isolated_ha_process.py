@@ -27,7 +27,10 @@ async def main():
     frame.async_setup(hass)
     finished = asyncio.Event()
     hass.data["lab_finished"] = finished
-    config = {"isolated_ha_lab": {}}
+    component = sys.argv[2] if len(sys.argv) > 2 else "isolated_ha_lab"
+    if component not in {"isolated_ha_lab", "protected_ha_lab"}:
+        raise ValueError("Unknown laboratory")
+    config = {component: {}}
     hass.config_entries = config_entries.ConfigEntries(hass, config)
     await hass.config_entries.async_initialize()
     dr.async_setup(hass)
@@ -35,7 +38,7 @@ async def main():
     await dr.async_load(hass)
     await er.async_load(hass)
     await rs.async_load(hass)
-    if not await async_setup_component(hass, "isolated_ha_lab", config):
+    if not await async_setup_component(hass, component, config):
         raise RuntimeError("Synthetic lab setup failed")
 
     async def stop_when_finished():
@@ -45,6 +48,8 @@ async def main():
     stopper = asyncio.create_task(stop_when_finished())
     await hass.async_run()
     await stopper
+    if restore := hass.data.get("lab_restore_guard"):
+        restore()
 
 
 asyncio.run(main())

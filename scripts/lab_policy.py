@@ -40,6 +40,8 @@ class ReadOnlyPolicy:
             or target.query
         ):
             raise PermissionError("Destination denied")
+        if params is not None and type(params) is not dict:
+            raise PermissionError("Parameters denied")
         params = params or {}
         if set(params) - {"user_email", "user_token", "format", "installation_id"}:
             raise PermissionError("Parameters denied")
@@ -48,6 +50,10 @@ class ReadOnlyPolicy:
             and str(params["installation_id"]) not in self.installations
         ):
             raise PermissionError("Installation denied")
+        if "format" in params and params["format"] != "json":
+            raise PermissionError("Format denied")
+        if method != "GET" and set(params) - {"user_email", "user_token"}:
+            raise PermissionError("Parameters denied")
         path = target.path
         permitted = (
             method == "GET"
@@ -110,9 +116,11 @@ class ProtectedSession:
         self.session, self.policy = session, policy
         self._redirect_guard = redirect_guard
 
-    def request(self, method, url, **kwargs):
+    def validate_request(self, method, url, **kwargs):
         if not self.policy.enabled:
             raise PermissionError("Real network experiment disabled")
+        if "headers" in kwargs and type(kwargs["headers"]) is not dict:
+            raise PermissionError("Headers denied")
         if set(kwargs) - {"params", "json", "data", "headers", "timeout"}:
             raise PermissionError("Request options denied")
         if set(k.lower() for k in kwargs.get("headers", {})) - {
@@ -129,13 +137,24 @@ class ProtectedSession:
             for k in kwargs.get("headers", {})
         ):
             raise PermissionError("Header denied")
+        for key, value in kwargs.get("headers", {}).items():
+            if not isinstance(value, str) or "\r" in value or "\n" in value:
+                raise PermissionError("Header value denied")
+            if key.lower() in {"origin", "referer"} and value not in {
+                "https://dkn.airzonecloud.com",
+                "https://dkn.airzonecloud.com/",
+            }:
+                raise PermissionError("Header value denied")
         self.policy.validate(
             method, url, **{k: kwargs.get(k) for k in ("params", "json", "data")}
         )
+
+    def request(self, method, url, **kwargs):
+        self.validate_request(method, url, **kwargs)
         self.policy.reserve(method, url)
         return self.session.request(method, url, allow_redirects=False, **kwargs)
 
-    def ws_connect(self, url, **kwargs):
+    def validate_socket_options(self, url, **kwargs):
         if (
             not self.policy.enabled
             or not self._redirect_guard
@@ -143,12 +162,15 @@ class ProtectedSession:
         ):
             raise PermissionError("Socket options denied")
         self.policy.validate_socket(url)
+
+    def ws_connect(self, url, **kwargs):
+        self.validate_socket_options(url, **kwargs)
         return ProtectedSocketContext(
             self.session.ws_connect(url, **kwargs), self.policy
         )
 
 
-async def create_protected_session(policy):
+async def create_protected_session(policy, *, connector=None):
     """Own a session whose HTTP and WebSocket handshakes reject redirects."""
 
     async def deny_redirect(*_):
@@ -156,7 +178,7 @@ async def create_protected_session(policy):
 
     trace = TraceConfig()
     trace.on_request_redirect.append(deny_redirect)
-    session = ClientSession(trace_configs=[trace], trust_env=False)
+    session = ClientSession(trace_configs=[trace], trust_env=False, connector=connector)
     return ProtectedSession(session, policy, redirect_guard=True)
 
 

@@ -10,9 +10,10 @@ import pytest
 
 def test_nonzero_process_exit_fails_even_with_successful_report(monkeypatch, tmp_path):
     monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr("sys.argv", ["run_isolated_ha.py"])
 
     def process(command, **_):
-        config = Path(command[-1])
+        config = Path(command[-2])
         (config / "lab-result.json").write_text(
             json.dumps(
                 {
