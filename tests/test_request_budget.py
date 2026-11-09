@@ -103,3 +103,25 @@ async def test_delayed_actual_http_start_updates_budget_deadline():
     await budget.run(delayed)
     await budget.run(immediate)
     assert starts == [25, 35]
+
+
+async def test_hidden_api_cooldown_cannot_release_a_burst():
+    now, starts = [0.0], []
+
+    async def sleep(seconds):
+        now[0] += seconds
+
+    budget = RequestBudget(lambda: now[0], sleep)
+
+    async def delayed_send():
+        # The API's shared Retry-After wait happens inside the operation.
+        now[0] += 120
+        starts.append(now[0])
+        now[0] += 1
+
+    async def next_send():
+        starts.append(now[0])
+
+    await budget.run(delayed_send)
+    await budget.run(next_send)
+    assert starts == [120, 131]

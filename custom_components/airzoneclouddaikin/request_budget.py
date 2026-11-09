@@ -46,6 +46,10 @@ class RequestBudget:
             else:
                 self._failures = 0
                 return result
+            finally:
+                # API cooldowns may delay the actual send inside operation().
+                # Conservatively space from completion to prevent a queued burst.
+                self._next = max(self._next, self._clock() + 10)
 
     def mark_started(self) -> None:
         """Account for an HTTP start delayed by device locks or batch readiness."""

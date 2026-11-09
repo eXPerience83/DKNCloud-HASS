@@ -98,7 +98,9 @@ nominal fixed ten-second cadence while push is active. During push outages,
 automatic information requests and recovery snapshots share an entry-wide
 budget of at least ten seconds between starts. A single-device fallback
 alternates an information request and a snapshot ten seconds later; multiple
-devices share installation snapshots and may have longer cycles. These timings
+devices share installation snapshots and may have longer cycles. Spacing is
+conservative from operation completion, so slow responses or internal server
+cooldowns cannot release queued bursts. These timings
 are client policies and do not guarantee physical-state convergence. REST
 failures back off; healthy fallback does not back off solely for a push outage.
 A successful subscription requires resynchronization before normal operation.
