@@ -29,6 +29,8 @@ import asyncio
 import logging
 import random
 from collections.abc import Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from json import JSONDecodeError
 from typing import Any
 
@@ -220,6 +222,7 @@ class AirzoneAPI:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
+        retry: bool = True,
     ) -> Any:
         """Authenticated request with limited retries for 429/5xx + ONE retry on timeout.
 
@@ -254,19 +257,24 @@ class AirzoneAPI:
 
                 # Backoff for 429 and 5xx (transient errors)
                 if status == 429 or 500 <= status <= 599:
-                    if attempt >= _MAX_RETRIES:
-                        raise
                     delay = _BASE_DELAY * (2**attempt) + random.uniform(0.0, _JITTER)
                     if status == 429:
                         try:
                             retry_after = cre.headers.get("Retry-After")  # type: ignore[attr-defined]
                             if retry_after:
-                                delay = max(delay, float(retry_after))
+                                try:
+                                    seconds = float(retry_after)
+                                except ValueError:
+                                    date = parsedate_to_datetime(retry_after)
+                                    if date.tzinfo is None:
+                                        date = date.replace(tzinfo=UTC)
+                                    seconds = (date - datetime.now(UTC)).total_seconds()
+                                delay = max(delay, seconds)
                         except Exception:  # noqa: BLE001
                             pass
-                        self._cooldown_until = max(
-                            self._cooldown_until, now + min(delay, 10.0)
-                        )
+                        self._cooldown_until = max(self._cooldown_until, now + delay)
+                    if not retry or attempt >= _MAX_RETRIES:
+                        raise
                     _LOGGER.debug(
                         "Retrying %s %s after %s due to HTTP %s (attempt %d/%d)",
                         method,
@@ -285,7 +293,7 @@ class AirzoneAPI:
 
             except TimeoutError:
                 # ONE gentle retry on timeout with short backoff
-                if attempt >= 1:
+                if not retry or attempt >= 1:
                     raise
                 delay = 0.4 * (2**attempt) + random.uniform(0.0, _JITTER)
                 _LOGGER.debug(
@@ -306,6 +314,24 @@ class AirzoneAPI:
     # --------------------------
     # Public API
     # --------------------------
+    async def request_information(self, device_id: str) -> Any:
+        """Request fresh information once; the scheduler owns retry timing."""
+        return await self._authed_request_with_retries(
+            "POST",
+            API_EVENTS,
+            params=self._auth_params(),
+            json={
+                "event": {
+                    "cgi": "infomaquina",
+                    "device_id": device_id,
+                    "option": "",
+                    "value": "",
+                }
+            },
+            extra_headers=HEADERS_EVENTS,
+            retry=False,
+        )
+
     async def login(self) -> bool:
         """Login and store authentication token (used by config/reauth flows)."""
         if not self._password:

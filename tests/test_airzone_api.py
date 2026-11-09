@@ -523,10 +523,10 @@ async def test_timeout_retries_only_once_when_second_call_times_out(
     assert sleeps == pytest.approx([0.4])
 
 
-async def test_429_retry_after_is_honored_but_cooldown_is_bounded(
+async def test_429_retry_after_is_honored_without_truncating_cooldown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Server Retry-After determines actual sleep; shared cooldown caps at 10s."""
+    """Server Retry-After controls both sleep and shared cooldown."""
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
         lambda *_: 0.0,
@@ -536,7 +536,7 @@ async def test_429_retry_after_is_honored_but_cooldown_is_bounded(
     )
     assert await api._authed_request_with_retries("GET", "/devices") == {"ok": 1}
     assert sleeps == [100.0]
-    assert api._cooldown_until == pytest.approx(10.0)
+    assert api._cooldown_until == pytest.approx(100.0)
 
 
 async def test_request_cancellation_is_not_swallowed(
@@ -695,3 +695,51 @@ async def test_devices_accepts_valid_empty_http_list(
     async with ClientSession() as session:
         api = AirzoneAPI("user@example.com", session, token="token")
         assert await api.fetch_devices("site-A") == []
+
+
+async def test_shared_cooldown_preserves_long_retry_after(monkeypatch):
+    """Other callers must observe the complete server-directed pause."""
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"}), {}]
+    )
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert sleeps[0] == 120
+    assert api._cooldown_until == 120
+
+
+async def test_retry_after_http_date(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
+
+    deadline = datetime.now(UTC) + timedelta(seconds=120)
+    api, sleeps = _make_api(
+        monkeypatch,
+        [
+            _client_response_error(
+                429, {"Retry-After": format_datetime(deadline, usegmt=True)}
+            ),
+            {},
+        ],
+    )
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert 118 <= sleeps[0] <= 120
+    assert api._cooldown_until == sleeps[0]
+
+
+async def test_information_timeout_is_not_retried(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [TimeoutError()])
+    with pytest.raises(TimeoutError):
+        await api.request_information("fake-device")
+    assert api._request.await_count == 1
+    assert sleeps == []
+
+
+async def test_information_429_sets_shared_pause_without_retry(monkeypatch):
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"})]
+    )
+    with pytest.raises(ClientResponseError):
+        await api.request_information("fake-device")
+    assert api._request.await_count == 1
+    assert api._cooldown_until == 120
+    assert sleeps == []
