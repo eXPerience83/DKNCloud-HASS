@@ -140,6 +140,14 @@ class ProtectedSession:
         for key, value in kwargs.get("headers", {}).items():
             if not isinstance(value, str) or "\r" in value or "\n" in value:
                 raise PermissionError("Header value denied")
+            if key.lower() == "x-requested-with" and value != "XMLHttpRequest":
+                raise PermissionError("Header value denied")
+            if key.lower() == "content-type" and value not in {
+                "application/json",
+                "application/json;charset=UTF-8",
+                "application/x-www-form-urlencoded",
+            }:
+                raise PermissionError("Header value denied")
             if key.lower() in {"origin", "referer"} and value not in {
                 "https://dkn.airzonecloud.com",
                 "https://dkn.airzonecloud.com/",
@@ -159,6 +167,10 @@ class ProtectedSession:
             not self.policy.enabled
             or not self._redirect_guard
             or set(kwargs) - {"autoping", "max_msg_size"}
+        ):
+            raise PermissionError("Socket options denied")
+        if ("autoping" in kwargs and kwargs["autoping"] is not True) or (
+            "max_msg_size" in kwargs and not 0 < kwargs["max_msg_size"] <= 1024 * 1024
         ):
             raise PermissionError("Socket options denied")
         self.policy.validate_socket(url)

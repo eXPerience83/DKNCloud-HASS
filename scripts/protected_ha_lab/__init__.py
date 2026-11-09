@@ -37,13 +37,14 @@ async def async_setup(hass, config):
         password = os.environ.pop("DKN_PASSWORD")
         policy = real_policy({device}, {installation}, PUSHER_APP_KEY)
         backend = None
-        supervisor = LabSupervisor()
+        # Reserve time for HA shutdown inside the parent's five-minute deadline.
+        supervisor = LabSupervisor(duration=285)
         gateway = await create_gateway(policy, supervisor)
     else:
         device, installation = "device", "site"
         username, password = "synthetic@example.invalid", "synthetic-password"
         supervisor = LabSupervisor(
-            duration=60 if case == "normal" else 3,
+            duration=60 if case in {"normal", "sleep"} else 3,
             state_limit=1 if case == "quota" else 40,
             spacing=0.01,
         )
@@ -132,6 +133,11 @@ async def async_setup(hass, config):
                 await asyncio.sleep(0.05)
             report["push_applied"] = True
             report["entities"] = len(hass.states.async_all())
+            if case == "sleep":
+                coordinator.data[device].update(scenary="sleep", sleep_expired=True)
+                coordinator.async_update_listeners()
+                await supervisor.stopped.wait()
+                return
             if real:
                 await supervisor.stopped.wait()
                 return
@@ -160,19 +166,23 @@ async def async_setup(hass, config):
             stopped.cancel()
             watcher.cancel()
             await asyncio.gather(task, stopped, watcher, return_exceptions=True)
-            if entry is not None:
-                if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
-                    if owner := bucket.get("sync_manager"):
-                        await owner.close()
-                        report["owned_tasks_closed"] = not owner._tasks and all(
-                            s._task is None for s in owner.schedulers.values()
-                        )
-                await hass.config_entries.async_unload(entry.entry_id)
-                if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
-                    if owner := bucket.get("sync_manager"):
-                        await owner.close()
-                await hass.config_entries.async_remove(entry.entry_id)
-            await gateway.protected.session.close()
+            try:
+                if entry is not None:
+                    if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
+                        if owner := bucket.get("sync_manager"):
+                            await owner.close()
+                            report["owned_tasks_closed"] = not owner._tasks and all(
+                                s._task is None for s in owner.schedulers.values()
+                            )
+                    await hass.config_entries.async_unload(entry.entry_id)
+                    if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
+                        if owner := bucket.get("sync_manager"):
+                            await owner.close()
+                    await hass.config_entries.async_remove(entry.entry_id)
+            except Exception:
+                report["error"] = "cleanup_failed"
+            finally:
+                await gateway.protected.session.close()
         if backend is not None:
             if backend.wait:
                 backend.wait.set()

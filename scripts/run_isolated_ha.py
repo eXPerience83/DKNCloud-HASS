@@ -25,6 +25,7 @@ parser.add_argument(
     "--protected-case",
     choices=[
         "normal",
+        "sleep",
         "duration",
         "quota",
         "authorization",
@@ -118,11 +119,14 @@ with tempfile.TemporaryDirectory(
                 and not summary.get("error")
                 and summary.get("loaded")
                 and summary.get("push_applied")
+                and summary.get("owned_tasks_closed")
+                and summary.get("storage_files") == 0
                 and summary.get("reason") == "duration"
                 and summary.get("session_closed")
                 else 1
             )
         expected = {
+            "sleep": "forbidden_operation",
             "duration": "duration",
             "authorization": "duration",
             "get": "duration",

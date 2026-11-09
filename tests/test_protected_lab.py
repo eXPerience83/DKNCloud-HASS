@@ -181,6 +181,7 @@ async def test_tls_pusher_subscription_and_cancel(tls_backend):
     "case",
     [
         "normal",
+        "sleep",
         "duration",
         "quota",
         "authorization",
@@ -223,7 +224,7 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
         assert summary["operations"].get("get", 0) >= 1
     if case == "cooldown":
         assert summary["cooldown_wait"]
-    if case == "normal":
+    if case in {"normal", "sleep"}:
         assert summary["owned_tasks_closed"]
         assert summary["entities"] >= 5
     assert not list(tmp_path.iterdir())
