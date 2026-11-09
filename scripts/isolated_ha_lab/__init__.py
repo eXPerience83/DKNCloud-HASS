@@ -180,16 +180,37 @@ async def async_setup(hass, config):
                 )
                 for domain in {"climate", "switch", "number", "sensor", "binary_sensor"}
             }
+            report["push_power"] = entry.runtime_data.coordinator.data["device"][
+                "power"
+            ]
+            power[0] = "1"
+            for device_id in ("device", "device2"):
+                await sockets[-1].send_json(
+                    {
+                        "event": "device",
+                        "channel": f"private-{device_id}",
+                        "data": json.dumps({"id": device_id, "power": "1"}),
+                    }
+                )
+            async with asyncio.timeout(5):
+                while hass.states.get(climate_id).state in {
+                    "off",
+                    "unknown",
+                    "unavailable",
+                }:
+                    await asyncio.sleep(0.05)
+            report["entity_controls_gated"] = {}
             blocked_before = gateway.blocked
             for domain, service, unique_id, values in [
-                ("climate", "turn_on", "device_climate", {}),
-                ("switch", "turn_on", "device_power", {}),
-                ("number", "set_value", "device_sleep_time", {"value": 5}),
+                ("climate", "turn_off", "device_climate", {}),
+                ("switch", "turn_off", "device_power", {}),
+                ("number", "set_value", "device_sleep_time", {"value": 40}),
                 ("climate", "set_temperature", "device_climate", {"temperature": 24}),
             ]:
                 entity_id = er.async_get(hass).async_get_entity_id(
                     domain, "airzoneclouddaikin", unique_id
                 )
+                before_service = gateway.blocked
                 try:
                     await hass.services.async_call(
                         domain,
@@ -199,10 +220,10 @@ async def async_setup(hass, config):
                     )
                 except Exception:
                     pass
+                report["entity_controls_gated"][f"{domain}.{service}"] = (
+                    gateway.blocked > before_service
+                )
             report["blocked_entity_controls"] = gateway.blocked - blocked_before
-            report["push_power"] = entry.runtime_data.coordinator.data["device"][
-                "power"
-            ]
             try:
                 await entry.runtime_data.api.async_set_scenary("device", "occupied")
             except PermissionError:
@@ -211,17 +232,17 @@ async def async_setup(hass, config):
             initial_gets = sum(path == "/devices" for _, path in calls)
             outage[0] = True
             await sockets[-1].close()
-            power[0] = "1"
+            power[0] = "0"
             async with asyncio.timeout(140):
                 while sum(
                     path == "/devices" for _, path in calls
                 ) < initial_gets + 2 or any(
-                    d.get("power") != "1"
+                    d.get("power") != "0"
                     for d in entry.runtime_data.coordinator.data.values()
                 ):
                     await asyncio.sleep(0.1)
             report["fallback_state_applied"] = all(
-                d.get("power") == "1"
+                d.get("power") == "0"
                 for d in entry.runtime_data.coordinator.data.values()
             )
             report["fallback_gets"] = (

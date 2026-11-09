@@ -32,6 +32,7 @@ def test_nonzero_process_exit_fails_even_with_successful_report(monkeypatch, tmp
                         )
                     },
                     "blocked_entity_controls": 4,
+                    "entity_controls_gated": {str(i): True for i in range(4)},
                     "installations": 2,
                     "fallback_gets": 2,
                     "push_recovered": True,

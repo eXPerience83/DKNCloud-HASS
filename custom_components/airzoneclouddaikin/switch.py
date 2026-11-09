@@ -203,7 +203,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                 service,
                 {"entity_id": climate_eid},
                 blocking=True,
-                context=self.context,
+                context=self._context,
             )
             return True
         except TimeoutError:

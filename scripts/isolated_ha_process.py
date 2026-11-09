@@ -14,11 +14,13 @@ from homeassistant.helpers import (
     restore_state as rs,
 )
 from homeassistant.setup import async_setup_component
+from homeassistant.util.unit_system import METRIC_SYSTEM
 
 
 async def main():
     hass = HomeAssistant(sys.argv[1])
     hass.config.skip_pip = True
+    hass.config.units = METRIC_SYSTEM
     await hass.config.async_set_time_zone("UTC")
     loader.async_setup(hass)
     entity.async_setup(hass)

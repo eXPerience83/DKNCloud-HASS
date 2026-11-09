@@ -82,6 +82,8 @@ with tempfile.TemporaryDirectory(
                 for domain in {"climate", "switch", "number", "sensor", "binary_sensor"}
             )
             or summary.get("blocked_entity_controls", 0) < 4
+            or len(summary.get("entity_controls_gated", {})) != 4
+            or not all(summary.get("entity_controls_gated", {}).values())
             or summary.get("installations") != 2
             or summary.get("fallback_gets", 0) < 2
             or not summary.get("push_recovered")
