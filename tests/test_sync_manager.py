@@ -151,3 +151,39 @@ async def test_supervisor_reconnects_and_fences_old_events(monkeypatch):
     assert instance.state.data["fake"]["power"] == "0"
     await instance.close()
     assert supervisor.done()
+
+
+async def test_failed_recovery_sets_device_backoff_and_clears_on_success(monkeypatch):
+    fetch = AsyncMock(side_effect=[TimeoutError(), [{"id": "fake", "power": "1"}]])
+    instance, _, _, _ = manager(fetch)
+    clock = [0.0]
+    instance._clock = lambda: clock[0]
+    instance._pool._clock = instance._clock
+    waits = []
+
+    async def sleep(seconds):
+        waits.append(seconds)
+        clock[0] += seconds
+
+    # Keep RecoveryPool's zero-time coalescing yield operational.
+    real_sleep = asyncio.sleep
+
+    async def timed_sleep(seconds):
+        if seconds:
+            await sleep(seconds)
+        else:
+            await real_sleep(0)
+
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.sync_manager.asyncio.sleep", timed_sleep
+    )
+    try:
+        await instance.recover("fake")
+    except TimeoutError:
+        pass
+    assert instance._recovery_due["fake"] >= 10
+    await instance.recover("fake")
+    assert waits and waits[0] >= 10
+    assert not instance._recovery_due
+    assert instance.state.data["fake"]["power"] == "1"
+    await instance.close()

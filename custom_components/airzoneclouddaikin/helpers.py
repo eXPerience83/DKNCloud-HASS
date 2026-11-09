@@ -413,3 +413,13 @@ def confirm_optimistic(hass, entry_id, data, touched):
                 optimistic_invalidate(hass, entry_id, device, key)
                 changed = True
     return changed
+
+
+def expire_optimistic(hass, entry_id):
+    """Expire overlays even when no enabled entity reads their properties."""
+    now = hass.loop.time()
+    optimistic = _optimistic_bucket(hass, entry_id)
+    for device, overlays in list(optimistic.items()):
+        for field, overlay in list(overlays.items()):
+            if overlay.get("expires", 0) <= now:
+                optimistic_invalidate(hass, entry_id, device, field)

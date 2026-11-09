@@ -55,7 +55,9 @@ class SyncManager:
         self.touched: dict[str, set[str]] = {}
         self._last_received = dict.fromkeys(initial, clock())
         self._last_event: dict[str, float] = {}
-        self._last_get: dict[str, float] = {}
+        self._last_get: dict[str, float] = dict.fromkeys(initial, clock())
+        self._recovery_failures: dict[str, int] = {}
+        self._recovery_due: dict[str, float] = {}
         self._resync_tasks: dict[str, asyncio.Task] = {}
         self.schedulers = {
             device: InformationScheduler(
@@ -82,7 +84,10 @@ class SyncManager:
                 self._auth_failed = True
                 self._reauth()
             raise asyncio.CancelledError from None
-        failures = self.schedulers[device].status.failures
+        failures = max(
+            self.schedulers[device].status.failures,
+            self._recovery_failures.get(device, 0),
+        )
         return min(300, 10 * 2 ** min(failures, 5)) * random.uniform(1, 1.2)
 
     async def _information(self, device: str) -> None:
@@ -118,7 +123,22 @@ class SyncManager:
         """Coalesce reads only when started after this caller is ready."""
         if self._stopped or self._auth_failed:
             raise asyncio.CancelledError
-        await self._pool.get(self._installations[device], self._clock())
+        delay = self._recovery_due.get(device, 0) - self._clock()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if self._stopped or self._auth_failed:
+            raise asyncio.CancelledError
+        try:
+            await self._pool.get(self._installations[device], self._clock())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._recovery_failures[device] = self._recovery_failures.get(device, 0) + 1
+            self._recovery_due[device] = self._clock() + self._error(device, error)
+            raise
+        else:
+            self._recovery_failures.pop(device, None)
+            self._recovery_due.pop(device, None)
 
     async def refresh(self) -> dict[str, dict[str, Any]]:
         """Explicit coordinator recovery without starting another polling loop."""
@@ -228,7 +248,17 @@ class SyncManager:
             "authentication_required": self._auth_failed,
             "devices": {
                 f"device_{i}": {
-                    "mode": "push" if s.status.push_active else "rest_fallback",
+                    "mode": (
+                        "stopped"
+                        if self._stopped
+                        else "auth_required"
+                        if self._auth_failed
+                        else "resyncing"
+                        if d in self._resync_tasks and not self._resync_tasks[d].done()
+                        else "push"
+                        if s.status.push_active
+                        else "rest_fallback"
+                    ),
                     "last_event_age": now - self._last_event[d]
                     if d in self._last_event
                     else None,
@@ -241,8 +271,16 @@ class SyncManager:
                     if s.status.last_information is not None
                     else None,
                     "information_result": s.status.result,
-                    "failures": s.status.failures,
-                    "backoff_remaining": max(0, (s.status.next_attempt or now) - now),
+                    "failures": max(
+                        s.status.failures, self._recovery_failures.get(d, 0)
+                    ),
+                    "backoff_remaining": max(
+                        0,
+                        max(
+                            s.status.next_attempt or now, self._recovery_due.get(d, now)
+                        )
+                        - now,
+                    ),
                 }
                 for i, (d, s) in enumerate(self.schedulers.items(), 1)
             },

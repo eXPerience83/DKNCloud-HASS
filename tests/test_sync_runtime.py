@@ -8,6 +8,7 @@ from homeassistant.helpers import entity_registry as er
 
 import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin.const import DOMAIN
+from custom_components.airzoneclouddaikin.helpers import optimistic_set
 
 
 async def test_verified_connector_runtime_and_silent_local_clock(
@@ -63,6 +64,7 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert hass.states.get(online_id).state == "on"
     notify = Mock()
     monkeypatch.setattr(integration.persistent_notification, "async_create", notify)
+    optimistic_set(hass, entry.entry_id, "dev1", "disabled_field", "pending")
     freezer.tick(timedelta(seconds=601))
     manager.maintenance()
     await hass.async_block_till_done()
@@ -72,6 +74,9 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     manager.maintenance()
     await hass.async_block_till_done()
     notify.assert_called_once()
+    assert "disabled_field" not in hass.data[DOMAIN][entry.entry_id]["optimistic"].get(
+        "dev1", {}
+    )
     assert manager._last_received == age
     assert len(fetches) == initial_reads
     assert await hass.config_entries.async_unload(entry.entry_id)

@@ -131,6 +131,9 @@ async def async_get_config_entry_diagnostics(
     raw = {"entry": entry_summary, "coordinator": coord_summary}
     if manager := domain_data.get("sync_manager"):
         raw["synchronization"] = manager.diagnostics()
+        raw["synchronization"]["overlays_pending"] = sum(
+            len(fields) for fields in domain_data.get("optimistic", {}).values()
+        )
 
     # 1) Known keys
     redacted = async_redact_data(raw, TO_REDACT)

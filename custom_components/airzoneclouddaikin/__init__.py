@@ -43,7 +43,12 @@ from .const import (
     SCENARY_VACANT,
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
-from .helpers import acquire_device_lock, confirm_optimistic, device_supports_heat_cool
+from .helpers import (
+    acquire_device_lock,
+    confirm_optimistic,
+    device_supports_heat_cool,
+    expire_optimistic,
+)
 from .sync_manager import SyncManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -914,6 +919,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
         @callback
         def maintain(_now):
+            expire_optimistic(hass, entry.entry_id)
             manager.maintenance()
 
         cancel_maintenance = async_track_time_interval(
