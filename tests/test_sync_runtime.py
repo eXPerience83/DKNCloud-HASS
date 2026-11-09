@@ -45,7 +45,11 @@ async def test_verified_connector_runtime_and_silent_local_clock(
 
     entry = dkn_config_entry_factory()
     entry.add_to_hass(hass)
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"sync_connector": connect}
+    monkeypatch.setattr(
+        integration,
+        "build_verified_adapter",
+        lambda api, session: Mock(connect=connect),
+    )
     assert await hass.config_entries.async_setup(entry.entry_id)
     await asyncio.wait_for(subscribed.wait(), 5)
     coordinator = entry.runtime_data.coordinator
@@ -82,3 +86,19 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not manager._tasks
     assert all(s._task is None for s in manager.schedulers.values())
+
+    # The adapter is rebuilt on reload rather than retaining obsolete account state.
+    registry_ids = {
+        e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+    }
+    subscribed.clear()
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await asyncio.wait_for(subscribed.wait(), 5)
+    replacement = hass.data[DOMAIN][entry.entry_id]["sync_manager"]
+    assert replacement is not manager
+    assert entry.runtime_data.coordinator.update_interval is None
+    assert registry_ids == {
+        e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+    }
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert not replacement._tasks

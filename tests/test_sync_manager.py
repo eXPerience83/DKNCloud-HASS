@@ -187,3 +187,20 @@ async def test_failed_recovery_sets_device_backoff_and_clears_on_success(monkeyp
     assert not instance._recovery_due
     assert instance.state.data["fake"]["power"] == "1"
     await instance.close()
+
+
+async def test_queued_request_is_fenced_when_authentication_expires():
+    instance, _, request, _ = manager()
+    await instance._limit.acquire()
+    await instance._limit.acquire()
+    queued = asyncio.create_task(instance._information("fake"))
+    await asyncio.sleep(0)
+    instance._auth_failed = True
+    instance._limit.release()
+    try:
+        await queued
+    except asyncio.CancelledError:
+        pass
+    request.assert_not_awaited()
+    instance._limit.release()
+    await instance.close()

@@ -94,11 +94,15 @@ class SyncManager:
         if self._stopped or self._auth_failed:
             raise asyncio.CancelledError
         async with self._locks(device), self._limit:
+            if self._stopped or self._auth_failed:
+                raise asyncio.CancelledError
             await self._request(device)
 
     async def _read(self, installation: str) -> list[dict[str, Any]]:
         checkpoint = self.state.checkpoint()
         async with self._limit:
+            if self._stopped or self._auth_failed:
+                raise asyncio.CancelledError
             devices = await self._fetch(installation)
         if not isinstance(devices, list):
             raise ValueError("Invalid recovery snapshot")

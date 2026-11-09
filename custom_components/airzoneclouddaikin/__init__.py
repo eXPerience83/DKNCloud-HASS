@@ -49,6 +49,7 @@ from .helpers import (
     device_supports_heat_cool,
     expire_optimistic,
 )
+from .push_adapter import build_verified_adapter
 from .sync_manager import SyncManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -880,7 +881,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     entry.async_on_unload(_cancel_sleep_expiry_task)
 
     # A verified adapter is required before replacing the existing runtime.
-    connector = bucket.get("sync_connector")
+    adapter = build_verified_adapter(api, session)
+    connector = adapter.connect if adapter is not None else None
     if connector is not None:
 
         def publish_sync(data, remote):

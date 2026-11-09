@@ -46,3 +46,12 @@ class DknPushAdapter:
             manager.subscription,
         )
         await client.connect()
+
+
+def build_verified_adapter(api, session: ClientSession) -> DknPushAdapter | None:
+    """Keep activation closed until the service-specific contracts are verified.
+
+    The runtime calls this factory again after reauth/reload so an adapter must
+    never retain an earlier API instance or authorization token across lifetimes.
+    """
+    return None
