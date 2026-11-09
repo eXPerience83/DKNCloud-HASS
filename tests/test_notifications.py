@@ -680,6 +680,9 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
     assert set(second) == {"dev-a", "dev-b"}
     assert second["dev-a"]["name"] == "Unit A"
     assert second["dev-b"]["name"] == "Unit B2"
+    # A failed-installation cache must not be eligible for Sleep cleanup.
+    assert second["dev-a"]["sleep_snapshot_fresh"] is False
+    assert second["dev-b"]["sleep_snapshot_fresh"] is True
 
 
 @pytest.mark.asyncio
