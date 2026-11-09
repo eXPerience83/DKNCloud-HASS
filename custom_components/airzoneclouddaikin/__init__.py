@@ -48,6 +48,7 @@ from .helpers import (
     confirm_optimistic,
     device_supports_heat_cool,
     expire_optimistic,
+    optimistic_set,
 )
 from .push_adapter import build_verified_adapter
 from .sync_manager import SyncManager
@@ -550,6 +551,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     hass.data.setdefault(DOMAIN, {})
     bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
     bucket.setdefault("sleep_tracking", {})
+    bucket["closing"] = False
     cfg = entry.data
     opts = entry.options
 
@@ -582,7 +584,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         if (
             not auth_requested
             and not hass.is_stopping
-            and entry.state is ConfigEntryState.LOADED
+            and entry.state in {ConfigEntryState.LOADED, ConfigEntryState.FAILED_UNLOAD}
         ):
             auth_requested = True
             entry.async_start_reauth_if_available(hass)
@@ -643,6 +645,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     async def _async_handle_sleep_expiry() -> None:
         sleep_expiry_lock = bucket.setdefault("sleep_expiry_lock", asyncio.Lock())
         async with sleep_expiry_lock:
+            if bucket.get("closing"):
+                return
             data = coordinator.data or {}
             sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
 
@@ -665,6 +669,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     )
                     continue
 
+                if bucket.get("closing") or hass.is_stopping:
+                    return
                 try:
                     await api.async_set_scenary(dev_id, SCENARY_HOME)
                 except asyncio.CancelledError:
@@ -689,12 +695,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     continue
 
                 tracking.force_exit_requested = True
+                optimistic_set(hass, entry.entry_id, dev_id, "scenary", SCENARY_HOME)
+                if manager := bucket.get("sync_manager"):
+                    manager.request_recovery(dev_id)
                 refresh_needed = True
 
             if refresh_needed and bucket.get("sync_manager") is None:
                 hass.async_create_task(coordinator.async_request_refresh())
 
     def _on_sleep_candidate() -> None:
+        if bucket.get("closing") or hass.is_stopping:
+            return
         existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
         if existing is not None and not existing.done():
             return
@@ -990,6 +1001,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         bucket["sync_maintenance_cancel"] = cancel_maintenance
 
         async def stop_sync(_event):
+            bucket["closing"] = True
+            _cancel_sleep_expiry_task()
+            if task := bucket.get("sleep_expiry_task"):
+                await asyncio.gather(task, return_exceptions=True)
             cancel_maintenance()
             await manager.close()
 
@@ -1005,6 +1020,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception, asyncio.CancelledError:
+        bucket["closing"] = True
+        _cancel_sleep_expiry_task()
+        if task := bucket.get("sleep_expiry_task"):
+            await asyncio.gather(task, return_exceptions=True)
         if connector is not None:
             cancel_maintenance()
             cancel_stop()
@@ -1047,6 +1066,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
             entry.entry_id,
         )
 
+    if unload_ok:
+        bucket["closing"] = True
+        if task := bucket.get("sleep_expiry_task"):
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
     if manager is not None:
         if not unload_ok:
             return False

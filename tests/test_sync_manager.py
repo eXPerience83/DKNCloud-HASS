@@ -352,3 +352,61 @@ async def test_supervisor_authorization_failure_stops_automatic_work():
         pass
     request.assert_not_awaited()
     await instance.close()
+
+
+async def test_shared_virtual_clock_real_budget_multiple_installations():
+    now, sleepers, trace = [0.0], [], []
+
+    async def sleep(delay):
+        if delay <= 0:
+            await asyncio.sleep(0)
+            return
+        future = asyncio.get_running_loop().create_future()
+        sleepers.append((now[0] + delay, future))
+        await future
+
+    async def information(device):
+        trace.append((now[0], "info", device))
+        if device == "a":
+            raise TimeoutError
+
+    async def fetch(installation):
+        trace.append((now[0], "get", installation))
+        await sleep(15)
+        return [{"id": d} for d, i in relations.items() if i == installation]
+
+    relations = {"a": "one", "b": "one", "c": "two"}
+    locks = {d: asyncio.Lock() for d in relations}
+    owner = SyncManager(
+        {d: {"id": d} for d in relations},
+        relations,
+        information,
+        fetch,
+        Mock(),
+        Mock(),
+        locks.__getitem__,
+        connect=AsyncMock(),
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+    tasks = [asyncio.create_task(s.cycle()) for s in owner.schedulers.values()]
+    try:
+        for tick in range(180):
+            now[0] = tick
+            for deadline, future in sleepers:
+                if deadline <= now[0] and not future.done():
+                    future.set_result(None)
+            for _ in range(10):
+                await asyncio.sleep(0)
+            if all(t.done() for t in tasks):
+                break
+        assert all(t.done() for t in tasks)
+        await asyncio.gather(*tasks)
+        assert all(b[0] - a[0] >= 10 for a, b in zip(trace, trace[1:], strict=False))
+        assert sorted(i for _, kind, i in trace if kind == "get") == ["one", "two"]
+        assert owner.schedulers["a"].status.failures == 1
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await owner.close()

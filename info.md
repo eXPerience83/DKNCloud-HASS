@@ -469,3 +469,9 @@ Commonly used fields:
 - Confirm exact allowed ranges/encodings for slats (P9/P10/P19/P20) on at least one model.
 - Confirm whether devices that do not support Auto fan (0) fall back to a manual speed (observed fallback: 1) rather than persisting 0 or returning an error.
 
+
+Automatic recovery retains snapshot eligibility after transient information-request
+failures. Information and recovery retries have separate deadlines; successful
+snapshots do not confirm physical freshness or clear information failures.
+Entry shutdown fences and awaits automatic scene cleanup. Channel authorization
+runs separately from socket reception; denied channels trigger bounded reconnect.

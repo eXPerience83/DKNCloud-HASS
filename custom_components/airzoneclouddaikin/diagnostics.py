@@ -25,6 +25,8 @@ from .const import DOMAIN
 # --- Static redaction keys (redacted wherever they appear, nested included) ---
 TO_REDACT = {
     # Auth & identity
+    "id",
+    "name",
     "email",
     "user_email",
     "password",
@@ -58,6 +60,7 @@ TO_REDACT = {
 # --- Defensive regex for *keys* (keep minimal, focused) ---
 # Matches are case-insensitive and applied on dict keys only.
 _RE_PATTERNS = [
+    re.compile(r"(^id$|_id$|^name$)", re.IGNORECASE),
     re.compile(r"token|auth(entication)?|secret|api.?key", re.IGNORECASE),
     re.compile(r"mail|email", re.IGNORECASE),
     re.compile(r"\bmac\b|\bpin\b|\buuid\b|\bserial\b", re.IGNORECASE),

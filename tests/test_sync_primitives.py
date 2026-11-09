@@ -128,6 +128,7 @@ async def test_timeout_does_not_trigger_immediate_retry():
     scheduler = InformationScheduler(
         request, AsyncMock(), clock=lambda: 0, sleep=sleep, on_error=lambda _: 40
     )
+    scheduler.status.push_active = True
     with pytest.raises(asyncio.CancelledError):
         await scheduler._run()
     assert request.await_count == 1
@@ -212,6 +213,7 @@ async def test_backoff_is_measured_after_slow_failure():
     scheduler = InformationScheduler(
         request, AsyncMock(), clock=lambda: now[0], sleep=sleep, on_error=lambda _: 40
     )
+    scheduler.status.push_active = True
     with pytest.raises(asyncio.CancelledError):
         await scheduler._run()
     assert waits == [40]
@@ -259,3 +261,21 @@ async def test_rejected_information_still_reads_fallback_snapshot(status):
         await scheduler.cycle()
     sleep.assert_awaited_once_with(10)
     recover.assert_awaited_once()
+
+
+async def test_fallback_get_survives_information_timeout_without_resend():
+    now = [0.0]
+    request, recovery = AsyncMock(side_effect=TimeoutError), AsyncMock()
+
+    async def sleep(seconds):
+        now[0] += seconds
+
+    scheduler = InformationScheduler(
+        request, recovery, clock=lambda: now[0], sleep=sleep, on_error=lambda _: 100
+    )
+    await scheduler.cycle()
+    await scheduler.cycle()
+    assert request.await_count == 1
+    assert recovery.await_count == 2
+    assert scheduler.status.failures == 1
+    assert scheduler._information_due == 100

@@ -58,6 +58,7 @@ class PusherClient:
     async def connect(self) -> None:
         """Consume until disconnection; cancellation closes only this socket."""
         subscribed: set[str] = set()
+        authorizations = []
         try:
             async with self._session.ws_connect(
                 self._url, autoping=True, max_msg_size=1024 * 1024
@@ -66,6 +67,9 @@ class PusherClient:
                 awaiting_pong = False
                 established = False
                 while True:
+                    for task in authorizations:
+                        if task.done():
+                            task.result()
                     try:
                         message = await asyncio.wait_for(
                             socket.receive(),
@@ -108,26 +112,35 @@ class PusherClient:
                             raise PusherProtocolError("Invalid activity timeout")
                         activity = float(timeout)
                         established = True
-                        for channel in self._channels:
-                            try:
-                                signature = await self._authorize(socket_id, channel)
-                            except ClientResponseError as error:
-                                if error.status != 403:
-                                    raise
-                                await self._on_subscription(
-                                    self._channels[channel], False
+
+                        async def authorize_channels(socket_id=socket_id):
+                            for channel in self._channels:
+                                try:
+                                    signature = await self._authorize(
+                                        socket_id, channel
+                                    )
+                                except ClientResponseError as error:
+                                    if error.status != 403:
+                                        raise
+                                    await self._on_subscription(
+                                        self._channels[channel], False
+                                    )
+                                    raise PusherProtocolError(
+                                        "Channel authorization denied", 403
+                                    ) from None
+                                if not isinstance(signature, str) or not signature:
+                                    raise PusherProtocolError(
+                                        "Invalid channel authorization"
+                                    )
+                                await socket.send_json(
+                                    {
+                                        "event": "pusher:subscribe",
+                                        "data": {"channel": channel, "auth": signature},
+                                    }
                                 )
-                                continue
-                            if not isinstance(signature, str) or not signature:
-                                raise PusherProtocolError(
-                                    "Invalid channel authorization"
-                                )
-                            await socket.send_json(
-                                {
-                                    "event": "pusher:subscribe",
-                                    "data": {"channel": channel, "auth": signature},
-                                }
-                            )
+
+                        authorizations.append(asyncio.create_task(authorize_channels()))
+                        await asyncio.sleep(0)
                     elif event == "pusher:ping":
                         await socket.send_json({"event": "pusher:pong", "data": {}})
                     elif event == "pusher:error":
@@ -153,5 +166,8 @@ class PusherClient:
                             # transient and is never retained in diagnostics.
                             await self._on_device(device_id, frame.get("data"))
         finally:
+            for task in authorizations:
+                task.cancel()
+            await asyncio.gather(*authorizations, return_exceptions=True)
             for channel in subscribed:
                 await self._on_subscription(self._channels[channel], False)

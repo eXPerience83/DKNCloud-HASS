@@ -132,8 +132,8 @@ async def test_diagnostics_redacts_extended_pii_fields(
         _assert_redacted(device_data["complete_name"])
         _assert_redacted(device_data["time_zone"])
         _assert_redacted(device_data["metadata"]["owner_id"])
-        assert device_data["ws_id"] == "ws-456"
-        assert "ws-456" in flattened
+        _assert_redacted(device_data["ws_id"])
+        assert "ws-456" not in flattened
     else:
         assert coordinator_result == "***"
         assert "ws-456" not in flattened

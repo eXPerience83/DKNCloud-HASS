@@ -70,6 +70,7 @@ class SyncManager:
         self._auth_failed = False
         self.connected = False
         self._push_error_kind = None
+        self._push_error_code = None
         self._last_errors = {}
         self.touched: dict[str, set[str]] = {}
         self._last_received = dict.fromkeys(initial, clock())
@@ -88,6 +89,7 @@ class SyncManager:
                 clock=clock,
                 sleep=sleep,
                 on_error=lambda error, d=device: self._error(d, error),
+                fallback_recover=lambda d=device: self.recover(d, fallback=True),
             )
             for device in initial
         }
@@ -204,18 +206,18 @@ class SyncManager:
         self._publish(deepcopy(self.state.data), True)
         return devices
 
-    async def recover(self, device: str) -> None:
+    async def recover(self, device: str, *, fallback=False) -> None:
         """Own recovery waiters even when started by an explicit HA refresh."""
         task = asyncio.current_task()
         if task is not None:
             self._recovery_waiters.add(task)
         try:
-            await self._recover(device)
+            await self._recover(device, fallback=fallback)
         finally:
             if task is not None:
                 self._recovery_waiters.discard(task)
 
-    async def _recover(self, device: str) -> None:
+    async def _recover(self, device: str, *, fallback=False) -> None:
         """Coalesce reads only when started after this caller is ready."""
         if self._stopped or self._auth_failed:
             raise asyncio.CancelledError
@@ -227,7 +229,15 @@ class SyncManager:
         try:
             while True:
                 try:
-                    await self._pool.get(self._installations[device], self._clock())
+                    await self._pool.get(
+                        self._installations[device],
+                        min(
+                            self._clock(),
+                            self._information_ready.get(device, self._clock()),
+                        )
+                        if fallback
+                        else self._clock(),
+                    )
                     break
                 except ObsoleteSnapshot:
                     continue
@@ -308,6 +318,11 @@ class SyncManager:
                         self._auth_failed = True
                         self._reauth()
                     return
+                self._push_error_code = (
+                    error.code
+                    if isinstance(error, PusherProtocolError)
+                    else getattr(error, "status", None)
+                )
                 kind = type(error).__name__
                 if kind != self._push_error_kind:
                     _LOGGER.warning("Cloud push connection interrupted (%s)", kind)
@@ -408,6 +423,7 @@ class SyncManager:
         now = self._clock()
         return {
             "pusher_connected": self.connected,
+            "pusher_error_code": self._push_error_code,
             "authentication_required": self._auth_failed,
             "automatic_budget": self._budget.diagnostics(),
             "devices": {
@@ -436,7 +452,7 @@ class SyncManager:
                     "state_age": self._reported_age(d),
                     "state_age_source": "reported_update_date",
                     "physical_freshness_verified": False,
-                    "stale": now - self._last_received[d] >= 60,
+                    "reception_stale": now - self._last_received[d] >= 60,
                     "last_information_age": now - s.status.last_information
                     if s.status.last_information is not None
                     else None,

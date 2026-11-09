@@ -110,9 +110,9 @@ def optimistic_get(
 
     expires = overlay.get("expires")
     if not isinstance(expires, (int, float)) or hass.loop.time() >= float(expires):
-        device_overlay.pop(key, None)
-        if not device_overlay:
-            optimistic.pop(device_id, None)
+        if manager := _entry_bucket(hass, entry_id).get("sync_manager"):
+            manager.request_recovery(device_id)
+        optimistic_invalidate(hass, entry_id, device_id, key)
         return backend_value
 
     return overlay.get("value", backend_value)

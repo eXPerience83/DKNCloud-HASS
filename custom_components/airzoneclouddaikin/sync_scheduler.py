@@ -7,7 +7,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from aiohttp import ClientResponseError
+from aiohttp import ClientError, ClientResponseError
 
 INFORMATION_INTERVAL = 10.0
 FALLBACK_READ_DELAY = 10.0
@@ -36,10 +36,14 @@ class InformationScheduler:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_error: Callable[[Exception], float],
+        fallback_recover=None,
     ) -> None:
         self.status = CycleStatus()
         self._request = request
         self._recover = recover
+        self._fallback_recover = fallback_recover or recover
+        self._information_due = 0.0
+        self._get_due = 0.0
         self._clock = clock
         self._sleep = sleep
         self._on_error = on_error
@@ -81,19 +85,53 @@ class InformationScheduler:
             self.status.last_information = self._clock()
             rejected = None
             try:
-                result = await self._request()
+                result = None
+                if self._clock() >= self._information_due:
+                    result = await self._request()
+                    self._information_due = 0
+                    self.status.failures = 0
                 if result is False:
                     self.status.result = "deferred"
                     return
-            except ClientResponseError as error:
-                if self.status.push_active or error.status not in {422, 423}:
+            except (ClientError, TimeoutError, OSError) as error:
+                status = (
+                    error.status if isinstance(error, ClientResponseError) else None
+                )
+                if self.status.push_active or status in {401, 429}:
                     raise
-                rejected = error
-            self.status.result = "accepted" if rejected is None else "rejected"
+                if status in {422, 423}:
+                    rejected = error
+                elif status is None or status >= 500:
+                    self.status.failures += 1
+                    self._information_due = self._clock() + self._on_error(error)
+                    self.status.result = "information_error"
+                else:
+                    raise
+            self.status.result = (
+                "information_backoff"
+                if self._information_due
+                else "accepted"
+                if rejected is None
+                else "rejected"
+            )
             if not self.status.push_active:
                 await self._sleep(FALLBACK_READ_DELAY)
-                if generation == self._generation and not self.status.push_active:
-                    await self._recover()
+                if (
+                    generation == self._generation
+                    and not self.status.push_active
+                    and self._clock() >= self._get_due
+                ):
+                    try:
+                        await self._fallback_recover()
+                    except (ClientError, TimeoutError, OSError) as error:
+                        if isinstance(error, ClientResponseError) and error.status in {
+                            401,
+                            429,
+                        }:
+                            raise
+                        self._get_due = self._clock() + self._on_error(error)
+                    else:
+                        self._get_due = 0
             self.status.last_success = self._clock()
             if rejected is not None:
                 raise rejected
@@ -112,7 +150,6 @@ class InformationScheduler:
                 delay = max(INFORMATION_INTERVAL, self._on_error(error))
                 started = self._clock()
             else:
-                self.status.failures = 0
                 delay = INFORMATION_INTERVAL * (2 if fallback else 1)
             # Missed slots are skipped, never replayed or queued.
             deadline = started + delay

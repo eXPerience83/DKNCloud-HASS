@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.helpers import entity_registry as er
 
@@ -180,6 +181,7 @@ async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     await entered.wait()
     api.fetch_installations.reset_mock()
     monkeypatch.setattr(entry, "async_start_reauth_if_available", Mock())
+    entry._async_set_state(hass, ConfigEntryState.FAILED_UNLOAD, None)
     api.on_write_auth_failure()
     assert manager._auth_failed
     api.on_write_auth_failure()
@@ -188,4 +190,53 @@ async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     with pytest.raises(asyncio.CancelledError):
         await discovery
     api.fetch_installations.assert_not_awaited()
+    entry._async_set_state(hass, ConfigEntryState.LOADED, None)
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("stop", [True, False])
+async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device, stop
+):
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    entered, release, cleaned = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    writes = []
+
+    async def pending_write(*_):
+        entered.set()
+        try:
+            await release.wait()
+            writes.append("write")
+        finally:
+            cleaned.set()
+
+    api.async_set_scenary = AsyncMock(side_effect=pending_write)
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data.coordinator
+    coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+    coordinator.async_update_listeners()
+    await asyncio.wait_for(entered.wait(), 5)
+    task = bucket["sleep_expiry_task"]
+    if stop:
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+        await hass.async_block_till_done()
+    else:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+    assert cleaned.is_set() and task.done()
+    release.set()
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    assert not writes
+    assert api.async_set_scenary.await_count == 1
+    if stop:
+        assert await hass.config_entries.async_unload(entry.entry_id)

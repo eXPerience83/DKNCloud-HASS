@@ -121,3 +121,44 @@ def test_invalid_json_exception_has_no_sensitive_decoder_context():
     with pytest.raises(PusherProtocolError) as error:
         PusherClient._object("synthetic-sensitive-invalid-json")
     assert error.value.__context__ is None
+
+
+async def test_authorization_wait_does_not_block_ping_and_is_joined_on_cancel():
+    c, socket, _, authorize, _, _ = client([])
+    authorized, pong, cleaned = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    messages = iter(
+        [
+            frame(
+                "pusher:connection_established",
+                {"socket_id": "1.2", "activity_timeout": 30},
+            ),
+            frame("pusher:ping", {}),
+        ]
+    )
+
+    async def auth(*_):
+        authorized.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    async def receive():
+        try:
+            return next(messages)
+        except StopIteration:
+            pong.set()
+            await asyncio.Event().wait()
+
+    authorize.side_effect = auth
+    socket.receive.side_effect = receive
+    task = asyncio.create_task(c.connect())
+    await authorized.wait()
+    await pong.wait()
+    assert {"event": "pusher:pong", "data": {}} in [
+        call.args[0] for call in socket.send_json.await_args_list
+    ]
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleaned.is_set()

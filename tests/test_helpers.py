@@ -235,3 +235,21 @@ def test_sync_overlays_confirm_only_explicit_received_fields(hass):
     assert confirm_optimistic(hass, "synthetic-entry", data, {"fake": {"power"}})
     assert optimistic_get(hass, "synthetic-entry", "fake", "power", "0") == "0"
     assert optimistic_get(hass, "synthetic-entry", "fake", "mode", "0") == "2"
+
+
+async def test_entity_expiry_requests_recovery_before_local_maintenance(hass):
+    from unittest.mock import Mock
+
+    from custom_components.airzoneclouddaikin.const import DOMAIN
+    from custom_components.airzoneclouddaikin.helpers import (
+        expire_optimistic,
+        optimistic_get,
+        optimistic_set,
+    )
+
+    manager = Mock()
+    hass.data.setdefault(DOMAIN, {})["expiry-test"] = {"sync_manager": manager}
+    optimistic_set(hass, "expiry-test", "fake", "power", "1", ttl=-1)
+    assert optimistic_get(hass, "expiry-test", "fake", "power", "0") == "0"
+    expire_optimistic(hass, "expiry-test")
+    manager.request_recovery.assert_called_once_with("fake")
