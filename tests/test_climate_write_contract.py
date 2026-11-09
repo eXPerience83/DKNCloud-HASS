@@ -152,6 +152,86 @@ async def test_presets_are_device_put_requests_not_event_commands(
     api.send_event.assert_not_awaited()
 
 
+async def test_expired_sleep_home_writes_raw_backend_scene(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Effective Home must not suppress real cleanup of raw expired Sleep."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"].update(
+        effective_scenary="occupied", sleep_expired=True
+    )
+    assert entity.preset_mode == "home"
+
+    await entity.async_set_preset_mode("home")
+
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": "occupied"}}
+    )
+
+
+async def test_expired_sleep_rearm_forces_real_occupied_to_sleep_transition(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new timer requires a fresh scene transition, not Sleep reapplication."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"].update(
+        effective_scenary="occupied", sleep_expired=True
+    )
+    old_start = dt_util.utcnow() - timedelta(hours=2)
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        sleep_started_at_utc=old_start,
+        force_exit_requested=True,
+    )
+    hass.data[DOMAIN]["climate-entry"]["sleep_tracking"] = {"unit-1": tracking}
+
+    await entity.async_set_preset_mode("sleep")
+
+    assert [call.args for call in api.put_device_fields.await_args_list] == [
+        ("unit-1", {"device": {"scenary": "occupied"}}),
+        ("unit-1", {"device": {"scenary": "sleep"}}),
+    ]
+    assert tracking.last_scenary == "sleep"
+    assert tracking.sleep_started_at_utc is not None
+    assert tracking.sleep_started_at_utc > old_start
+    assert tracking.force_exit_requested is False
+
+
+async def test_failed_second_rearm_step_does_not_optimistically_select_sleep(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep Home visible and refresh if occupied succeeds but Sleep fails."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"].update(
+        effective_scenary="occupied", sleep_expired=True
+    )
+    api.put_device_fields.side_effect = [None, RuntimeError("second write failed")]
+
+    with pytest.raises(RuntimeError, match="second write failed"):
+        await entity.async_set_preset_mode("sleep")
+
+    assert api.put_device_fields.await_count == 2
+    assert entity.preset_mode == "home"
+
+
 async def test_invalid_preset_is_noop(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
