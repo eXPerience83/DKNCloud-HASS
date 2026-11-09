@@ -234,6 +234,8 @@ async def async_setup(hass, config):
 
             traceback.print_exc()
             report["error"] = type(error).__name__
+            if "manager" in locals():
+                report["health_on_failure"] = manager.diagnostics()
         finally:
             bucket = hass.data.get("airzoneclouddaikin", {}).get(entry.entry_id, {})
             if owner := bucket.get("sync_manager"):

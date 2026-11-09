@@ -87,7 +87,6 @@ class InformationScheduler:
         async with self._lock:
             generation = self._generation
             self.status.last_evaluation = self._clock()
-            rejected = None
             try:
                 result = None
                 if self._clock() >= self._information_due:
@@ -99,26 +98,16 @@ class InformationScheduler:
                 if result is False:
                     self.status.result = "deferred"
                     return
-            except (ClientError, TimeoutError, OSError) as error:
+            except (ClientError, TimeoutError, OSError, ValueError) as error:
                 status = (
                     error.status if isinstance(error, ClientResponseError) else None
                 )
                 if self.status.push_active or status in {401, 429}:
                     raise
-                if status in {422, 423}:
-                    rejected = error
-                elif status is None or status >= 500:
-                    self.status.failures += 1
-                    self._information_due = self._clock() + self._on_error(error)
-                    self.status.result = "information_error"
-                else:
-                    raise
+                self.status.failures += 1
+                self._information_due = self._clock() + self._on_error(error)
             self.status.result = (
-                "information_backoff"
-                if self._information_due
-                else "accepted"
-                if rejected is None
-                else "rejected"
+                "information_backoff" if self._information_due else "accepted"
             )
             if not self.status.push_active:
                 await self._sleep(FALLBACK_READ_DELAY)
@@ -129,7 +118,7 @@ class InformationScheduler:
                 ):
                     try:
                         await self._fallback_recover()
-                    except (ClientError, TimeoutError, OSError) as error:
+                    except (ClientError, TimeoutError, OSError, ValueError) as error:
                         if isinstance(error, ClientResponseError) and error.status in {
                             401,
                             429,
@@ -139,8 +128,6 @@ class InformationScheduler:
                     else:
                         self._get_due = 0
             self.status.last_success = self._clock()
-            if rejected is not None:
-                raise rejected
 
     async def _run(self) -> None:
         while True:

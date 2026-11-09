@@ -482,3 +482,8 @@ Channel authorization failures retry independently without closing healthy chann
 The automatic request budget enforces spacing only; operation backoff and the
 server-directed cooldown remain separate. Diagnostics export health summaries
 without raw device data or entry options.
+
+Failed socket attempts do not trigger extra topology discovery. Reconnection
+discovery waits for successful device resynchronization. Rejected information
+requests also retain recovery eligibility; authentication and server-directed
+rate-limit pauses remain authoritative.

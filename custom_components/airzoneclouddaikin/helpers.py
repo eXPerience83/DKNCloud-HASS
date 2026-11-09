@@ -81,6 +81,9 @@ def optimistic_set(
     """Store an optimistic value for a device field with expiration."""
 
     optimistic = _optimistic_bucket(hass, entry_id)
+    if key == "scenary":
+        revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
+        revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})
 
     expires_in = ttl if ttl is not None else _adaptive_ttl(hass, entry_id)

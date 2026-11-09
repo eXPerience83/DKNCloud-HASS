@@ -410,3 +410,38 @@ async def test_shared_virtual_clock_real_budget_multiple_installations():
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await owner.close()
+
+
+async def test_failed_push_attempts_do_not_compete_with_fallback_discovery():
+    instance, _, _, _ = manager()
+    discovery = AsyncMock(return_value={"fake": "installation"})
+    instance._discover = discovery
+    second = asyncio.Event()
+    attempts = []
+
+    async def connect(_):
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise ConnectionError
+        second.set()
+        await asyncio.Event().wait()
+
+    instance._connect = connect
+    task = asyncio.create_task(instance._supervise())
+    instance._tasks.append(task)
+    await second.wait()
+    discovery.assert_not_awaited()
+    assert instance._reconnect_discovery_pending
+    await instance.close()
+
+
+async def test_discovery_runs_after_successful_resynchronization():
+    instance, _, _, _ = manager()
+    instance._discover = AsyncMock(return_value={"fake": "installation"})
+    instance._reconnect_discovery_pending = True
+    await instance.subscription("fake", True)
+    await instance._resync_tasks["fake"]
+    await instance._topology_task
+    instance._discover.assert_awaited_once()
+    assert instance.schedulers["fake"].status.push_active
+    await instance.close()

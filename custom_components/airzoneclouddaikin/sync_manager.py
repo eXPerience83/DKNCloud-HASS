@@ -62,6 +62,7 @@ class SyncManager:
         self._discovery_lock = asyncio.Lock()
         self._last_discovery = None
         self._topology_task = None
+        self._reconnect_discovery_pending = False
         self._limit = asyncio.Semaphore(2)
         self._budget = RequestBudget(clock, sleep)
         self._pool = RecoveryPool(self._read, clock, timed_fetch=self._read)
@@ -297,6 +298,16 @@ class SyncManager:
             while not self._stopped and not self._auth_failed:
                 try:
                     await self.schedulers[device].set_push(True)
+                    if self._reconnect_discovery_pending and all(
+                        s.status.push_active for s in self.schedulers.values()
+                    ):
+                        self._reconnect_discovery_pending = False
+                        if self._discover is not None and (
+                            self._topology_task is None or self._topology_task.done()
+                        ):
+                            self._topology_task = asyncio.create_task(
+                                self._discover_once()
+                            )
                     return
                 except asyncio.CancelledError:
                     raise
@@ -310,9 +321,6 @@ class SyncManager:
         failures = 0
         while not self._stopped and not self._auth_failed:
             started = self._clock()
-            if failures and self._discover is not None:
-                if self._topology_task is None or self._topology_task.done():
-                    self._topology_task = asyncio.create_task(self._discover_once())
             self.state.invalidate()
             try:
                 await self._connect(self)
@@ -337,6 +345,7 @@ class SyncManager:
                     if 4000 <= error.code <= 4099:
                         return
             finally:
+                self._reconnect_discovery_pending = True
                 self.state.invalidate()
                 self.connected = False
                 for device in self.schedulers:

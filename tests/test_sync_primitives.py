@@ -1,7 +1,7 @@
 """Synthetic tests for transport-independent synchronization ownership."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -247,7 +247,7 @@ async def test_ineligible_failed_read_does_not_poison_later_waiter():
     await pool.close()
 
 
-@pytest.mark.parametrize("status", [422, 423])
+@pytest.mark.parametrize("status", [400, 403, 404, 422, 423, 500])
 async def test_rejected_information_still_reads_fallback_snapshot(status):
     from aiohttp import ClientResponseError
 
@@ -257,8 +257,8 @@ async def test_rejected_information_still_reads_fallback_snapshot(status):
     scheduler = InformationScheduler(
         request, recover, sleep=sleep, on_error=lambda _: 10
     )
-    with pytest.raises(ClientResponseError):
-        await scheduler.cycle()
+    await scheduler.cycle()
+    assert scheduler.status.failures == 1
     sleep.assert_awaited_once_with(10)
     recover.assert_awaited_once()
 
@@ -279,3 +279,18 @@ async def test_fallback_get_survives_information_timeout_without_resend():
     assert recovery.await_count == 2
     assert scheduler.status.failures == 1
     assert scheduler._information_due == 100
+
+
+async def test_invalid_snapshot_does_not_increase_information_backoff():
+    information_error, recovery_error = Mock(return_value=300), Mock(return_value=20)
+    scheduler = InformationScheduler(
+        AsyncMock(),
+        AsyncMock(side_effect=ValueError("Invalid snapshot")),
+        sleep=AsyncMock(),
+        on_error=information_error,
+        on_recovery_error=recovery_error,
+    )
+    await scheduler.cycle()
+    information_error.assert_not_called()
+    recovery_error.assert_called_once()
+    assert scheduler.status.failures == 0

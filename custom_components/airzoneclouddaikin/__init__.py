@@ -680,17 +680,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     or getattr(bucket.get("sync_manager"), "_auth_failed", False)
                 ):
                     return
+                scene_revision = bucket.get("scene_revisions", {}).get(dev_id, 0)
                 try:
                     async with acquire_device_lock(hass, entry.entry_id, dev_id):
                         current = (coordinator.data or {}).get(dev_id, {})
                         overlay = (
                             bucket.get("optimistic", {}).get(dev_id, {}).get("scenary")
                         )
+                        if bucket.get("scene_revisions", {}).get(
+                            dev_id, 0
+                        ) != scene_revision or (
+                            overlay and overlay.get("value") != SCENARY_SLEEP
+                        ):
+                            # A manual scene supersedes cleanup for this sleep session.
+                            tracking.force_exit_requested = True
+                            continue
                         if (
                             bucket.get("closing")
-                            or current.get("scenary") != SCENARY_SLEEP
+                            or str(current.get("scenary") or "").strip().lower()
+                            != SCENARY_SLEEP
                             or not current.get("sleep_expired")
-                            or (overlay and overlay.get("value") != SCENARY_SLEEP)
                         ):
                             continue
                         await api.async_set_scenary(dev_id, SCENARY_HOME)
