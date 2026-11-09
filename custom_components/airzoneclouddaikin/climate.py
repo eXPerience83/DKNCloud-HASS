@@ -291,8 +291,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except Exception as err:
                 if cleared_stale_sleep:
                     optimistic_set(
-                        self.hass, self._entry_id, self._device_id,
-                        "scenary", "occupied",
+                        self.hass,
+                        self._entry_id,
+                        self._device_id,
+                        "scenary",
+                        "occupied",
                     )
                     schedule_post_write_refresh(
                         self.hass, self.coordinator, entry_id=self._entry_id
