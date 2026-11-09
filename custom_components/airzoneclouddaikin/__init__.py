@@ -43,7 +43,7 @@ from .const import (
     SCENARY_VACANT,
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
-from .helpers import device_supports_heat_cool
+from .helpers import acquire_device_lock, device_supports_heat_cool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +101,25 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
     tracking.last_scenary = scenary
 
 
+def _record_explicit_sleep_started(
+    hass: HomeAssistant, entry_id: str, device_id: str
+) -> None:
+    """Restart local Sleep tracking after an explicit successful Sleep write.
+
+    The intervening occupied->sleep may occur between backend polls.
+    """
+    bucket = hass.data.get(DOMAIN, {}).get(entry_id, {})
+    devices = bucket.get("sleep_tracking", {})
+    if not isinstance(devices, dict):
+        return
+    tracking = devices.setdefault(device_id, SleepTracking())
+    if not isinstance(tracking, SleepTracking):
+        return
+    tracking.last_scenary = SCENARY_SLEEP
+    tracking.sleep_started_at_utc = dt_util.utcnow()
+    tracking.force_exit_requested = False
+
+
 def _parse_sleep_time_minutes(device: dict[str, Any]) -> int | None:
     """Parse sleep_time minutes from a device snapshot."""
 
@@ -134,6 +153,28 @@ def _backend_power_is_off(device: dict[str, Any]) -> bool:
         return int(str(raw).strip()) == 0
     except TypeError, ValueError:  # noqa: BLE001
         return False
+
+
+def _sleep_cleanup_due(
+    dev: dict[str, Any], tracking: SleepTracking | None, now: datetime
+) -> bool:
+    """Authorise cleanup only for a fresh OFF snapshot of the same session."""
+    if tracking is None or tracking.force_exit_requested:
+        return False
+    if dev.get("sleep_snapshot_fresh") is not True:
+        return False
+    if str(dev.get("scenary") or "").strip().lower() != SCENARY_SLEEP:
+        return False
+    if dev.get("sleep_expired") is not True or not _backend_power_is_off(dev):
+        return False
+    minutes = _parse_sleep_time_minutes(dev)
+    started = tracking.sleep_started_at_utc
+    return bool(
+        started is not None
+        and minutes is not None
+        and minutes > 0
+        and now >= started + timedelta(minutes=minutes + SLEEP_TIMEOUT_GRACE_MINUTES)
+    )
 
 
 class AirzoneCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
@@ -229,6 +270,7 @@ async def _async_update_data(
         )
 
         data: dict[str, dict[str, Any]] = {}
+        fresh_device_ids: set[str] = set()
         relations = await api.fetch_installations()
         # Malformed installation responses are transient failures, not an
         # authoritative empty account: preserve the last good device snapshot.
@@ -325,6 +367,7 @@ async def _async_update_data(
                 dev_id_str = str(dev_id)
                 data[dev_id_str] = dev
                 inst_device_ids.add(dev_id_str)
+                fresh_device_ids.add(dev_id_str)
                 device_installation_map[dev_id_str] = inst_id
 
             previous_ids = set(last_devices_by_inst.get(inst_id, set()))
@@ -361,6 +404,10 @@ async def _async_update_data(
             for stale_id in tracked_ids - active_ids:
                 sleep_tracking.pop(stale_id, None)
         for dev_id, dev in data.items():
+            dev["sleep_snapshot_fresh"] = dev_id in fresh_device_ids
+            if not dev["sleep_snapshot_fresh"]:
+                # A fallback snapshot is not evidence for a new Sleep cleanup.
+                continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
 
             tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
@@ -620,57 +667,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         sleep_expiry_lock = bucket.setdefault("sleep_expiry_lock", asyncio.Lock())
         async with sleep_expiry_lock:
             data = coordinator.data or {}
-            sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
-
             if not data:
                 return
 
             refresh_needed = False
-            for dev_id, dev in data.items():
-                tracking = sleep_tracking.get(dev_id)
-                if tracking is None or tracking.force_exit_requested:
-                    continue
+            for dev_id in list(data):
+                # Revalidate after locking: an explicit user Sleep command may
+                # have restarted the tracking clock in the meantime.
+                lock = acquire_device_lock(hass, entry.entry_id, dev_id)
+                async with lock:
+                    dev = (coordinator.data or {}).get(dev_id)
+                    tracking: SleepTracking | None = bucket.get(
+                        "sleep_tracking", {}
+                    ).get(dev_id)
+                    if not isinstance(dev, dict) or not _sleep_cleanup_due(
+                        dev, tracking, dt_util.utcnow()
+                    ):
+                        continue
+                    try:
+                        await api.async_set_scenary(dev_id, SCENARY_HOME)
+                    except asyncio.CancelledError:
+                        raise
+                    except ClientResponseError as cre:
+                        _LOGGER.warning(
+                            "Failed to clean up expired sleep scenary on %s (HTTP %s).",
+                            dev_id,
+                            cre.status,
+                        )
+                        continue
+                    except TimeoutError:
+                        _LOGGER.warning(
+                            "Failed to clean up expired sleep scenary on %s (timeout)",
+                            dev_id,
+                        )
+                        continue
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning(
+                            "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
+                            dev_id,
+                            err,
+                            exc_info=True,
+                        )
+                        continue
 
-                raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
-                    continue
-
-                if api is None:
-                    _LOGGER.debug(
-                        "API handle missing; skipping sleep expiry cleanup for %s",
-                        dev_id,
-                    )
-                    continue
-
-                try:
-                    await api.async_set_scenary(dev_id, SCENARY_HOME)
-                except asyncio.CancelledError:
-                    raise
-                except ClientResponseError as cre:
-                    status = cre.status
-                    _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (HTTP %s).",
-                        dev_id,
-                        status,
-                    )
-                    continue
-                except TimeoutError:
-                    _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (timeout)",
-                        dev_id,
-                    )
-                    continue
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
-                        dev_id,
-                        err,
-                        exc_info=True,
-                    )
-                    continue
-
-                tracking.force_exit_requested = True
-                refresh_needed = True
+                    tracking.force_exit_requested = True
+                    refresh_needed = True
 
             if refresh_needed:
                 hass.async_create_task(coordinator.async_request_refresh())
@@ -683,16 +724,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         if not data:
             return
         sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
-        has_candidate = False
-        for dev_id, dev in data.items():
-            tracking = sleep_tracking.get(dev_id)
-            if tracking is None or tracking.force_exit_requested:
-                continue
-            raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_expired"):
-                has_candidate = True
-                break
-        if not has_candidate:
+        now = dt_util.utcnow()
+        if not any(
+            _sleep_cleanup_due(dev, sleep_tracking.get(dev_id), now)
+            for dev_id, dev in data.items()
+        ):
             return
         bucket["sleep_expiry_task"] = hass.async_create_task(
             _async_handle_sleep_expiry()
