@@ -69,3 +69,25 @@ async def test_redirect_guard_stops_before_following_location(
         assert not reached
     finally:
         await protected.session.close()
+
+
+async def test_socket_cannot_send_unknown_commands():
+    from unittest.mock import AsyncMock
+
+    from scripts.lab_policy import ProtectedSocket
+
+    raw = AsyncMock()
+    socket = ProtectedSocket(raw, ReadOnlyPolicy({"d"}, {"i"}, "synthetic"))
+    for payload in [
+        {"event": "device", "data": {"cgi": "modmaquina"}},
+        {"event": "client-command", "data": {}},
+        {
+            "event": "pusher:subscribe",
+            "data": {"channel": "private-other", "auth": "synthetic"},
+        },
+    ]:
+        with pytest.raises(PermissionError):
+            await socket.send_json(payload)
+    raw.send_json.assert_not_awaited()
+    await socket.send_json({"event": "pusher:ping", "data": {}})
+    raw.send_json.assert_awaited_once()

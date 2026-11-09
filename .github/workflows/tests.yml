@@ -96,6 +96,14 @@ jobs:
             --cov-report=xml:coverage.xml \
             --cov-report=json:coverage.json
 
+      - name: Run independent Home Assistant loopback smoke
+        env:
+          TMPDIR: ${{ runner.temp }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --locked --no-sync python scripts/run_isolated_ha.py
+
       - name: Report and check incremental statement coverage
         shell: bash
         run: |

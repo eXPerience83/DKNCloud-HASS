@@ -2,48 +2,13 @@
 
 import asyncio
 import json
-from urllib.parse import urlsplit
 
 import pytest
 from aiohttp import ClientSession, web
 
 import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin import push_adapter
-
-
-class ReadOnlySession:
-    """Test-only boundary; forward permitted operations exclusively to loopback."""
-
-    def __init__(self, session, origin):
-        self.session, self.origin = session, origin
-        self.blocked = 0
-
-    def request(self, method, url, **kwargs):
-        path = urlsplit(str(url)).path.rstrip("/")
-        allowed = method == "GET" and path in {"/devices", "/installation_relations"}
-        allowed |= method == "POST" and path in {"/users/sign_in", "/pusher/auth"}
-        payload = kwargs.get("json") or {}
-        event = payload.get("event", {})
-        allowed |= (
-            method == "POST"
-            and path == "/events"
-            and set(payload) == {"event"}
-            and event.get("cgi") == "infomaquina"
-            and set(event) <= {"cgi", "device_id", "option", "value"}
-            and event.get("option", "") == ""
-            and event.get("value", "") == ""
-        )
-        if not allowed:
-            self.blocked += 1
-            raise PermissionError("Control operation denied")
-        return self.session.request(
-            method, self.origin + path, allow_redirects=False, **kwargs
-        )
-
-    def ws_connect(self, url, **kwargs):
-        if not str(url).startswith("wss://ws.pusherapp.com/app/"):
-            raise PermissionError("Unknown WebSocket denied")
-        return self.session.ws_connect(self.origin + "/socket", **kwargs)
+from scripts.lab_policy import LocalReadOnlySession as ReadOnlySession
 
 
 async def test_real_entry_loopback_and_control_barrier(
