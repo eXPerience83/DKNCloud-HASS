@@ -100,12 +100,32 @@ automatic information requests and recovery snapshots share an entry-wide
 budget of at least ten seconds between starts. A single-device fallback
 alternates an information request and a snapshot ten seconds later; multiple
 devices share installation snapshots and may have longer cycles. Spacing is
-conservative from operation completion, so slow responses or internal server
-cooldowns cannot release queued bursts. These timings
+conservative from operation completion, so slow responses or server-directed
+cooldown cannot release queued bursts. These timings
 are client policies and do not guarantee physical-state convergence. REST
 failures back off; healthy fallback does not back off solely for a push outage.
 A successful subscription requires resynchronization before normal operation.
 Local time-based connectivity and scene maintenance continues without I/O.
+
+
+Automatic recovery retains snapshot eligibility after transient information-request
+failures. Information and recovery retries have separate deadlines; successful
+snapshots do not confirm physical freshness or clear information failures.
+Entry shutdown fences and awaits automatic scene cleanup. Channel authorization
+runs separately from socket reception with bounded retries per channel.
+
+Authenticated operations are fenced again after cooldown waits; entry suspension
+cancels pending operations. Automatic scene cleanup shares device write locks.
+Channel authorization failures retry independently without closing healthy channels.
+The automatic request budget enforces spacing only; operation backoff and the
+server-directed cooldown remain separate. Diagnostics export health summaries
+without raw device data or entry options.
+
+Failed socket attempts do not trigger extra topology discovery. Reconnection
+discovery waits for successful device resynchronization. Rejected information
+requests also retain recovery eligibility; authentication and server-directed
+rate-limit pauses remain authoritative.
+
 
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
@@ -468,22 +488,3 @@ Commonly used fields:
 - Confirm behavior of P2=4 (HEAT_COOL/AUTO) across more installations before enabling by default.
 - Confirm exact allowed ranges/encodings for slats (P9/P10/P19/P20) on at least one model.
 - Confirm whether devices that do not support Auto fan (0) fall back to a manual speed (observed fallback: 1) rather than persisting 0 or returning an error.
-
-
-Automatic recovery retains snapshot eligibility after transient information-request
-failures. Information and recovery retries have separate deadlines; successful
-snapshots do not confirm physical freshness or clear information failures.
-Entry shutdown fences and awaits automatic scene cleanup. Channel authorization
-runs separately from socket reception; denied channels trigger bounded reconnect.
-
-Authenticated operations are fenced again after cooldown waits; entry suspension
-cancels pending operations. Automatic scene cleanup shares device write locks.
-Channel authorization failures retry independently without closing healthy channels.
-The automatic request budget enforces spacing only; operation backoff and the
-server-directed cooldown remain separate. Diagnostics export health summaries
-without raw device data or entry options.
-
-Failed socket attempts do not trigger extra topology discovery. Reconnection
-discovery waits for successful device resynchronization. Rejected information
-requests also retain recovery eligibility; authentication and server-directed
-rate-limit pauses remain authoritative.

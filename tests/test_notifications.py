@@ -1040,3 +1040,26 @@ async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
     assert bucket["notify_state"]["device"]["online_cancel"] is None
     assert "pending_refresh" not in bucket
     assert "device_locks" not in bucket
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_initial_snapshot_auth_error_precedes_sibling_cancellation(
+    hass, dkn_config_entry_factory, reverse
+):
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+
+    class API:
+        async def fetch_installations(self):
+            ids = ["cancel", "unauthorized"]
+            return [
+                {"installation_id": item} for item in (ids[::-1] if reverse else ids)
+            ]
+
+        async def fetch_devices(self, installation):
+            if installation == "cancel":
+                raise asyncio.CancelledError
+            raise _client_response_error(401)
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        await integration._async_update_data(hass, entry, API())

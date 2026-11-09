@@ -273,6 +273,11 @@ async def _async_update_data(
 
         fetches = [api.fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
+        if any(
+            isinstance(result, ClientResponseError) and result.status == 401
+            for result in fetch_results
+        ):
+            raise ConfigEntryAuthFailed("Authentication required (401)")
 
         last_data: dict[str, dict[str, Any]] = domain_bucket.get("last_data", {})
         if not isinstance(last_data, dict):

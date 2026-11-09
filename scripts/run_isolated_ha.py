@@ -70,13 +70,18 @@ with tempfile.TemporaryDirectory(
     if report.exists():
         summary = json.loads(report.read_text())
         if (
-            summary.get("error")
+            result.returncode != 0
+            or summary.get("error")
             or not summary.get("control_blocked")
             or not summary.get("migrated")
             or summary.get("push_power") != "0"
             or not summary.get("owned_tasks_closed")
             or summary.get("backend_control_writes") != 0
-            or summary.get("entities", 0) < 1
+            or any(
+                summary.get("platform_entities", {}).get(domain, 0) < 2
+                for domain in {"climate", "switch", "number", "sensor", "binary_sensor"}
+            )
+            or summary.get("blocked_entity_controls", 0) < 4
             or summary.get("installations") != 2
             or summary.get("fallback_gets", 0) < 2
             or not summary.get("push_recovered")

@@ -46,6 +46,9 @@ async def async_setup(hass, config):
                         "modes": "11111",
                         "scenary": "occupied",
                         "local_temp": "22",
+                        "sleep_time": 30,
+                        "min_temp_unoccupied": 16,
+                        "max_temp_unoccupied": 28,
                         "cold_consign": "24",
                         "heat_consign": "20",
                         "availables_speeds": "3",
@@ -170,6 +173,33 @@ async def async_setup(hass, config):
                     if "synthetic" in s.entity_id.lower()
                 ]
             )
+            report["platform_entities"] = {
+                domain: sum(
+                    state.domain == domain and "synthetic" in state.entity_id
+                    for state in hass.states.async_all()
+                )
+                for domain in {"climate", "switch", "number", "sensor", "binary_sensor"}
+            }
+            blocked_before = gateway.blocked
+            for domain, service, unique_id, values in [
+                ("climate", "turn_on", "device_climate", {}),
+                ("switch", "turn_on", "device_power", {}),
+                ("number", "set_value", "device_sleep_time", {"value": 5}),
+                ("climate", "set_temperature", "device_climate", {"temperature": 24}),
+            ]:
+                entity_id = er.async_get(hass).async_get_entity_id(
+                    domain, "airzoneclouddaikin", unique_id
+                )
+                try:
+                    await hass.services.async_call(
+                        domain,
+                        service,
+                        {"entity_id": entity_id, **values},
+                        blocking=True,
+                    )
+                except Exception:
+                    pass
+            report["blocked_entity_controls"] = gateway.blocked - blocked_before
             report["push_power"] = entry.runtime_data.coordinator.data["device"][
                 "power"
             ]
