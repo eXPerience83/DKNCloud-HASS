@@ -129,6 +129,8 @@ async def async_get_config_entry_diagnostics(
         }
 
     raw = {"entry": entry_summary, "coordinator": coord_summary}
+    if manager := domain_data.get("sync_manager"):
+        raw["synchronization"] = manager.diagnostics()
 
     # 1) Known keys
     redacted = async_redact_data(raw, TO_REDACT)

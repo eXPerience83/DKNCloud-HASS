@@ -57,6 +57,8 @@ def _optimistic_bucket(hass: HomeAssistant, entry_id: str) -> OptimisticEntry:
 def _adaptive_ttl(hass: HomeAssistant, entry_id: str) -> float:
     bucket = _entry_bucket(hass, entry_id)
     scan_interval = bucket.get("scan_interval")
+    if bucket.get("sync_manager") is not None:
+        return 30.0
     ttl = float(OPTIMISTIC_TTL_SEC)
     try:
         if scan_interval is not None:
@@ -141,6 +143,9 @@ def schedule_post_write_refresh(
     """Request a coordinator refresh after a short delay (coalesced per entry)."""
 
     bucket = _entry_bucket(hass, entry_id)
+    if bucket.get("sync_manager") is not None:
+        # Existing device cycles observe accepted writes; never create a second GET.
+        return None
     cancel_handles: list[Callable[[], None]] = bucket.setdefault("cancel_handles", [])
 
     pending: Callable[[], None] | None = bucket.get("pending_refresh")
@@ -394,3 +399,17 @@ def build_device_info(device: dict[str, Any], device_id: str) -> DeviceInfo:
         name=device.get("name") or "Airzone Device",
         connections=connections,
     )
+
+
+def confirm_optimistic(hass, entry_id, data, touched):
+    """Retire only overlays for explicitly received matching fields."""
+    changed = False
+    optimistic = _optimistic_bucket(hass, entry_id)
+    for device, keys in touched.items():
+        state = data.get(device, {})
+        for key in keys:
+            overlay = optimistic.get(device, {}).get(key)
+            if overlay is not None and str(overlay.get("value")) == str(state.get(key)):
+                optimistic_invalidate(hass, entry_id, device, key)
+                changed = True
+    return changed

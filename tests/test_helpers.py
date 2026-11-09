@@ -222,3 +222,16 @@ def test_parse_float_unparseable_collections_return_none() -> None:
     """Values that cannot be converted to float must return None."""
     assert parse_float([]) is None
     assert parse_float({}) is None
+
+
+def test_sync_overlays_confirm_only_explicit_received_fields(hass):
+    from custom_components.airzoneclouddaikin.const import DOMAIN
+    from custom_components.airzoneclouddaikin.helpers import confirm_optimistic
+
+    hass.data.setdefault(DOMAIN, {})["synthetic-entry"] = {"sync_manager": object()}
+    optimistic_set(hass, "synthetic-entry", "fake", "power", "1")
+    optimistic_set(hass, "synthetic-entry", "fake", "mode", "2")
+    data = {"fake": {"power": "1", "mode": "2"}}
+    assert confirm_optimistic(hass, "synthetic-entry", data, {"fake": {"power"}})
+    assert optimistic_get(hass, "synthetic-entry", "fake", "power", "0") == "0"
+    assert optimistic_get(hass, "synthetic-entry", "fake", "mode", "0") == "2"

@@ -890,7 +890,7 @@ async def test_entry_restart_simulation_reuses_token_and_cleans_state(
 
 
 @pytest.mark.asyncio
-async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
+async def test_options_update_reloads_with_fixed_compatibility_interval(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
     setup_api_class: type[FakeSetupAPI],
@@ -912,17 +912,17 @@ async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
     form = await hass.config_entries.options.async_init(entry.entry_id)
     assert form["type"] is FlowResultType.FORM
     result = await hass.config_entries.options.async_configure(
-        form["flow_id"], user_input={CONF_SCAN_INTERVAL: 20}
+        form["flow_id"], user_input={CONF_SLEEP_TIMEOUT_ENABLED: True}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
     bucket = hass.data[DOMAIN][entry.entry_id]
-    assert entry.options[CONF_SCAN_INTERVAL] == 20
+    assert CONF_SCAN_INTERVAL not in entry.options
     assert entry.options["user_token"] == token
     assert bucket["api"] is not previous
-    assert bucket["scan_interval"] == 20
-    assert bucket["coordinator"].update_interval == timedelta(seconds=20)
+    assert bucket["scan_interval"] == 10
+    assert bucket["coordinator"].update_interval == timedelta(seconds=10)
     assert bucket["coordinator"].data["dev1"]["id"] == "dev1"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -978,7 +978,6 @@ async def test_options_heat_cool_toggle_reloads_without_identity_changes(
         result = await hass.config_entries.options.async_configure(
             form["flow_id"],
             user_input={
-                CONF_SCAN_INTERVAL: 10,
                 CONF_ENABLE_HEAT_COOL: enabled,
                 CONF_SLEEP_TIMEOUT_ENABLED: False,
             },

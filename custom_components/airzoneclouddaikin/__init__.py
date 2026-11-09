@@ -21,10 +21,10 @@ from aiohttp import ClientResponseError
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_USERNAME, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -43,7 +43,8 @@ from .const import (
     SCENARY_VACANT,
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
-from .helpers import device_supports_heat_cool
+from .helpers import acquire_device_lock, confirm_optimistic, device_supports_heat_cool
+from .sync_manager import SyncManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -165,11 +166,9 @@ async def async_migrate_entry(
 ) -> bool:
     """Migrate legacy config entries to the latest schema."""
 
-    target_version = 2
+    target_version = 3
 
-    needs_unique_id = (
-        config_entry.version < target_version or not config_entry.unique_id
-    )
+    needs_unique_id = config_entry.version < 2 or not config_entry.unique_id
 
     if needs_unique_id:
         username = str(config_entry.data.get(CONF_USERNAME, "")).strip()
@@ -207,7 +206,12 @@ async def async_migrate_entry(
                 )
 
     if config_entry.version != target_version:
-        hass.config_entries.async_update_entry(config_entry, version=target_version)
+        data, options = dict(config_entry.data), dict(config_entry.options)
+        data.pop("scan_interval", None)
+        options.pop("scan_interval", None)
+        hass.config_entries.async_update_entry(
+            config_entry, data=data, options=options, version=target_version
+        )
 
     return True
 
@@ -221,12 +225,6 @@ async def _async_update_data(
     """
     try:
         domain_bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
-        sleep_tracking: dict[str, SleepTracking] = domain_bucket.setdefault(
-            "sleep_tracking", {}
-        )
-        sleep_timeout_enabled = bool(
-            entry.options.get(CONF_SLEEP_TIMEOUT_ENABLED, False)
-        )
 
         data: dict[str, dict[str, Any]] = {}
         relations = await api.fetch_installations()
@@ -354,41 +352,7 @@ async def _async_update_data(
         domain_bucket["failed_installations_last_update"] = set(failed_installations)
         domain_bucket["has_successful_snapshot"] = True
         domain_bucket["last_data"] = dict(data)
-        now = dt_util.utcnow()
-        tracked_ids = set(sleep_tracking)
-        active_ids = set(data)
-        if not had_non_auth_install_errors:
-            for stale_id in tracked_ids - active_ids:
-                sleep_tracking.pop(stale_id, None)
-        for dev_id, dev in data.items():
-            raw_scenary = str(dev.get("scenary") or "").strip().lower()
-
-            tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
-            if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
-                _update_sleep_tracking_for_device(tracking, raw_scenary)
-
-            sleep_expired = False
-            backend_power_off = False
-            sleep_time_minutes = _parse_sleep_time_minutes(dev)
-
-            if (
-                sleep_timeout_enabled
-                and tracking.sleep_started_at_utc is not None
-                and sleep_time_minutes is not None
-                and sleep_time_minutes > 0
-            ):
-                timeout_at = tracking.sleep_started_at_utc + timedelta(
-                    minutes=sleep_time_minutes + SLEEP_TIMEOUT_GRACE_MINUTES
-                )
-                backend_power_off = _backend_power_is_off(dev)
-                sleep_expired = now >= timeout_at and backend_power_off
-
-            dev["sleep_expired"] = sleep_expired
-
-            effective_scenary = raw_scenary
-            if sleep_timeout_enabled and raw_scenary == SCENARY_SLEEP and sleep_expired:
-                effective_scenary = SCENARY_HOME
-            dev["effective_scenary"] = effective_scenary
+        _derive_state(hass, entry, data, had_non_auth_install_errors)
 
         return data
 
@@ -405,6 +369,48 @@ async def _async_update_data(
         raise UpdateFailed(
             f"Failed to update Airzone data: {type(err).__name__}"
         ) from err
+
+
+def _derive_state(hass, entry, data, had_non_auth_install_errors=False):
+    """Recompute local scene state for snapshots, push and maintenance ticks."""
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    sleep_tracking = bucket.setdefault("sleep_tracking", {})
+    sleep_timeout_enabled = bool(entry.options.get(CONF_SLEEP_TIMEOUT_ENABLED, False))
+    now = dt_util.utcnow()
+    tracked_ids = set(sleep_tracking)
+    active_ids = set(data)
+    if not had_non_auth_install_errors:
+        for stale_id in tracked_ids - active_ids:
+            sleep_tracking.pop(stale_id, None)
+    for dev_id, dev in data.items():
+        raw_scenary = str(dev.get("scenary") or "").strip().lower()
+
+        tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
+        if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
+            _update_sleep_tracking_for_device(tracking, raw_scenary)
+
+        sleep_expired = False
+        backend_power_off = False
+        sleep_time_minutes = _parse_sleep_time_minutes(dev)
+
+        if (
+            sleep_timeout_enabled
+            and tracking.sleep_started_at_utc is not None
+            and sleep_time_minutes is not None
+            and sleep_time_minutes > 0
+        ):
+            timeout_at = tracking.sleep_started_at_utc + timedelta(
+                minutes=sleep_time_minutes + SLEEP_TIMEOUT_GRACE_MINUTES
+            )
+            backend_power_off = _backend_power_is_off(dev)
+            sleep_expired = now >= timeout_at and backend_power_off
+
+        dev["sleep_expired"] = sleep_expired
+
+        effective_scenary = raw_scenary
+        if sleep_timeout_enabled and raw_scenary == SCENARY_SLEEP and sleep_expired:
+            effective_scenary = SCENARY_HOME
+        dev["effective_scenary"] = effective_scenary
 
 
 async def _async_prepare_notify_strings(
@@ -568,9 +574,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     api.on_write_auth_failure = request_write_reauth
     entry.async_on_unload(lambda: setattr(api, "on_write_auth_failure", None))
 
-    scan_interval = int(opts.get("scan_interval", DEFAULT_SCAN_INTERVAL_SEC))
-    # Runtime clamp for safety even if UI guardrails are bypassed.
-    scan_interval = max(10, min(30, scan_interval))
+    scan_interval = DEFAULT_SCAN_INTERVAL_SEC
 
     coordinator: AirzoneCoordinator = AirzoneCoordinator(
         hass,
@@ -637,8 +641,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
                 if api is None:
                     _LOGGER.debug(
-                        "API handle missing; skipping sleep expiry cleanup for %s",
-                        dev_id,
+                        "API handle missing; skipping sleep expiry cleanup",
                     )
                     continue
 
@@ -649,30 +652,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 except ClientResponseError as cre:
                     status = cre.status
                     _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (HTTP %s).",
-                        dev_id,
+                        "Failed to clean up expired sleep scenary (HTTP %s).",
                         status,
                     )
                     continue
                 except TimeoutError:
                     _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (timeout)",
-                        dev_id,
+                        "Failed to clean up expired sleep scenary (timeout)",
                     )
                     continue
                 except Exception as err:  # noqa: BLE001
                     _LOGGER.warning(
-                        "Failed to clean up expired sleep scenary on %s (unexpected error): %s",
-                        dev_id,
-                        err,
-                        exc_info=True,
+                        "Failed to clean up expired sleep scenary (%s)",
+                        type(err).__name__,
                     )
                     continue
 
                 tracking.force_exit_requested = True
                 refresh_needed = True
 
-            if refresh_needed:
+            if refresh_needed and bucket.get("sync_manager") is None:
                 hass.async_create_task(coordinator.async_request_refresh())
 
     def _on_sleep_candidate() -> None:
@@ -743,7 +742,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                             cancel()
                     finally:
                         st["online_cancel"] = None
-                    _LOGGER.debug("[%s] offline transition started at %s", dev_id, now)
+                    _LOGGER.debug("WServer offline debounce started")
                     continue
 
                 # While OFFLINE: check debounce and notify once
@@ -793,7 +792,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                             notification_id=nid,
                         )
                         st["notified"] = True
-                        _LOGGER.warning("[%s] WServer offline (notified).", dev_id)
+                        _LOGGER.warning("WServer offline (notified).")
                     continue
 
                 # Transition: OFFLINE -> ONLINE
@@ -814,7 +813,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                         title=title,
                         notification_id=nid_online,
                     )
-                    _LOGGER.info("[%s] WServer back online.", dev_id)
+                    _LOGGER.info("WServer back online.")
 
                     cancel = st.get("online_cancel")
                     try:
@@ -838,8 +837,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 st["last"] = online
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug(
-                    "Notification update failed for %s (%s).",
-                    dev_id,
+                    "Notification evaluation failed (%s).",
                     type(err).__name__,
                 )
 
@@ -876,7 +874,70 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     entry.async_on_unload(unsub)
     entry.async_on_unload(_cancel_sleep_expiry_task)
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # A verified adapter is required before replacing the existing runtime.
+    connector = bucket.get("sync_connector")
+    if connector is not None:
+
+        def publish_sync(data, remote):
+            _derive_state(hass, entry, data)
+            bucket["last_data"] = data
+            if remote:
+                confirmed = confirm_optimistic(
+                    hass, entry.entry_id, data, manager.touched
+                )
+                if (
+                    confirmed
+                    or data != coordinator.data
+                    or not coordinator.last_update_success
+                ):
+                    coordinator.async_set_updated_data(data)
+            else:
+                coordinator.data = data
+                coordinator.async_update_listeners()
+
+        async def fetch_sync(installation):
+            return await api.fetch_devices(installation, retry=False)
+
+        manager = SyncManager(
+            coordinator.data or {},
+            bucket["device_installation_map"],
+            api.request_information,
+            fetch_sync,
+            publish_sync,
+            request_write_reauth,
+            lambda device: acquire_device_lock(hass, entry.entry_id, device),
+            connect=connector,
+        )
+        bucket["sync_manager"] = manager
+        coordinator.update_interval = None
+        coordinator.update_method = manager.refresh
+
+        @callback
+        def maintain(_now):
+            manager.maintenance()
+
+        cancel_maintenance = async_track_time_interval(
+            hass, maintain, timedelta(seconds=10)
+        )
+        entry.async_on_unload(cancel_maintenance)
+        bucket["sync_maintenance_cancel"] = cancel_maintenance
+
+        @callback
+        def close_sync():
+            hass.async_create_task(manager.close())
+
+        entry.async_on_unload(close_sync)
+
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception, asyncio.CancelledError:
+        if connector is not None:
+            cancel_maintenance()
+            await manager.close()
+        raise
+
+    if connector is not None:
+        manager.start()
 
     entry.async_on_unload(entry.add_update_listener(_update_listener))
 
@@ -894,6 +955,11 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
     """Unload a config entry."""
+    bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    if manager := bucket.get("sync_manager"):
+        if cancel := bucket.pop("sync_maintenance_cancel", None):
+            cancel()
+        await manager.close()
     try:
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     except Exception:  # noqa: BLE001

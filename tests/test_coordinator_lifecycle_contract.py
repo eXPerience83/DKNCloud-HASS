@@ -162,8 +162,9 @@ async def test_legacy_entry_migration_normalizes_unique_id_only(
     entry.add_to_hass(hass)
     original_data = dict(entry.data)
     original_options = dict(entry.options)
+    original_options.pop("scan_interval", None)
     assert await integration.async_migrate_entry(hass, entry)
-    assert entry.version == 2
+    assert entry.version == 3
     assert entry.unique_id == "user@example.com"
     assert dict(entry.data) == original_data
     assert dict(entry.options) == original_options
@@ -211,5 +212,5 @@ async def test_legacy_entry_without_username_does_not_invent_identity(
     )
     entry.add_to_hass(hass)
     assert await integration.async_migrate_entry(hass, entry)
-    assert entry.version == 2
+    assert entry.version == 3
     assert entry.unique_id == "legacy-unique"

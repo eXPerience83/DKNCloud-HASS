@@ -383,7 +383,9 @@ class AirzoneAPI:
             return relations
         return None
 
-    async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
+    async def fetch_devices(
+        self, installation_id: Any, *, retry: bool = True
+    ) -> list[dict[str, Any]] | None:
         """GET /devices with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {
             "format": "json",
@@ -393,6 +395,7 @@ class AirzoneAPI:
             "GET",
             API_DEVICES,
             params=params,
+            retry=retry,
         )
         if isinstance(resp, dict) and "devices" in resp:
             devices = resp["devices"]
