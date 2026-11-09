@@ -74,6 +74,9 @@ async def async_setup(hass, config):
         )
         async for frame in ws:
             payload = json.loads(frame.data)
+            if payload["event"] == "pusher:ping":
+                await ws.send_json({"event": "pusher:pong", "data": {}})
+                continue
             if payload["event"] == "pusher:subscribe":
                 channel = payload["data"]["channel"]
                 power[0] = "0"
@@ -202,12 +205,16 @@ async def async_setup(hass, config):
                 for a, b in zip(fallback_starts, fallback_starts[1:], strict=False)
             )
             outage[0] = False
-            async with asyncio.timeout(100):
+            recovery_started = asyncio.get_running_loop().time()
+            async with asyncio.timeout(180):
                 while not all(
                     s.status.push_active for s in manager.schedulers.values()
                 ):
                     await asyncio.sleep(0.1)
             report["push_recovered"] = True
+            report["recovery_seconds"] = round(
+                asyncio.get_running_loop().time() - recovery_started, 2
+            )
             await hass.config_entries.async_reload(entry.entry_id)
             await asyncio.sleep(1)
             replacement = hass.data["airzoneclouddaikin"][entry.entry_id][

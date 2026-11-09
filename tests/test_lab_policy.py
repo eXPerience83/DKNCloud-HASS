@@ -91,3 +91,15 @@ async def test_socket_cannot_send_unknown_commands():
     raw.send_json.assert_not_awaited()
     await socket.send_json({"event": "pusher:ping", "data": {}})
     raw.send_json.assert_awaited_once()
+
+
+def test_method_override_header_is_denied_before_delegation():
+    policy = ReadOnlyPolicy({"d"}, {"i"}, "synthetic", enabled=True)
+    raw = Mock()
+    with pytest.raises(PermissionError):
+        ProtectedSession(raw, policy).request(
+            "GET",
+            "https://dkn.airzonecloud.com/devices",
+            headers={"X-HTTP-Method-Override": "PUT"},
+        )
+    raw.request.assert_not_called()

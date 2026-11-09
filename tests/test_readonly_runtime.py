@@ -48,6 +48,9 @@ async def test_real_entry_loopback_and_control_barrier(
         )
         async for frame in ws:
             message = json.loads(frame.data)
+            if message["event"] == "pusher:ping":
+                await ws.send_json({"event": "pusher:pong", "data": {}})
+                continue
             if message["event"] == "pusher:subscribe":
                 channel = message["data"]["channel"]
                 await ws.send_json(

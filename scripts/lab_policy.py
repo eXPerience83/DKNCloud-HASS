@@ -95,6 +95,15 @@ class ProtectedSession:
             raise PermissionError("Real network experiment disabled")
         if set(kwargs) - {"params", "json", "data", "headers", "timeout"}:
             raise PermissionError("Request options denied")
+        if set(k.lower() for k in kwargs.get("headers", {})) - {
+            "user-agent",
+            "accept",
+            "content-type",
+            "x-requested-with",
+            "origin",
+            "referer",
+        }:
+            raise PermissionError("Header denied")
         if any(
             k.lower() in {"host", "authorization", "cookie"}
             for k in kwargs.get("headers", {})

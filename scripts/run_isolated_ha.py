@@ -48,11 +48,11 @@ with tempfile.TemporaryDirectory(
                 env=environment,
                 stdout=log,
                 stderr=log,
-                timeout=240,
+                timeout=360,
             )
         except subprocess.TimeoutExpired:
             print(
-                "HA daemon did not finish within 240 seconds; child killed and awaited"
+                "HA daemon did not finish within 360 seconds; child killed and awaited"
             )
             print((config / "process.log").read_text()[-4000:])
             sys.exit(1)
