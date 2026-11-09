@@ -14,7 +14,11 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
+from .__init__ import (
+    AirzoneConfigEntry,
+    AirzoneCoordinator,
+    _record_explicit_sleep_started,
+)
 from .commands import modmaquina_payload
 from .const import (
     CONF_ENABLE_HEAT_COOL,
@@ -247,7 +251,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         current = self.preset_mode
-        if current == preset_mode:
+        # The effective Home label can mask a raw expired Sleep session.
+        # Do not suppress explicit cleanup or re-arm on that UI state.
+        expired_raw_sleep = (
+            str(self._device.get("scenary") or "").strip().lower() == "sleep"
+            and self._device.get("sleep_expired") is True
+        )
+        if current == preset_mode and not (
+            preset_mode == "home" and expired_raw_sleep
+        ):
             return
 
         scenary = preset_to_scenary(preset_mode)
@@ -262,14 +274,29 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            cleared_stale_sleep = False
             try:
-                # Canonical write path (no legacy helpers).
+                if preset_mode == "sleep" and expired_raw_sleep:
+                    # Re-applying Sleep while the backend already says "sleep"
+                    # cannot be relied on to start another one-shot timer.
+                    await api.put_device_fields(
+                        self._device_id, {"device": {"scenary": "occupied"}}
+                    )
+                    cleared_stale_sleep = True
                 await api.put_device_fields(
                     self._device_id, {"device": {"scenary": scenary}}
                 )
             except asyncio.CancelledError:
                 raise
             except Exception as err:
+                if cleared_stale_sleep:
+                    optimistic_set(
+                        self.hass, self._entry_id, self._device_id,
+                        "scenary", "occupied",
+                    )
+                    schedule_post_write_refresh(
+                        self.hass, self.coordinator, entry_id=self._entry_id
+                    )
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",
                     scenary,
@@ -278,6 +305,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
                 raise
 
+            if preset_mode == "sleep":
+                _record_explicit_sleep_started(
+                    self.hass, self._entry_id, self._device_id
+                )
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, "scenary", scenary
             )
