@@ -669,7 +669,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     )
                     continue
 
-                if bucket.get("closing") or hass.is_stopping:
+                if (
+                    bucket.get("closing")
+                    or hass.is_stopping
+                    or getattr(bucket.get("sync_manager"), "_auth_failed", False)
+                ):
                     return
                 try:
                     await api.async_set_scenary(dev_id, SCENARY_HOME)
@@ -704,7 +708,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 hass.async_create_task(coordinator.async_request_refresh())
 
     def _on_sleep_candidate() -> None:
-        if bucket.get("closing") or hass.is_stopping:
+        if (
+            bucket.get("closing")
+            or hass.is_stopping
+            or getattr(bucket.get("sync_manager"), "_auth_failed", False)
+        ):
             return
         existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
         if existing is not None and not existing.done():

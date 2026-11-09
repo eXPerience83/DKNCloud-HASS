@@ -147,6 +147,11 @@ async def test_real_entry_loopback_and_control_barrier(
             with pytest.raises(PermissionError):
                 gateway.request(method, "https://example.invalid" + path, json=payload)
         assert gateway.blocked == 4
+        coordinator = entry.runtime_data.coordinator
+        coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+        coordinator.async_update_listeners()
+        await until(lambda: gateway.blocked > 4)
+        assert not any(method == "PUT" for method, _ in calls)
         assert await hass.config_entries.async_unload(entry.entry_id)
         assert not manager._tasks
         assert all(s._task is None for s in manager.schedulers.values())

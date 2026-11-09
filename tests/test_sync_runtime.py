@@ -194,7 +194,7 @@ async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-@pytest.mark.parametrize("stop", [True, False])
+@pytest.mark.parametrize("stop", [True, False, None])
 async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     hass, monkeypatch, dkn_config_entry_factory, sample_device, stop
 ):
@@ -207,7 +207,8 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     async def pending_write(*_):
         entered.set()
         try:
-            await release.wait()
+            if stop is not None:
+                await release.wait()
             writes.append("write")
         finally:
             cleaned.set()
@@ -223,10 +224,21 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     assert await hass.config_entries.async_setup(entry.entry_id)
     bucket = hass.data[DOMAIN][entry.entry_id]
     coordinator = entry.runtime_data.coordinator
+    recovery = Mock()
+    monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
     coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
     coordinator.async_update_listeners()
     await asyncio.wait_for(entered.wait(), 5)
     task = bucket["sleep_expiry_task"]
+    if stop is None:
+        await task
+        assert bucket["optimistic"]["dev1"]["scenary"]["value"] == "occupied"
+        recovery.assert_called_once_with("dev1")
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        assert api.async_set_scenary.await_count == 1
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        return
     if stop:
         hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
         await hass.async_block_till_done()
