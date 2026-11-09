@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from aiohttp import ClientResponseError
+
 
 @dataclass
 class _Read:
@@ -22,8 +24,10 @@ class RecoveryPool:
         self,
         fetch: Callable[[str], Awaitable[Any]],
         clock: Callable[[], float] = time.monotonic,
+        timed_fetch=None,
     ) -> None:
         self._fetch = fetch
+        self._timed_fetch = timed_fetch
         self._clock = clock
         self._pending: dict[str, _Read] = {}
         self._closed = False
@@ -41,7 +45,13 @@ class RecoveryPool:
                 async def read(record=pending):
                     # Let concurrent ready callers join before starting I/O.
                     await asyncio.sleep(0)
-                    record.started = self._clock()
+
+                    def started():
+                        record.started = self._clock()
+
+                    if self._timed_fetch is not None:
+                        return await self._timed_fetch(installation, started)
+                    started()
                     return await self._fetch(installation)
 
                 pending.task = asyncio.create_task(read())
@@ -49,6 +59,14 @@ class RecoveryPool:
             assert task is not None
             try:
                 result = await asyncio.shield(task)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                if isinstance(error, ClientResponseError) and error.status == 401:
+                    raise
+                if pending.started is not None and pending.started < ready_at:
+                    continue
+                raise
             finally:
                 if task.done() and self._pending.get(installation) is pending:
                     self._pending.pop(installation)

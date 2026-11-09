@@ -7,8 +7,10 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
+from aiohttp import ClientResponseError
+
 INFORMATION_INTERVAL = 10.0
-FALLBACK_READ_DELAY = 3.0
+FALLBACK_READ_DELAY = 10.0
 
 
 @dataclass
@@ -77,17 +79,29 @@ class InformationScheduler:
         async with self._lock:
             generation = self._generation
             self.status.last_information = self._clock()
-            await self._request()
-            self.status.result = "accepted"
+            rejected = None
+            try:
+                result = await self._request()
+                if result is False:
+                    self.status.result = "deferred"
+                    return
+            except ClientResponseError as error:
+                if self.status.push_active or error.status not in {422, 423}:
+                    raise
+                rejected = error
+            self.status.result = "accepted" if rejected is None else "rejected"
             if not self.status.push_active:
                 await self._sleep(FALLBACK_READ_DELAY)
                 if generation == self._generation and not self.status.push_active:
                     await self._recover()
             self.status.last_success = self._clock()
+            if rejected is not None:
+                raise rejected
 
     async def _run(self) -> None:
         while True:
             started = self._clock()
+            fallback = not self.status.push_active
             try:
                 await self.cycle()
             except asyncio.CancelledError:
@@ -96,9 +110,10 @@ class InformationScheduler:
                 self.status.failures += 1
                 self.status.result = "error"
                 delay = max(INFORMATION_INTERVAL, self._on_error(error))
+                started = self._clock()
             else:
                 self.status.failures = 0
-                delay = INFORMATION_INTERVAL
+                delay = INFORMATION_INTERVAL * (2 if fallback else 1)
             # Missed slots are skipped, never replayed or queued.
             deadline = started + delay
             now = self._clock()

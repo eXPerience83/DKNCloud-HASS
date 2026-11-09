@@ -422,4 +422,7 @@ def expire_optimistic(hass, entry_id):
     for device, overlays in list(optimistic.items()):
         for field, overlay in list(overlays.items()):
             if overlay.get("expires", 0) <= now:
+                manager = _entry_bucket(hass, entry_id).get("sync_manager")
+                if manager is not None:
+                    manager.request_recovery(device)
                 optimistic_invalidate(hass, entry_id, device, field)

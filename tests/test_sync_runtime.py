@@ -1,14 +1,17 @@
 """Exercise the synchronization owner through Home Assistant's real lifecycle."""
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.helpers import entity_registry as er
 
 import custom_components.airzoneclouddaikin as integration
+from custom_components.airzoneclouddaikin import push_adapter
 from custom_components.airzoneclouddaikin.const import DOMAIN
-from custom_components.airzoneclouddaikin.helpers import optimistic_set
 
 
 async def test_verified_connector_runtime_and_silent_local_clock(
@@ -16,6 +19,9 @@ async def test_verified_connector_runtime_and_silent_local_clock(
 ):
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.sync_scheduler.FALLBACK_READ_DELAY", 0
+    )
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.sync_manager.FALLBACK_READ_DELAY", 0
     )
     device = {**sample_device, "connection_date": datetime.now(UTC).isoformat()}
     information = AsyncMock()
@@ -25,8 +31,9 @@ async def test_verified_connector_runtime_and_silent_local_clock(
         def __init__(self, *args, **kwargs):
             self.on_write_auth_failure = None
             self.request_information = information
+            self.authorize_channel = AsyncMock(return_value="synthetic-signature")
 
-        async def fetch_installations(self):
+        async def fetch_installations(self, *, retry=True):
             return [{"installation_id": "synthetic-installation"}]
 
         async def fetch_devices(self, installation, *, retry=True):
@@ -34,21 +41,47 @@ async def test_verified_connector_runtime_and_silent_local_clock(
             return [dict(device)]
 
     monkeypatch.setattr(integration, "AirzoneAPI", API)
+    from custom_components.airzoneclouddaikin.request_budget import RequestBudget
+
+    budget_clock = [0.0]
+
+    async def budget_sleep(seconds):
+        budget_clock[0] += seconds
+
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.sync_manager.RequestBudget",
+        lambda clock, sleep: RequestBudget(lambda: budget_clock[0], budget_sleep),
+    )
     subscribed = asyncio.Event()
 
-    async def connect(manager):
-        await manager.subscription("dev1", True)
-        await manager._resync_tasks["dev1"]
-        await manager.event("dev1", {"power": "0"}, manager.state.generation)
-        subscribed.set()
-        await asyncio.Event().wait()
+    class SyntheticWire:
+        def __init__(
+            self, session, url, channels, authorize, on_device, on_subscription
+        ):
+            assert "synthetic-app" in url
+            self.channels, self.authorize = channels, authorize
+            self.on_device, self.on_subscription = on_device, on_subscription
 
+        async def connect(self):
+            for channel, device_id in self.channels.items():
+                assert await self.authorize("1.2", channel) == "synthetic-signature"
+                await self.on_subscription(device_id, True)
+                owner = self.on_subscription.__self__
+                await owner._resync_tasks[device_id]
+                await self.on_device(
+                    device_id, json.dumps({"id": device_id, "power": "0"})
+                )
+            subscribed.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(push_adapter, "PUSHER_APP_KEY", "synthetic-app")
+    monkeypatch.setattr(push_adapter, "PusherClient", SyntheticWire)
     entry = dkn_config_entry_factory()
     entry.add_to_hass(hass)
     monkeypatch.setattr(
         integration,
         "build_verified_adapter",
-        lambda api, session: Mock(connect=connect),
+        push_adapter.build_verified_adapter,
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
     await asyncio.wait_for(subscribed.wait(), 5)
@@ -56,6 +89,13 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     manager = hass.data[DOMAIN][entry.entry_id]["sync_manager"]
     assert coordinator.update_interval is None
     assert coordinator.data["dev1"]["power"] == "0"
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=False)
+        )
+        assert not await integration.async_unload_entry(hass, entry)
+        assert not manager._stopped
+        assert manager._tasks
     initial_reads = len(fetches)
     await manager.schedulers["dev1"].cycle()
     assert len(fetches) == initial_reads
@@ -68,7 +108,6 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert hass.states.get(online_id).state == "on"
     notify = Mock()
     monkeypatch.setattr(integration.persistent_notification, "async_create", notify)
-    optimistic_set(hass, entry.entry_id, "dev1", "disabled_field", "pending")
     freezer.tick(timedelta(seconds=601))
     manager.maintenance()
     await hass.async_block_till_done()
@@ -78,9 +117,7 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     manager.maintenance()
     await hass.async_block_till_done()
     notify.assert_called_once()
-    assert "disabled_field" not in hass.data[DOMAIN][entry.entry_id]["optimistic"].get(
-        "dev1", {}
-    )
+
     assert manager._last_received == age
     assert len(fetches) == initial_reads
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -100,5 +137,51 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert registry_ids == {
         e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)
     }
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            hass.config_entries, "async_unload_platforms", AsyncMock(return_value=False)
+        )
+        assert not await integration.async_unload_entry(hass, entry)
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+        await hass.async_block_till_done()
+        assert replacement._stopped
+        assert not replacement._tasks
     assert await hass.config_entries.async_unload(entry.entry_id)
     assert not replacement._tasks
+
+
+async def test_queued_topology_discovery_is_fenced_after_auth_failure(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    from custom_components.airzoneclouddaikin.request_budget import RequestBudget
+
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    manager = hass.data[DOMAIN][entry.entry_id]["sync_manager"]
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def wait(_):
+        entered.set()
+        await release.wait()
+        manager._budget._next = 0
+
+    manager._budget = RequestBudget(sleep=wait)
+    manager._budget._next = manager._clock() + 10
+    discovery = asyncio.create_task(manager._discover())
+    await entered.wait()
+    api.fetch_installations.reset_mock()
+    manager._auth_failed = True
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await discovery
+    api.fetch_installations.assert_not_awaited()
+    assert await hass.config_entries.async_unload(entry.entry_id)

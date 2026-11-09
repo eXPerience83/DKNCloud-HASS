@@ -53,7 +53,8 @@ automatically launch reauth from an entity service error. On success, Home
 Assistant reloads the entry and constructs a fresh API client with the new
 token. If the entry was never fully loaded or DKN returns the same token,
 the flow explicitly schedules a reload; otherwise the update listener does so.
-The integration does not retain its own persistent reauth-request flag.
+An entry-lifetime flag coalesces write-side reauthentication requests; reload
+constructs a new client and resets that flag.
 Propagated HTTP errors strip credentials and device identifiers from request
 URLs, including hidden exception context, before reaching HA consumers.
 
@@ -88,6 +89,20 @@ Write-side reauthentication callbacks are cleared on entry unload and only
 start flows for loaded entries while Home Assistant is not stopping.
 Migration logs do not include normalized account email addresses; persisted
 config-entry identifiers remain unchanged.
+
+### Automatic synchronization policy (not a backend contract)
+
+The coordinator initializes from a device snapshot, then accepts partial push
+updates without erasing absent fields. Each device requests information at a
+nominal fixed ten-second cadence while push is active. During push outages,
+automatic information requests and recovery snapshots share an entry-wide
+budget of at least ten seconds between starts. A single-device fallback
+alternates an information request and a snapshot ten seconds later; multiple
+devices share installation snapshots and may have longer cycles. These timings
+are client policies and do not guarantee physical-state convergence. REST
+failures back off; healthy fallback does not back off solely for a push outage.
+A successful subscription requires resynchronization before normal operation.
+Local time-based connectivity and scene maintenance continues without I/O.
 
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
@@ -174,7 +189,7 @@ curl -sS --compressed \
   -H "Accept: application/json, text/plain, */*" \
   "$BASE/installation_relations?user_email=$EMAIL&user_token=$TOKEN&format=json"
 
-# 2) Snapshot devices (recommended polling endpoint)
+# 2) Device snapshot endpoint
 curl -sS --compressed \
   -H "Accept: application/json, text/plain, */*" \
   "$BASE/devices?format=json&installation_id=$INSTALLATION_ID&user_email=$EMAIL&user_token=$TOKEN"
@@ -410,7 +425,8 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - `/events` may respond 2xx even if the physical unit later clamps/corrects the value.
 - `/events` may return 422 when the WServer is not connected.
 - `/events` may return 423 when the device/machine is not ready.
-- Some changes propagate with delay; always prefer polling `/devices?...` to confirm settled state.
+- Updates are asynchronous. HTTP success acknowledges backend receipt, not physical convergence; recovery snapshots may contain cached state.
+- Automatic synchronization uses a fixed nominal cadence with recovery and backoff. There is no user-selectable refresh interval.
 - Treat repeated scenary writes (e.g., `sleep → occupied`) as **idempotent** and safe.
 
 ---

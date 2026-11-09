@@ -196,3 +196,16 @@ def dummy_coordinator_factory(
         return DummyCoordinator(data=data, hass=hass, api=api)
 
     return _factory
+
+
+@pytest.fixture(autouse=True)
+def isolate_background_push_in_legacy_contract_tests(monkeypatch):
+    """Keep REST/entity unit fixtures isolated from automatic background I/O.
+
+    test_sync_runtime explicitly supplies its connector and exercises the complete
+    HA lifecycle. Adapter wire contracts are tested separately with synthetic data.
+    """
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.build_verified_adapter",
+        lambda api, session: None,
+    )

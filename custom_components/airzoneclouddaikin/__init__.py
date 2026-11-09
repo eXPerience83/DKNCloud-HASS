@@ -20,7 +20,7 @@ from typing import Any
 from aiohttp import ClientResponseError
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
-from homeassistant.const import CONF_USERNAME, Platform
+from homeassistant.const import CONF_USERNAME, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -573,14 +573,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
     # Commands do not run inside the coordinator's refresh task. Trigger
     # native reauth directly if a write returns 401 (HA de-duplicates flows).
+    auth_requested = False
+
     def request_write_reauth() -> None:
-        if not hass.is_stopping and entry.state is ConfigEntryState.LOADED:
+        nonlocal auth_requested
+        if (
+            not auth_requested
+            and not hass.is_stopping
+            and entry.state is ConfigEntryState.LOADED
+        ):
+            auth_requested = True
             entry.async_start_reauth_if_available(hass)
 
     api.on_write_auth_failure = request_write_reauth
     entry.async_on_unload(lambda: setattr(api, "on_write_auth_failure", None))
 
     scan_interval = DEFAULT_SCAN_INTERVAL_SEC
+    adapter = build_verified_adapter(api, session)
+    connector = adapter.connect if adapter is not None else None
 
     coordinator: AirzoneCoordinator = AirzoneCoordinator(
         hass,
@@ -588,7 +598,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         name="airzone_data",
         config_entry=entry,
         update_method=lambda: _async_update_data(hass, entry, api),
-        update_interval=timedelta(seconds=scan_interval),
+        update_interval=None
+        if connector is not None
+        else timedelta(seconds=scan_interval),
     )
     coordinator.api = api
 
@@ -880,9 +892,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     entry.async_on_unload(unsub)
     entry.async_on_unload(_cancel_sleep_expiry_task)
 
-    # A verified adapter is required before replacing the existing runtime.
-    adapter = build_verified_adapter(api, session)
-    connector = adapter.connect if adapter is not None else None
     if connector is not None:
 
         def publish_sync(data, remote):
@@ -905,6 +914,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         async def fetch_sync(installation):
             return await api.fetch_devices(installation, retry=False)
 
+        async def discover_sync():
+            async def request(operation):
+                async def send():
+                    async with manager._limit:
+                        if manager._stopped or manager._auth_failed:
+                            raise asyncio.CancelledError
+                        manager._budget.mark_started()
+                        return await operation()
+
+                return await manager._budget.run(send)
+
+            relations = await request(lambda: api.fetch_installations(retry=False))
+            if relations is None:
+                raise ValueError("Invalid installation discovery")
+            mapping = {}
+            for relation in relations:
+                installation = relation.get("installation")
+                installation_id = (
+                    (installation.get("id") or installation.get("installation_id"))
+                    if isinstance(installation, dict)
+                    else None
+                )
+                installation_id = (
+                    installation_id
+                    or relation.get("installation_id")
+                    or relation.get("id")
+                )
+                if not installation_id:
+                    continue
+                devices = await request(
+                    lambda i=installation_id: api.fetch_devices(i, retry=False)
+                )
+                if devices is None:
+                    raise ValueError("Invalid device discovery")
+                for device in devices:
+                    device_id = (
+                        device.get("id") or str(device.get("mac") or "").strip().lower()
+                    )
+                    if device_id:
+                        mapping[str(device_id)] = str(installation_id)
+            return mapping
+
+        @callback
+        def topology_changed():
+            hass.config_entries.async_schedule_reload(entry.entry_id)
+
         manager = SyncManager(
             coordinator.data or {},
             bucket["device_installation_map"],
@@ -914,6 +969,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             request_write_reauth,
             lambda device: acquire_device_lock(hass, entry.entry_id, device),
             connect=connector,
+            discover=discover_sync,
+            on_topology_change=topology_changed,
         )
         bucket["sync_manager"] = manager
         coordinator.update_interval = None
@@ -930,6 +987,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         entry.async_on_unload(cancel_maintenance)
         bucket["sync_maintenance_cancel"] = cancel_maintenance
 
+        async def stop_sync(_event):
+            cancel_maintenance()
+            await manager.close()
+
+        cancel_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_sync)
+        entry.async_on_unload(cancel_stop)
+
         @callback
         def close_sync():
             hass.async_create_task(manager.close())
@@ -941,6 +1005,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     except Exception, asyncio.CancelledError:
         if connector is not None:
             cancel_maintenance()
+            cancel_stop()
             await manager.close()
         raise
 
@@ -964,10 +1029,7 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
     """Unload a config entry."""
     bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
-    if manager := bucket.get("sync_manager"):
-        if cancel := bucket.pop("sync_maintenance_cancel", None):
-            cancel()
-        await manager.close()
+    manager = bucket.get("sync_manager")
     try:
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     except Exception:  # noqa: BLE001
@@ -982,6 +1044,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
             "Not all platforms unloaded cleanly for config entry %s.",
             entry.entry_id,
         )
+
+    if manager is not None:
+        if not unload_ok:
+            return False
+        if cancel := bucket.pop("sync_maintenance_cancel", None):
+            cancel()
+        await manager.close()
 
     domain_bucket = hass.data.get(DOMAIN)
     if domain_bucket is not None and entry.entry_id in domain_bucket:

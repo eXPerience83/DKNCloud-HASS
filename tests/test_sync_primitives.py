@@ -44,7 +44,7 @@ async def test_fallback_delay_and_push_resynchronization():
         request, recover, sleep=sleep, on_error=lambda _: 10
     )
     await scheduler.cycle()
-    assert steps == ["information", 3.0, "get"]
+    assert steps == ["information", 10.0, "get"]
     steps.clear()
     await scheduler.set_push(True)
     await scheduler.cycle()
@@ -173,3 +173,89 @@ async def test_recovery_pool_coalesces_and_closes_owned_reads():
     await pool.close()
     with pytest.raises(asyncio.CancelledError):
         await pool.get("fake-installation", 0)
+
+
+async def test_pool_closes_fetch_after_its_last_waiter_is_cancelled():
+    from custom_components.airzoneclouddaikin.recovery_pool import RecoveryPool
+
+    entered, cleaned = asyncio.Event(), asyncio.Event()
+
+    async def fetch(_):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    pool = RecoveryPool(fetch)
+    waiter = asyncio.create_task(pool.get("fake", 0))
+    await entered.wait()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert not cleaned.is_set()
+    await pool.close()
+    assert cleaned.is_set()
+
+
+async def test_backoff_is_measured_after_slow_failure():
+    now, waits = [0.0], []
+
+    async def request():
+        now[0] += 35
+        raise TimeoutError
+
+    async def sleep(delay):
+        waits.append(delay)
+        raise asyncio.CancelledError
+
+    scheduler = InformationScheduler(
+        request, AsyncMock(), clock=lambda: now[0], sleep=sleep, on_error=lambda _: 40
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler._run()
+    assert waits == [40]
+
+
+async def test_ineligible_failed_read_does_not_poison_later_waiter():
+    from custom_components.airzoneclouddaikin.recovery_pool import RecoveryPool
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    now, attempts = [0.0], [0]
+
+    async def fetch(_):
+        attempts[0] += 1
+        if attempts[0] == 1:
+            entered.set()
+            await release.wait()
+            raise TimeoutError
+        return "recovered"
+
+    pool = RecoveryPool(fetch, lambda: now[0])
+    first = asyncio.create_task(pool.get("fake", 0))
+    await entered.wait()
+    now[0] = 10
+    second = asyncio.create_task(pool.get("fake", 10))
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(TimeoutError):
+        await first
+    assert await second == "recovered"
+    assert attempts[0] == 2
+    await pool.close()
+
+
+@pytest.mark.parametrize("status", [422, 423])
+async def test_rejected_information_still_reads_fallback_snapshot(status):
+    from aiohttp import ClientResponseError
+
+    recover = AsyncMock()
+    request = AsyncMock(side_effect=ClientResponseError(None, (), status=status))
+    sleep = AsyncMock()
+    scheduler = InformationScheduler(
+        request, recover, sleep=sleep, on_error=lambda _: 10
+    )
+    with pytest.raises(ClientResponseError):
+        await scheduler.cycle()
+    sleep.assert_awaited_once_with(10)
+    recover.assert_awaited_once()

@@ -11,6 +11,12 @@ def manager(fetch=None):
     publish = Mock()
     request = AsyncMock()
     reauth = Mock()
+    time = [0.0]
+
+    async def fast_sleep(seconds):
+        time[0] += seconds
+        await asyncio.sleep(0)
+
     instance = SyncManager(
         {"fake": {"id": "fake", "power": "0", "mode": "1"}},
         {"fake": "installation"},
@@ -20,7 +26,24 @@ def manager(fetch=None):
         reauth,
         lambda d: locks.setdefault(d, asyncio.Lock()),
         connect=AsyncMock(),
+        clock=lambda: time[0],
+        sleep=fast_sleep,
     )
+
+    class ImmediateBudget:
+        async def run(self, operation):
+            return await operation()
+
+        def close(self):
+            pass
+
+        def mark_started(self):
+            pass
+
+        def diagnostics(self):
+            return {}
+
+    instance._budget = ImmediateBudget()
     return instance, publish, request, reauth
 
 
@@ -90,7 +113,7 @@ async def test_fallback_cycle_and_recovery_share_single_owner():
 
     scheduler._sleep = sleep
     await scheduler.cycle()
-    assert waits == [3]
+    assert waits == [10]
     assert fetch.await_count == request.await_count == 1
     await instance.subscription("fake", True)
     await instance._resync_tasks["fake"]
@@ -177,6 +200,7 @@ async def test_failed_recovery_sets_device_backoff_and_clears_on_success(monkeyp
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.sync_manager.asyncio.sleep", timed_sleep
     )
+    instance._sleep = timed_sleep
     try:
         await instance.recover("fake")
     except TimeoutError:
@@ -203,4 +227,128 @@ async def test_queued_request_is_fenced_when_authentication_expires():
         pass
     request.assert_not_awaited()
     instance._limit.release()
+    await instance.close()
+
+
+async def test_fallback_devices_batch_one_get_after_all_information_is_ready():
+
+    now, trace = [0.0], []
+
+    async def sleep(seconds):
+        now[0] += seconds
+        await asyncio.sleep(0)
+
+    async def request(device):
+        trace.append((now[0], "information", device))
+        now[0] += 0.2
+
+    async def fetch(installation):
+        trace.append((now[0], "get", installation))
+        return [{"id": "a"}, {"id": "b"}]
+
+    instance = SyncManager(
+        {"a": {"id": "a"}, "b": {"id": "b"}},
+        {"a": "shared", "b": "shared"},
+        request,
+        fetch,
+        Mock(),
+        Mock(),
+        lambda _: asyncio.Lock(),
+        connect=AsyncMock(),
+        clock=lambda: now[0],
+        sleep=sleep,
+    )
+    await instance._information("a")
+    await instance._information("b")
+    await asyncio.gather(instance.recover("a"), instance.recover("b"))
+    assert [op[1] for op in trace] == ["information", "information", "get"]
+    assert trace[-1][0] >= 20.2
+    assert all(b[0] - a[0] >= 10 for a, b in zip(trace, trace[1:], strict=False))
+    await instance.close()
+
+
+async def test_recovery_normalizes_mac_fallback_without_proving_physical_freshness():
+    instance, _, _, _ = manager(
+        AsyncMock(return_value=[{"mac": " FA:KE ", "power": "1"}])
+    )
+    instance.state.data = {"fa:ke": {"id": "fa:ke", "power": "0"}}
+    instance._installations = {"fa:ke": "installation"}
+    instance.schedulers["fa:ke"] = instance.schedulers.pop("fake")
+    instance._last_received = {"fa:ke": 0}
+    await instance.recover("fa:ke")
+    assert instance.state.data["fa:ke"]["power"] == "1"
+    diagnostic = instance.diagnostics()["devices"]["device_1"]
+    assert diagnostic["last_get_age"] == 0
+    assert diagnostic["state_age"] is None
+    assert diagnostic["physical_freshness_verified"] is False
+    await instance.close()
+
+
+async def test_authoritative_topology_change_requests_reload():
+    instance, _, _, _ = manager()
+    changed = Mock()
+    instance._on_topology_change = changed
+    instance._discover = AsyncMock(return_value={})
+    await instance._discover_once()
+    changed.assert_called_once()
+    assert "fake" in instance.state.data  # retained until the coordinated reload
+    await instance.close()
+
+
+async def test_quiet_recovery_backoff_does_not_block_other_device():
+    instance, _, _, _ = manager()
+    instance.schedulers["other"] = instance.schedulers["fake"]
+    instance._installations["other"] = "other-installation"
+    instance.state.data["other"] = {"id": "other"}
+    instance._last_received["other"] = 0
+    instance._fetch = AsyncMock(return_value=[{"id": "other"}])
+    instance._recovery_due["fake"] = 300
+    waiting, release = asyncio.Event(), asyncio.Event()
+
+    async def sleep(delay):
+        if delay >= 300:
+            waiting.set()
+            await release.wait()
+
+    instance._sleep = sleep
+    instance.request_recovery("fake")
+    await waiting.wait()
+    instance.request_recovery("other")
+    await instance._quiet_tasks["other"]
+    instance._fetch.assert_awaited_once_with("other-installation")
+    assert not instance._quiet_tasks["fake"].done()
+    await instance.close()
+
+
+async def test_close_owns_explicit_recovery_waiting_for_backoff():
+    instance, _, _, _ = manager()
+    entered = asyncio.Event()
+
+    async def sleep(_):
+        entered.set()
+        await asyncio.Event().wait()
+
+    instance._sleep = sleep
+    instance._recovery_due["fake"] = 300
+    caller = asyncio.create_task(instance.recover("fake"))
+    await entered.wait()
+    await instance.close()
+    assert caller.cancelled()
+    assert not instance._recovery_waiters
+
+
+async def test_supervisor_authorization_failure_stops_automatic_work():
+    from aiohttp import ClientResponseError
+
+    instance, _, request, reauth = manager()
+    instance._connect = AsyncMock(side_effect=ClientResponseError(None, (), status=401))
+    await instance._supervise()
+    assert instance._auth_failed
+    reauth.assert_called_once()
+    assert instance._connect.await_count == 1
+    try:
+        await instance._information("fake")
+    except asyncio.CancelledError:
+        pass
+    request.assert_not_awaited()
     await instance.close()

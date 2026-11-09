@@ -1,9 +1,12 @@
 """Bind verified vendor contracts to the transport and synchronization owner."""
 
+import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiohttp import ClientSession
+from yarl import URL
 
 from .pusher_client import PusherClient, PusherProtocolError
 from .sync_manager import SyncManager
@@ -32,26 +35,91 @@ class DknPushAdapter:
             try:
                 patch = self._decode(payload)
             except ValueError, TypeError, KeyError:
-                raise PusherProtocolError("Invalid device event") from None
+                patch = None
             if not isinstance(patch, dict):
                 raise PusherProtocolError("Invalid device event")
             await manager.event(device_id, patch, generation)
+
+        async def authorize(socket_id, channel):
+            async with manager._limit:
+                if manager._stopped or manager._auth_failed:
+                    raise asyncio.CancelledError
+                return await self._authorize(socket_id, channel)
 
         client = PusherClient(
             self._session,
             self._url,
             {f"private-{device}": device for device in manager.schedulers},
-            self._authorize,
+            authorize,
             device,
             manager.subscription,
         )
         await client.connect()
 
 
-def build_verified_adapter(api, session: ClientSession) -> DknPushAdapter | None:
-    """Keep activation closed until the service-specific contracts are verified.
+# Public service application identifier; not an account token or app secret.
+PUSHER_APP_KEY = "765ec374ae0a69f4ce44"
+PUSHER_HOST = "ws.pusherapp.com"
 
-    The runtime calls this factory again after reauth/reload so an adapter must
-    never retain an earlier API instance or authorization token across lifetimes.
-    """
-    return None
+
+def decode_device(payload: Any) -> dict[str, Any]:
+    """Decode the public Channels data encoding into a root device patch."""
+    value = None
+    try:
+        value = json.loads(payload) if isinstance(payload, str) else payload
+    except ValueError, TypeError:
+        pass
+    if not isinstance(value, dict) or not value:
+        raise PusherProtocolError("Invalid device event")
+    if not any(
+        k in value
+        for k in (
+            "id",
+            "power",
+            "mode",
+            "local_temp",
+            "connection_date",
+            "update_date",
+            "scenary",
+            "cold_consign",
+            "heat_consign",
+            "cold_speed",
+            "heat_speed",
+            "sleep_time",
+            "machine_errors",
+            "modes",
+            "availables_speeds",
+            "firmware",
+            "brand",
+            "units",
+            "name",
+            "progs_enabled",
+            "min_limit_cold",
+            "max_limit_cold",
+            "min_limit_heat",
+            "max_limit_heat",
+            "min_temp_unoccupied",
+            "max_temp_unoccupied",
+            "mac",
+            "pin",
+            "installation_id",
+            "ver_state_slats",
+            "ver_position_slats",
+            "hor_state_slats",
+            "hor_position_slats",
+            "ver_cold_slats",
+            "ver_heat_slats",
+            "hor_cold_slats",
+            "hor_heat_slats",
+        )
+    ):
+        raise PusherProtocolError("Unrecognized device event")
+    return value
+
+
+def build_verified_adapter(api, session: ClientSession) -> DknPushAdapter:
+    """Build a fresh adapter with the current entry's token-only API."""
+    url = URL.build(
+        scheme="wss", host=PUSHER_HOST, path=f"/app/{PUSHER_APP_KEY}"
+    ).with_query(protocol="7", client="python-dkncloud", version="1.0")
+    return DknPushAdapter(session, str(url), api.authorize_channel, decode_device)
