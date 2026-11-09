@@ -303,3 +303,43 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
         )
     if cancel := hass.data[DOMAIN]["entry"].get("pending_refresh"):
         cancel()
+
+
+async def test_new_observed_sleep_session_rearms_after_convergence(hass):
+    """Only a non-Sleep backend observation retires a pending session marker."""
+    from types import SimpleNamespace
+
+    from custom_components.airzoneclouddaikin import _derive_state
+
+    entry = SimpleNamespace(entry_id="entry", options={})
+    hass.data.setdefault(DOMAIN, {})["entry"] = {
+        "sleep_exit_pending": {"device": "unverified"}
+    }
+    _derive_state(hass, entry, {"device": {"scenary": "sleep", "power": "0"}})
+    assert "device" in hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
+    _derive_state(hass, entry, {"device": {"scenary": "occupied"}})
+    assert not hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
+    _derive_state(hass, entry, {"device": {"scenary": "sleep"}})
+    tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["device"]
+    assert tracking.sleep_started_at_utc is not None
+    assert not tracking.force_exit_requested
+
+
+async def test_explicit_new_sleep_rearms_local_tracking(hass):
+    from datetime import UTC, datetime
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        sleep_started_at_utc=datetime(2020, 1, 1, tzinfo=UTC),
+        force_exit_requested=True,
+    )
+    hass.data.setdefault(DOMAIN, {})["entry"] = {
+        "sleep_tracking": {"device": tracking},
+        "sleep_exit_pending": {"device": "unverified"},
+    }
+    helpers.optimistic_set(hass, "entry", "device", "scenary", "sleep")
+    assert not tracking.force_exit_requested
+    assert tracking.sleep_started_at_utc.year > 2020
+    assert not hass.data[DOMAIN]["entry"]["sleep_exit_pending"]

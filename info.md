@@ -501,3 +501,6 @@ Pending exit state is runtime-local; after restart the Sleep observation timer
 starts again, without inferring a physical activation timestamp. The grace remains
 10 minutes. Scene exit writes use no API retry; manual scene commands retain their
 existing retry policy.
+
+A non-Sleep backend observation retires a pending exit marker. A new explicit
+Sleep selection re-arms local tracking; this does not establish physical timing.

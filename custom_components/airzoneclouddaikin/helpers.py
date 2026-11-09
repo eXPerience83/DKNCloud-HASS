@@ -27,6 +27,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
@@ -86,6 +87,15 @@ def optimistic_set(
             _entry_bucket(hass, entry_id).get("sleep_exit_pending", {}).pop(
                 device_id, None
             )
+            if (
+                tracking := _entry_bucket(hass, entry_id)
+                .get("sleep_tracking", {})
+                .get(device_id)
+            ):
+                # A new explicit command starts a local observation, not a physical clock.
+                tracking.sleep_started_at_utc = dt_util.utcnow()
+                tracking.last_scenary = SCENARY_SLEEP
+                tracking.force_exit_requested = False
         revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
         revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})

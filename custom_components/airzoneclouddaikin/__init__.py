@@ -397,6 +397,8 @@ def _derive_state(hass, entry, data, had_non_auth_install_errors=False):
             sleep_tracking.pop(stale_id, None)
     for dev_id, dev in data.items():
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
+        if raw_scenary in {SCENARY_HOME, SCENARY_VACANT}:
+            bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
         if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
@@ -664,7 +666,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             if not data:
                 return
 
-            refresh_needed = False
             for dev_id, dev in data.items():
                 tracking = sleep_tracking.get(dev_id)
                 if tracking is None or tracking.force_exit_requested:
@@ -697,9 +698,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     allow_away_handling=False,
                 )
                 tracking.force_exit_requested = True
-
-            if refresh_needed and bucket.get("sync_manager") is None:
-                hass.async_create_task(coordinator.async_request_refresh())
 
     def _on_sleep_candidate() -> None:
         if (
