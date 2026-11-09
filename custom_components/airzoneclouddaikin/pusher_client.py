@@ -7,12 +7,16 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-from aiohttp import ClientSession, WSMsgType
+from aiohttp import ClientResponseError, ClientSession, WSMsgType
 from yarl import URL
 
 
 class PusherProtocolError(Exception):
     """A sanitized protocol failure; never carries remote payloads or URLs."""
+
+    def __init__(self, message: str, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class PusherClient:
@@ -76,6 +80,11 @@ class PusherClient:
                         awaiting_pong = True
                         continue
                     if message.type in {WSMsgType.CLOSE, WSMsgType.CLOSED}:
+                        code = socket.close_code
+                        if isinstance(code, int) and 4000 <= code <= 4299:
+                            raise PusherProtocolError(
+                                "Channel service closed the connection", code
+                            )
                         return
                     if message.type == WSMsgType.ERROR:
                         raise PusherProtocolError("WebSocket transport failed")
@@ -100,7 +109,19 @@ class PusherClient:
                         activity = float(timeout)
                         established = True
                         for channel in self._channels:
-                            signature = await self._authorize(socket_id, channel)
+                            try:
+                                signature = await self._authorize(socket_id, channel)
+                            except ClientResponseError as error:
+                                if error.status != 403:
+                                    raise
+                                await self._on_subscription(
+                                    self._channels[channel], False
+                                )
+                                continue
+                            if not isinstance(signature, str) or not signature:
+                                raise PusherProtocolError(
+                                    "Invalid channel authorization"
+                                )
                             await socket.send_json(
                                 {
                                     "event": "pusher:subscribe",
@@ -110,8 +131,11 @@ class PusherClient:
                     elif event == "pusher:ping":
                         await socket.send_json({"event": "pusher:pong", "data": {}})
                     elif event == "pusher:error":
+                        data = self._object(frame.get("data"))
+                        code = data.get("code")
                         raise PusherProtocolError(
-                            "Channel service rejected the request"
+                            "Channel service rejected the request",
+                            code if isinstance(code, int) else None,
                         )
                     else:
                         channel = frame.get("channel")

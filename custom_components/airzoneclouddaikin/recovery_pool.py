@@ -5,7 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass
+class _Read:
+    started: float | None = None
+    task: asyncio.Task | None = None
 
 
 class RecoveryPool:
@@ -18,7 +25,7 @@ class RecoveryPool:
     ) -> None:
         self._fetch = fetch
         self._clock = clock
-        self._pending: dict[str, tuple[float, asyncio.Task[Any]]] = {}
+        self._pending: dict[str, _Read] = {}
         self._closed = False
 
     async def get(self, installation: str, ready_at: float) -> Any:
@@ -28,23 +35,33 @@ class RecoveryPool:
         while not self._closed:
             pending = self._pending.get(installation)
             if pending is None:
-                task = asyncio.create_task(self._fetch(installation))
-                pending = (self._clock(), task)
+                pending = _Read()
                 self._pending[installation] = pending
-            started, task = pending
+
+                async def read(record=pending):
+                    # Let concurrent ready callers join before starting I/O.
+                    await asyncio.sleep(0)
+                    record.started = self._clock()
+                    return await self._fetch(installation)
+
+                pending.task = asyncio.create_task(read())
+            task = pending.task
+            assert task is not None
             try:
                 result = await asyncio.shield(task)
             finally:
                 if task.done() and self._pending.get(installation) is pending:
                     self._pending.pop(installation)
-            if started >= ready_at:
+            if pending.started is not None and pending.started >= ready_at:
                 return result
         raise asyncio.CancelledError
 
     async def close(self) -> None:
         """Cancel and await reads even when their original waiters disappeared."""
         self._closed = True
-        tasks = [task for _, task in self._pending.values()]
+        tasks = [
+            record.task for record in self._pending.values() if record.task is not None
+        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
