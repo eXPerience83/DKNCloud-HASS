@@ -94,6 +94,7 @@ class SyntheticBackend:
         self.status = 200
         self.redirect = False
         self.malformed = False
+        self.push_available = True
         self.wait = None
         self.wait_path = None
 
@@ -118,6 +119,8 @@ class SyntheticBackend:
         if self.malformed:
             return web.Response(text="invalid JSON", content_type="application/json")
         if request.path.startswith("/app/"):
+            if not self.push_available:
+                return web.json_response({}, status=503)
             ws = web.WebSocketResponse()
             await ws.prepare(request)
             self.sockets.append(ws)

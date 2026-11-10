@@ -181,6 +181,7 @@ async def test_tls_pusher_subscription_and_cancel(tls_backend):
     "case",
     [
         "normal",
+        "reconnect",
         "sleep",
         "duration",
         "quota",
@@ -211,10 +212,11 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
         env={"TMPDIR": str(tmp_path)},
         capture_output=True,
         text=True,
-        timeout=85,
+        timeout=150 if case == "reconnect" else 85,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     summary = json.loads(result.stdout.splitlines()[0])
+    assert summary.get("error") != "cleanup_failed"
     assert summary["backend_control_writes"] == 0
     assert summary["session_closed"] and summary["server_closed"]
     assert summary["storage_files"] == 0
@@ -224,7 +226,9 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
         assert summary["operations"].get("get", 0) >= 1
     if case == "cooldown":
         assert summary["cooldown_wait"]
-    if case in {"normal", "sleep"}:
+    if case == "reconnect":
+        assert summary["tls_fallback"] and summary["tls_reconnected"]
+    if case in {"normal", "reconnect", "sleep"}:
         assert summary["owned_tasks_closed"]
         assert summary["entities"] >= 5
     assert not list(tmp_path.iterdir())

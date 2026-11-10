@@ -44,7 +44,11 @@ async def async_setup(hass, config):
         device, installation = "device", "site"
         username, password = "synthetic@example.invalid", "synthetic-password"
         supervisor = LabSupervisor(
-            duration=60 if case in {"normal", "sleep"} else 3,
+            duration=120
+            if case == "reconnect"
+            else 60
+            if case in {"normal", "sleep"}
+            else 3,
             state_limit=1 if case == "quota" else 40,
             spacing=0.01,
         )
@@ -133,6 +137,23 @@ async def async_setup(hass, config):
                 await asyncio.sleep(0.05)
             report["push_applied"] = True
             report["entities"] = len(hass.states.async_all())
+            if case == "reconnect":
+                backend.push_available = False
+                backend.power = "1"
+                await backend.sockets[-1].close()
+                while (
+                    manager.schedulers[device].status.push_active
+                    or coordinator.data[device]["power"] != "1"
+                ):
+                    await asyncio.sleep(0.05)
+                report["tls_fallback"] = True
+                backend.push_available = True
+                while (
+                    not manager.schedulers[device].status.push_active
+                    or coordinator.data[device]["power"] != "0"
+                ):
+                    await asyncio.sleep(0.05)
+                report["tls_reconnected"] = True
             if case == "sleep":
                 coordinator.data[device].update(scenary="sleep", sleep_expired=True)
                 coordinator.async_update_listeners()

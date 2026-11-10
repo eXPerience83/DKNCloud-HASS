@@ -25,6 +25,7 @@ parser.add_argument(
     "--protected-case",
     choices=[
         "normal",
+        "reconnect",
         "sleep",
         "duration",
         "quota",
@@ -133,6 +134,9 @@ with tempfile.TemporaryDirectory(
                 and summary.get("session_closed")
                 else 1
             )
+        if args.protected_case == "reconnect":
+            if not summary.get("tls_fallback") or not summary.get("tls_reconnected"):
+                sys.exit(1)
         expected = {
             "sleep": "forbidden_operation",
             "duration": "duration",
@@ -143,10 +147,11 @@ with tempfile.TemporaryDirectory(
             "redirect": "http_security",
             "tls": "tls_verification",
         }
-        if args.protected_case != "normal":
+        if args.protected_case not in {"normal", "reconnect"}:
             sys.exit(
                 0
                 if result.returncode == 0
+                and summary.get("error") != "cleanup_failed"
                 and summary.get("reason") == expected[args.protected_case]
                 and summary.get("backend_control_writes") == 0
                 and summary.get("session_closed")
