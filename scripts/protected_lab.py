@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import json
 import sys
 import time
 from contextlib import contextmanager
@@ -132,6 +133,16 @@ class GuardedContext:
             result = await self.context.__aenter__()
             entered = True
             if not self.websocket:
+                if result.status < 300:
+                    key = (
+                        "get_received"
+                        if self.path == "/devices"
+                        else "information_accepted"
+                        if self.path == "/events"
+                        else None
+                    )
+                    if key:
+                        self.gateway.observations[key] += 1
                 owner.response(result.status)
                 if result.status < 300 and result.status != 204:
                     # The API consumes JSON. Validate without logging or retaining it.
@@ -154,7 +165,11 @@ class GuardedContext:
                                 owner.abort("device_scope")
                     except ValueError, TypeError, ContentTypeError:
                         owner.abort("invalid_response")
-            return GuardedSocket(result, owner) if self.websocket else result
+            return (
+                GuardedSocket(result, owner, self.gateway.observations)
+                if self.websocket
+                else result
+            )
         except BaseException as error:
             if isinstance(error, PermissionError) and not isinstance(error, LabStopped):
                 owner.reason = "transport_security"
@@ -177,15 +192,26 @@ class GuardedContext:
 class GuardedSocket:
     """Propagate forbidden WebSocket writes to the experiment supervisor."""
 
-    def __init__(self, socket, owner):
+    def __init__(self, socket, owner, observations):
         self.socket, self.owner = socket, owner
+        self.observations = observations
 
     @property
     def close_code(self):
         return self.socket.close_code
 
     async def receive(self):
-        return await self.socket.receive()
+        message = await self.socket.receive()
+        try:
+            frame = json.loads(message.data)
+            if (
+                isinstance(frame, dict)
+                and frame.get("event") == "pusher:connection_established"
+            ):
+                self.observations["websocket_established"] += 1
+        except ValueError, TypeError:
+            pass
+        return message
 
     async def send_json(self, payload):
         self.owner.check()
@@ -200,6 +226,9 @@ class LaboratoryGateway:
 
     def __init__(self, protected, supervisor):
         self.protected, self.supervisor = protected, supervisor
+        self.observations = dict(
+            websocket_established=0, get_received=0, information_accepted=0
+        )
 
     def request(self, method, url, **kwargs):
         try:

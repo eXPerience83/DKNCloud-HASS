@@ -45,9 +45,9 @@ async def async_setup(hass, config):
         username, password = "synthetic@example.invalid", "synthetic-password"
         supervisor = LabSupervisor(
             duration=120
-            if case == "reconnect"
+            if case in {"reconnect", "reconnect_no_events"}
             else 60
-            if case in {"normal", "sleep"}
+            if case in {"normal", "sleep", "no_events", "invalid_event", "wrong_device"}
             else 35
             if case == "get"
             else 15
@@ -63,11 +63,67 @@ async def async_setup(hass, config):
                 "authorization": "/pusher/auth",
                 "duration": "/users/sign_in",
             }[case]
+        backend.emit_events = case != "no_events"
+        backend.event_kind = case
         backend.redirect = case == "redirect"
         policy = ReadOnlyPolicy({device}, {installation}, PUSHER_APP_KEY, enabled=True)
         gateway = await create_gateway(
             policy, supervisor, connector=backend.connector(trusted=case != "tls")
         )
+    import time
+
+    from custom_components.airzoneclouddaikin.sync_manager import SyncManager
+
+    observations = dict(
+        device_received=0,
+        device_changed_state=0,
+        entity_observed_push=0,
+        device_applied=0,
+        get_applied=0,
+        subscribed=False,
+        last_device_age=None,
+    )
+    original_event = SyncManager.event
+    original_read = SyncManager._read
+    original_subscription = SyncManager.subscription
+
+    async def observed_event(manager, identity, patch, generation):
+        previous = dict(manager.state.data.get(identity, {}))
+        revision = manager.state.revision
+        await original_event(manager, identity, patch, generation)
+        if manager.state.revision != revision:
+            observations["device_received"] += 1
+            if any(previous.get(k) != v for k, v in patch.items() if v is not None):
+                observations["device_changed_state"] += 1
+            state = manager.state.data[identity]
+            coordinator = hass.data["airzoneclouddaikin"][entry_id[0]]["coordinator"]
+            if all(
+                coordinator.data[identity].get(k) == v == state.get(k)
+                for k, v in patch.items()
+                if v is not None
+            ):
+                observations["device_applied"] += 1
+                if patch.get("power") == "0" and any(
+                    entity.domain == "climate" and entity.state == "off"
+                    for entity in hass.states.async_all()
+                ):
+                    observations["entity_observed_push"] += 1
+                observations["last_device_age"] = time.monotonic()
+
+    async def observed_read(manager, *args, **kwargs):
+        result = await original_read(manager, *args, **kwargs)
+        observations["get_applied"] += 1
+        return result
+
+    async def observed_subscription(manager, identity, active):
+        if active:
+            observations["subscribed"] = True
+        return await original_subscription(manager, identity, active)
+
+    entry_id = [None]
+    SyncManager.event = observed_event
+    SyncManager._read = observed_read
+    SyncManager.subscription = observed_subscription
     # Nothing containing account/device data is persisted, even in ephemeral HA storage.
     from homeassistant.helpers.storage import Store
 
@@ -89,6 +145,9 @@ async def async_setup(hass, config):
 
     def restore_guard():
         guard.__exit__(None, None, None)
+        SyncManager.event = original_event
+        SyncManager._read = original_read
+        SyncManager.subscription = original_subscription
         Store.async_save, Store.async_delay_save = original_save, original_delay
         integration.async_get_clientsession = original
         config_flow.async_get_clientsession = original_flow
@@ -117,6 +176,7 @@ async def async_setup(hass, config):
                 discovery_keys={},
                 subentries_data=[],
             )
+            entry_id[0] = entry.entry_id
             await hass.config_entries.async_add(entry)
             while not getattr(entry, "runtime_data", None):
                 await asyncio.sleep(0.05)
@@ -129,14 +189,17 @@ async def async_setup(hass, config):
                 return
             coordinator = entry.runtime_data.coordinator
             manager = hass.data[entry.domain][entry.entry_id]["sync_manager"]
-            while not manager.schedulers[device].status.push_active or (
-                not real and coordinator.data[device]["power"] != "0"
-            ):
+            while not manager.schedulers[device].status.push_active:
                 await asyncio.sleep(0.05)
             while not all(
                 any(s.domain == domain for s in hass.states.async_all())
                 for domain in {"climate", "switch", "number", "sensor", "binary_sensor"}
             ):
+                await asyncio.sleep(0.05)
+            if case in {"no_events", "invalid_event", "wrong_device"}:
+                await supervisor.stopped.wait()
+                return
+            while not observations["device_applied"]:
                 await asyncio.sleep(0.05)
             report["push_applied"] = True
             report["entities"] = len(hass.states.async_all())
@@ -150,7 +213,8 @@ async def async_setup(hass, config):
                 report["pending_recovery_get_reached"] = True
                 await supervisor.stopped.wait()
                 return
-            if case == "reconnect":
+            if case in {"reconnect", "reconnect_no_events"}:
+                before_events = observations["device_applied"]
                 backend.push_available = False
                 backend.power = "1"
                 await backend.sockets[-1].close()
@@ -160,6 +224,7 @@ async def async_setup(hass, config):
                 ):
                     await asyncio.sleep(0.05)
                 report["tls_fallback"] = True
+                backend.emit_events = case != "reconnect_no_events"
                 backend.push_available = True
                 while (
                     not manager.schedulers[device].status.push_active
@@ -167,6 +232,11 @@ async def async_setup(hass, config):
                 ):
                     await asyncio.sleep(0.05)
                 report["tls_reconnected"] = True
+                if case == "reconnect_no_events":
+                    await supervisor.stopped.wait()
+                report["push_recovered"] = (
+                    observations["device_applied"] > before_events
+                )
             if case == "sleep":
                 coordinator.data[device].update(scenary="sleep", sleep_expired=True)
                 coordinator.async_update_listeners()
@@ -254,7 +324,15 @@ async def async_setup(hass, config):
                 await backend.close()
 
         def describe():
+            last = observations["last_device_age"]
+            observations["last_device_age"] = time.monotonic() - last if last else None
             return dict(
+                observations=observations | gateway.observations,
+                pusher_result="verified"
+                if observations["device_applied"]
+                else "inconclusive",
+                safely_finished=report.get("pending_http_tasks") == 0
+                and gateway.protected.session.closed,
                 reason=supervisor.reason,
                 counts=supervisor.counts,
                 operations=backend.operations if backend else None,

@@ -25,6 +25,10 @@ parser.add_argument(
     "--protected-case",
     choices=[
         "normal",
+        "no_events",
+        "invalid_event",
+        "wrong_device",
+        "reconnect_no_events",
         "reconnect",
         "sleep",
         "duration",
@@ -136,11 +140,30 @@ with tempfile.TemporaryDirectory(prefix="dkn-ha-", dir=temporary_root) as tempor
                 if result.returncode == 0
                 and not summary.get("error")
                 and summary.get("loaded")
-                and summary.get("push_applied")
+                and summary.get("pusher_result") == "verified"
+                and summary.get("pending_http_tasks") == 0
                 and summary.get("owned_tasks_closed")
                 and summary.get("storage_files") == 0
                 and summary.get("reason") == "duration"
                 and summary.get("session_closed")
+                else 1
+            )
+        if args.protected_case in {
+            "no_events",
+            "invalid_event",
+            "wrong_device",
+            "reconnect_no_events",
+        }:
+            expected_events = args.protected_case == "reconnect_no_events"
+            sys.exit(
+                0
+                if result.returncode == 0
+                and not summary.get("error")
+                and summary.get("safely_finished")
+                and summary.get("storage_files") == 0
+                and bool(summary["observations"]["device_applied"]) == expected_events
+                and not summary.get("push_recovered", False)
+                and summary.get("backend_control_writes") == 0
                 else 1
             )
         if args.protected_case == "reconnect":
@@ -172,7 +195,8 @@ with tempfile.TemporaryDirectory(prefix="dkn-ha-", dir=temporary_root) as tempor
             0
             if result.returncode == 0
             and not summary.get("error")
-            and summary.get("push_applied")
+            and summary.get("pusher_result") == "verified"
+            and summary.get("pending_http_tasks") == 0
             and summary.get("internal_write_blocked")
             and summary.get("reason") == "forbidden_operation"
             and summary.get("backend_control_writes") == 0

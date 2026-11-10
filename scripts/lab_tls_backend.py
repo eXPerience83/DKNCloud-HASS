@@ -89,6 +89,8 @@ class SyntheticBackend:
         self.operations = {}
         self.controls = 0
         self.events = 0
+        self.emit_events = True
+        self.event_kind = "normal"
         self.power = "1"
         self.sockets = []
         self.status = 200
@@ -135,7 +137,8 @@ class SyntheticBackend:
                 if data["event"] == "pusher:ping":
                     await ws.send_json({"event": "pusher:pong", "data": {}})
                 elif data["event"] == "pusher:subscribe":
-                    self.power = "0"
+                    if self.event_kind in {"reconnect", "reconnect_no_events"}:
+                        self.power = "0"
                     await ws.send_json(
                         {
                             "event": "pusher_internal:subscription_succeeded",
@@ -143,11 +146,22 @@ class SyntheticBackend:
                             "data": {},
                         }
                     )
+                    if not self.emit_events:
+                        continue
                     await ws.send_json(
                         {
                             "event": "device",
                             "channel": "private-device",
-                            "data": {"id": "device", "power": "0"},
+                            "data": (
+                                {"unknown": True}
+                                if self.event_kind == "invalid_event"
+                                else {
+                                    "id": "other"
+                                    if self.event_kind == "wrong_device"
+                                    else "device",
+                                    "power": "0",
+                                }
+                            ),
                         }
                     )
                     self.events += 1
