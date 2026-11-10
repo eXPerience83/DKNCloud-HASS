@@ -1,7 +1,6 @@
 """One supervised run of the real integration through the TLS-only laboratory."""
 
 import asyncio
-import json
 import logging
 import os
 from pathlib import Path
@@ -9,6 +8,7 @@ from pathlib import Path
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 
+from scripts.lab_lifecycle import finish_lab
 from scripts.lab_policy import ReadOnlyPolicy
 from scripts.lab_tls_backend import SyntheticBackend
 from scripts.protected_lab import LabSupervisor, create_gateway, real_policy
@@ -48,6 +48,8 @@ async def async_setup(hass, config):
             if case == "reconnect"
             else 60
             if case in {"normal", "sleep"}
+            else 15
+            if case in {"cooldown", "authorization", "get"}
             else 3,
             state_limit=1 if case == "quota" else 40,
             spacing=0.01,
@@ -181,7 +183,10 @@ async def async_setup(hass, config):
             if not supervisor.stopped.is_set():
                 raise RuntimeError("Synthetic operation did not stop the laboratory")
         except Exception:
-            report["error"] = "scenario_failed"
+            if case in {"tls", "redirect", "quota"} and supervisor.stopped.is_set():
+                report["security_stop"] = True
+            else:
+                report["error"] = "scenario_failed"
         finally:
             task.cancel()
             stopped.cancel()
@@ -202,24 +207,28 @@ async def async_setup(hass, config):
                     await hass.config_entries.async_remove(entry.entry_id)
             except Exception:
                 report["error"] = "cleanup_failed"
-            finally:
-                await gateway.protected.session.close()
-        if backend is not None:
-            if backend.wait:
-                backend.wait.set()
-            await backend.close()
-        report.update(
-            reason=supervisor.reason,
-            counts=supervisor.counts,
-            operations=backend.operations if backend else None,
-            cooldown_wait=case == "cooldown" and bool(report.get("loaded")),
-            backend_control_writes=backend.controls if backend else None,
-            session_closed=gateway.protected.session.closed,
-            server_closed=not backend.runner.sites if backend else True,
-            storage_files=len(list(Path(hass.config.path(".storage")).glob("*"))),
+
+        async def close_backend():
+            if backend is not None:
+                if backend.wait:
+                    backend.wait.set()
+                await backend.close()
+
+        def describe():
+            return dict(
+                reason=supervisor.reason,
+                counts=supervisor.counts,
+                operations=backend.operations if backend else None,
+                cooldown_wait=case == "cooldown" and bool(report.get("loaded")),
+                backend_control_writes=backend.controls if backend else None,
+                session_closed=gateway.protected.session.closed,
+                server_closed=not backend.runner.sites if backend else True,
+                storage_files=len(list(Path(hass.config.path(".storage")).glob("*"))),
+            )
+
+        await finish_lab(
+            hass, report, [gateway.protected.session.close, close_backend], describe
         )
-        Path(hass.config.path("lab-result.json")).write_text(json.dumps(report))
-        hass.data["lab_finished"].set()
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, scenario)
     return True

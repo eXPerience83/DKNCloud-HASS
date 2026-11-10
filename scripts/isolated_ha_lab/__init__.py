@@ -2,11 +2,12 @@
 
 import asyncio
 import json
-from pathlib import Path
 
 from aiohttp import ClientSession, web
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
+from scripts.lab_lifecycle import finish_lab
 
 
 async def async_setup(hass, config):
@@ -288,15 +289,21 @@ async def async_setup(hass, config):
             if "manager" in locals():
                 report["health_on_failure"] = manager.diagnostics()
         finally:
-            bucket = hass.data.get("airzoneclouddaikin", {}).get(entry.entry_id, {})
-            if owner := bucket.get("sync_manager"):
-                await owner.close()
-            await runner.cleanup()
-            await session.close()
-            report["session_closed"] = session.closed
-            report["server_closed"] = not runner.sites
-            Path(hass.config.path("lab-result.json")).write_text(json.dumps(report))
-            hass.data["lab_finished"].set()
+
+            async def close_owner():
+                bucket = hass.data.get("airzoneclouddaikin", {}).get(entry.entry_id, {})
+                if owner := bucket.get("sync_manager"):
+                    await owner.close()
+
+            await finish_lab(
+                hass,
+                report,
+                [close_owner, runner.cleanup, session.close],
+                lambda: {
+                    "session_closed": session.closed,
+                    "server_closed": not runner.sites,
+                },
+            )
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, scenario)
     return True

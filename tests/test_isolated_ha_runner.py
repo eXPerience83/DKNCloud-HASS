@@ -55,3 +55,26 @@ def test_nonzero_process_exit_fails_even_with_successful_report(monkeypatch, tmp
             str(Path(__file__).resolve().parents[1] / "scripts/run_isolated_ha.py")
         )
     assert error.value.code == 1
+
+
+def test_child_deadline_is_shorter_than_outer_test_and_cleans_configuration(
+    monkeypatch, tmp_path
+):
+    import subprocess
+
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr(
+        "sys.argv", ["run_isolated_ha.py", "--protected", "--process-timeout", "0.1"]
+    )
+
+    def expired(command, **kwargs):
+        assert kwargs["timeout"] == 0.1
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("subprocess.run", expired)
+    with pytest.raises(SystemExit) as error:
+        runpy.run_path(
+            str(Path(__file__).resolve().parents[1] / "scripts/run_isolated_ha.py")
+        )
+    assert error.value.code == 1
+    assert not list(tmp_path.iterdir())

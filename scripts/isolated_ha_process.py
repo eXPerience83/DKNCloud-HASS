@@ -50,6 +50,8 @@ async def main():
     await stopper
     if restore := hass.data.get("lab_restore_guard"):
         restore()
+    if hass.data.get("lab_failed"):
+        raise SystemExit(1)
 
 
 asyncio.run(main())

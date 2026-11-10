@@ -207,6 +207,8 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
             "--protected",
             "--protected-case",
             case,
+            "--process-timeout",
+            "140" if case == "reconnect" else "75",
         ],
         cwd=root,
         env={"TMPDIR": str(tmp_path)},

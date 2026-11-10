@@ -116,6 +116,10 @@ def test_real_policy_quota_and_deadline(monkeypatch):
     with pytest.raises(PermissionError, match="quota"):
         protected.request("GET", "https://dkn.airzonecloud.com/devices")
     assert session.request.call_count == 40
-    monkeypatch.setattr(lab_policy.time, "monotonic", lambda: policy.deadline)
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        lab_policy, "time", SimpleNamespace(monotonic=lambda: policy.deadline)
+    )
     with pytest.raises(PermissionError, match="duration"):
         protected.request("GET", "https://dkn.airzonecloud.com/devices")

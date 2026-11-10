@@ -37,7 +37,16 @@ parser.add_argument(
     ],
     default="normal",
 )
+parser.add_argument(
+    "--process-timeout",
+    type=float,
+    help="Lower synthetic child deadline for failure tests",
+)
 args = parser.parse_args()
+if args.process_timeout is not None and (
+    args.protected_real or not 0 < args.process_timeout <= 300
+):
+    parser.error("Invalid synthetic process deadline")
 if args.protected_real:
     from scripts.protected_lab import REAL_DESTINATIONS_ENABLED
 
@@ -102,7 +111,7 @@ with tempfile.TemporaryDirectory(
                 env=environment,
                 stdout=subprocess.DEVNULL if args.protected else log,
                 stderr=subprocess.DEVNULL if args.protected else log,
-                timeout=300 if args.protected else 360,
+                timeout=args.process_timeout or (300 if args.protected else 360),
             )
         except subprocess.TimeoutExpired:
             print("HA daemon exceeded the process deadline; child killed and awaited")
