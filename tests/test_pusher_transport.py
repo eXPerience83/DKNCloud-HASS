@@ -164,6 +164,38 @@ async def test_authorization_wait_does_not_block_ping_and_is_joined_on_cancel():
     assert cleaned.is_set()
 
 
+async def test_pending_authorization_is_joined_before_socket_transport_closes():
+    c, socket, context, authorize, _, _ = client([])
+    entered, cleaned = asyncio.Event(), asyncio.Event()
+    handshake = frame(
+        "pusher:connection_established", {"socket_id": "1.2", "activity_timeout": 30}
+    )
+
+    async def auth(*_):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    async def receive():
+        if not entered.is_set():
+            return handshake
+        await asyncio.Event().wait()
+
+    async def closing(*_):
+        assert cleaned.is_set(), "Authorization I/O must end before transport close"
+
+    authorize.side_effect = auth
+    socket.receive.side_effect = receive
+    context.__aexit__.side_effect = closing
+    task = asyncio.create_task(c.connect())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 @pytest.mark.parametrize(
     "failure",
     [403, 429, 500, TimeoutError, ValueError, OSError, ServerDisconnectedError, None],

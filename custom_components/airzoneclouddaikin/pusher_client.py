@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AsyncExitStack
 from typing import Any
 
 from aiohttp import ClientError, ClientResponseError, ClientSession, WSMsgType
@@ -34,6 +35,8 @@ class PusherClient:
         authorize: Callable[[str, str], Awaitable[str]],
         on_device: Callable[[str, Any], Awaitable[None]],
         on_subscription: Callable[[str, bool], Awaitable[None]],
+        *,
+        websocket_connect: Callable[..., Any] | None = None,
     ) -> None:
         parsed = URL(url)
         if parsed.scheme != "wss" or parsed.user is not None or parsed.fragment:
@@ -45,6 +48,7 @@ class PusherClient:
         self._authorize = authorize
         self._on_device = on_device
         self._on_subscription = on_subscription
+        self._websocket_connect = websocket_connect or session.ws_connect
 
     @staticmethod
     def _object(value: Any) -> dict[str, Any]:
@@ -61,9 +65,13 @@ class PusherClient:
         subscribed: set[str] = set()
         authorizations = []
         try:
-            async with self._session.ws_connect(
-                self._url, autoping=True, max_msg_size=1024 * 1024
-            ) as socket:
+            async with AsyncExitStack() as stack:
+                socket = await stack.enter_async_context(
+                    self._websocket_connect(
+                        self._url, autoping=True, max_msg_size=1024 * 1024
+                    )
+                )
+                stack.push_async_callback(self._close_authorizations, authorizations)
                 activity = 30.0
                 awaiting_pong = False
                 established = False
@@ -182,8 +190,12 @@ class PusherClient:
                             # transient and is never retained in diagnostics.
                             await self._on_device(device_id, frame.get("data"))
         finally:
-            for task in authorizations:
-                task.cancel()
-            await asyncio.gather(*authorizations, return_exceptions=True)
             for channel in subscribed:
                 await self._on_subscription(self._channels[channel], False)
+
+    @staticmethod
+    async def _close_authorizations(tasks) -> None:
+        """Finish owned HTTP work before the WebSocket transport is closed."""
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
