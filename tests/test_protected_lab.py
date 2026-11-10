@@ -134,7 +134,7 @@ async def test_tls_pusher_subscription_and_cancel(tls_backend):
     api = AirzoneAPI("synthetic@example.invalid", gateway, token="synthetic")
     client = PusherClient(
         gateway,
-        "wss://ws.pusherapp.com/app/synthetic?protocol=7&client=python-dkncloud&version=1.0",
+        "wss://dkn.airzonecloud.com:8080/app/synthetic?protocol=7&client=python-dkncloud&version=1.0",
         {"private-device": "device"},
         api.authorize_channel,
         event,
@@ -246,7 +246,7 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
 
 async def test_websocket_redirect_and_unknown_message_stop(tls_backend):
     gateway = await make_gateway(tls_backend)
-    url = "wss://ws.pusherapp.com/app/synthetic?protocol=7&client=python-dkncloud&version=1.0"
+    url = "wss://dkn.airzonecloud.com:8080/app/synthetic?protocol=7&client=python-dkncloud&version=1.0"
     try:
         with gateway.enforce():
             async with gateway.ws_connect(url) as ws:
@@ -329,5 +329,58 @@ async def test_synchronous_socket_cannot_bypass_gateway(tls_backend, datagram):
             else:
                 sock.connect(("127.0.0.1", tls_backend.port))
         assert gateway.supervisor.reason == "alternate_transport"
+    finally:
+        await gateway.protected.session.close()
+
+
+async def test_adapter_factory_uses_service_tls_endpoint_end_to_end(
+    tls_backend, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
+    from custom_components.airzoneclouddaikin.push_adapter import build_verified_adapter
+
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.push_adapter.PUSHER_APP_KEY", "synthetic"
+    )
+    gateway = await make_gateway(tls_backend)
+    api = AirzoneAPI("synthetic@example.invalid", gateway, token="synthetic")
+    received = asyncio.Event()
+    subscriptions = []
+    patches = []
+
+    async def event(device_id, patch, generation):
+        patches.append((device_id, patch, generation))
+        received.set()
+
+    async def subscription(device_id, active):
+        subscriptions.append((device_id, active))
+
+    owner = SimpleNamespace(
+        state=SimpleNamespace(generation=0),
+        schedulers={"device": None},
+        _limit=asyncio.Semaphore(1),
+        _stopped=False,
+        _auth_failed=False,
+        channel_errors={},
+        event=event,
+        subscription=subscription,
+    )
+    try:
+        with gateway.enforce():
+            task = asyncio.create_task(
+                build_verified_adapter(api, gateway).connect(owner)
+            )
+            try:
+                await asyncio.wait_for(received.wait(), 2)
+            finally:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        assert patches == [("device", {"id": "device", "power": "0"}, 0)]
+        assert subscriptions == [("device", True), ("device", False)]
+        assert tls_backend.controls == 0
+        assert not api._pending
+        assert not gateway.protected.session.closed
     finally:
         await gateway.protected.session.close()

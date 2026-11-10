@@ -74,7 +74,8 @@ class DknPushAdapter:
 
 # Public service application identifier; not an account token or app secret.
 PUSHER_APP_KEY = "765ec374ae0a69f4ce44"
-PUSHER_HOST = "ws.pusherapp.com"
+PUSHER_HOST = "dkn.airzonecloud.com"
+PUSHER_PORT = 8080
 
 
 def decode_device(payload: Any) -> dict[str, Any]:
@@ -135,6 +136,9 @@ def decode_device(payload: Any) -> dict[str, Any]:
 def build_verified_adapter(api, session: ClientSession) -> DknPushAdapter:
     """Build a fresh adapter with the current entry's token-only API."""
     url = URL.build(
-        scheme="wss", host=PUSHER_HOST, path=f"/app/{PUSHER_APP_KEY}"
+        scheme="wss",
+        host=PUSHER_HOST,
+        port=PUSHER_PORT,
+        path=f"/app/{PUSHER_APP_KEY}",
     ).with_query(protocol="7", client="python-dkncloud", version="1.0")
     return DknPushAdapter(session, str(url), api.authorize_channel, decode_device)

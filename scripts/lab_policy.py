@@ -98,7 +98,7 @@ class ReadOnlyPolicy:
             raise PermissionError("Experiment duration exceeded")
         target = URL(url)
         if (
-            target.origin() != URL("wss://ws.pusherapp.com")
+            target.origin() != URL("wss://dkn.airzonecloud.com:8080")
             or target.user is not None
             or target.fragment
             or target.path != f"/app/{self.app_key}"
@@ -278,6 +278,12 @@ class LocalReadOnlySession:
         )
 
     def ws_connect(self, url, **kwargs):
-        if not str(url).startswith("wss://ws.pusherapp.com/app/"):
+        target = URL(url)
+        if (
+            target.origin() != URL("wss://dkn.airzonecloud.com:8080")
+            or target.user is not None
+            or target.fragment
+            or not target.path.startswith("/app/")
+        ):
             raise PermissionError("Unknown WebSocket denied")
         return self.session.ws_connect(self.origin + "/socket", **kwargs)

@@ -7,6 +7,21 @@ import pytest
 from scripts.lab_policy import ProtectedSession, ReadOnlyPolicy
 
 
+def test_only_service_socket_origin_is_permitted():
+    policy = ReadOnlyPolicy({"d"}, {"i"}, "synthetic")
+    path = "/app/synthetic?protocol=7&client=python-dkncloud&version=1.0"
+    policy.validate_socket("wss://dkn.airzonecloud.com:8080" + path)
+    for origin in (
+        "wss://ws.pusherapp.com",
+        "wss://dkn.airzonecloud.com",
+        "wss://dkn.airzonecloud.com:8081",
+        "ws://dkn.airzonecloud.com:8080",
+        "wss://other.invalid:8080",
+    ):
+        with pytest.raises(PermissionError):
+            policy.validate_socket(origin + path)
+
+
 @pytest.mark.parametrize(
     "url",
     [

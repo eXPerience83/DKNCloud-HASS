@@ -94,6 +94,10 @@ config-entry identifiers remain unchanged.
 
 ### Automatic synchronization policy (not a backend contract)
 
+Push uses the service-specific secure WebSocket origin with certificate
+verification enabled. The protected laboratory permits that same origin only;
+real destinations remain disabled by default.
+
 The coordinator initializes from a device snapshot, then accepts partial push
 updates without erasing absent fields. Each device requests information at a
 nominal fixed ten-second cadence while push is active. During push outages,

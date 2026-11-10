@@ -5,6 +5,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
+from yarl import URL
 
 from custom_components.airzoneclouddaikin.push_adapter import (
     build_verified_adapter,
@@ -38,6 +39,7 @@ def test_factory_is_operational_and_uses_current_api(monkeypatch):
     api, session = Mock(), Mock()
     adapter = build_verified_adapter(api, session)
     assert adapter is not None
+    assert URL(adapter._url).origin() == URL("wss://dkn.airzonecloud.com:8080")
     assert "/app/synthetic-app?" in adapter._url
     assert "protocol=7" in adapter._url
     assert adapter._authorize is api.authorize_channel

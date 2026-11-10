@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-HOSTS = {"dkn.airzonecloud.com", "ws.pusherapp.com"}
+HOSTS = {"dkn.airzonecloud.com"}
 
 
 def certificate(directory):
@@ -57,13 +57,13 @@ def certificate(directory):
 
 
 class LoopbackResolver(AbstractResolver):
-    """Resolve only the two allowed fixture names to this ephemeral TLS server."""
+    """Resolve only the service's REST and socket ports to this TLS fixture."""
 
     def __init__(self, port):
         self.port = port
 
     async def resolve(self, host, port=0, family=socket.AF_INET):
-        if host not in HOSTS or port != 443:
+        if host not in HOSTS or port not in {443, 8080}:
             raise OSError("Synthetic destination denied")
         return [
             {
