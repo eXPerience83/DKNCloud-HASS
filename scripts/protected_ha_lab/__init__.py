@@ -48,18 +48,19 @@ async def async_setup(hass, config):
             if case == "reconnect"
             else 60
             if case in {"normal", "sleep"}
+            else 35
+            if case == "get"
             else 15
-            if case in {"cooldown", "authorization", "get"}
+            if case in {"cooldown", "authorization"}
             else 3,
             state_limit=1 if case == "quota" else 40,
             spacing=0.01,
         )
         backend = await SyntheticBackend(hass.config.config_dir).start()
-        if case in {"duration", "authorization", "get"}:
+        if case in {"duration", "authorization"}:
             backend.wait = asyncio.Event()
             backend.wait_path = {
                 "authorization": "/pusher/auth",
-                "get": "/devices",
                 "duration": "/users/sign_in",
             }[case]
         backend.redirect = case == "redirect"
@@ -139,6 +140,16 @@ async def async_setup(hass, config):
                 await asyncio.sleep(0.05)
             report["push_applied"] = True
             report["entities"] = len(hass.states.async_all())
+            if case == "get":
+                before = backend.operations.get("get", 0)
+                backend.wait = asyncio.Event()
+                backend.wait_path = "/devices"
+                manager.request_recovery(device)
+                while backend.operations.get("get", 0) <= before:
+                    await asyncio.sleep(0.05)
+                report["pending_recovery_get_reached"] = True
+                await supervisor.stopped.wait()
+                return
             if case == "reconnect":
                 backend.push_available = False
                 backend.power = "1"
@@ -201,6 +212,13 @@ async def async_setup(hass, config):
             stopped.cancel()
             watcher.cancel()
             await asyncio.gather(task, stopped, watcher, return_exceptions=True)
+            if case == "get":
+                runtime = getattr(entry, "runtime_data", None)
+                report["get_pending_before_owner_shutdown"] = bool(
+                    runtime
+                    and runtime.api._pending
+                    and gateway.protected.session.connector._acquired
+                )
             try:
                 if entry is not None:
                     if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
