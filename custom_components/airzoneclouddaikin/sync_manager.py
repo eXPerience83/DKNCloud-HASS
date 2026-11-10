@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Any
 
 from aiohttp import ClientResponseError
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.util import dt as dt_util
 
 from .pusher_client import PusherProtocolError
@@ -261,7 +262,13 @@ class SyncManager:
     async def refresh(self) -> dict[str, dict[str, Any]]:
         """Explicit coordinator recovery without starting another polling loop."""
         devices = list(self.schedulers)
-        await asyncio.gather(*(self.recover(d) for d in devices))
+        try:
+            await asyncio.gather(*(self.recover(d) for d in devices))
+        except asyncio.CancelledError:
+            caller = asyncio.current_task()
+            if self._auth_failed and (caller is None or not caller.cancelling()):
+                raise ConfigEntryAuthFailed("Cloud authentication required") from None
+            raise
         return deepcopy(self.state.data)
 
     async def event(self, device: str, patch: dict[str, Any], generation: int) -> None:

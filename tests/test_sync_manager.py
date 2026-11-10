@@ -445,3 +445,56 @@ async def test_discovery_runs_after_successful_resynchronization():
     instance._discover.assert_awaited_once()
     assert instance.schedulers["fake"].status.push_active
     await instance.close()
+
+
+async def test_refresh_reports_authentication_without_disguising_external_cancel():
+    import pytest
+    from aiohttp import ClientResponseError
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    instance, _, _, reauth = manager(
+        AsyncMock(side_effect=ClientResponseError(None, (), status=401))
+    )
+    with pytest.raises(ConfigEntryAuthFailed):
+        await instance.refresh()
+    reauth.assert_called_once()
+    await instance.close()
+
+    entered = asyncio.Event()
+
+    async def fetch(_):
+        entered.set()
+        await asyncio.Event().wait()
+
+    instance, *_ = manager(fetch)
+    task = asyncio.create_task(instance.refresh())
+    await entered.wait()
+    instance._auth_failed = True
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await instance.close()
+
+
+async def test_ha_coordinator_records_recovery_authentication_error(hass):
+    import logging
+
+    from aiohttp import ClientResponseError
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+    from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+    instance, _, _, reauth = manager(
+        AsyncMock(side_effect=ClientResponseError(None, (), status=401))
+    )
+    coordinator = DataUpdateCoordinator(
+        hass,
+        logging.getLogger(__name__),
+        name="synthetic",
+        config_entry=None,
+        update_method=instance.refresh,
+    )
+    await coordinator.async_refresh()
+    assert isinstance(coordinator.last_exception, ConfigEntryAuthFailed)
+    assert not coordinator.last_update_success
+    reauth.assert_called_once()
+    await instance.close()
