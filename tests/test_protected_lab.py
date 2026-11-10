@@ -83,29 +83,6 @@ async def test_response_failures_stop_without_private_exception(tls_backend, fai
         await gateway.protected.session.close()
 
 
-async def test_quota_and_independent_deadline_cancel_pending_get(tls_backend):
-    gateway = await make_gateway(tls_backend, duration=0.1)
-    tls_backend.wait = asyncio.Event()
-    try:
-        with gateway.enforce():
-
-            async def get():
-                async with gateway.request(
-                    "GET", "https://dkn.airzonecloud.com/devices"
-                ):
-                    pass
-
-            request = asyncio.create_task(get())
-            await gateway.supervisor.watch()
-            assert gateway.supervisor.reason == "duration"
-            request.cancel()
-            await asyncio.gather(request, return_exceptions=True)
-        assert request.done()
-    finally:
-        tls_backend.wait.set()
-        await gateway.protected.session.close()
-
-
 async def test_quota_counts_real_failed_attempts(tls_backend):
     gateway = await make_gateway(tls_backend, state_limit=1)
     try:
@@ -224,10 +201,14 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
     assert summary["storage_files"] == 0
     if case == "authorization":
         assert summary["operations"].get("authorize", 0) >= 1
+        assert summary["inflight_authorization_at_deadline"]
     if case == "get":
         assert summary["operations"].get("get", 0) >= 1
+        assert summary["inflight_get_at_deadline"]
+        assert summary["pending_http_tasks"] == 0
     if case == "cooldown":
         assert summary["cooldown_wait"]
+        assert summary["cooldown_pending_at_deadline"]
     if case == "reconnect":
         assert summary["tls_fallback"] and summary["tls_reconnected"]
     if case in {"normal", "reconnect", "sleep"}:

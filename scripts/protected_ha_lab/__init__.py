@@ -188,6 +188,15 @@ async def async_setup(hass, config):
             else:
                 report["error"] = "scenario_failed"
         finally:
+            if case in {"get", "authorization"}:
+                report[f"inflight_{case}_at_deadline"] = bool(
+                    gateway.protected.session.connector._acquired
+                )
+            if case == "cooldown":
+                runtime = getattr(entry, "runtime_data", None)
+                report["cooldown_pending_at_deadline"] = bool(
+                    runtime and runtime.api._pending
+                )
             task.cancel()
             stopped.cancel()
             watcher.cancel()
@@ -224,6 +233,12 @@ async def async_setup(hass, config):
                 session_closed=gateway.protected.session.closed,
                 server_closed=not backend.runner.sites if backend else True,
                 storage_files=len(list(Path(hass.config.path(".storage")).glob("*"))),
+                pending_http_tasks=sum(
+                    not task.done()
+                    and getattr(task.get_coro(), "__qualname__", "")
+                    == "AirzoneAPI._authed_request_impl"
+                    for task in asyncio.all_tasks()
+                ),
             )
 
         await finish_lab(
