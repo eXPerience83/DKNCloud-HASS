@@ -204,3 +204,5 @@ class SyntheticBackend:
         for ws in self.sockets:
             await ws.close()
         await self.runner.cleanup()
+        for name in ("synthetic-cert.pem", "synthetic-key.pem"):
+            (Path(self.directory) / name).unlink(missing_ok=True)

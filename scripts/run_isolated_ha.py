@@ -75,12 +75,20 @@ with tempfile.TemporaryDirectory(
         )
     )
     (config / "configuration.yaml").write_text(component + ":\n")
-    environment = dict(
-        os.environ,
-        PYTHONPATH=str(config) + os.pathsep + str(root),
-        DKN_LAB_TARGET="real" if args.protected_real else "synthetic",
-        DKN_LAB_CASE=args.protected_case,
-    )
+    environment = {
+        "TMPDIR": os.environ["TMPDIR"],
+        "PYTHONPATH": str(config) + os.pathsep + str(root),
+        "DKN_LAB_TARGET": "real" if args.protected_real else "synthetic",
+        "DKN_LAB_CASE": args.protected_case,
+    }
+    if args.protected_real:
+        for key in (
+            "DKN_EMAIL",
+            "DKN_PASSWORD",
+            "DKN_DEVICE_ID",
+            "DKN_INSTALLATION_ID",
+        ):
+            environment[key] = os.environ[key]
     with (config / "process.log").open("w") as log:
         try:
             result = subprocess.run(
