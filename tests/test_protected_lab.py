@@ -307,13 +307,23 @@ async def test_auth_quota_persistent_forbidden_and_direct_connect(tls_backend):
         await gateway.protected.session.close()
 
 
-async def test_synchronous_socket_cannot_bypass_gateway(tls_backend):
+@pytest.mark.parametrize("datagram", [False, True])
+async def test_synchronous_socket_cannot_bypass_gateway(tls_backend, datagram):
     import socket
 
     gateway = await make_gateway(tls_backend)
     try:
-        with gateway.enforce(), socket.socket() as sock, pytest.raises(LabStopped):
-            sock.connect(("127.0.0.1", tls_backend.port))
+        with (
+            gateway.enforce(),
+            socket.socket(
+                type=socket.SOCK_DGRAM if datagram else socket.SOCK_STREAM
+            ) as sock,
+            pytest.raises(LabStopped),
+        ):
+            if datagram:
+                sock.sendto(b"synthetic", ("127.0.0.1", tls_backend.port))
+            else:
+                sock.connect(("127.0.0.1", tls_backend.port))
         assert gateway.supervisor.reason == "alternate_transport"
     finally:
         await gateway.protected.session.close()

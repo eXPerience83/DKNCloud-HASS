@@ -32,6 +32,8 @@ def _audit_network(event, args):
         return
     if event in {"subprocess.Popen", "os.system", "os.posix_spawn"}:
         gateway.supervisor.abort("alternate_process")
+    if event in {"socket.sendto", "socket.sendmsg"}:
+        gateway.supervisor.abort("alternate_transport")
     if event == "socket.connect" and _NETWORK_LEASE.get() is not gateway:
         gateway.supervisor.abort("alternate_transport")
 
