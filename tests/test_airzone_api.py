@@ -872,3 +872,68 @@ async def test_suspended_control_distinguishes_lifecycle_and_authentication(auth
         await task
     api._request.assert_not_awaited()
     assert not api._pending
+
+
+@pytest.mark.parametrize("auth", [False, True])
+async def test_fence_cancels_owned_io_without_cancelling_caller(auth):
+    import asyncio
+
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered = asyncio.Event()
+
+    async def wait(*_, **__):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._request = wait
+
+    async def caller():
+        try:
+            await api.async_set_scenary("synthetic", "occupied")
+        except ConfigEntryAuthFailed, asyncio.CancelledError:
+            assert asyncio.current_task().cancelling() == 0
+        await asyncio.sleep(0)
+        return "caller continued"
+
+    task = asyncio.create_task(caller())
+    await entered.wait()
+    assert task not in api._pending
+    api.suspend(auth=auth)
+    assert await task == "caller continued"
+    assert not api._pending
+
+
+async def test_external_cancellation_is_not_changed_to_authentication_error():
+    import asyncio
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered = asyncio.Event()
+
+    async def wait(*_, **__):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._request = wait
+    task = asyncio.create_task(api.async_set_scenary("synthetic", "occupied"))
+    await entered.wait()
+    api._auth_suspended = True
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not api._pending
+
+
+@pytest.mark.parametrize("value", ["inf", "nan", "-inf"])
+async def test_nonfinite_retry_after_cannot_suspend_entry_indefinitely(
+    monkeypatch, value
+):
+    import math
+
+    api, _ = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": value})]
+    )
+    with pytest.raises(ClientResponseError):
+        await api.request_information("synthetic")
+    assert math.isfinite(api._cooldown_until)

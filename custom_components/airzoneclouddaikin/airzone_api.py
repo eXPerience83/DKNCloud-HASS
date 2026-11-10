@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -245,11 +246,14 @@ class AirzoneAPI:
         raise safe_error
 
     async def _authed_request_with_retries(self, *args, **kwargs):
-        task = asyncio.current_task()
+        task = asyncio.create_task(self._authed_request_impl(*args, **kwargs))
         self._pending.add(task)
         try:
-            return await self._authed_request_impl(*args, **kwargs)
+            return await task
         except asyncio.CancelledError:
+            caller = asyncio.current_task()
+            if caller is not None and caller.cancelling():
+                raise
             if (
                 self._auth_suspended
                 and args
@@ -327,7 +331,8 @@ class AirzoneAPI:
                                     if date.tzinfo is None:
                                         date = date.replace(tzinfo=UTC)
                                     seconds = (date - datetime.now(UTC)).total_seconds()
-                                delay = max(delay, seconds)
+                                if math.isfinite(seconds):
+                                    delay = max(delay, seconds)
                         except Exception:  # noqa: BLE001
                             pass
                         self._cooldown_until = max(
