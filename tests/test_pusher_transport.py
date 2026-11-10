@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from aiohttp import WSMsgType
+from aiohttp import ServerDisconnectedError, WSMsgType
 
 from custom_components.airzoneclouddaikin.pusher_client import (
     PusherClient,
@@ -164,7 +164,11 @@ async def test_authorization_wait_does_not_block_ping_and_is_joined_on_cancel():
     assert cleaned.is_set()
 
 
-async def test_denied_channel_recovers_without_interrupting_healthy_channel():
+@pytest.mark.parametrize(
+    "failure",
+    [403, 429, 500, TimeoutError, ValueError, OSError, ServerDisconnectedError, None],
+)
+async def test_denied_channel_recovers_without_interrupting_healthy_channel(failure):
     from aiohttp import ClientResponseError
 
     c, socket, _, authorize, device, subscription = client([])
@@ -182,7 +186,11 @@ async def test_denied_channel_recovers_without_interrupting_healthy_channel():
     async def auth(_, channel):
         attempts.append(channel)
         if channel == "private-bad" and attempts.count(channel) == 1:
-            raise ClientResponseError(None, (), status=403)
+            if failure is None:
+                return None
+            if isinstance(failure, int):
+                raise ClientResponseError(None, (), status=failure)
+            raise failure("synthetic")
         return "synthetic"
 
     async def wait(_):
@@ -217,3 +225,21 @@ async def test_denied_channel_recovers_without_interrupting_healthy_channel():
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_channel_401_still_reaches_account_supervisor():
+    from aiohttp import ClientResponseError
+
+    c, _, _, authorize, _, _ = client(
+        [
+            frame(
+                "pusher:connection_established",
+                {"socket_id": "1.2", "activity_timeout": 30},
+            ),
+        ]
+    )
+    authorize.side_effect = ClientResponseError(None, (), status=401)
+    with pytest.raises(ClientResponseError) as error:
+        await c.connect()
+    assert error.value.status == 401
+    authorize.assert_awaited_once()

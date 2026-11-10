@@ -7,7 +7,7 @@ import json
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
-from aiohttp import ClientResponseError, ClientSession, WSMsgType
+from aiohttp import ClientError, ClientResponseError, ClientSession, WSMsgType
 from yarl import URL
 
 
@@ -121,8 +121,20 @@ class PusherClient:
                                     signature = await self._authorize(
                                         socket_id, channel
                                     )
-                                except ClientResponseError as error:
-                                    if error.status != 403:
+                                    if not isinstance(signature, str) or not signature:
+                                        raise ValueError(
+                                            "Invalid channel authorization"
+                                        )
+                                except (
+                                    ClientError,
+                                    TimeoutError,
+                                    OSError,
+                                    ValueError,
+                                ) as error:
+                                    if isinstance(error, ClientResponseError) and not (
+                                        error.status in {403, 429}
+                                        or 500 <= error.status <= 599
+                                    ):
                                         raise
                                     failures += 1
                                     await self._on_subscription(
@@ -132,10 +144,6 @@ class PusherClient:
                                         min(300, 30 * 2 ** min(failures - 1, 4))
                                     )
                                     continue
-                                if not isinstance(signature, str) or not signature:
-                                    raise PusherProtocolError(
-                                        "Invalid channel authorization"
-                                    )
                                 await socket.send_json(
                                     {
                                         "event": "pusher:subscribe",

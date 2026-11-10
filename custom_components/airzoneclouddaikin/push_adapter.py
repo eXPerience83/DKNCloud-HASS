@@ -5,7 +5,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from aiohttp import ClientResponseError, ClientSession
+from aiohttp import ClientError, ClientResponseError, ClientSession
 from yarl import URL
 
 from .pusher_client import PusherClient, PusherProtocolError
@@ -48,8 +48,15 @@ class DknPushAdapter:
                 try:
                     signature = await self._authorize(socket_id, channel)
                 except ClientResponseError as error:
-                    if error.status == 403:
-                        manager.channel_errors[device_id] = 403
+                    if error.status != 401:
+                        manager.channel_errors[device_id] = error.status
+                    raise
+                except (ClientError, TimeoutError, OSError, ValueError) as error:
+                    manager.channel_errors[device_id] = (
+                        "invalid_response"
+                        if isinstance(error, ValueError)
+                        else "transport"
+                    )
                     raise
                 manager.channel_errors.pop(device_id, None)
                 return signature
