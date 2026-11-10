@@ -78,3 +78,14 @@ def test_child_deadline_is_shorter_than_outer_test_and_cleans_configuration(
         )
     assert error.value.code == 1
     assert not list(tmp_path.iterdir())
+
+
+def test_missing_remote_dev_tmpdir_fails_closed_without_fallback(monkeypatch, capsys):
+    monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.setattr("sys.argv", ["run_isolated_ha.py"])
+    with pytest.raises(SystemExit) as error:
+        runpy.run_path(
+            str(Path(__file__).resolve().parents[1] / "scripts/run_isolated_ha.py")
+        )
+    assert error.value.code == 2
+    assert "Remote Dev TMPDIR is required" in capsys.readouterr().err

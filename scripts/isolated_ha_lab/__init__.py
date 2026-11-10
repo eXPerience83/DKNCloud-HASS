@@ -15,6 +15,7 @@ async def async_setup(hass, config):
     from scripts.lab_policy import LocalReadOnlySession as ReadOnlySession
 
     calls = []
+    control_writes = 0
     power = ["1"]
     outage = [False]
     deny_second = [True]
@@ -22,6 +23,19 @@ async def async_setup(hass, config):
     fallback_starts = []
 
     async def backend(request):
+        nonlocal control_writes
+        if request.method in {"PUT", "PATCH", "DELETE"}:
+            control_writes += 1
+        if request.method == "POST" and request.path not in {
+            "/users/sign_in",
+            "/pusher/auth",
+        }:
+            body = await request.json()
+            if (
+                request.path != "/events"
+                or body.get("event", {}).get("cgi") != "infomaquina"
+            ):
+                control_writes += 1
         calls.append((request.method, request.path))
         if outage[0] and request.path in {"/devices", "/events"}:
             fallback_starts.append(asyncio.get_running_loop().time())
@@ -278,9 +292,7 @@ async def async_setup(hass, config):
                 and not replacement._tasks
                 and all(s._task is None for s in replacement.schedulers.values())
             )
-            report["backend_control_writes"] = sum(
-                method == "PUT" for method, _ in calls
-            )
+            report["backend_control_writes"] = control_writes
         except Exception as error:
             import traceback
 

@@ -21,10 +21,21 @@ async def test_real_entry_loopback_and_control_barrier(
 ):
     delivered = asyncio.Event()
     calls = []
+    control_writes = []
     outage = [False]
     sockets = []
 
     async def handler(request):
+        if request.method == "POST" and request.path not in {
+            "/users/sign_in",
+            "/pusher/auth",
+        }:
+            body = await request.json()
+            if (
+                request.path != "/events"
+                or body.get("event", {}).get("cgi") != "infomaquina"
+            ):
+                control_writes.append("unexpected_post")
         calls.append((request.method, request.path))
         if request.path == "/installation_relations":
             return web.json_response([{"installation_id": "synthetic-installation"}])
@@ -119,8 +130,10 @@ async def test_real_entry_loopback_and_control_barrier(
         coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
         coordinator.async_update_listeners()
         await until(lambda: gateway.blocked > 4)
-        assert not any(method == "PUT" for method, _ in calls)
+        assert not any(method in {"PUT", "PATCH", "DELETE"} for method, _ in calls)
+        assert not control_writes
         assert await hass.config_entries.async_unload(entry.entry_id)
         assert not manager._tasks
         assert all(s._task is None for s in manager.schedulers.values())
-        assert not any(method == "PUT" for method, _ in calls)
+        assert not any(method in {"PUT", "PATCH", "DELETE"} for method, _ in calls)
+        assert not control_writes

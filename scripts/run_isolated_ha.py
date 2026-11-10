@@ -57,10 +57,10 @@ if args.protected_real:
     args.protected = True
 component = "protected_ha_lab" if args.protected else "isolated_ha_lab"
 
-root = Path(__file__).resolve().parents[1]
-with tempfile.TemporaryDirectory(
-    prefix="dkn-ha-", dir=os.environ["TMPDIR"]
-) as temporary:
+temporary_root = os.environ.get("TMPDIR")
+if not temporary_root:
+    parser.error("Remote Dev TMPDIR is required for disposable executable state")
+with tempfile.TemporaryDirectory(prefix="dkn-ha-", dir=temporary_root) as temporary:
     config = Path(temporary)
     components = config / "custom_components"
     components.mkdir()
@@ -86,7 +86,7 @@ with tempfile.TemporaryDirectory(
     )
     (config / "configuration.yaml").write_text(component + ":\n")
     environment = {
-        "TMPDIR": os.environ["TMPDIR"],
+        "TMPDIR": temporary_root,
         "PYTHONPATH": str(config) + os.pathsep + str(root),
         "DKN_LAB_TARGET": "real" if args.protected_real else "synthetic",
         "DKN_LAB_CASE": args.protected_case,
