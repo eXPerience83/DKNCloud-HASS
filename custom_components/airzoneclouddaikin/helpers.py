@@ -23,6 +23,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from aiohttp import ClientResponseError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
@@ -359,6 +360,10 @@ async def async_auto_exit_sleep_if_needed(
             await api.async_set_scenary(device_id, SCENARY_HOME, retry=False)
         except asyncio.CancelledError:
             raise
+        except ClientResponseError as error:
+            if 400 <= error.status < 500:
+                pending[device_id] = "rejected"
+            _LOGGER.warning("Sleep exit not confirmed (HTTP %s)", error.status)
         except Exception as error:  # noqa: BLE001
             _LOGGER.warning("Sleep exit remains unverified (%s)", type(error).__name__)
         else:

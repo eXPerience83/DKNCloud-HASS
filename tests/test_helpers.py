@@ -343,3 +343,30 @@ async def test_explicit_new_sleep_rearms_local_tracking(hass):
     assert not tracking.force_exit_requested
     assert tracking.sleep_started_at_utc.year > 2020
     assert not hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
+
+
+async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
+    from unittest.mock import AsyncMock
+
+    from aiohttp import ClientResponseError
+
+    api = DummyApi()
+    api.async_set_scenary = AsyncMock(
+        side_effect=ClientResponseError(None, (), status=422)
+    )
+    coordinator = DummyCoordinator(api)
+    for _ in range(2):
+        await async_auto_exit_sleep_if_needed(
+            hass,
+            entry_id="entry",
+            device_id="device",
+            device={"scenary": "sleep", "sleep_expired": True},
+            coordinator=coordinator,
+            reason="test",
+            is_device_on=lambda: False,
+            allow_away_handling=False,
+        )
+    assert hass.data[DOMAIN]["entry"]["sleep_exit_pending"]["device"] == "rejected"
+    api.async_set_scenary.assert_awaited_once()
+    if cancel := hass.data[DOMAIN]["entry"].get("pending_refresh"):
+        cancel()
