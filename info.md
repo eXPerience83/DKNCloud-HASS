@@ -87,7 +87,8 @@ Reauthentication delegates reload only to the registered integration update
 listener. Unrelated listeners do not suppress the explicit reload fallback.
 
 Write-side reauthentication callbacks are cleared on entry unload and only
-start flows for loaded entries while Home Assistant is not stopping.
+start flows for loaded or failed-unload entries while Home Assistant is not
+stopping.
 Migration logs do not include normalized account email addresses; persisted
 config-entry identifiers remain unchanged.
 
@@ -248,6 +249,22 @@ curl -sS --compressed \
 
 
 ---
+
+
+### Sleep exit coordination (not a backend contract)
+
+Both automatic expiry and active-control preparation serialize scene exits with
+manual writes. They recheck current state and scene revisions after acquiring the
+lock. An attempted automatic HOME write is not replayed after an ambiguous result;
+it requests a budgeted recovery read instead. HTTP acceptance does not confirm
+physical application.
+Pending exit state is runtime-local; after restart the Sleep observation timer
+starts again, without inferring a physical activation timestamp. The grace remains
+10 minutes. Scene exit writes use no API retry; manual scene commands retain their
+existing retry policy.
+
+A non-Sleep backend observation retires a pending exit marker. A new explicit
+Sleep selection re-arms local tracking; this does not establish physical timing.
 
 ## 3) Event Model (Px options) — Consolidated Table
 
@@ -489,18 +506,3 @@ Commonly used fields:
 - Confirm behavior of P2=4 (HEAT_COOL/AUTO) across more installations before enabling by default.
 - Confirm exact allowed ranges/encodings for slats (P9/P10/P19/P20) on at least one model.
 - Confirm whether devices that do not support Auto fan (0) fall back to a manual speed (observed fallback: 1) rather than persisting 0 or returning an error.
-
-### Sleep exit coordination
-
-Both automatic expiry and active-control preparation serialize scene exits with
-manual writes. They recheck current state and scene revisions after acquiring the
-lock. An attempted automatic HOME write is not replayed after an ambiguous result;
-it requests a budgeted recovery read instead. HTTP acceptance does not confirm
-physical application. A new explicit Sleep selection re-arms exit handling.
-Pending exit state is runtime-local; after restart the Sleep observation timer
-starts again, without inferring a physical activation timestamp. The grace remains
-10 minutes. Scene exit writes use no API retry; manual scene commands retain their
-existing retry policy.
-
-A non-Sleep backend observation retires a pending exit marker. A new explicit
-Sleep selection re-arms local tracking; this does not establish physical timing.
