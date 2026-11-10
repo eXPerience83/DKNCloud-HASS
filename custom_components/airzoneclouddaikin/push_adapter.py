@@ -3,11 +3,14 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Any
 
 from aiohttp import ClientError, ClientResponseError, ClientSession
 from yarl import URL
 
+from . import push_tls
+from .push_tls import PUSHER_HOST, PUSHER_PORT
 from .pusher_client import PusherClient, PusherProtocolError
 from .sync_manager import SyncManager
 
@@ -24,11 +27,34 @@ class DknPushAdapter:
         url: str,
         authorize: Callable[[str, str], Awaitable[str]],
         decode: Callable[[Any], dict[str, Any]],
+        *,
+        tls_compatibility: bool = False,
     ) -> None:
         self._session, self._url = session, url
         self._authorize, self._decode = authorize, decode
+        self._tls_compatibility = tls_compatibility
+        self._ssl_context = None
+        self._context_lock = asyncio.Lock()
 
     async def connect(self, manager: SyncManager) -> None:
+        if manager._stopped or manager._auth_failed:
+            raise asyncio.CancelledError
+        options = {}
+        if self._tls_compatibility:
+            async with self._context_lock:
+                if self._ssl_context is None:
+                    self._ssl_context = await asyncio.to_thread(
+                        push_tls.create_compatibility_context
+                    )
+            push_tls.validate_context(self._url, self._ssl_context)
+            # The protected laboratory supplies its own redirect-guarded boundary.
+            connector = getattr(self._session, "compatibility_websocket", None)
+            options["websocket_connect"] = partial(
+                connector or push_tls.compatibility_websocket,
+                ssl_context=self._ssl_context,
+            )
+        if manager._stopped or manager._auth_failed:
+            raise asyncio.CancelledError
         generation = manager.state.generation
 
         async def device(device_id: str, payload: Any) -> None:
@@ -68,14 +94,13 @@ class DknPushAdapter:
             authorize,
             device,
             manager.subscription,
+            **options,
         )
         await client.connect()
 
 
 # Public service application identifier; not an account token or app secret.
 PUSHER_APP_KEY = "765ec374ae0a69f4ce44"
-PUSHER_HOST = "dkn.airzonecloud.com"
-PUSHER_PORT = 8080
 
 
 def decode_device(payload: Any) -> dict[str, Any]:
@@ -141,4 +166,10 @@ def build_verified_adapter(api, session: ClientSession) -> DknPushAdapter:
         port=PUSHER_PORT,
         path=f"/app/{PUSHER_APP_KEY}",
     ).with_query(protocol="7", client="python-dkncloud", version="1.0")
-    return DknPushAdapter(session, str(url), api.authorize_channel, decode_device)
+    return DknPushAdapter(
+        session,
+        str(url),
+        api.authorize_channel,
+        decode_device,
+        tls_compatibility=push_tls.STATIC_RSA_COMPATIBILITY_ENABLED,
+    )

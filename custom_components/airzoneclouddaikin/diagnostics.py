@@ -5,6 +5,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from . import push_tls
 from .const import DOMAIN
 
 
@@ -15,7 +16,12 @@ async def async_get_config_entry_diagnostics(
     domain_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
     coordinator = domain_data.get("coordinator")
 
-    result = {"entry": {"version": getattr(entry, "version", None)}}
+    result = {
+        "entry": {"version": getattr(entry, "version", None)},
+        "transport_policy": {
+            "static_rsa_compatibility_enabled": push_tls.STATIC_RSA_COMPATIBILITY_ENABLED
+        },
+    }
     if coordinator is not None:
         result["coordinator"] = {
             "devices_count": len(coordinator.data or {}),

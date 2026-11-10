@@ -98,6 +98,17 @@ Push uses the service-specific secure WebSocket origin with certificate
 verification enabled. The protected laboratory permits that same origin only;
 real destinations remain disabled by default.
 
+Static-RSA WebSocket compatibility is implemented but disabled by default pending
+an explicit security decision. It adds only `AES128-GCM-SHA256`, after modern
+suites, to a fresh HA trust context for the service's secure socket origin.
+TLS 1.2 or newer, certificate and hostname verification remain mandatory;
+redirects are rejected. REST and shared TLS contexts are unchanged. Static RSA
+does not provide forward secrecy. There is no automatic cipher fallback or
+user-facing option to enable this exception.
+Diagnostics expose whether that policy is enabled. Pending channel authorization
+is cancelled and awaited before closing the WebSocket transport, including when
+connection establishment or entry shutdown fails.
+
 The coordinator initializes from a device snapshot, then accepts partial push
 updates without erasing absent fields. Each device requests information at a
 nominal fixed ten-second cadence while push is active. During push outages,

@@ -5,6 +5,8 @@ import time
 from aiohttp import ClientSession, TraceConfig
 from yarl import URL
 
+from custom_components.airzoneclouddaikin.push_tls import validate_context
+
 
 class ReadOnlyPolicy:
     """Validate every destination and operation before any network delegation."""
@@ -179,6 +181,14 @@ class ProtectedSession:
         self.validate_socket_options(url, **kwargs)
         return ProtectedSocketContext(
             self.session.ws_connect(url, **kwargs), self.policy
+        )
+
+    def compatibility_websocket(self, url, *, ssl_context, **kwargs):
+        """Permit only the scoped, certificate-verified compatibility context."""
+        self.validate_socket_options(url, **kwargs)
+        validate_context(url, ssl_context)
+        return ProtectedSocketContext(
+            self.session.ws_connect(url, ssl=ssl_context, **kwargs), self.policy
         )
 
 

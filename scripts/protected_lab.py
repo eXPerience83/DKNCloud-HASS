@@ -255,6 +255,23 @@ class LaboratoryGateway:
             self, lambda: self.protected.ws_connect(url, **kwargs), websocket=True
         )
 
+    def compatibility_websocket(self, url, *, ssl_context, **kwargs):
+        """Keep the optional TLS transport within the same audited session."""
+        from custom_components.airzoneclouddaikin.push_tls import validate_context
+
+        try:
+            self.protected.validate_socket_options(url, **kwargs)
+            validate_context(url, ssl_context)
+        except PermissionError, ValueError, TypeError:
+            self.supervisor.abort("forbidden_socket")
+        return GuardedContext(
+            self,
+            lambda: self.protected.compatibility_websocket(
+                url, ssl_context=ssl_context, **kwargs
+            ),
+            websocket=True,
+        )
+
     @contextmanager
     def enforce(self):
         """Fail closed for other aiohttp sessions and direct asyncio transports.
