@@ -264,7 +264,8 @@ starts again, without inferring a physical activation timestamp. The grace remai
 existing retry policy.
 
 A non-Sleep backend observation retires a pending exit marker. A new explicit
-Sleep selection re-arms local tracking; this does not establish physical timing.
+Sleep selection re-arms local tracking; an older discarded cleanup must not
+disarm that new selection. This does not establish physical timing.
 
 ## 3) Event Model (Px options) — Consolidated Table
 

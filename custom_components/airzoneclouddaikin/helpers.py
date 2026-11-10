@@ -94,6 +94,7 @@ def optimistic_set(
                 .get(device_id)
             ):
                 # A new explicit command starts a local observation, not a physical clock.
+                tracking.session_revision += 1
                 tracking.sleep_started_at_utc = dt_util.utcnow()
                 tracking.last_scenary = SCENARY_SLEEP
                 tracking.force_exit_requested = False

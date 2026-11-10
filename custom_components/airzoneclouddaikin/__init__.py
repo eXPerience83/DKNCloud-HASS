@@ -90,6 +90,7 @@ class SleepTracking:
     last_scenary: str | None = None
     sleep_started_at_utc: datetime | None = None
     force_exit_requested: bool = False
+    session_revision: int = 0
 
 
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
@@ -102,6 +103,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.sleep_started_at_utc is None
             or tracking.last_scenary != SCENARY_SLEEP
         ):
+            tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
             tracking.force_exit_requested = False
     else:
@@ -687,6 +689,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     or getattr(bucket.get("sync_manager"), "_auth_failed", False)
                 ):
                     return
+                session_revision = tracking.session_revision
                 await async_auto_exit_sleep_if_needed(
                     hass,
                     entry_id=entry.entry_id,
@@ -697,7 +700,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     is_device_on=lambda: True,
                     allow_away_handling=False,
                 )
-                tracking.force_exit_requested = True
+                if tracking.session_revision == session_revision:
+                    tracking.force_exit_requested = True
 
     def _on_sleep_candidate() -> None:
         if (

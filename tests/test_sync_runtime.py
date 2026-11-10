@@ -195,7 +195,9 @@ async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-@pytest.mark.parametrize("stop", [True, False, None, "race", "race_expired"])
+@pytest.mark.parametrize(
+    "stop", [True, False, None, "race", "race_expired", "race_new_sleep"]
+)
 async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     hass, monkeypatch, dkn_config_entry_factory, sample_device, stop
 ):
@@ -228,7 +230,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     recovery = Mock()
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
     coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
-    if stop in {"race", "race_expired"}:
+    if stop in {"race", "race_expired", "race_new_sleep"}:
         lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
         await lock.acquire()
         coordinator.async_update_listeners()
@@ -238,19 +240,29 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
             entry.entry_id,
             "dev1",
             "scenary",
-            "vacant",
+            "sleep" if stop == "race_new_sleep" else "vacant",
             ttl=-1 if stop == "race_expired" else 30,
         )
         if stop == "race_expired":
             from custom_components.airzoneclouddaikin.helpers import optimistic_get
 
             optimistic_get(hass, entry.entry_id, "dev1", "scenary", "sleep")
+        if stop == "race_new_sleep":
+            coordinator.data["dev1"]["sleep_expired"] = False
         lock.release()
         await hass.async_block_till_done()
         api.async_set_scenary.assert_not_awaited()
-        coordinator.async_update_listeners()
-        await hass.async_block_till_done()
-        api.async_set_scenary.assert_not_awaited()
+        if stop == "race_new_sleep":
+            assert not bucket["sleep_tracking"]["dev1"].force_exit_requested
+            release.set()
+            coordinator.data["dev1"]["sleep_expired"] = True
+            coordinator.async_update_listeners()
+            await hass.async_block_till_done()
+            api.async_set_scenary.assert_awaited_once()
+        else:
+            coordinator.async_update_listeners()
+            await hass.async_block_till_done()
+            api.async_set_scenary.assert_not_awaited()
         assert await hass.config_entries.async_unload(entry.entry_id)
         return
     coordinator.async_update_listeners()
