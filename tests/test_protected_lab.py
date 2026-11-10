@@ -206,6 +206,7 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
         assert summary["operations"].get("get", 0) >= 1
         assert summary["inflight_get_at_deadline"]
         assert summary["pending_http_tasks"] == 0
+        assert summary["transports_open_when_checked"]
     if case == "cooldown":
         assert summary["cooldown_wait"]
         assert summary["cooldown_pending_at_deadline"]

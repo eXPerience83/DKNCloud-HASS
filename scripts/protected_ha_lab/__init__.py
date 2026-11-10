@@ -217,6 +217,18 @@ async def async_setup(hass, config):
             except Exception:
                 report["error"] = "cleanup_failed"
 
+        # Observe the shutdown owner before transport cleanup can mask pending I/O.
+        report["pending_http_tasks"] = sum(
+            not task.done()
+            and getattr(task.get_coro(), "__qualname__", "")
+            == "AirzoneAPI._authed_request_impl"
+            for task in asyncio.all_tasks()
+        )
+        report["transports_open_when_checked"] = (
+            not gateway.protected.session.closed
+            and (backend is None or bool(backend.runner.sites))
+        )
+
         async def close_backend():
             if backend is not None:
                 if backend.wait:
@@ -233,12 +245,6 @@ async def async_setup(hass, config):
                 session_closed=gateway.protected.session.closed,
                 server_closed=not backend.runner.sites if backend else True,
                 storage_files=len(list(Path(hass.config.path(".storage")).glob("*"))),
-                pending_http_tasks=sum(
-                    not task.done()
-                    and getattr(task.get_coro(), "__qualname__", "")
-                    == "AirzoneAPI._authed_request_impl"
-                    for task in asyncio.all_tasks()
-                ),
             )
 
         await finish_lab(
