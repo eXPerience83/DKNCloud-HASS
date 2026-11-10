@@ -2,8 +2,8 @@
 
 import json
 import runpy
+import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -47,7 +47,7 @@ def test_nonzero_process_exit_fails_even_with_successful_report(monkeypatch, tmp
                 }
             )
         )
-        return SimpleNamespace(returncode=1)
+        return subprocess.CompletedProcess(command, 1)
 
     monkeypatch.setattr("subprocess.run", process)
     with pytest.raises(SystemExit) as error:
@@ -60,8 +60,6 @@ def test_nonzero_process_exit_fails_even_with_successful_report(monkeypatch, tmp
 def test_child_deadline_is_shorter_than_outer_test_and_cleans_configuration(
     monkeypatch, tmp_path
 ):
-    import subprocess
-
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     monkeypatch.setattr(
         "sys.argv", ["run_isolated_ha.py", "--protected", "--process-timeout", "0.1"]

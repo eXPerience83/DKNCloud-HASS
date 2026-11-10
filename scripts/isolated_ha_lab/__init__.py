@@ -130,19 +130,20 @@ async def async_setup(hass, config):
 
     async def scenario(_):
         report = {}
-        entry = ConfigEntry(
-            version=2,
-            minor_version=1,
-            domain="airzoneclouddaikin",
-            data={"username": "synthetic@example.invalid"},
-            options={"user_token": "synthetic", "scan_interval": 30},
-            source="user",
-            title="Synthetic",
-            unique_id="synthetic",
-            discovery_keys={},
-            subentries_data=[],
-        )
+        entry = None
         try:
+            entry = ConfigEntry(
+                version=2,
+                minor_version=1,
+                domain="airzoneclouddaikin",
+                data={"username": "synthetic@example.invalid"},
+                options={"user_token": "synthetic", "scan_interval": 30},
+                source="user",
+                title="Synthetic",
+                unique_id="synthetic",
+                discovery_keys={},
+                subentries_data=[],
+            )
             await hass.config_entries.async_add(entry)
             async with asyncio.timeout(60):
                 while getattr(entry, "runtime_data", None) is None or not hass.data.get(
@@ -303,6 +304,8 @@ async def async_setup(hass, config):
         finally:
 
             async def close_owner():
+                if entry is None:
+                    return
                 bucket = hass.data.get("airzoneclouddaikin", {}).get(entry.entry_id, {})
                 if owner := bucket.get("sync_manager"):
                     await owner.close()
