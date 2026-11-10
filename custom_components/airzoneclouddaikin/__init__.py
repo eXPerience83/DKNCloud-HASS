@@ -1008,7 +1008,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
         async def stop_sync(_event):
             bucket["closing"] = True
-            api.suspend()
+            api.suspend(auth=False)
             _cancel_sleep_expiry_task()
             if task := bucket.get("sleep_expiry_task"):
                 await asyncio.gather(task, return_exceptions=True)
@@ -1076,7 +1076,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
     if unload_ok:
         bucket["closing"] = True
         if api := bucket.get("api"):
-            api.suspend()
+            api.suspend(auth=False)
         if task := bucket.get("sleep_expiry_task"):
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)

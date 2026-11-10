@@ -83,14 +83,16 @@ class AirzoneAPI:
         self._token: str | None = token
         self._cooldown_until: float = 0.0
         self._suspended = False
+        self._auth_suspended = False
         self.request_allowed = lambda: True
         self.on_information_started = None
         self._pending = set()
         self.on_write_auth_failure: Callable[[], None] | None = None
 
-    def suspend(self):
+    def suspend(self, *, auth: bool = True):
         """Fence future sends and cancel other pending authenticated operations."""
         self._suspended = True
+        self._auth_suspended = self._auth_suspended or auth
         for task in tuple(self._pending):
             if task is not asyncio.current_task():
                 task.cancel()
@@ -249,7 +251,7 @@ class AirzoneAPI:
             return await self._authed_request_impl(*args, **kwargs)
         except asyncio.CancelledError:
             if (
-                self._suspended
+                self._auth_suspended
                 and args
                 and (
                     args[0] == "PUT"

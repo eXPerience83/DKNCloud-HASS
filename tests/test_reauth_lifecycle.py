@@ -55,7 +55,7 @@ async def test_reauth_restores_complete_ha_runtime_twice(
     clients: list[FakeAPI] = []
 
     class FakeAPI:
-        def suspend(self):
+        def suspend(self, *, auth=True):
             """Mirror the entry-lifetime API fence in legacy fixtures."""
             pass
 

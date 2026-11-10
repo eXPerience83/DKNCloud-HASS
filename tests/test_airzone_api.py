@@ -846,3 +846,29 @@ async def test_auth_fence_after_cooldown_prevents_wire_send(operation):
     with pytest.raises(asyncio.CancelledError):
         await task
     api._request.assert_not_awaited()
+
+
+@pytest.mark.parametrize("auth", [False, True])
+async def test_suspended_control_distinguishes_lifecycle_and_authentication(auth):
+    import asyncio
+
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered = asyncio.Event()
+
+    async def wait(_):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._cooldown_until = 100
+    api._now = lambda: 0
+    api._sleep = wait
+    api._request = AsyncMock()
+    task = asyncio.create_task(api.async_set_scenary("synthetic", "occupied"))
+    await entered.wait()
+    api.suspend(auth=auth)
+    with pytest.raises(ConfigEntryAuthFailed if auth else asyncio.CancelledError):
+        await task
+    api._request.assert_not_awaited()
+    assert not api._pending
