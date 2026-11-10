@@ -266,7 +266,11 @@ class SyncManager:
             await asyncio.gather(*(self.recover(d) for d in devices))
         except asyncio.CancelledError:
             caller = asyncio.current_task()
-            if self._auth_failed and (caller is None or not caller.cancelling()):
+            if (
+                self._auth_failed
+                and not self._stopped
+                and (caller is None or not caller.cancelling())
+            ):
                 raise ConfigEntryAuthFailed("Cloud authentication required") from None
             raise
         return deepcopy(self.state.data)

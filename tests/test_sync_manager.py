@@ -459,6 +459,9 @@ async def test_refresh_reports_authentication_without_disguising_external_cancel
         await instance.refresh()
     reauth.assert_called_once()
     await instance.close()
+    with pytest.raises(asyncio.CancelledError):
+        await instance.refresh()
+    reauth.assert_called_once()
 
     entered = asyncio.Event()
 
