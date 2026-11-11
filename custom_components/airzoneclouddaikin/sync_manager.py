@@ -138,7 +138,10 @@ class SyncManager:
         push_at_start = self.schedulers[device].status.push_active
 
         async def send():
-            async with self._locks(device), self._limit:
+            # INFO is a read-only request, and API cooldown may block it for
+            # minutes. Do not hold the device's write lock while waiting:
+            # controls must reach their fail-fast cooldown check promptly.
+            async with self._limit:
                 if self._stopped or self._auth_failed:
                     raise asyncio.CancelledError
                 if push_at_start and not self.schedulers[device].status.push_active:
