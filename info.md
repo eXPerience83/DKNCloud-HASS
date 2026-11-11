@@ -138,6 +138,10 @@ five minutes (the number of retries is not bounded).
 Authenticated operations are fenced again after cooldown waits; entry suspension
 cancels pending operations. Automatic scene cleanup shares device write locks.
 Channel authorization failures retry independently without closing healthy channels.
+A socket that stays active without acknowledging a channel subscription triggers
+a bounded per-channel ACK timeout (60 seconds), followed by the same backoff;
+other subscribed channels remain active. An ACK confirms subscription, not data
+freshness or a completed device update.
 The automatic request budget enforces spacing only; operation backoff and the
 server-directed cooldown remain separate. Device control requests fail fast when
 the remaining server cooldown exceeds ten seconds; long Retry-After responses

@@ -11,6 +11,8 @@ from typing import Any
 from aiohttp import ClientError, ClientResponseError, ClientSession, WSMsgType
 from yarl import URL
 
+_SUBSCRIPTION_ACK_TIMEOUT = 60.0
+
 
 class PusherProtocolError(Exception):
     """A sanitized protocol failure; never carries remote payloads or URLs."""
@@ -45,6 +47,7 @@ class PusherClient:
         self._url = url
         self._channels = dict(channels)
         self._retry_sleep = asyncio.sleep
+        self._ack_timeout = _SUBSCRIPTION_ACK_TIMEOUT
         self._authorize = authorize
         self._on_device = on_device
         self._on_subscription = on_subscription
@@ -63,6 +66,7 @@ class PusherClient:
     async def connect(self) -> None:
         """Consume until disconnection; cancellation closes only this socket."""
         subscribed: set[str] = set()
+        acknowledgments = {channel: asyncio.Event() for channel in self._channels}
         authorizations = []
         try:
             async with AsyncExitStack() as stack:
@@ -125,6 +129,8 @@ class PusherClient:
                         async def authorize_channel(channel, socket_id=socket_id):
                             failures = 0
                             while True:
+                                if acknowledgments[channel].is_set():
+                                    return
                                 try:
                                     signature = await self._authorize(
                                         socket_id, channel
@@ -158,7 +164,22 @@ class PusherClient:
                                         "data": {"channel": channel, "auth": signature},
                                     }
                                 )
-                                return
+                                try:
+                                    await asyncio.wait_for(
+                                        acknowledgments[channel].wait(),
+                                        timeout=self._ack_timeout,
+                                    )
+                                    return
+                                except TimeoutError:
+                                    failures += 1
+                                    # A live socket without an ACK is not a
+                                    # usable subscription. Retry only this channel.
+                                    await self._on_subscription(
+                                        self._channels[channel], False
+                                    )
+                                    await self._retry_sleep(
+                                        min(300, 30 * 2 ** min(failures - 1, 4))
+                                    )
 
                         for channel in self._channels:
                             authorizations.append(
@@ -183,8 +204,10 @@ class PusherClient:
                             continue
                         device_id = self._channels[channel]
                         if event == "pusher_internal:subscription_succeeded":
-                            subscribed.add(channel)
-                            await self._on_subscription(device_id, True)
+                            acknowledgments[channel].set()
+                            if channel not in subscribed:
+                                subscribed.add(channel)
+                                await self._on_subscription(device_id, True)
                         elif event == "device" and channel in subscribed:
                             # Vendor decoding is deliberately delegated; raw data is
                             # transient and is never retained in diagnostics.

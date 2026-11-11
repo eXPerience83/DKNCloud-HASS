@@ -275,3 +275,49 @@ async def test_channel_401_still_reaches_account_supervisor():
         await c.connect()
     assert error.value.status == 401
     authorize.assert_awaited_once()
+
+
+async def test_missing_ack_retries_only_affected_channel():
+    c, socket, _, authorize, _, subscription = client([])
+    c._channels = {"private-noack": "noack", "private-healthy": "healthy"}
+    c._ack_timeout = 0.02
+    queue = asyncio.Queue()
+    await queue.put(
+        frame(
+            "pusher:connection_established",
+            {"socket_id": "1.2", "activity_timeout": 30},
+        )
+    )
+    retry_sent = asyncio.Event()
+    attempts = []
+
+    async def send(payload):
+        if payload["event"] != "pusher:subscribe":
+            return
+        channel = payload["data"]["channel"]
+        attempts.append(channel)
+        if channel == "private-healthy":
+            await queue.put(
+                frame("pusher_internal:subscription_succeeded", {}, channel)
+            )
+        if attempts.count("private-noack") >= 2:
+            retry_sent.set()
+
+    c._retry_sleep = lambda _: asyncio.sleep(0)
+    socket.send_json.side_effect = send
+    socket.receive.side_effect = queue.get
+    task = asyncio.create_task(c.connect())
+    try:
+        await asyncio.wait_for(retry_sent.wait(), 2)
+        assert authorize.await_count >= 3
+        assert attempts.count("private-healthy") == 1
+        assert attempts.count("private-noack") >= 2
+        assert ("healthy", True) in [
+            call.args for call in subscription.await_args_list
+        ]
+        assert ("healthy", False) not in [
+            call.args for call in subscription.await_args_list
+        ]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
