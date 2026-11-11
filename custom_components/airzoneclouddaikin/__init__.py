@@ -1004,7 +1004,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
         api.on_information_started = information_started
         coordinator.update_interval = None
-        coordinator.update_method = manager.refresh
+
+        async def refresh_sync():
+            # manager.refresh() returns transport state, while publish_sync()
+            # derives local scene fields on a separate copy. Return the same
+            # derived view so an explicit refresh cannot undo that publication.
+            data = await manager.refresh()
+            _derive_state(hass, entry, data)
+            return data
+
+        coordinator.update_method = refresh_sync
 
         @callback
         def maintain(_now):
