@@ -94,6 +94,7 @@ class SyntheticBackend:
         self.power = "1"
         self.sockets = []
         self.status = 200
+        self.event_response = None
         self.redirect = False
         self.malformed = False
         self.push_available = True
@@ -195,7 +196,7 @@ class SyntheticBackend:
         if request.path == "/events" and request.method == "POST":
             payload = await request.json()
             if payload.get("event", {}).get("cgi") == "infomaquina":
-                return web.json_response({}, status=201)
+                return self.event_response or web.json_response({}, status=201)
         self.controls += 1
         return web.json_response({}, status=405)
 

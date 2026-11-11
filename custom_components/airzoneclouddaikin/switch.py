@@ -119,19 +119,14 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             _LOGGER.error("API not attached to coordinator; cannot send command.")
             return
         payload = modmaquina_payload(self._device_id, option, value)
-        _LOGGER.debug("Sending event %s=%s for %s", option, value, self._device_id)
+        _LOGGER.debug("Sending device control event %s", option)
         try:
             await api.send_event(payload)
         except asyncio.CancelledError:
             raise
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
-                "Failed to send_event %s=%s for %s: %s",
-                option,
-                value,
-                self._device_id,
-                err,
-                exc_info=True,
+                "Device control event %s failed (%s)", option, type(err).__name__
             )
             raise
 

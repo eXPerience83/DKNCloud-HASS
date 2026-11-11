@@ -144,27 +144,30 @@ class GuardedContext:
                     if key:
                         self.gateway.observations[key] += 1
                 owner.response(result.status)
-                if result.status < 300 and result.status != 204:
-                    # The API consumes JSON. Validate without logging or retaining it.
+                if (
+                    result.status < 300
+                    and result.status != 204
+                    and self.path != "/events"
+                ):
+                    # Structured endpoints need JSON; information events do not.
+                    # Abort outside the handler to drop private exception context.
                     try:
                         value = await result.json()
-                        if not isinstance(value, (dict, list)):
-                            owner.abort("invalid_response")
-                        if self.path == "/devices":
-                            devices = (
-                                value.get("devices")
-                                if isinstance(value, dict)
-                                else value
-                            )
-                            if not isinstance(devices, list) or any(
-                                not isinstance(device, dict)
-                                or str(device.get("id"))
-                                not in self.gateway.protected.policy.devices
-                                for device in devices
-                            ):
-                                owner.abort("device_scope")
                     except ValueError, TypeError, ContentTypeError:
+                        value = None
+                    if not isinstance(value, (dict, list)):
                         owner.abort("invalid_response")
+                    if self.path == "/devices":
+                        devices = (
+                            value.get("devices") if isinstance(value, dict) else value
+                        )
+                        if not isinstance(devices, list) or any(
+                            not isinstance(device, dict)
+                            or str(device.get("id"))
+                            not in self.gateway.protected.policy.devices
+                            for device in devices
+                        ):
+                            owner.abort("device_scope")
             return (
                 GuardedSocket(result, owner, self.gateway.observations)
                 if self.websocket

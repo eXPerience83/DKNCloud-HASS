@@ -128,7 +128,8 @@ Automatic recovery retains snapshot eligibility after transient information-requ
 failures. Information and recovery retries have separate deadlines; successful
 snapshots do not confirm physical freshness or clear information failures.
 Entry shutdown fences and awaits automatic scene cleanup. Channel authorization
-runs separately from socket reception with bounded retries per channel.
+runs separately from socket reception with per-channel retry backoff capped at
+five minutes (the number of retries is not bounded).
 
 Authenticated operations are fenced again after cooldown waits; entry suspension
 cancels pending operations. Automatic scene cleanup shares device write locks.

@@ -65,6 +65,7 @@ _LOGGER = logging.getLogger(__name__)
 _MAX_RETRIES = 3
 _BASE_DELAY = 0.6
 _JITTER = 0.25
+_MAX_WRITE_COOLDOWN_WAIT = 10.0
 
 
 class AirzoneAPI:
@@ -288,10 +289,19 @@ class AirzoneAPI:
         English:
         - 401 is *not* retried here; it is propagated so the coordinator opens reauth.
         """
+        is_device_write = method.upper() in {"PUT", "PATCH", "DELETE"} or (
+            method.upper() == "POST"
+            and path == API_EVENTS
+            and (json or {}).get("event", {}).get("cgi") != "infomaquina"
+        )
         attempt = 0
         while True:
-            while self._cooldown_until > self._now():
-                await self._sleep(self._cooldown_until - self._now())
+            while (remaining := self._cooldown_until - self._now()) > 0:
+                if is_device_write and remaining > _MAX_WRITE_COOLDOWN_WAIT:
+                    raise HomeAssistantError(
+                        "Cloud rate limit active; device command was not sent"
+                    )
+                await self._sleep(remaining)
 
             if self._suspended or not self.request_allowed():
                 raise asyncio.CancelledError

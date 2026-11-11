@@ -138,3 +138,17 @@ def test_real_policy_quota_and_deadline(monkeypatch):
     )
     with pytest.raises(PermissionError, match="duration"):
         protected.request("GET", "https://dkn.airzonecloud.com/devices")
+
+
+def test_loopback_lab_rejects_compatibility_without_network():
+    from scripts.lab_policy import LocalReadOnlySession
+
+    raw = Mock()
+    local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
+    with pytest.raises(PermissionError, match="denied in loopback lab"):
+        local.compatibility_websocket(
+            "wss://dkn.airzonecloud.com:8080/app/synthetic",
+            ssl_context=Mock(),
+        )
+    assert local.blocked == 1
+    raw.ws_connect.assert_not_called()

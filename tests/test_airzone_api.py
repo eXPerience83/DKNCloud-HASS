@@ -861,7 +861,7 @@ async def test_suspended_control_distinguishes_lifecycle_and_authentication(auth
         entered.set()
         await asyncio.Event().wait()
 
-    api._cooldown_until = 100
+    api._cooldown_until = 10
     api._now = lambda: 0
     api._sleep = wait
     api._request = AsyncMock()
@@ -937,3 +937,26 @@ async def test_nonfinite_retry_after_cannot_suspend_entry_indefinitely(
     with pytest.raises(ClientResponseError):
         await api.request_information("synthetic")
     assert math.isfinite(api._cooldown_until)
+
+
+async def test_control_fails_fast_on_long_cooldown_without_blocking_information(
+    monkeypatch,
+):
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 120
+    with pytest.raises(HomeAssistantError, match="command was not sent"):
+        await api.send_event({"event": {"cgi": "modmaquina"}})
+    assert api._request.await_count == 0
+    assert sleeps == []
+
+    await api.request_information("synthetic")
+    assert api._request.await_count == 1
+    assert sleeps == [120]
+
+
+async def test_short_cooldown_still_rechecks_before_control(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 10
+    await api.put_device_fields("synthetic", {"sleep_time": 30})
+    assert sleeps == [10]
+    assert api._request.await_count == 1

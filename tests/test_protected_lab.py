@@ -384,3 +384,47 @@ async def test_adapter_factory_uses_service_tls_endpoint_end_to_end(
         assert not gateway.protected.session.closed
     finally:
         await gateway.protected.session.close()
+
+
+@pytest.mark.parametrize("status,body", [(200, b""), (201, b"accepted")])
+async def test_information_accepts_successful_non_json_responses(
+    tls_backend, status, body
+):
+    from aiohttp import web
+
+    tls_backend.event_response = web.Response(
+        status=status, body=body, content_type="text/plain"
+    )
+    gateway = await make_gateway(tls_backend)
+    try:
+        with gateway.enforce():
+            async with gateway.request(
+                "POST",
+                "https://dkn.airzonecloud.com/events",
+                json={
+                    "event": {
+                        "cgi": "infomaquina",
+                        "device_id": "device",
+                        "option": "",
+                        "value": "",
+                    }
+                },
+            ) as response:
+                assert response.status == status
+        assert gateway.supervisor.reason is None
+    finally:
+        await gateway.protected.session.close()
+
+
+async def test_invalid_json_error_drops_exception_context(tls_backend):
+    tls_backend.malformed = True
+    gateway = await make_gateway(tls_backend)
+    try:
+        with gateway.enforce(), pytest.raises(LabStopped) as error:
+            async with gateway.request(
+                "GET", "https://dkn.airzonecloud.com/devices"
+            ):
+                pass
+        assert error.value.__context__ is None
+    finally:
+        await gateway.protected.session.close()

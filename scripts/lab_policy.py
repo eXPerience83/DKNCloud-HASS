@@ -297,3 +297,8 @@ class LocalReadOnlySession:
         ):
             raise PermissionError("Unknown WebSocket denied")
         return self.session.ws_connect(self.origin + "/socket", **kwargs)
+
+    def compatibility_websocket(self, url, *, ssl_context, **kwargs):
+        """Fail closed: the lab session must never bypass its loopback gateway."""
+        self.blocked += 1
+        raise PermissionError("Compatibility WebSocket denied in loopback lab")
