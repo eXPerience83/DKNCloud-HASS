@@ -136,7 +136,9 @@ Authenticated operations are fenced again after cooldown waits; entry suspension
 cancels pending operations. Automatic scene cleanup shares device write locks.
 Channel authorization failures retry independently without closing healthy channels.
 The automatic request budget enforces spacing only; operation backoff and the
-server-directed cooldown remain separate. Diagnostics export health summaries
+server-directed cooldown remain separate. Device control requests fail fast when
+the remaining server cooldown exceeds ten seconds; long Retry-After responses
+do not schedule delayed control retries. Diagnostics export health summaries
 without raw device data or entry options.
 
 Failed socket attempts do not trigger extra topology discovery. Reconnection

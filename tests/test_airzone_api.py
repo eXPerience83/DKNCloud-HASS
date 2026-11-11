@@ -960,3 +960,17 @@ async def test_short_cooldown_still_rechecks_before_control(monkeypatch):
     await api.put_device_fields("synthetic", {"sleep_time": 30})
     assert sleeps == [10]
     assert api._request.await_count == 1
+
+
+async def test_long_retry_after_on_control_does_not_schedule_late_replay(
+    monkeypatch,
+):
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"}), {}]
+    )
+    with pytest.raises(ClientResponseError) as error:
+        await api.put_device_fields("synthetic", {"sleep_time": 30})
+    assert error.value.status == 429
+    assert api._request.await_count == 1
+    assert sleeps == []
+    assert api._cooldown_until == 120

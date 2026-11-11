@@ -348,6 +348,14 @@ class AirzoneAPI:
                         self._cooldown_until = max(
                             self._cooldown_until, self._now() + delay
                         )
+                    # A long server pause must not queue a stale device
+                    # command or silently replay a rejected write.
+                    if (
+                        status == 429
+                        and is_device_write
+                        and delay > _MAX_WRITE_COOLDOWN_WAIT
+                    ):
+                        raise
                     if not retry or attempt >= _MAX_RETRIES:
                         raise
                     _LOGGER.debug(
