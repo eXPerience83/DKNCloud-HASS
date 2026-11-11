@@ -77,9 +77,7 @@ async def test_information_cooldown_never_queues_a_delayed_control():
         async with asyncio.timeout(1):
             async with instance._locks("fake"):
                 with pytest.raises(CommandNotSentCooldown):
-                    await api.put_device_fields(
-                        "fake", {"device": {"power": "1"}}
-                    )
+                    await api.put_device_fields("fake", {"device": {"power": "1"}})
         api._request.assert_not_awaited()
     finally:
         release.set()
