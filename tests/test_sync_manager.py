@@ -522,9 +522,7 @@ async def test_failed_push_handshake_preserves_rest_checkpoint():
     except asyncio.CancelledError:
         pass
     assert instance.state.generation == checkpoint[0]
-    assert instance.state.snapshot(
-        [{"id": "fake", "power": "1"}], checkpoint
-    )
+    assert instance.state.snapshot([{"id": "fake", "power": "1"}], checkpoint)
     await instance.close()
 
 
