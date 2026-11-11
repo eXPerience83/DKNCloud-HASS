@@ -3,6 +3,12 @@
 import asyncio
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
+from custom_components.airzoneclouddaikin.airzone_api import (
+    AirzoneAPI,
+    CommandNotSentCooldown,
+)
 from custom_components.airzoneclouddaikin.sync_manager import SyncManager
 
 
@@ -45,6 +51,44 @@ def manager(fetch=None):
 
     instance._budget = ImmediateBudget()
     return instance, publish, request, reauth
+
+
+async def test_information_cooldown_never_queues_a_delayed_control():
+    """Slow informational cooldown must not own the lock used by HVAC writes."""
+    now = [0.0]
+    waiting, release = asyncio.Event(), asyncio.Event()
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    api._now = lambda: now[0]
+    api._cooldown_until = 300.0
+    api._request = AsyncMock(return_value={})
+
+    async def sleep_in_cooldown(seconds):
+        waiting.set()
+        await release.wait()
+        now[0] += seconds
+
+    api._sleep = sleep_in_cooldown
+    instance, _, _, _ = manager()
+    instance._request = api.request_information
+    information = asyncio.create_task(instance._information("fake"))
+    try:
+        await asyncio.wait_for(waiting.wait(), timeout=1)
+        # The real climate controls acquire the same per-device lock.
+        async with asyncio.timeout(1):
+            async with instance._locks("fake"):
+                with pytest.raises(CommandNotSentCooldown):
+                    await api.put_device_fields(
+                        "fake", {"device": {"power": "1"}}
+                    )
+        api._request.assert_not_awaited()
+    finally:
+        release.set()
+        await asyncio.wait_for(information, timeout=1)
+        await instance.close()
+
+    # The rejected control never reappears when the informational wait ends.
+    api._request.assert_awaited_once()
+    assert api._request.await_args.args[0] == "POST"
 
 
 async def test_event_during_get_wins_and_missing_fields_survive():
