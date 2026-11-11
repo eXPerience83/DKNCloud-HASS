@@ -312,9 +312,7 @@ async def test_missing_ack_retries_only_affected_channel():
         assert authorize.await_count >= 3
         assert attempts.count("private-healthy") == 1
         assert attempts.count("private-noack") >= 2
-        assert ("healthy", True) in [
-            call.args for call in subscription.await_args_list
-        ]
+        assert ("healthy", True) in [call.args for call in subscription.await_args_list]
         assert ("healthy", False) not in [
             call.args for call in subscription.await_args_list
         ]
