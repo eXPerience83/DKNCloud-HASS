@@ -302,7 +302,10 @@ class SyncManager:
             old.cancel()
             await asyncio.gather(old, return_exceptions=True)
         if not active:
-            await self.schedulers[device].set_push(False)
+            # Repeated failed socket attempts must not fence an independent
+            # fallback GET; a real push session or pending resync still does.
+            if old is not None or self.schedulers[device].status.push_active:
+                await self.schedulers[device].set_push(False)
             return
 
         async def resync() -> None:
@@ -332,7 +335,6 @@ class SyncManager:
         failures = 0
         while not self._stopped and not self._auth_failed:
             started = self._clock()
-            self.state.invalidate()
             try:
                 await self._connect(self)
             except asyncio.CancelledError:
@@ -357,7 +359,11 @@ class SyncManager:
                         return
             finally:
                 self._reconnect_discovery_pending = True
-                self.state.invalidate()
+                # No subscription means no prior device events to fence.
+                # In particular, do not invalidate an in-flight REST snapshot
+                # just because another WebSocket handshake failed.
+                if self.connected:
+                    self.state.invalidate()
                 self.connected = False
                 for device in self.schedulers:
                     await self.subscription(device, False)

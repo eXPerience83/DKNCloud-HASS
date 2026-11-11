@@ -161,6 +161,8 @@ async def test_supervisor_reconnects_and_fences_old_events(monkeypatch):
     async def connect(owner):
         attempts.append(owner.state.generation)
         if len(attempts) == 1:
+            # A real subscribed connection requires generation fencing.
+            await owner.subscription("fake", True)
             raise ConnectionError("synthetic-private-value")
         second.set()
         await asyncio.Event().wait()
@@ -500,4 +502,48 @@ async def test_ha_coordinator_records_recovery_authentication_error(hass):
     assert isinstance(coordinator.last_exception, ConfigEntryAuthFailed)
     assert not coordinator.last_update_success
     reauth.assert_called_once()
+    await instance.close()
+
+
+async def test_failed_push_handshake_preserves_rest_checkpoint():
+    instance, _, _, _ = manager()
+    checkpoint = instance.state.checkpoint()
+
+    async def failed(_):
+        raise ConnectionError("synthetic")
+
+    async def cancel_backoff(_):
+        raise asyncio.CancelledError
+
+    instance._connect = failed
+    instance._sleep = cancel_backoff
+    try:
+        await instance._supervise()
+    except asyncio.CancelledError:
+        pass
+    assert instance.state.generation == checkpoint[0]
+    assert instance.state.snapshot(
+        [{"id": "fake", "power": "1"}], checkpoint
+    )
+    await instance.close()
+
+
+async def test_repeated_disconnected_notice_preserves_deferred_fallback_get():
+    instance, _, _, _ = manager()
+    entered, release = asyncio.Event(), asyncio.Event()
+    scheduler = instance.schedulers["fake"]
+
+    async def wait(_):
+        entered.set()
+        await release.wait()
+
+    scheduler._sleep = wait
+    scheduler._request = AsyncMock()
+    scheduler._fallback_recover = AsyncMock()
+    cycle = asyncio.create_task(scheduler.cycle())
+    await entered.wait()
+    await instance.subscription("fake", False)
+    release.set()
+    await cycle
+    scheduler._fallback_recover.assert_awaited_once()
     await instance.close()

@@ -121,6 +121,9 @@ conservative from operation completion, so slow responses or server-directed
 cooldown cannot release queued bursts. These timings
 are client policies and do not guarantee physical-state convergence. REST
 failures back off; healthy fallback does not back off solely for a push outage.
+Failed connection attempts without any confirmed subscription do not invalidate
+in-flight REST snapshots. A subscribed connection ending still fences old push
+events and related in-flight reads.
 A successful subscription requires resynchronization before normal operation.
 Local time-based connectivity and scene maintenance continues without I/O.
 
