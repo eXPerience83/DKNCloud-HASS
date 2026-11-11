@@ -40,6 +40,11 @@ class DknPushAdapter:
         if manager._stopped or manager._auth_failed:
             raise asyncio.CancelledError
         options = {}
+        # A genuine shared aiohttp session has no per-call redirect hook for
+        # ws_connect. Use an isolated guarded socket, never mutate shared REST.
+        # Synthetic/laboratory gateway objects retain their own guarded socket.
+        if not self._tls_compatibility and isinstance(self._session, ClientSession):
+            options["websocket_connect"] = push_tls.strict_websocket
         if self._tls_compatibility:
             async with self._context_lock:
                 if self._ssl_context is None:

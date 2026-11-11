@@ -493,3 +493,37 @@ async def test_tls_auth_ack_reconciliation_and_owner_shutdown(
         if manager:
             await manager.close()
         await rest.close()
+
+
+async def test_strict_transport_rejects_redirect_before_next_request(
+    backend_factory, monkeypatch
+):
+    backend = await backend_factory(rsa_only=False)
+    backend.redirect_socket = True
+    sessions = owned_sessions(monkeypatch, backend)
+    with pytest.raises(ValueError, match="redirect rejected"):
+        async with push_tls.strict_websocket(URL):
+            pytest.fail("Strict WebSocket followed a redirect")
+    assert backend.calls == 1
+    assert sessions and all(session.closed for session in sessions)
+
+
+async def test_default_adapter_uses_guarded_strict_transport_for_real_session(
+    monkeypatch,
+):
+    wire = Mock(return_value=SimpleNamespace(connect=AsyncMock()))
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.push_adapter.PusherClient", wire
+    )
+    manager = SimpleNamespace(
+        state=SimpleNamespace(generation=0),
+        schedulers={},
+        event=AsyncMock(),
+        subscription=AsyncMock(),
+        _stopped=False,
+        _auth_failed=False,
+    )
+    async with ClientSession() as session:
+        adapter = build_verified_adapter(Mock(), session)
+        await adapter.connect(manager)
+    assert wire.call_args.kwargs["websocket_connect"] is push_tls.strict_websocket

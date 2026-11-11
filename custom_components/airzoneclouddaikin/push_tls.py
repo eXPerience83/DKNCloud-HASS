@@ -1,5 +1,6 @@
 """Explicitly gated TLS compatibility for the service's WebSocket only."""
 
+import asyncio
 import logging
 import ssl
 from contextlib import asynccontextmanager
@@ -78,3 +79,24 @@ async def compatibility_websocket(
             url, ssl=ssl_context, autoping=autoping, max_msg_size=max_msg_size
         ) as socket:
             yield socket
+
+
+@asynccontextmanager
+async def strict_websocket(
+    url: str,
+    *,
+    autoping: bool = True,
+    max_msg_size: int = 1024 * 1024,
+):
+    """Use isolated, verified HA TLS and reject all WebSocket redirects.
+
+    Ordinary Home Assistant REST sessions are not changed. Strict mode never
+    adds a legacy cipher; the context is built off the event loop.
+    """
+    context = await asyncio.to_thread(
+        create_client_context, alpn_protocols=SSL_ALPN_HTTP11
+    )
+    async with compatibility_websocket(
+        url, ssl_context=context, autoping=autoping, max_msg_size=max_msg_size
+    ) as socket:
+        yield socket

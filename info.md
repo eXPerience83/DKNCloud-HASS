@@ -95,7 +95,8 @@ config-entry identifiers remain unchanged.
 ### Automatic synchronization policy (not a backend contract)
 
 Push uses the service-specific secure WebSocket origin with certificate
-verification enabled. The protected laboratory permits that same origin only;
+verification enabled. The strict transport rejects redirects using an isolated
+session and Home Assistant's verified TLS trust; REST sessions are unchanged. The protected laboratory permits that same origin only;
 real destinations remain disabled by default.
 
 Static-RSA WebSocket compatibility is implemented but disabled by default pending
