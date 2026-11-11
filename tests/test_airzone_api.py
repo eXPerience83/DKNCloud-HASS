@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import traceback
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -984,3 +985,38 @@ async def test_ambiguous_control_timeout_is_never_replayed(monkeypatch):
         )
     assert api._request.await_count == 1
     assert sleeps == []
+
+
+@pytest.mark.parametrize("auth", [True, False])
+async def test_suspension_precedes_long_control_cooldown(monkeypatch, auth):
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 600
+    api.suspend(auth=auth)
+    with pytest.raises(ConfigEntryAuthFailed if auth else asyncio.CancelledError):
+        await api.put_device_fields("synthetic", {"sleep_time": 30})
+    api._request.assert_not_awaited()
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("auth", [True, False])
+async def test_suspension_during_control_cooldown_prevents_send(monkeypatch, auth):
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api, _ = _make_api(monkeypatch, [{}])
+    entered = asyncio.Event()
+
+    async def wait(_):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._sleep = wait
+    api._cooldown_until = 5
+    task = asyncio.create_task(api.put_device_fields("synthetic", {"sleep_time": 30}))
+    await entered.wait()
+    api.suspend(auth=auth)
+    with pytest.raises(ConfigEntryAuthFailed if auth else asyncio.CancelledError):
+        await task
+    api._request.assert_not_awaited()
+    assert not api._pending

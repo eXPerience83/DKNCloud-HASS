@@ -297,3 +297,75 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     assert api.async_set_scenary.await_count == 1
     if stop:
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("next_action", ["retry", "rearm", "manual", "stop"])
+async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device, next_action
+):
+    from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api._request = AsyncMock(return_value={})
+    api._cooldown_until = hass.loop.time() + 600
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data.coordinator
+    recovery = Mock()
+    monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
+    coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    tracking = bucket["sleep_tracking"]["dev1"]
+    assert not tracking.force_exit_requested
+    assert not bucket["sleep_exit_pending"]
+    api._request.assert_not_awaited()
+    recovery.assert_not_called()
+    first_task = bucket["sleep_expiry_task"]
+    for _ in range(3):
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+    assert bucket["sleep_expiry_task"] is first_task
+    if next_action == "stop":
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        api._request.assert_not_awaited()
+        return
+    if next_action in {"rearm", "manual"}:
+        previous = tracking.session_revision
+        integration.optimistic_set(
+            hass,
+            entry.entry_id,
+            "dev1",
+            "scenary",
+            "sleep" if next_action == "rearm" else "vacant",
+        )
+        if next_action == "rearm":
+            assert tracking.session_revision > previous
+            assert not tracking.force_exit_requested
+            assert "dev1" not in bucket["sleep_exit_retry_after"]
+            coordinator.data["dev1"]["sleep_expired"] = False
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        api._request.assert_not_awaited()
+        if next_action == "manual":
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            return
+        coordinator.data["dev1"]["sleep_expired"] = True
+    api._cooldown_until = 0
+    bucket["sleep_exit_retry_after"]["dev1"] = 0
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    api._request.assert_awaited_once()
+    assert tracking.force_exit_requested
+    assert bucket["sleep_exit_pending"]["dev1"] == "accepted"
+    recovery.assert_called_once_with("dev1")
+    assert await hass.config_entries.async_unload(entry.entry_id)

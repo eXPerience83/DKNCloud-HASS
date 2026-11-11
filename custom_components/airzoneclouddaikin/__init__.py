@@ -690,7 +690,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 ):
                     return
                 session_revision = tracking.session_revision
-                await async_auto_exit_sleep_if_needed(
+                result = await async_auto_exit_sleep_if_needed(
                     hass,
                     entry_id=entry.entry_id,
                     device_id=dev_id,
@@ -700,7 +700,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     is_device_on=lambda: True,
                     allow_away_handling=False,
                 )
-                if tracking.session_revision == session_revision:
+                if (
+                    result is not False
+                    and tracking.session_revision == session_revision
+                ):
                     tracking.force_exit_requested = True
 
     def _on_sleep_candidate() -> None:
@@ -721,6 +724,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         for dev_id, dev in data.items():
             tracking = sleep_tracking.get(dev_id)
             if tracking is None or tracking.force_exit_requested:
+                continue
+            if hass.loop.time() < bucket.get("sleep_exit_retry_after", {}).get(
+                dev_id, 0
+            ):
                 continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
             if raw_scenary == SCENARY_SLEEP and dev.get("sleep_expired"):

@@ -544,6 +544,12 @@ or arbitrary freshness window is imposed. Resolving contradictory observations
 requires an explicit precedence contract; HTTP reception is not physical freshness.
 
 Device-control transport timeouts are never automatically replayed: acceptance
-may have preceded the timeout. Read-only requests retain their existing bounded
-timeout retry policy. An ACK arriving during authorization or at its timeout
+may have preceded the timeout. Read-only calls with `retry=True` retain their bounded internal timeout retry.
+INFO and automatic recovery/discovery GETs use `retry=False`; their schedulers
+own backoff and do not perform an internal timeout retry. An ACK arriving during authorization or at its timeout
 boundary prevents another subscribe or a false channel-disconnected notification.
+
+A locally rejected Sleep exit carries an explicit no-send cooldown result. It
+remains eligible after that monotonic deadline, without a recovery GET or rapid
+retry loop. Any potentially submitted write retains its ambiguity guard. Entry
+suspension takes precedence over cooldown rejection, including after waits.

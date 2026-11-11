@@ -16,7 +16,8 @@ P4-A/B:
 
 Timeouts:
 - Catch only built-in TimeoutError (asyncio.TimeoutError is an alias on 3.11+).
-- Do ONE gentle retry on timeouts.
+- Read-only calls with retry=True permit ONE gentle timeout retry.
+- Automatic retry=False operations delegate backoff to their scheduler.
 
 Important:
 - 401 is never retried here; it must bubble up to the coordinator.
@@ -66,6 +67,14 @@ _MAX_RETRIES = 3
 _BASE_DELAY = 0.6
 _JITTER = 0.25
 _MAX_WRITE_COOLDOWN_WAIT = 10.0
+
+
+class CommandNotSentCooldown(HomeAssistantError):
+    """A local cooldown rejected this invocation before any HTTP attempt."""
+
+    def __init__(self, retry_at: float):
+        super().__init__("Cloud rate limit active; device command was not sent")
+        self.retry_at = retry_at
 
 
 class AirzoneAPI:
@@ -284,7 +293,7 @@ class AirzoneAPI:
         extra_headers: dict[str, str] | None = None,
         retry: bool = True,
     ) -> Any:
-        """Authenticated request with limited retries for 429/5xx + ONE retry on timeout.
+        """Authenticated request with optional 429/5xx and read-only timeout retries.
 
         English:
         - 401 is *not* retried here; it is propagated so the coordinator opens reauth.
@@ -296,8 +305,14 @@ class AirzoneAPI:
         )
         attempt = 0
         while True:
+            if self._suspended or not self.request_allowed():
+                raise asyncio.CancelledError
             while (remaining := self._cooldown_until - self._now()) > 0:
+                if self._suspended or not self.request_allowed():
+                    raise asyncio.CancelledError
                 if is_device_write and remaining > _MAX_WRITE_COOLDOWN_WAIT:
+                    if attempt == 0:
+                        raise CommandNotSentCooldown(self._cooldown_until)
                     raise HomeAssistantError(
                         "Cloud rate limit active; device command was not sent"
                     )

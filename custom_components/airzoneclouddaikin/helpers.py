@@ -30,6 +30,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .airzone_api import CommandNotSentCooldown
 from .const import (
     DOMAIN,
     MANUFACTURER,
@@ -85,6 +86,9 @@ def optimistic_set(
     optimistic = _optimistic_bucket(hass, entry_id)
     if key == "scenary":
         if value == SCENARY_SLEEP:
+            _entry_bucket(hass, entry_id).get("sleep_exit_retry_after", {}).pop(
+                device_id, None
+            )
             _entry_bucket(hass, entry_id).get("sleep_exit_pending", {}).pop(
                 device_id, None
             )
@@ -329,8 +333,10 @@ async def async_auto_exit_sleep_if_needed(
     allow_away_handling: bool,
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
     on_success: Callable[[], None] | None = None,
-) -> None:
-    """Serialize sleep exits and never replay an ambiguous scene write."""
+) -> bool | None:
+    """Return False only for a provably unsent, cooldown-deferred exit.
+
+    Serialize sleep exits and never replay an ambiguous scene write."""
     bucket = _entry_bucket(hass, entry_id)
     revision = bucket.get("scene_revisions", {}).get(device_id, 0)
     raw = str(device.get("scenary") or "").lower()
@@ -355,10 +361,21 @@ async def async_auto_exit_sleep_if_needed(
         api = getattr(coordinator, "api", None)
         if api is None:
             return
+        deadlines = bucket.setdefault("sleep_exit_retry_after", {})
+        if hass.loop.time() < deadlines.get(device_id, 0):
+            return False
+        deadlines.pop(device_id, None)
         pending[device_id] = "unverified"
+        unsent = False
         try:
             # No retries: a transport failure may follow acceptance by the server.
             await api.async_set_scenary(device_id, SCENARY_HOME, retry=False)
+        except CommandNotSentCooldown as error:
+            # No I/O occurred in this invocation; keep this session eligible.
+            pending.pop(device_id, None)
+            deadlines[device_id] = error.retry_at
+            unsent = True
+            return False
         except asyncio.CancelledError:
             raise
         except ClientResponseError as error:
@@ -373,7 +390,7 @@ async def async_auto_exit_sleep_if_needed(
             if on_success:
                 on_success()
         finally:
-            if not bucket.get("closing"):
+            if not unsent and not bucket.get("closing"):
                 if manager := bucket.get("sync_manager"):
                     manager.request_recovery(device_id)
                 else:
