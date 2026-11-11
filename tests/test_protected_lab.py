@@ -421,9 +421,7 @@ async def test_invalid_json_error_drops_exception_context(tls_backend):
     gateway = await make_gateway(tls_backend)
     try:
         with gateway.enforce(), pytest.raises(LabStopped) as error:
-            async with gateway.request(
-                "GET", "https://dkn.airzonecloud.com/devices"
-            ):
+            async with gateway.request("GET", "https://dkn.airzonecloud.com/devices"):
                 pass
         assert error.value.__context__ is None
     finally:
