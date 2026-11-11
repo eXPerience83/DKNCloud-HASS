@@ -159,6 +159,38 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert not replacement._tasks
 
 
+async def test_explicit_refresh_preserves_derived_scenary_in_coordinator(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """A coordinator refresh must return the scene fields it just published."""
+    first = {**sample_device, "scenary": "occupied"}
+    second = {**sample_device, "scenary": "sleep"}
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=[[first], [second]])
+    api.request_information = AsyncMock()
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    try:
+        assert coordinator.data["dev1"]["effective_scenary"] == "occupied"
+        assert coordinator.data["dev1"]["sleep_expired"] is False
+        await coordinator.async_refresh()
+        assert coordinator.data["dev1"]["scenary"] == "sleep"
+        assert coordinator.data["dev1"]["effective_scenary"] == "sleep"
+        assert coordinator.data["dev1"]["sleep_expired"] is False
+        assert api.fetch_devices.await_count == 2
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
