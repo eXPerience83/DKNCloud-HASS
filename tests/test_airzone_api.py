@@ -974,3 +974,13 @@ async def test_long_retry_after_on_control_does_not_schedule_late_replay(
     assert api._request.await_count == 1
     assert sleeps == []
     assert api._cooldown_until == 120
+
+
+async def test_ambiguous_control_timeout_is_never_replayed(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [TimeoutError(), {}])
+    with pytest.raises(TimeoutError):
+        await api._authed_request_with_retries(
+            "PUT", "/devices/synthetic", json={"device": {"scenary": "occupied"}}
+        )
+    assert api._request.await_count == 1
+    assert sleeps == []

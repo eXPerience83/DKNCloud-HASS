@@ -58,7 +58,14 @@ async def test_verified_connector_runtime_and_silent_local_clock(
 
     class SyntheticWire:
         def __init__(
-            self, session, url, channels, authorize, on_device, on_subscription
+            self,
+            session,
+            url,
+            channels,
+            authorize,
+            on_device,
+            on_subscription,
+            **kwargs,
         ):
             assert "synthetic-app" in url
             self.channels, self.authorize = channels, authorize

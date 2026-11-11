@@ -158,6 +158,8 @@ class PusherClient:
                                         min(300, 30 * 2 ** min(failures - 1, 4))
                                     )
                                     continue
+                                if acknowledgments[channel].is_set():
+                                    return
                                 await socket.send_json(
                                     {
                                         "event": "pusher:subscribe",
@@ -171,6 +173,8 @@ class PusherClient:
                                     )
                                     return
                                 except TimeoutError:
+                                    if acknowledgments[channel].is_set():
+                                        return
                                     failures += 1
                                     # A live socket without an ACK is not a
                                     # usable subscription. Retry only this channel.

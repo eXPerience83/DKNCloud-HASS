@@ -533,3 +533,17 @@ Commonly used fields:
 - Confirm behavior of P2=4 (HEAT_COOL/AUTO) across more installations before enabling by default.
 - Confirm exact allowed ranges/encodings for slats (P9/P10/P19/P20) on at least one model.
 - Confirm whether devices that do not support Auto fan (0) fall back to a manual speed (observed fallback: 1) rather than persisting 0 or returning an error.
+
+### Snapshot ordering and control timeout limits
+
+Local field revisions prevent a GET already in progress from replacing fields
+received through push during that GET. They do not establish backend content
+age: a later GET may still return older cached values, and same-connection
+events have no verified monotonic version contract. No timestamp-based rejection
+or arbitrary freshness window is imposed. Resolving contradictory observations
+requires an explicit precedence contract; HTTP reception is not physical freshness.
+
+Device-control transport timeouts are never automatically replayed: acceptance
+may have preceded the timeout. Read-only requests retain their existing bounded
+timeout retry policy. An ACK arriving during authorization or at its timeout
+boundary prevents another subscribe or a false channel-disconnected notification.

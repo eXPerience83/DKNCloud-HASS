@@ -376,7 +376,7 @@ class AirzoneAPI:
 
             except TimeoutError:
                 # ONE gentle retry on timeout with short backoff
-                if not retry or attempt >= 1:
+                if is_device_write or not retry or attempt >= 1:
                     raise
                 delay = 0.4 * (2**attempt) + random.uniform(0.0, _JITTER)
                 _LOGGER.debug(

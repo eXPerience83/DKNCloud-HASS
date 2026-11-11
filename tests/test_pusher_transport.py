@@ -319,3 +319,52 @@ async def test_missing_ack_retries_only_affected_channel():
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_late_ack_during_reauthorization_does_not_resubscribe():
+    c, socket, _, authorize, _, subscription = client([])
+    c._ack_timeout = 0.01
+    c._retry_sleep = lambda _: asyncio.sleep(0)
+    queue = asyncio.Queue()
+    queue.put_nowait(
+        frame(
+            "pusher:connection_established",
+            {"socket_id": "1.2", "activity_timeout": 30},
+        )
+    )
+    pending, release, applied = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    attempts = 0
+
+    async def authorization(*_):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            pending.set()
+            await release.wait()
+        return "synthetic-signature"
+
+    async def subscribed(device, active):
+        if active:
+            applied.set()
+
+    authorize.side_effect = authorization
+    subscription.side_effect = subscribed
+    socket.receive.side_effect = queue.get
+    task = asyncio.create_task(c.connect())
+    try:
+        await asyncio.wait_for(pending.wait(), 2)
+        queue.put_nowait(
+            frame("pusher_internal:subscription_succeeded", {}, "private-fake")
+        )
+        await asyncio.wait_for(applied.wait(), 2)
+        subscription.reset_mock()
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        assert socket.send_json.await_count == 1
+        assert ("fake", False) not in [
+            call.args for call in subscription.await_args_list
+        ]
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
