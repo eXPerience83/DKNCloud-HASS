@@ -234,9 +234,7 @@ async def test_explicit_refresh_counts_single_off_snapshot_once(
         # A genuinely separate follow-up OFF Pusher report can confirm it.
         await manager.event("dev1", {"power": "0"}, generation)
         await hass.async_block_till_done()
-        api.async_set_scenary.assert_awaited_once_with(
-            "dev1", "occupied", retry=False
-        )
+        api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
 
