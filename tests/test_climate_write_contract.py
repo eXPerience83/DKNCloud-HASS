@@ -294,6 +294,7 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
     entity.coordinator.data["unit-1"].update(
         effective_scenary="occupied",
         sleep_expired=True,
+        sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
     entered, release = asyncio.Event(), asyncio.Event()
@@ -354,6 +355,7 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     entity.coordinator.data["unit-1"].update(
         effective_scenary="occupied",
         sleep_expired=True,
+        sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
     api.async_set_scenary = AsyncMock()
@@ -397,6 +399,7 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
     entity.coordinator.data["unit-1"].update(
         effective_scenary="occupied",
         sleep_expired=True,
+        sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
