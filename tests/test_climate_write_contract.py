@@ -228,7 +228,108 @@ async def test_second_sleep_rearm_failure_preserves_home_and_requests_readback(
     assert api.put_device_fields.await_count == 2
     assert entity.preset_mode == "home"
     manager.request_recovery.assert_called_once_with("unit-1")
+    assert (
+        hass.data[DOMAIN]["climate-entry"]["sleep_exit_pending"]["unit-1"]
+        == "unverified"
+    )
     assert hass.data[DOMAIN]["climate-entry"].get("sleep_tracking") is None
+
+
+async def test_later_queued_preset_runs_after_earlier_write_commits(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """The second user command wins after the first PUT finishes."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    first_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def write_scene(_device_id, payload, **_kwargs):
+        if payload["device"]["scenary"] == "vacant":
+            first_started.set()
+            await release.wait()
+        return {}
+
+    api.put_device_fields.side_effect = write_scene
+    first = asyncio.create_task(entity.async_set_preset_mode("away"))
+    try:
+        await asyncio.wait_for(first_started.wait(), 1)
+        second = asyncio.create_task(entity.async_set_preset_mode("sleep"))
+        await asyncio.sleep(0)
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), 2)
+    assert [
+        call.args[1]["device"]["scenary"]
+        for call in api.put_device_fields.await_args_list
+    ] == ["vacant", "sleep"]
+    assert entity.preset_mode == "sleep"
+
+
+async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """A timed-out first rearm PUT must not be replayed by expiry cleanup."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"].update(
+        effective_scenary="occupied",
+        sleep_expired=True,
+        sleep_snapshot_fresh=True,
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    api.put_device_fields.side_effect = TimeoutError("ambiguous first PUT")
+    with pytest.raises(TimeoutError, match="ambiguous first PUT"):
+        await entity.async_set_preset_mode("sleep")
+
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": "occupied"}}, retry=False
+    )
+    assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
+    manager.request_recovery.assert_called_once_with("unit-1")
+    await async_auto_exit_sleep_if_needed(
+        hass,
+        entry_id="climate-entry",
+        device_id="unit-1",
+        device=entity._device,
+        coordinator=entity.coordinator,
+        reason="expiry",
+        is_device_on=lambda: True,
+        allow_away_handling=False,
+    )
+    assert api.put_device_fields.await_count == 1
+
+
+async def test_known_unsent_first_step_does_not_mark_ambiguous(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """Local rate-limit rejection proves the first PUT was never sent."""
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        CommandNotSentCooldown,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"].update(
+        effective_scenary="occupied", sleep_expired=True
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    api.put_device_fields.side_effect = CommandNotSentCooldown(
+        hass.loop.time() + 300
+    )
+    with pytest.raises(CommandNotSentCooldown):
+        await entity.async_set_preset_mode("sleep")
+    assert bucket.get("sleep_exit_pending", {}).get("unit-1") is None
+    manager.request_recovery.assert_not_called()
 
 
 async def test_expired_sleep_rearm_does_not_override_newer_queued_manual_scene(
