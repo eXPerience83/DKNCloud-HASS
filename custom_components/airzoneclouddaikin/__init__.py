@@ -111,7 +111,8 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             or tracking.last_scenary != SCENARY_SLEEP
         ):
             tracking.start_known = tracking.last_scenary in {
-                SCENARY_HOME, SCENARY_VACANT
+                SCENARY_HOME,
+                SCENARY_VACANT,
             }
             tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
@@ -498,13 +499,17 @@ def _derive_state(
         fresh_power = fresh_power_ids is not None and dev_id in fresh_power_ids
         if active_sleep and fresh_power:
             raw_power = dev.get("power")
-            power_value = str(raw_power if raw_power is not None else "").strip().lower()
+            power_value = (
+                str(raw_power if raw_power is not None else "").strip().lower()
+            )
             if power_value in {"1", "true", "on"}:
                 tracking.observed_on = True
                 tracking.consecutive_off_reports = 0
                 tracking.last_confirmed_on_utc = now
                 if due is not None and now >= due:
-                    tracking.overdue_on_reports = min(2, tracking.overdue_on_reports + 1)
+                    tracking.overdue_on_reports = min(
+                        2, tracking.overdue_on_reports + 1
+                    )
                 else:
                     tracking.overdue_on_reports = 0
             elif power_value in {"0", "false", "off"}:
