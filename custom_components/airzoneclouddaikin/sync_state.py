@@ -41,9 +41,13 @@ class SyncState:
         return changed
 
     def snapshot(
-        self, devices: list[dict[str, Any]], checkpoint: tuple[int, int]
+        self,
+        devices: list[dict[str, Any]],
+        checkpoint: tuple[int, int],
+        *,
+        applied_fields: dict[str, set[str]] | None = None,
     ) -> bool:
-        """Merge a successful GET; deletion requires separate discovery."""
+        """Merge GET, optionally recording only fields not superseded by push."""
         generation, revision = checkpoint
         if generation != self.generation:
             return False
@@ -57,5 +61,7 @@ class SyncState:
             for key, value in device.items():
                 if value is not None and fields.get(key, 0) <= revision:
                     state[key] = deepcopy(value)
+                    if applied_fields is not None:
+                        applied_fields.setdefault(device_id, set()).add(key)
             self.data[device_id] = state
         return self.data != before
