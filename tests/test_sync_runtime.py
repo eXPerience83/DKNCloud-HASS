@@ -248,7 +248,7 @@ async def test_inflight_get_discarded_power_cannot_confirm_pushed_off(
     old_get = {**sample_device, "scenary": "sleep", "power": "1"}
     calls = 0
 
-    async def fetch(_installation):
+    async def fetch(_installation, **_kwargs):
         nonlocal calls
         calls += 1
         if calls == 1:
