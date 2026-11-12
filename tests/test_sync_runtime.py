@@ -373,6 +373,58 @@ async def test_sleep_pending_requires_explicit_remote_scene_to_clear(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_current_sleep_off_needs_on_then_two_fresh_off_reports(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """A retained startup OFF must not cause cleanup; confirmed ON→OFF may."""
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    recovery = Mock()
+    monkeypatch.setattr(manager, "request_recovery", recovery)
+    generation = manager.state.generation
+
+    # A restored prior OFF with Sleep cannot terminate a new local session.
+    await manager.event("dev1", {"scenary": "sleep", "power": "0"}, generation)
+    await manager.event("dev1", {"power": "0"}, generation)
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_not_awaited()
+
+    # Observe ON in this session, then require corroboration of a new OFF.
+    await manager.event("dev1", {"power": "1"}, generation)
+    await manager.event("dev1", {"power": "0"}, generation)
+    assert not bucket["sleep_tracking"]["dev1"].force_exit_requested
+    api.async_set_scenary.assert_not_awaited()
+    recovery.assert_called_once_with("dev1")
+    await manager.event("dev1", {"power": "0"}, generation)
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_awaited_once_with(
+        "dev1", "occupied", retry=False
+    )
+    assert bucket["sleep_exit_pending"]["dev1"] == "accepted"
+
+    # Repeated OFF and maintenance cannot replay an already accepted PUT.
+    await manager.event("dev1", {"power": "0"}, generation)
+    manager.maintenance()
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_awaited_once()
+    await manager.event("dev1", {"scenary": "occupied"}, generation)
+    assert "dev1" not in bucket["sleep_exit_pending"]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
