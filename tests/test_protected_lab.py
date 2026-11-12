@@ -338,6 +338,12 @@ async def test_adapter_factory_uses_service_tls_endpoint_end_to_end(
 ):
     from types import SimpleNamespace
 
+    # Synthetic CA is trusted only within this test; the production factory
+    # still constructs its own verified, service-scoped compatibility context.
+    monkeypatch.setenv(
+        "REQUESTS_CA_BUNDLE", str(tls_backend.directory / "synthetic-cert.pem")
+    )
+
     from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
     from custom_components.airzoneclouddaikin.push_adapter import build_verified_adapter
 
