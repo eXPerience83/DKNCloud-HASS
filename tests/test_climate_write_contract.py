@@ -269,13 +269,18 @@ async def test_active_sleep_setpoint_and_fan_preserve_scene(
 ):
     """Changing temperature or fan during an active Sleep sends no scene PUT."""
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        mode=mode, scenary="sleep", power="1",
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode=mode,
+        scenary="sleep",
+        power="1",
     )
     await entity.async_set_temperature(temperature=23)
     await entity.async_set_fan_mode("high")
     assert [x.args[0]["event"]["option"] for x in api.send_event.await_args_list] == [
-        setpoint, fan
+        setpoint,
+        fan,
     ]
     api.put_device_fields.assert_not_awaited()
 
@@ -289,11 +294,16 @@ async def test_active_sleep_hvac_mode_change_preserves_scene(
     )
 
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        mode="2", scenary="sleep", power="1",
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="2",
+        scenary="sleep",
+        power="1",
     )
     monkeypatch.setattr(
-        climate_module, "async_auto_exit_sleep_if_needed",
+        climate_module,
+        "async_auto_exit_sleep_if_needed",
         async_auto_exit_sleep_if_needed,
     )
     await entity.async_set_hvac_mode(HVACMode.COOL)

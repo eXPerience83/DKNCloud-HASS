@@ -280,8 +280,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             if (
                 bucket.get("closing")
                 or self.hass.is_stopping
-                or bucket.get("scene_revisions", {}).get(self._device_id, 0)
-                != revision
+                or bucket.get("scene_revisions", {}).get(self._device_id, 0) != revision
             ):
                 # A newer manual scene command superseded this queued request.
                 return
