@@ -58,8 +58,8 @@ def owned_sessions(monkeypatch, backend):
     return sessions
 
 
-def test_compatibility_disabled_and_modern_default_preserved():
-    assert not push_tls.STATIC_RSA_COMPATIBILITY_ENABLED
+def test_approved_compatibility_enabled_and_modern_default_preserved():
+    assert push_tls.STATIC_RSA_COMPATIBILITY_ENABLED
     shared = get_default_context()
     before = [c["name"] for c in shared.get_ciphers()]
     context = push_tls.create_compatibility_context()
@@ -97,9 +97,10 @@ def test_non_verifying_context_rejected():
         push_tls.validate_context(URL, ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER))
 
 
-async def test_default_factory_never_creates_compatibility_context(monkeypatch):
-    context = Mock(side_effect=AssertionError("Default must retain TLS policy"))
-    monkeypatch.setattr(push_tls, "create_compatibility_context", context)
+async def test_default_factory_creates_scoped_verified_compatibility(monkeypatch):
+    context = get_default_context()
+    factory = Mock(return_value=context)
+    monkeypatch.setattr(push_tls, "create_compatibility_context", factory)
     wire = Mock(return_value=SimpleNamespace(connect=AsyncMock()))
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.push_adapter.PusherClient", wire
@@ -112,10 +113,15 @@ async def test_default_factory_never_creates_compatibility_context(monkeypatch):
         _stopped=False,
         _auth_failed=False,
     )
-    adapter = build_verified_adapter(Mock(), Mock())
+    session = Mock(compatibility_websocket=None)
+    adapter = build_verified_adapter(Mock(), session)
     await adapter.connect(manager)
-    context.assert_not_called()
-    assert "websocket_connect" not in wire.call_args.kwargs
+    factory.assert_called_once_with()
+    socket = wire.call_args.kwargs["websocket_connect"]
+    assert socket.func is push_tls.compatibility_websocket
+    assert socket.keywords["ssl_context"] is context
+    assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
+    session.ws_connect.assert_not_called()
 
 
 async def test_context_loaded_off_loop_and_reused_on_reconnection(monkeypatch):
@@ -508,7 +514,7 @@ async def test_strict_transport_rejects_redirect_before_next_request(
     assert sessions and all(session.closed for session in sessions)
 
 
-async def test_default_adapter_uses_guarded_strict_transport_for_real_session(
+async def test_default_adapter_uses_guarded_compatibility_for_real_session(
     monkeypatch,
 ):
     wire = Mock(return_value=SimpleNamespace(connect=AsyncMock()))
@@ -526,4 +532,8 @@ async def test_default_adapter_uses_guarded_strict_transport_for_real_session(
     async with ClientSession() as session:
         adapter = build_verified_adapter(Mock(), session)
         await adapter.connect(manager)
-    assert wire.call_args.kwargs["websocket_connect"] is push_tls.strict_websocket
+    socket = wire.call_args.kwargs["websocket_connect"]
+    assert socket.func is push_tls.compatibility_websocket
+    context = socket.keywords["ssl_context"]
+    assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
+    assert context.minimum_version >= ssl.TLSVersion.TLSv1_2
