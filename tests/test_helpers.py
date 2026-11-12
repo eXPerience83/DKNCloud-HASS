@@ -408,6 +408,116 @@ async def test_local_sleep_survives_retained_scene_on_maintenance_and_partial_pu
     assert tracking.last_scenary == "occupied"
 
 
+async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
+    hass, freezer,
+):
+    """Five-minute threshold is transport-independent, never a power command."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from custom_components.airzoneclouddaikin import _derive_state
+
+    entry = SimpleNamespace(entry_id="known", options={})
+    manager = Mock()
+    hass.data.setdefault(DOMAIN, {})["known"] = {"sync_manager": manager}
+    home = {"device": {"scenary": "occupied", "power": "1", "sleep_time": 30}}
+    sleep = {"device": {"scenary": "sleep", "power": "1", "sleep_time": 30}}
+
+    _derive_state(
+        hass, entry, home, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+    )
+    optimistic_set(hass, "known", "device", "scenary", "sleep")
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+    )
+    tracking = hass.data[DOMAIN]["known"]["sleep_tracking"]["device"]
+    assert tracking.start_known
+    assert tracking.expected_minutes == 30
+
+    freezer.tick(timedelta(minutes=34, seconds=59))
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set()
+    )
+    assert sleep["device"]["sleep_overdue"] is False
+    manager.request_recovery.assert_not_called()
+
+    freezer.tick(timedelta(seconds=2))
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set()
+    )
+    manager.request_recovery.assert_called_once_with("device")
+    assert sleep["device"]["sleep_overdue"] is False
+
+    # Two new power reports after +5, not repeated local maintenance data.
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+    )
+    assert sleep["device"]["sleep_overdue"] is False
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+    )
+    assert sleep["device"]["sleep_overdue"] is True
+
+    freezer.tick(timedelta(seconds=61))
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set()
+    )
+    assert sleep["device"]["sleep_overdue"] is False
+
+    # A Sleep already active at HA startup has no reliable start timestamp.
+    unknown = SimpleNamespace(entry_id="unknown", options={})
+    hass.data[DOMAIN]["unknown"] = {"sync_manager": Mock()}
+    _derive_state(
+        hass, unknown, sleep, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+    )
+    other = hass.data[DOMAIN]["unknown"]["sleep_tracking"]["device"]
+    assert not other.start_known
+    assert sleep["device"]["sleep_overdue"] is False
+
+
+async def test_sleep_overdue_does_not_survive_timer_edit_or_confirmed_off(
+    hass, freezer,
+):
+    """Changing sleep_time invalidates clock inference; OFF clears anomaly."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from custom_components.airzoneclouddaikin import _derive_state
+
+    entry = SimpleNamespace(entry_id="entry", options={})
+    hass.data.setdefault(DOMAIN, {})["entry"] = {"sync_manager": Mock()}
+    state = {"device": {"scenary": "occupied", "power": "1", "sleep_time": 30}}
+    _derive_state(
+        hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+    )
+    optimistic_set(hass, "entry", "device", "scenary", "sleep")
+    state["device"]["scenary"] = "sleep"
+    _derive_state(
+        hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+    )
+
+    state["device"]["sleep_time"] = 40
+    _derive_state(
+        hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+    )
+    tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["device"]
+    assert tracking.start_known is False
+
+    freezer.tick(timedelta(minutes=60))
+    _derive_state(
+        hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+    )
+    assert state["device"]["sleep_overdue"] is False
+    assert not tracking.overdue_probe_requested
+    state["device"]["power"] = "0"
+    _derive_state(
+        hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+    )
+    assert state["device"]["sleep_overdue"] is False
+
+
 async def test_explicit_new_sleep_rearms_local_tracking(hass):
     from datetime import UTC, datetime
 
