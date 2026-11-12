@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
