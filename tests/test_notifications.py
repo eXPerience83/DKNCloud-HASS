@@ -665,9 +665,16 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 return [
-                    {"id": "dev-a", "name": "Unit A", "scenary": "occupied", "power": "0"}
+                    {
+                        "id": "dev-a",
+                        "name": "Unit A",
+                        "scenary": "occupied",
+                        "power": "0",
+                    }
                 ]
-            return [{"id": "dev-b", "name": "Unit B", "scenary": "occupied", "power": "0"}]
+            return [
+                {"id": "dev-b", "name": "Unit B", "scenary": "occupied", "power": "0"}
+            ]
 
     first = await integration._async_update_data(hass, entry, DummyAPIOk())
     assert set(first) == {"dev-a", "dev-b"}
@@ -681,7 +688,9 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 raise RuntimeError("temporary")
-            return [{"id": "dev-b", "name": "Unit B2", "scenary": "occupied", "power": "0"}]
+            return [
+                {"id": "dev-b", "name": "Unit B2", "scenary": "occupied", "power": "0"}
+            ]
 
     second = await integration._async_update_data(hass, entry, DummyAPIPartial())
 

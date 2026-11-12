@@ -325,7 +325,6 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
         cancel()
 
 
-
 async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     hass, dummy_coordinator_factory, monkeypatch
 ):
