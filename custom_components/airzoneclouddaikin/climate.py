@@ -15,6 +15,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
+from .airzone_api import CommandNotSentCooldown
 from .commands import modmaquina_payload
 from .const import (
     CONF_ENABLE_HEAT_COOL,
@@ -258,11 +259,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 and self._overlay_value("scenary", None) != "occupied"
             )
 
-        if self.preset_mode == preset_mode and not (
-            preset_mode == "home" and needs_home_cleanup()
-        ):
-            return
-
         scenary = preset_to_scenary(preset_mode)
         if not scenary:
             _LOGGER.debug("Unsupported preset -> scenary mapping: %s", preset_mode)
@@ -274,15 +270,31 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {})
-        revision = bucket.get("scene_revisions", {}).get(self._device_id, 0)
+        revisions = bucket.setdefault("scene_revisions", {})
+        revision = revisions.get(self._device_id, 0)
+        intents = bucket.setdefault("scene_preset_intents", {})
+        intent = intents.get(self._device_id, 0) + 1
+        intents[self._device_id] = intent
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
             if (
                 bucket.get("closing")
                 or self.hass.is_stopping
-                or bucket.get("scene_revisions", {}).get(self._device_id, 0) != revision
+                or intents.get(self._device_id) != intent
             ):
-                # A newer manual scene command superseded this queued request.
+                # Only a newer queued request may supersede this one.
+                return
+            current_revision = revisions.get(self._device_id, 0)
+            previous_write = bucket.get("scene_preset_last_write", {}).get(
+                self._device_id
+            )
+            if current_revision != revision and not (
+                previous_write is not None
+                and previous_write[0] == current_revision
+                and previous_write[1] < intent
+            ):
+                # A write outside this preset command path changed the scene
+                # after the request was queued; do not overwrite it.
                 return
             if self.preset_mode == preset_mode and not (
                 preset_mode == "home" and needs_home_cleanup()
@@ -301,6 +313,21 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                         self.hass, self.coordinator, entry_id=self._entry_id
                     )
 
+            def record_preset_write() -> None:
+                bucket.setdefault("scene_preset_last_write", {})[self._device_id] = (
+                    revisions.get(self._device_id, 0),
+                    intent,
+                )
+
+            def fence_ambiguous_scene() -> None:
+                # An accepted server-side write may have lost its HTTP reply.
+                # Automatic Sleep expiry must not issue another scene command
+                # before a subsequent backend read confirms convergence.
+                bucket.setdefault("sleep_exit_pending", {})[
+                    self._device_id
+                ] = "unverified"
+                request_readback()
+
             def preserve_partial_home() -> None:
                 # Only the first PUT was accepted. A failed second PUT may
                 # have reached the server: never blindly retry it or claim
@@ -308,8 +335,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 optimistic_set(
                     self.hass, self._entry_id, self._device_id, "scenary", "occupied"
                 )
+                record_preset_write()
                 self.async_write_ha_state()
-                request_readback()
+                fence_ambiguous_scene()
 
             try:
                 if rearm:
@@ -334,10 +362,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except asyncio.CancelledError:
                 if cleared_stale_sleep:
                     preserve_partial_home()
+                elif rearm:
+                    fence_ambiguous_scene()
                 raise
             except Exception as err:
                 if cleared_stale_sleep:
                     preserve_partial_home()
+                elif rearm and not isinstance(err, CommandNotSentCooldown):
+                    fence_ambiguous_scene()
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",
                     scenary,
@@ -351,8 +383,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, "scenary", scenary
             )
+            record_preset_write()
             self.async_write_ha_state()
             if expired:
+                if not rearm and scenary == "occupied":
+                    # Successful explicit cleanup still needs remote readback.
+                    bucket.setdefault("sleep_exit_pending", {})[
+                        self._device_id
+                    ] = "accepted"
                 request_readback()
             else:
                 schedule_post_write_refresh(
