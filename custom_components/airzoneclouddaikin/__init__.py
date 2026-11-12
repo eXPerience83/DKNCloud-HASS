@@ -700,10 +700,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     is_device_on=lambda: True,
                     allow_away_handling=False,
                 )
-                if (
-                    result is not False
-                    and tracking.session_revision == session_revision
-                ):
+                if result is None and tracking.session_revision == session_revision:
+                    # True means the locked recheck found expiry no longer due;
+                    # False means cooldown deferred before any write was sent.
                     tracking.force_exit_requested = True
 
     def _on_sleep_candidate() -> None:
