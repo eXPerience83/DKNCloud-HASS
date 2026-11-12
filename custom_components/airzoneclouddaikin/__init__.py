@@ -812,13 +812,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     continue
 
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if raw_scenary != SCENARY_SLEEP or not (
-                    dev.get("sleep_off_confirmed")
-                    or (
-                        dev.get("sleep_expired")
-                        and dev.get("sleep_snapshot_fresh", True) is not False
-                    )
+                if raw_scenary != SCENARY_SLEEP or not dev.get(
+                    "sleep_off_confirmed"
                 ):
+                    # Expiry is now only a local UI hint. It is not a write
+                    # authorization without a session-consistent OFF.
                     continue
 
                 if api is None:
@@ -873,13 +871,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             ):
                 continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if raw_scenary == SCENARY_SLEEP and (
-                dev.get("sleep_off_confirmed")
-                or (
-                    dev.get("sleep_expired")
-                    and dev.get("sleep_snapshot_fresh", True) is not False
-                )
-            ):
+            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_off_confirmed"):
                 has_candidate = True
                 break
         if not has_candidate:
