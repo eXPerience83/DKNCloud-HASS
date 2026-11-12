@@ -40,11 +40,13 @@ jobs:
             uv.lock
 
       - name: Validate locked environment
+        shell: bash
         run: |
           set -euo pipefail
           uv lock --check
 
       - name: Focused Ruff
+        shell: bash
         run: |
           set -euo pipefail
           uv sync --locked --only-group lint
@@ -52,6 +54,7 @@ jobs:
           uv run --locked --no-sync ruff format --check custom_components/airzoneclouddaikin tests
 
       - name: Focused official Home Assistant regressions
+        shell: bash
         env:
           PYTHONPATH: .
         run: |
@@ -66,6 +69,7 @@ jobs:
 
       - name: Full integration test suite on completed Sleep stack
         if: github.ref_name == 'feat/171-sleep-overdue-five-minute'
+        shell: bash
         env:
           PYTHONPATH: .
         run: |
