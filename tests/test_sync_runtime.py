@@ -331,6 +331,48 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_sleep_pending_requires_explicit_remote_scene_to_clear(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """A Pusher power-only patch must not resolve an ambiguous scene PUT."""
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    device_id = "dev1"
+    generation = manager.state.generation
+    pending = bucket.setdefault("sleep_exit_pending", {})
+    pending[device_id] = "unverified"
+
+    # An unchanged, cached Home scene in a power-only event is not an ACK.
+    await manager.event(device_id, {"power": "0"}, generation)
+    assert pending[device_id] == "unverified"
+
+    # An explicit Home report confirms the remote scene and releases the fence.
+    await manager.event(device_id, {"scenary": "occupied"}, generation)
+    assert device_id not in pending
+
+    # Start a new ambiguity. Unrelated patches must not clear the fence
+    # even when the retained raw scene is Home.
+    pending[device_id] = "unverified"
+    await manager.event(device_id, {"power": "1"}, generation)
+    assert pending[device_id] == "unverified"
+    await manager.event(device_id, {"scenary": "sleep"}, generation)
+    assert pending[device_id] == "unverified"
+    await manager.event(device_id, {"scenary": "vacant"}, generation)
+    assert device_id not in pending
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):

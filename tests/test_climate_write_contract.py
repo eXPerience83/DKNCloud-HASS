@@ -266,6 +266,102 @@ async def test_later_queued_preset_runs_after_earlier_write_commits(
     assert entity.preset_mode == "sleep"
 
 
+async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """A queued manual Sleep must survive the cleanup's optimistic Home."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"].update(
+        effective_scenary="occupied", sleep_expired=True,
+        sleep_snapshot_fresh=True,
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    api.async_set_scenary = AsyncMock()
+
+    async def delayed_home(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+
+    api.async_set_scenary.side_effect = delayed_home
+    cleanup = asyncio.create_task(
+        async_auto_exit_sleep_if_needed(
+            hass,
+            entry_id="climate-entry",
+            device_id="unit-1",
+            device=entity._device,
+            coordinator=entity.coordinator,
+            reason="expiry",
+            is_device_on=lambda: True,
+            allow_away_handling=False,
+        )
+    )
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    manual_sleep = asyncio.create_task(entity.async_set_preset_mode("sleep"))
+    await asyncio.sleep(0)
+    try:
+        assert not manual_sleep.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(cleanup, manual_sleep), timeout=3)
+
+    api.async_set_scenary.assert_awaited_once_with(
+        "unit-1", "occupied", retry=False
+    )
+    # With cached raw Sleep, a manual rearm still uses occupied → sleep.
+    assert [call.args[1]["device"]["scenary"] for call in
+            api.put_device_fields.await_args_list] == ["occupied", "sleep"]
+    assert entity.preset_mode == "sleep"
+
+
+async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """The cleanup must not send Home after a newer preset has queued."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        acquire_device_lock,
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"].update(
+        effective_scenary="occupied", sleep_expired=True,
+        sleep_snapshot_fresh=True,
+    )
+    api.async_set_scenary = AsyncMock()
+    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+    await lock.acquire()
+    try:
+        cleanup = asyncio.create_task(
+            async_auto_exit_sleep_if_needed(
+                hass,
+                entry_id="climate-entry",
+                device_id="unit-1",
+                device=entity._device,
+                coordinator=entity.coordinator,
+                reason="expiry",
+                is_device_on=lambda: True,
+                allow_away_handling=False,
+            )
+        )
+        await asyncio.sleep(0)
+        manual = asyncio.create_task(entity.async_set_preset_mode("sleep"))
+        await asyncio.sleep(0)
+    finally:
+        lock.release()
+    await asyncio.wait_for(asyncio.gather(cleanup, manual), timeout=3)
+    api.async_set_scenary.assert_not_awaited()
+    assert api.put_device_fields.await_count == 2
+    assert entity.preset_mode == "sleep"
+
+
 async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
     hass, dummy_coordinator_factory, monkeypatch
 ):

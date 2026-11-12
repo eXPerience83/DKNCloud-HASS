@@ -341,6 +341,9 @@ async def async_auto_exit_sleep_if_needed(
     Never replay an ambiguous scene write."""
     bucket = _entry_bucket(hass, entry_id)
     revision = bucket.get("scene_revisions", {}).get(device_id, 0)
+    # Snapshot the manual intent before this cleanup can wait or send.
+    # A later preset request must not be discarded by our optimistic Home.
+    cleanup_intent = bucket.get("scene_preset_intents", {}).get(device_id, 0)
     raw = str(device.get("scenary") or "").lower()
     if raw == SCENARY_VACANT:
         if allow_away_handling and auto_exit_away:
@@ -359,6 +362,13 @@ async def async_auto_exit_sleep_if_needed(
             or device_id in pending
         ):
             return
+        if (
+            bucket.get("scene_preset_intents", {}).get(device_id, 0)
+            != cleanup_intent
+        ):
+            # A manual request arrived while cleanup waited for the lock.
+            # It takes precedence and must not be marked handled.
+            return True
         if reason == "expiry" and current.get("sleep_snapshot_fresh") is False:
             # A cached OFF cannot justify an automatic device write.
             return True
@@ -395,6 +405,13 @@ async def async_auto_exit_sleep_if_needed(
         else:
             pending[device_id] = "accepted"
             optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
+            # The cleanup wrote after its initial manual-intent snapshot.
+            # A later queued preset may proceed past the revision fence,
+            # while older requests and unrelated scene writes remain fenced.
+            bucket.setdefault("scene_preset_last_write", {})[device_id] = (
+                bucket["scene_revisions"][device_id],
+                cleanup_intent,
+            )
             if on_success:
                 on_success()
         finally:

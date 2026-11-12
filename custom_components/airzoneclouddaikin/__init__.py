@@ -238,6 +238,7 @@ async def _async_update_data(
 
         data: dict[str, dict[str, Any]] = {}
         fresh_power_ids: set[str] = set()
+        fresh_scenary_ids: set[str] = set()
         relations = await api.fetch_installations()
         # Malformed installation responses are transient failures, not an
         # authoritative empty account: preserve the last good device snapshot.
@@ -340,6 +341,8 @@ async def _async_update_data(
                 data[dev_id_str] = dev
                 if dev.get("power") is not None:
                     fresh_power_ids.add(dev_id_str)
+                if dev.get("scenary") is not None:
+                    fresh_scenary_ids.add(dev_id_str)
                 inst_device_ids.add(dev_id_str)
                 device_installation_map[dev_id_str] = inst_id
 
@@ -378,6 +381,7 @@ async def _async_update_data(
             data,
             had_non_auth_install_errors,
             fresh_power_ids=fresh_power_ids,
+            fresh_scenary_ids=fresh_scenary_ids,
         )
 
         return data
@@ -404,6 +408,7 @@ def _derive_state(
     had_non_auth_install_errors=False,
     *,
     fresh_power_ids: set[str] | None = None,
+    fresh_scenary_ids: set[str] | None = None,
 ):
     """Recompute local scene state for snapshots, push and maintenance ticks."""
     bucket = hass.data[DOMAIN][entry.entry_id]
@@ -420,7 +425,14 @@ def _derive_state(
             # Do not act on cached fallback OFF or unrelated partial push.
             dev["sleep_snapshot_fresh"] = dev_id in fresh_power_ids
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
-        if raw_scenary in {SCENARY_HOME, SCENARY_VACANT}:
+        if (
+            raw_scenary in {SCENARY_HOME, SCENARY_VACANT}
+            and fresh_scenary_ids is not None
+            and dev_id in fresh_scenary_ids
+        ):
+            # Partial Pusher events or cached installation snapshots may
+            # retain an old Home scene: only a newly observed scene resolves
+            # an ambiguous scene write.
             bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
@@ -952,7 +964,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 if remote
                 else set()
             )
-            _derive_state(hass, entry, data, fresh_power_ids=fresh_power_ids)
+            fresh_scenary_ids = (
+                {device for device, keys in manager.touched.items() if "scenary" in keys}
+                if remote
+                else set()
+            )
+            _derive_state(
+                hass, entry, data,
+                fresh_power_ids=fresh_power_ids,
+                fresh_scenary_ids=fresh_scenary_ids,
+            )
             bucket["last_data"] = data
             if remote:
                 confirmed = confirm_optimistic(
@@ -1046,7 +1067,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             fresh_power_ids = {
                 device for device, keys in manager.touched.items() if "power" in keys
             }
-            _derive_state(hass, entry, data, fresh_power_ids=fresh_power_ids)
+            fresh_scenary_ids = {
+                device for device, keys in manager.touched.items()
+                if "scenary" in keys
+            }
+            _derive_state(
+                hass, entry, data,
+                fresh_power_ids=fresh_power_ids,
+                fresh_scenary_ids=fresh_scenary_ids,
+            )
             return data
 
         coordinator.update_method = refresh_sync
