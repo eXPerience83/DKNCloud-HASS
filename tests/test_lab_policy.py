@@ -140,15 +140,29 @@ def test_real_policy_quota_and_deadline(monkeypatch):
         protected.request("GET", "https://dkn.airzonecloud.com/devices")
 
 
-def test_loopback_lab_rejects_compatibility_without_network():
+def test_loopback_lab_rejects_unverified_compatibility_without_network():
     from scripts.lab_policy import LocalReadOnlySession
 
     raw = Mock()
     local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
-    with pytest.raises(PermissionError, match="denied in loopback lab"):
+    with pytest.raises(ValueError, match="policy rejected"):
         local.compatibility_websocket(
             "wss://dkn.airzonecloud.com:8080/app/synthetic",
             ssl_context=Mock(),
         )
-    assert local.blocked == 1
     raw.ws_connect.assert_not_called()
+
+
+def test_loopback_lab_maps_verified_compatibility_only_to_local_socket():
+    from custom_components.airzoneclouddaikin.push_tls import (
+        create_compatibility_context,
+    )
+    from scripts.lab_policy import LocalReadOnlySession
+
+    raw = Mock()
+    local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
+    local.compatibility_websocket(
+        "wss://dkn.airzonecloud.com:8080/app/synthetic",
+        ssl_context=create_compatibility_context(),
+    )
+    raw.ws_connect.assert_called_once_with("http://127.0.0.1:4567/socket")
