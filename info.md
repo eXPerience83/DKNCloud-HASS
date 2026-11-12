@@ -95,17 +95,22 @@ config-entry identifiers remain unchanged.
 ### Automatic synchronization policy (not a backend contract)
 
 Push uses the service-specific secure WebSocket origin with certificate
-verification enabled. The strict transport rejects redirects using an isolated
-session and Home Assistant's verified TLS trust; REST sessions are unchanged. The protected laboratory permits that same origin only;
-real destinations remain disabled by default.
+and hostname verification enabled. The socket transport rejects redirects using
+an isolated session and Home Assistant's verified TLS trust; ordinary REST
+sessions are unchanged. The separately protected research laboratory still
+disables live destinations by default.
 
-Static-RSA WebSocket compatibility is implemented but disabled by default pending
-an explicit security decision. It adds only `AES128-GCM-SHA256`, after modern
-suites, to a fresh HA trust context for the service's secure socket origin.
-TLS 1.2 or newer, certificate and hostname verification remain mandatory;
-redirects are rejected. REST and shared TLS contexts are unchanged. Static RSA
-does not provide forward secrecy. There is no automatic cipher fallback or
-user-facing option to enable this exception.
+Following explicit owner approval on 2026-11-12, WebSocket-only static-RSA TLS
+compatibility is **enabled** for `wss://dkn.airzonecloud.com:8080/app/...`.
+The service's official web client was independently observed negotiating
+TLS 1.2 with `TLS_RSA_WITH_AES_128_GCM_SHA256`. The compatibility context adds
+only OpenSSL `AES128-GCM-SHA256`, after modern suites, to a fresh verified HA
+trust context for that origin. TLS 1.2 or newer, certificate and hostname
+verification remain mandatory; redirects are rejected. REST and shared TLS
+contexts are unchanged. Static RSA encrypts traffic but lacks forward secrecy.
+There is no automatic cipher fallback or user-facing configuration switch.
+Do not pin the service certificate fingerprint; normal certificate renewal
+must continue to pass standard trust and hostname verification.
 Diagnostics expose whether that policy is enabled. Pending channel authorization
 is cancelled and awaited before closing the WebSocket transport, including when
 connection establishment or entry shutdown fails.
