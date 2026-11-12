@@ -1,0 +1,65 @@
+name: Sleep stacked validation
+
+on:
+  push:
+    branches:
+      - "fix/171-*"
+      - "feat/171-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sleep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: |
+            .python-version
+            pyproject.toml
+            uv.lock
+
+      - name: Validate locked environment
+        run: |
+          set -euo pipefail
+          uv lock --check
+
+      - name: Focused Ruff
+        run: |
+          set -euo pipefail
+          uv sync --locked --only-group lint
+          uv run --locked --no-sync ruff check custom_components/airzoneclouddaikin tests
+          uv run --locked --no-sync ruff format --check custom_components/airzoneclouddaikin tests
+
+      - name: Focused official Home Assistant regressions
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          uv sync --locked --only-group test
+          uv run --locked --no-sync python -m compileall -q custom_components tests
+          uv run --locked --no-sync python -m pytest -q \
+            tests/test_helpers.py \
+            tests/test_sync_runtime.py \
+            tests/test_climate_write_contract.py \
+            tests/test_switch.py
