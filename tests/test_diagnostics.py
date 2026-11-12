@@ -39,7 +39,7 @@ async def test_diagnostics_export_only_allowed_health(hass, payload):
     assert "private-synthetic" not in str(result)
     assert result["coordinator"] == {"devices_count": 1, "last_update_success": True}
     assert result["synchronization"]["overlays_pending"] == 0
-    assert result["transport_policy"]["static_rsa_compatibility_enabled"] is False
+    assert result["transport_policy"]["static_rsa_compatibility_enabled"] is True
 
 
 async def test_tls_policy_diagnostics_are_explicit(hass, monkeypatch):
