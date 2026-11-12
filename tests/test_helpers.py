@@ -472,6 +472,16 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
     _derive_state(hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set())
     assert sleep["device"]["sleep_overdue"] is False
 
+    # A single new ON after the gap cannot reuse the previous two reports.
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+    )
+    assert sleep["device"]["sleep_overdue"] is False
+    _derive_state(
+        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+    )
+    assert sleep["device"]["sleep_overdue"] is True
+
     # A Sleep already active at HA startup has no reliable start timestamp.
     unknown = SimpleNamespace(entry_id="unknown", options={})
     hass.data[DOMAIN]["unknown"] = {"sync_manager": Mock()}
