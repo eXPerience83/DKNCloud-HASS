@@ -299,6 +299,10 @@ class LocalReadOnlySession:
         return self.session.ws_connect(self.origin + "/socket", **kwargs)
 
     def compatibility_websocket(self, url, *, ssl_context, **kwargs):
-        """Fail closed: the lab session must never bypass its loopback gateway."""
-        self.blocked += 1
-        raise PermissionError("Compatibility WebSocket denied in loopback lab")
+        """Validate the scoped WSS request, then route it to loopback only.
+
+        This local, unencrypted test socket exercises HA/Pusher integration;
+        separate synthetic TLS tests verify actual cipher and certificate I/O.
+        """
+        validate_context(url, ssl_context)
+        return self.ws_connect(url, **kwargs)
