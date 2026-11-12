@@ -409,7 +409,8 @@ async def test_local_sleep_survives_retained_scene_on_maintenance_and_partial_pu
 
 
 async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
-    hass, freezer,
+    hass,
+    freezer,
 ):
     """Five-minute threshold is transport-independent, never a power command."""
     from datetime import timedelta
@@ -436,16 +437,12 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
     assert tracking.expected_minutes == 30
 
     freezer.tick(timedelta(minutes=34, seconds=59))
-    _derive_state(
-        hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set()
-    )
+    _derive_state(hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set())
     assert sleep["device"]["sleep_overdue"] is False
     manager.request_recovery.assert_not_called()
 
     freezer.tick(timedelta(seconds=2))
-    _derive_state(
-        hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set()
-    )
+    _derive_state(hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set())
     manager.request_recovery.assert_called_once_with("device")
     assert sleep["device"]["sleep_overdue"] is False
 
@@ -460,9 +457,7 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
     assert sleep["device"]["sleep_overdue"] is True
 
     freezer.tick(timedelta(seconds=61))
-    _derive_state(
-        hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set()
-    )
+    _derive_state(hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set())
     assert sleep["device"]["sleep_overdue"] is False
 
     # A Sleep already active at HA startup has no reliable start timestamp.
@@ -477,7 +472,8 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
 
 
 async def test_sleep_overdue_does_not_survive_timer_edit_or_confirmed_off(
-    hass, freezer,
+    hass,
+    freezer,
 ):
     """Changing sleep_time invalidates clock inference; OFF clears anomaly."""
     from datetime import timedelta
