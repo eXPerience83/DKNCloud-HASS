@@ -371,10 +371,7 @@ async def async_auto_exit_sleep_if_needed(
             return True
         off_confirmed = current.get("sleep_off_confirmed") is True
         if reason == "expiry":
-            if (
-                not off_confirmed
-                and current.get("sleep_snapshot_fresh") is False
-            ):
+            if not off_confirmed and current.get("sleep_snapshot_fresh") is False:
                 # A cached OFF cannot justify the legacy expiry cleanup.
                 return True
             if not off_confirmed and not current.get("sleep_expired"):
