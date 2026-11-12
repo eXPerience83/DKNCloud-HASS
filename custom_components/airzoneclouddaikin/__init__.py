@@ -91,6 +91,8 @@ class SleepTracking:
     sleep_started_at_utc: datetime | None = None
     force_exit_requested: bool = False
     session_revision: int = 0
+    observed_on: bool = False
+    consecutive_off_reports: int = 0
 
 
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
@@ -106,8 +108,12 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
             tracking.force_exit_requested = False
+            tracking.observed_on = False
+            tracking.consecutive_off_reports = 0
     else:
         tracking.sleep_started_at_utc = None
+        tracking.observed_on = False
+        tracking.consecutive_off_reports = 0
 
     tracking.last_scenary = scenary
 
@@ -445,6 +451,35 @@ def _derive_state(
             # evidence from the remote device.
             _update_sleep_tracking_for_device(tracking, raw_scenary)
 
+        # OFF must belong to this session. The first newly received OFF
+        # triggers a bounded readback; a second OFF report confirms the
+        # transition without trusting retained startup/maintenance values.
+        active_sleep = (
+            tracking.last_scenary == SCENARY_SLEEP
+            and tracking.sleep_started_at_utc is not None
+        )
+        fresh_power = fresh_power_ids is not None and dev_id in fresh_power_ids
+        if active_sleep and fresh_power:
+            power_value = str(dev.get("power") or "").strip().lower()
+            if power_value in {"1", "true", "on"}:
+                tracking.observed_on = True
+                tracking.consecutive_off_reports = 0
+            elif (
+                power_value in {"0", "false", "off"}
+                and tracking.observed_on
+                and tracking.consecutive_off_reports < 2
+            ):
+                tracking.consecutive_off_reports += 1
+                if tracking.consecutive_off_reports == 1:
+                    if manager := bucket.get("sync_manager"):
+                        manager.request_recovery(dev_id)
+        dev["sleep_off_confirmed"] = bool(
+            active_sleep
+            and tracking.observed_on
+            and tracking.consecutive_off_reports >= 2
+            and _backend_power_is_off(dev)
+        )
+
         sleep_expired = False
         backend_power_off = False
         sleep_time_minutes = _parse_sleep_time_minutes(dev)
@@ -715,8 +750,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
                 if (
                     raw_scenary != SCENARY_SLEEP
-                    or not dev.get("sleep_expired")
-                    or dev.get("sleep_snapshot_fresh", True) is False
+                    or not (
+                        dev.get("sleep_off_confirmed")
+                        or (
+                            dev.get("sleep_expired")
+                            and dev.get("sleep_snapshot_fresh", True) is not False
+                        )
+                    )
                 ):
                     continue
 
@@ -774,8 +814,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
             if (
                 raw_scenary == SCENARY_SLEEP
-                and dev.get("sleep_expired")
-                and dev.get("sleep_snapshot_fresh", True) is not False
+                and (
+                    dev.get("sleep_off_confirmed")
+                    or (
+                        dev.get("sleep_expired")
+                        and dev.get("sleep_snapshot_fresh", True) is not False
+                    )
+                )
             ):
                 has_candidate = True
                 break
