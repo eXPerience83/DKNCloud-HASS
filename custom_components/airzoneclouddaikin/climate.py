@@ -228,6 +228,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Presets (HA) ----------------------------------------------------
 
     @property
+    def extra_state_attributes(self) -> dict[str, bool]:
+        """Expose read-only Sleep monitoring without asserting physical truth."""
+        dev = self._device
+        return {
+            "sleep_start_known": bool(dev.get("sleep_start_known", False)),
+            "sleep_overdue": bool(dev.get("sleep_overdue", False)),
+        }
+
+    @property
     def preset_modes(self) -> list[str] | None:
         return ["home", "away", "sleep"]
 

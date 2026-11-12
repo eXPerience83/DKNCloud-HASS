@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -91,6 +92,13 @@ class SleepTracking:
     sleep_started_at_utc: datetime | None = None
     force_exit_requested: bool = False
     session_revision: int = 0
+    observed_on: bool = False
+    consecutive_off_reports: int = 0
+    start_known: bool = False
+    expected_minutes: int | None = None
+    overdue_on_reports: int = 0
+    last_confirmed_on_utc: datetime | None = None
+    overdue_probe_requested: bool = False
 
 
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
@@ -103,11 +111,28 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.sleep_started_at_utc is None
             or tracking.last_scenary != SCENARY_SLEEP
         ):
+            tracking.start_known = tracking.last_scenary in {
+                SCENARY_HOME,
+                SCENARY_VACANT,
+            }
             tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
             tracking.force_exit_requested = False
+            tracking.observed_on = False
+            tracking.consecutive_off_reports = 0
+            tracking.expected_minutes = None
+            tracking.overdue_on_reports = 0
+            tracking.last_confirmed_on_utc = None
+            tracking.overdue_probe_requested = False
     else:
         tracking.sleep_started_at_utc = None
+        tracking.observed_on = False
+        tracking.consecutive_off_reports = 0
+        tracking.start_known = False
+        tracking.expected_minutes = None
+        tracking.overdue_on_reports = 0
+        tracking.last_confirmed_on_utc = None
+        tracking.overdue_probe_requested = False
 
     tracking.last_scenary = scenary
 
@@ -436,12 +461,107 @@ def _derive_state(
             bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
-        if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
+        overlay = bucket.get("optimistic", {}).get(dev_id, {}).get("scenary")
+        overlay_value = None
+        if overlay is not None:
+            expires = overlay.get("expires")
+            if isinstance(expires, (int, float)) and expires > hass.loop.time():
+                overlay_value = str(overlay.get("value") or "").strip().lower()
+        if (
+            raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}
+            and (fresh_scenary_ids is None or dev_id in fresh_scenary_ids)
+            and (overlay_value is None or overlay_value == raw_scenary)
+        ):
+            # A maintenance tick, partial push or an older remote scene cannot
+            # erase a new, still-pending manual Sleep/scene selection.
             _update_sleep_tracking_for_device(tracking, raw_scenary)
+
+        # OFF must belong to this session. The first newly received OFF
+        # triggers a bounded readback; a second OFF report confirms the
+        # transition without trusting retained startup/maintenance values.
+        active_sleep = (
+            tracking.last_scenary == SCENARY_SLEEP
+            and tracking.sleep_started_at_utc is not None
+        )
+        sleep_time_minutes = _parse_sleep_time_minutes(dev)
+        if active_sleep and sleep_time_minutes is not None:
+            if tracking.expected_minutes is None:
+                tracking.expected_minutes = sleep_time_minutes
+            elif tracking.expected_minutes != sleep_time_minutes:
+                # A changed timer may or may not reschedule the physical unit.
+                # Do not infer an overdue physical timer from such a session.
+                tracking.start_known = False
+                tracking.overdue_on_reports = 0
+
+        due = (
+            tracking.sleep_started_at_utc
+            + timedelta(minutes=tracking.expected_minutes + SLEEP_TIMEOUT_GRACE_MINUTES)
+            if (
+                active_sleep
+                and tracking.start_known
+                and tracking.expected_minutes is not None
+                and tracking.expected_minutes > 0
+            )
+            else None
+        )
+        fresh_power = fresh_power_ids is not None and dev_id in fresh_power_ids
+        if active_sleep and fresh_power:
+            raw_power = dev.get("power")
+            power_value = (
+                str(raw_power if raw_power is not None else "").strip().lower()
+            )
+            if power_value in {"1", "true", "on"}:
+                if (
+                    tracking.last_confirmed_on_utc is not None
+                    and now - tracking.last_confirmed_on_utc > timedelta(seconds=60)
+                ):
+                    # A long telemetry gap starts a new corroboration window;
+                    # one resumed ON report cannot reuse an old pair.
+                    tracking.overdue_on_reports = 0
+                tracking.observed_on = True
+                tracking.consecutive_off_reports = 0
+                tracking.last_confirmed_on_utc = now
+                if due is not None and now >= due:
+                    tracking.overdue_on_reports = min(
+                        2, tracking.overdue_on_reports + 1
+                    )
+                else:
+                    tracking.overdue_on_reports = 0
+            elif power_value in {"0", "false", "off"}:
+                tracking.overdue_on_reports = 0
+                tracking.last_confirmed_on_utc = None
+                if tracking.observed_on and tracking.consecutive_off_reports < 2:
+                    tracking.consecutive_off_reports += 1
+                    if tracking.consecutive_off_reports == 1:
+                        if manager := bucket.get("sync_manager"):
+                            manager.request_recovery(dev_id)
+        dev["sleep_off_confirmed"] = bool(
+            active_sleep
+            and tracking.observed_on
+            and tracking.consecutive_off_reports >= 2
+            and _backend_power_is_off(dev)
+        )
+        dev["sleep_start_known"] = bool(active_sleep and tracking.start_known)
+
+        if due is not None and now >= due and not tracking.overdue_probe_requested:
+            tracking.overdue_probe_requested = True
+            if manager := bucket.get("sync_manager"):
+                manager.request_recovery(dev_id)
+
+        # This is a *remote-reported* ON anomaly, not physical proof.
+        # Require two explicit post-deadline reports and do not keep an
+        # overdue diagnostic alive on old cached state or lost connectivity.
+        dev["sleep_overdue"] = bool(
+            due is not None
+            and now >= due
+            and tracking.overdue_on_reports >= 2
+            and tracking.last_confirmed_on_utc is not None
+            and now - tracking.last_confirmed_on_utc <= timedelta(seconds=60)
+            and not _backend_power_is_off(dev)
+        )
 
         sleep_expired = False
         backend_power_off = False
-        sleep_time_minutes = _parse_sleep_time_minutes(dev)
 
         if (
             sleep_timeout_enabled
@@ -707,11 +827,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     continue
 
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if (
-                    raw_scenary != SCENARY_SLEEP
-                    or not dev.get("sleep_expired")
-                    or dev.get("sleep_snapshot_fresh", True) is False
-                ):
+                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_off_confirmed"):
+                    # Expiry is now only a local UI hint. It is not a write
+                    # authorization without a session-consistent OFF.
                     continue
 
                 if api is None:
@@ -766,11 +884,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             ):
                 continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if (
-                raw_scenary == SCENARY_SLEEP
-                and dev.get("sleep_expired")
-                and dev.get("sleep_snapshot_fresh", True) is not False
-            ):
+            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_off_confirmed"):
                 has_candidate = True
                 break
         if not has_candidate:
@@ -1066,24 +1180,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         coordinator.update_interval = None
 
         async def refresh_sync():
-            # manager.refresh() returns transport state, while publish_sync()
-            # derives local scene fields on a separate copy. Return the same
-            # derived view so an explicit refresh cannot undo that publication.
+            # The manager publishes and derives each successful GET exactly
+            # once. Deriving the same touched fields again here would count
+            # one OFF as two independent observations, authorizing unsafe
+            # Sleep cleanup. Return the already derived publication instead.
             data = await manager.refresh()
-            fresh_power_ids = {
-                device for device, keys in manager.touched.items() if "power" in keys
-            }
-            fresh_scenary_ids = {
-                device for device, keys in manager.touched.items() if "scenary" in keys
-            }
-            _derive_state(
-                hass,
-                entry,
-                data,
-                fresh_power_ids=fresh_power_ids,
-                fresh_scenary_ids=fresh_scenary_ids,
-            )
-            return data
+            return deepcopy(bucket.get("last_data") or data)
 
         coordinator.update_method = refresh_sync
 

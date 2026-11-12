@@ -104,11 +104,16 @@ second step restarts **local** session tracking; physical timer restart still
 requires a separately authorized real-device check.
 
 Active Sleep setpoint, fan and supported mode changes retain the Sleep scene.
-The optional expiry cleanup remains off by default with the existing ten-minute
-grace; no shorter timer or early manual-OFF cleanup is introduced by this change.
-An automatic cleanup may use only power newly returned in the current GET or
-Pusher event, never a cached installation fallback or unrelated partial event.
-This source guard is not proof of instantaneous physical state.
+In the newer unmerged Sleep stack (#192–#194), a recorded session-consistent
+ON→OFF is confirmed with two newly received OFF reports before one automatic
+`occupied` cleanup is attempted. The first report requests bounded readback.
+Legacy local expiry display remains optional (off by default). The uniform
+five-minute grace is used for expiry display and for an ON-overdue diagnostic,
+not as permission to turn OFF or to clean a still-ON scene. Tracking distinguishes
+HA-initiated/observed starts from Sleep already present at boot; a changed
+`sleep_time` invalidates overdue timing assumptions. These are integration
+policies under synthetic validation, **not device-certified behavior**.
+Remote reports can be stale even when retrieved in a later GET.
 
 ### Automatic synchronization policy (not a backend contract)
 
@@ -302,15 +307,19 @@ curl -sS --compressed \
 
 ### Sleep exit coordination (not a backend contract)
 
-Both automatic expiry and active-control preparation serialize scene exits with
-manual writes. They recheck current state and scene revisions after acquiring the
-lock. An attempted automatic HOME write is not replayed after an ambiguous result;
-it requests a budgeted recovery read instead. HTTP acceptance does not confirm
-physical application.
-Pending exit state is runtime-local; after restart the Sleep observation timer
-starts again, without inferring a physical activation timestamp. The grace remains
-10 minutes. Scene exit writes use no API retry; manual scene commands retain their
-existing retry policy.
+Automatic confirmed-OFF cleanup and active-control preparation serialize scene
+exits with manual writes. They recheck current state and scene revisions after
+acquiring the lock. Automatic Home writes are never replayed after ambiguous
+results; readback requests are budgeted. HTTP acceptance alone does not prove
+physical application. The older optional expired-Home UI view is not authority
+for an automatic scene write.
+Pending exit state is runtime-local. Restarted HA does not know when an already
+active physical Sleep timer began; do not raise a deadline anomaly from that
+assumption. The shared monitoring margin is **five minutes** for both INFO/Pusher
+and GET paths; an ON beyond that deadline requests one recovery and requires two
+post-deadline fresh ON reports before being shown as a *reported* diagnostic,
+without sending an OFF or Home command. Automatic Sleep exit uses no API retry;
+manual command retry behavior remains unchanged.
 
 A non-Sleep backend observation retires a pending exit marker. A new explicit
 Sleep selection re-arms local tracking; an older discarded cleanup must not
@@ -533,9 +542,11 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 Observed behavior:
 - After `sleep_time` elapses, devices typically power off but may keep reporting `scenary="sleep"` until explicitly changed.
 
-Integration policy (recommended):
-- Auto-exit Sleep (sleep → occupied) before HA-driven wake commands so backend state matches user-visible behavior.
-- Optionally (disabled by default): treat long-running Sleep sessions as “home/occupied” in the UI and perform a best-effort one-off backend cleanup write, **only once the backend reports `power=0`**.
+Integration policy (unmerged, physical validation pending):
+- Auto-exit Sleep (sleep → occupied) before HA-driven wake commands.
+- When a current Sleep session has established an ON observation and two explicit OFF reports, request a single serialized `occupied` cleanup without waiting for timer expiry; verify backend readback before declaring convergence.
+- A time-expired local Home display remains optional and disabled by default. It does **not** independently authorize cleanup based on an old OFF.
+- If a session with sufficiently known start still reports ON after `sleep_time + 5 minutes`, request bounded recovery and expose a read-only `sleep_overdue` diagnostic only after repeated newly received ON; do not switch power or scene based on this diagnostic.
 
 ---
 

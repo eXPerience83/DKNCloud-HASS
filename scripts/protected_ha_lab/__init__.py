@@ -243,7 +243,12 @@ async def async_setup(hass, config):
                     observations["device_applied"] > before_events
                 )
             if case == "sleep":
-                coordinator.data[device].update(scenary="sleep", sleep_expired=True)
+                # Inject the post-confirmation state, not merely a timed-out
+                # Sleep scene. The write barrier must reject the resulting
+                # automatic Home command even when OFF was corroborated.
+                coordinator.data[device].update(
+                    scenary="sleep", sleep_off_confirmed=True
+                )
                 coordinator.async_update_listeners()
                 await supervisor.stopped.wait()
                 return

@@ -55,8 +55,8 @@ HEADERS_EVENTS = {
 OPTIMISTIC_TTL_SEC: float = 2.5
 POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
 
-# Additional slack beyond the configured sleep_time before treating sleep as expired
-SLEEP_TIMEOUT_GRACE_MINUTES = 10
+# Uniform five-minute margin (Pusher and GET) for local Sleep monitoring
+SLEEP_TIMEOUT_GRACE_MINUTES = 5
 
 # -------------------- UX: Persistent notifications (PR A) -----------------
 # Debounce to avoid flapping (seconds the device must remain offline

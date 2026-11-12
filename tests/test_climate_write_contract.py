@@ -153,6 +153,20 @@ async def test_presets_are_device_put_requests_not_event_commands(
     api.send_event.assert_not_awaited()
 
 
+async def test_climate_exposes_sleep_overdue_as_reported_diagnostic(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    entity, _api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    entity.coordinator.data["unit-1"].update(
+        sleep_start_known=True,
+        sleep_overdue=True,
+    )
+    assert entity.extra_state_attributes == {
+        "sleep_start_known": True,
+        "sleep_overdue": True,
+    }
+
+
 async def test_expired_sleep_home_writes_real_backend_cleanup(
     hass, dummy_coordinator_factory, monkeypatch
 ):
@@ -280,6 +294,7 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
     entity.coordinator.data["unit-1"].update(
         effective_scenary="occupied",
         sleep_expired=True,
+        sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
     entered, release = asyncio.Event(), asyncio.Event()
@@ -340,6 +355,7 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     entity.coordinator.data["unit-1"].update(
         effective_scenary="occupied",
         sleep_expired=True,
+        sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
     api.async_set_scenary = AsyncMock()
@@ -383,6 +399,7 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
     entity.coordinator.data["unit-1"].update(
         effective_scenary="occupied",
         sleep_expired=True,
+        sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
     bucket = hass.data[DOMAIN]["climate-entry"]

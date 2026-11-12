@@ -14,7 +14,7 @@
 
 - **Climate control:** Power, cooling, heating, ventilation, dehumidification, target temperature and supported fan speeds.
 - **Native presets:** `home`, `away` and `sleep` on each climate entity. No separate `select.scenary` entity.
-- **Sleep and away settings:** Configurable sleep timer and minimum/maximum unoccupied temperatures. Wake commands automatically exit a stale Sleep scene; an additional timeout cleanup is optional.
+- **Sleep and away settings:** Configurable sleep timer and minimum/maximum unoccupied temperatures. Wake commands exit a stale Sleep scene. A session-consistent ON→OFF transition also initiates a guarded one-shot Home cleanup, without waiting for timer expiry (physical LAB acceptance still pending).
 - **Status and diagnostics:** Room temperature, device power, connection status, last connection and other available device data. Connection monitoring is passive (no additional pings).
 - **Privacy by default:** Identifiers such as MAC, PIN and installation/location are only exposed by opting in; those entities remain disabled by default.
 - **Localized UI:** English, Spanish, French, German, Italian and Portuguese.
@@ -44,7 +44,7 @@ Optional settings in the Home Assistant UI:
 - **Scan interval:** Refresh period in seconds (default: **10**).
 - **Expose PII identifiers:** Add sensitive identifier entities (off by default; the entities themselves are disabled by default).
 - **Experimental HEAT_COOL:** Only when the device advertises support; this mode is not broadly validated on hardware.
-- **Sleep timeout cleanup:** Optional behavior for sleep sessions that have expired; off by default.
+- **Sleep expiry display (legacy option):** Optional local effective Home view after the timer plus a five-minute margin if the backend reports OFF; off by default. Guarded automatic ON→OFF cleanup is independent of this option.
 
 ## Available entities
 
@@ -73,7 +73,7 @@ For the API commands, device modes, capabilities and detailed backend behavior, 
 
 **How do I change Home/Away/Sleep?** Use the climate entity's presets or the Home Assistant `climate.set_preset_mode` service. The old `select.scenary` entity was removed.
 
-**Why does Sleep sometimes remain active after the unit turns off?** Some devices continue reporting Sleep after the timer expires. The integration exits Sleep before a Home Assistant wake command; optional timeout cleanup can also be enabled.
+**Why does Sleep sometimes remain active after the unit turns off?** Some devices retain the raw Sleep scene after powering off. The draft integration waits for a session-consistent ON→OFF report, then requests one guarded `occupied` cleanup and verifies backend convergence; missing or retained telemetry can delay that confirmation. The legacy expiry display option is separate. This new behavior still requires physical LAB acceptance.
 
 **Why can't I select HEAT_COOL?** Both the device capability bit and the **Enable experimental HEAT_COOL mode** option are required. Even then, its physical behavior is not fully validated across devices.
 

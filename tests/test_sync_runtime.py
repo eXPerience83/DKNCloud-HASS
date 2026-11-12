@@ -191,6 +191,124 @@ async def test_explicit_refresh_preserves_derived_scenary_in_coordinator(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_explicit_refresh_counts_single_off_snapshot_once(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """The coordinator must not treat one refreshed GET as two OFF reports."""
+    first = {**sample_device, "scenary": "occupied", "power": "1"}
+    off = {**sample_device, "scenary": "sleep", "power": "0"}
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=[[first], [off]])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    recovery = Mock()
+    monkeypatch.setattr(manager, "request_recovery", recovery)
+    generation = manager.state.generation
+    try:
+        # The observed ON must belong to the same Sleep session.
+        await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
+        tracking = bucket["sleep_tracking"]["dev1"]
+        assert tracking.observed_on
+
+        # One GET publishes once, then returns via refresh_sync. The latter
+        # must reuse derived data without treating the same GET as a second OFF.
+        await coordinator.async_refresh()
+        assert api.fetch_devices.await_count == 2
+        assert tracking.consecutive_off_reports == 1
+        assert not coordinator.data["dev1"]["sleep_off_confirmed"]
+        api.async_set_scenary.assert_not_awaited()
+        recovery.assert_called_once_with("dev1")
+
+        # A genuinely separate follow-up OFF Pusher report can confirm it.
+        await manager.event("dev1", {"power": "0"}, generation)
+        await hass.async_block_till_done()
+        api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_inflight_get_discarded_power_cannot_confirm_pushed_off(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """An old GET power rejected by SyncState is not a second OFF report."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    first = {**sample_device, "scenary": "occupied", "power": "1"}
+    old_get = {**sample_device, "scenary": "sleep", "power": "1"}
+    calls = 0
+
+    async def fetch(_installation, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return [first]
+        entered.set()
+        await release.wait()
+        return [old_get]
+
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=fetch)
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    recovery = Mock()
+    monkeypatch.setattr(manager, "request_recovery", recovery)
+    generation = manager.state.generation
+    refresh = None
+    try:
+        await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
+        tracking = bucket["sleep_tracking"]["dev1"]
+        assert tracking.observed_on
+        refresh = asyncio.create_task(coordinator.async_refresh())
+        await asyncio.wait_for(entered.wait(), timeout=3)
+
+        # GET began with an ON power value, but a newer Pusher OFF wins.
+        await manager.event("dev1", {"power": "0"}, generation)
+        assert tracking.consecutive_off_reports == 1
+        api.async_set_scenary.assert_not_awaited()
+        release.set()
+        await asyncio.wait_for(refresh, timeout=3)
+
+        # The returned GET did not apply its stale power field.
+        assert manager.state.data["dev1"]["power"] == "0"
+        assert "power" not in manager.touched.get("dev1", set())
+        assert tracking.consecutive_off_reports == 1
+        assert coordinator.data["dev1"]["sleep_off_confirmed"] is False
+        api.async_set_scenary.assert_not_awaited()
+        recovery.assert_called_once_with("dev1")
+
+        await manager.event("dev1", {"power": "0"}, generation)
+        await hass.async_block_till_done()
+        api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
+    finally:
+        release.set()
+        if refresh is not None and not refresh.done():
+            await asyncio.wait_for(refresh, timeout=3)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
@@ -268,7 +386,12 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     coordinator = entry.runtime_data.coordinator
     recovery = Mock()
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
-    coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+    coordinator.data["dev1"].update(
+        scenary="sleep",
+        sleep_expired=True,
+        sleep_off_confirmed=True,
+        power="0",
+    )
     if stop in {"race", "race_expired", "race_new_sleep"}:
         lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
         await lock.acquire()
@@ -288,6 +411,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
             optimistic_get(hass, entry.entry_id, "dev1", "scenary", "sleep")
         if stop == "race_new_sleep":
             coordinator.data["dev1"]["sleep_expired"] = False
+            coordinator.data["dev1"]["sleep_off_confirmed"] = False
         lock.release()
         await hass.async_block_till_done()
         api.async_set_scenary.assert_not_awaited()
@@ -295,6 +419,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
             assert not bucket["sleep_tracking"]["dev1"].force_exit_requested
             release.set()
             coordinator.data["dev1"]["sleep_expired"] = True
+            coordinator.data["dev1"]["sleep_off_confirmed"] = True
             coordinator.async_update_listeners()
             await hass.async_block_till_done()
             api.async_set_scenary.assert_awaited_once()
@@ -373,6 +498,56 @@ async def test_sleep_pending_requires_explicit_remote_scene_to_clear(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_current_sleep_off_needs_on_then_two_fresh_off_reports(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """A retained startup OFF must not cause cleanup; confirmed ON→OFF may."""
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    recovery = Mock()
+    monkeypatch.setattr(manager, "request_recovery", recovery)
+    generation = manager.state.generation
+
+    # A restored prior OFF with Sleep cannot terminate a new local session.
+    await manager.event("dev1", {"scenary": "sleep", "power": "0"}, generation)
+    await manager.event("dev1", {"power": "0"}, generation)
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_not_awaited()
+
+    # Observe ON in this session, then require corroboration of a new OFF.
+    await manager.event("dev1", {"power": "1"}, generation)
+    await manager.event("dev1", {"power": "0"}, generation)
+    assert not bucket["sleep_tracking"]["dev1"].force_exit_requested
+    api.async_set_scenary.assert_not_awaited()
+    recovery.assert_called_once_with("dev1")
+    await manager.event("dev1", {"power": "0"}, generation)
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
+    assert bucket["sleep_exit_pending"]["dev1"] == "accepted"
+
+    # Repeated OFF and maintenance cannot replay an already accepted PUT.
+    await manager.event("dev1", {"power": "0"}, generation)
+    manager.maintenance()
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_awaited_once()
+    await manager.event("dev1", {"scenary": "occupied"}, generation)
+    assert "dev1" not in bucket["sleep_exit_pending"]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
@@ -397,6 +572,7 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
         scenary="sleep",
         power="0",
         sleep_expired=True,
+        sleep_off_confirmed=False,
         sleep_snapshot_fresh=False,
     )
     coordinator.async_update_listeners()
@@ -404,6 +580,12 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     api.async_set_scenary.assert_not_awaited()
 
     coordinator.data["dev1"]["sleep_snapshot_fresh"] = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    # Expired local UI status alone cannot authorize an automatic PUT.
+    api.async_set_scenary.assert_not_awaited()
+
+    coordinator.data["dev1"]["sleep_off_confirmed"] = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
@@ -436,13 +618,19 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
     await lock.acquire()
     try:
-        coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+        coordinator.data["dev1"].update(
+            scenary="sleep",
+            sleep_expired=True,
+            sleep_off_confirmed=True,
+            power="0",
+        )
         coordinator.async_update_listeners()
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         first_task = bucket["sleep_expiry_task"]
         assert not first_task.done()
         coordinator.data["dev1"]["sleep_expired"] = False
+        coordinator.data["dev1"]["sleep_off_confirmed"] = False
     finally:
         lock.release()
 
@@ -454,6 +642,7 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
 
     # Expiry recurs in the same Sleep session: cleanup is still eligible.
     coordinator.data["dev1"]["sleep_expired"] = True
+    coordinator.data["dev1"]["sleep_off_confirmed"] = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
@@ -486,7 +675,12 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
     coordinator = entry.runtime_data.coordinator
     recovery = Mock()
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
-    coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+    coordinator.data["dev1"].update(
+        scenary="sleep",
+        sleep_expired=True,
+        sleep_off_confirmed=True,
+        power="0",
+    )
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     tracking = bucket["sleep_tracking"]["dev1"]
@@ -517,6 +711,7 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
             assert not tracking.force_exit_requested
             assert "dev1" not in bucket["sleep_exit_retry_after"]
             coordinator.data["dev1"]["sleep_expired"] = False
+            coordinator.data["dev1"]["sleep_off_confirmed"] = False
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
         api._request.assert_not_awaited()
@@ -524,6 +719,7 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
             assert await hass.config_entries.async_unload(entry.entry_id)
             return
         coordinator.data["dev1"]["sleep_expired"] = True
+        coordinator.data["dev1"]["sleep_off_confirmed"] = True
     api._cooldown_until = 0
     bucket["sleep_exit_retry_after"]["dev1"] = 0
     coordinator.async_update_listeners()

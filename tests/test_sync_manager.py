@@ -105,6 +105,10 @@ async def test_event_during_get_wins_and_missing_fields_survive():
     await recovery
     assert instance.state.data["fake"]["power"] == "1"
     assert instance.state.data["fake"]["mode"] == "2"
+    # The GET power was superseded by Pusher. Its presence in the raw
+    # response must not become fresh OFF evidence downstream.
+    assert "power" not in instance.touched["fake"]
+    assert "mode" in instance.touched["fake"]
     assert publish.call_count == 2
     await instance.close()
 
