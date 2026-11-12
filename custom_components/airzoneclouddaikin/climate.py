@@ -323,9 +323,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 # An accepted server-side write may have lost its HTTP reply.
                 # Automatic Sleep expiry must not issue another scene command
                 # before a subsequent backend read confirms convergence.
-                bucket.setdefault("sleep_exit_pending", {})[
-                    self._device_id
-                ] = "unverified"
+                bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
+                    "unverified"
+                )
                 request_readback()
 
             def preserve_partial_home() -> None:
@@ -388,9 +388,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             if expired:
                 if not rearm and scenary == "occupied":
                     # Successful explicit cleanup still needs remote readback.
-                    bucket.setdefault("sleep_exit_pending", {})[
-                        self._device_id
-                    ] = "accepted"
+                    bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
+                        "accepted"
+                    )
                 request_readback()
             else:
                 schedule_post_write_refresh(

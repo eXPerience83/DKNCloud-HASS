@@ -324,9 +324,7 @@ async def test_known_unsent_first_step_does_not_mark_ambiguous(
     bucket = hass.data[DOMAIN]["climate-entry"]
     manager = Mock()
     bucket["sync_manager"] = manager
-    api.put_device_fields.side_effect = CommandNotSentCooldown(
-        hass.loop.time() + 300
-    )
+    api.put_device_fields.side_effect = CommandNotSentCooldown(hass.loop.time() + 300)
     with pytest.raises(CommandNotSentCooldown):
         await entity.async_set_preset_mode("sleep")
     assert bucket.get("sleep_exit_pending", {}).get("unit-1") is None
