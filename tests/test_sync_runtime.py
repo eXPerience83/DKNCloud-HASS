@@ -496,18 +496,18 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     await lock.acquire()
     try:
         coordinator.data["dev1"].update(
-        scenary="sleep",
-        sleep_expired=True,
-        sleep_off_confirmed=True,
-        power="0",
-    )
+            scenary="sleep",
+            sleep_expired=True,
+            sleep_off_confirmed=True,
+            power="0",
+        )
         coordinator.async_update_listeners()
         await asyncio.sleep(0)
         await asyncio.sleep(0)
         first_task = bucket["sleep_expiry_task"]
         assert not first_task.done()
         coordinator.data["dev1"]["sleep_expired"] = False
-            coordinator.data["dev1"]["sleep_off_confirmed"] = False
+        coordinator.data["dev1"]["sleep_off_confirmed"] = False
     finally:
         lock.release()
 
@@ -519,7 +519,7 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
 
     # Expiry recurs in the same Sleep session: cleanup is still eligible.
     coordinator.data["dev1"]["sleep_expired"] = True
-            coordinator.data["dev1"]["sleep_off_confirmed"] = True
+    coordinator.data["dev1"]["sleep_off_confirmed"] = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
@@ -596,7 +596,7 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
             assert await hass.config_entries.async_unload(entry.entry_id)
             return
         coordinator.data["dev1"]["sleep_expired"] = True
-            coordinator.data["dev1"]["sleep_off_confirmed"] = True
+        coordinator.data["dev1"]["sleep_off_confirmed"] = True
     api._cooldown_until = 0
     bucket["sleep_exit_retry_after"]["dev1"] = 0
     coordinator.async_update_listeners()
