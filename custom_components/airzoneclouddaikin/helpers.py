@@ -376,11 +376,9 @@ async def async_auto_exit_sleep_if_needed(
             return True
         off_confirmed = current.get("sleep_off_confirmed") is True
         if reason == "expiry":
-            if not off_confirmed and current.get("sleep_snapshot_fresh") is False:
-                # A cached OFF cannot justify the legacy expiry cleanup.
-                return True
-            if not off_confirmed and not current.get("sleep_expired"):
-                # Recheck both possible cleanup triggers under the device lock.
+            if not off_confirmed:
+                # Elapsed time, cached OFF or startup state alone do not
+                # authorize an automatic scene write for this Sleep session.
                 return True
         elif not current.get("sleep_expired") and is_device_on():
             # A wake/helper operation may still exit an OFF Sleep session;
