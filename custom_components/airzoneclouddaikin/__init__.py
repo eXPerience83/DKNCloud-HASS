@@ -364,7 +364,9 @@ async def _async_update_data(
                 for dev_id in last_devices_by_inst.get(inst_id, set()):
                     dev = last_data.get(dev_id)
                     if dev is not None:
-                        data.setdefault(dev_id, dev)
+                        # The new freshness marker is snapshot-local. Do not
+                        # mutate the previous result via a reused cached dict.
+                        data.setdefault(dev_id, dict(dev))
 
         domain_bucket["last_update_had_install_errors"] = had_non_auth_install_errors
         domain_bucket["failed_installations_last_update"] = set(failed_installations)
