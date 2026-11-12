@@ -522,6 +522,7 @@ def _derive_state(
             and tracking.consecutive_off_reports >= 2
             and _backend_power_is_off(dev)
         )
+        dev["sleep_start_known"] = bool(active_sleep and tracking.start_known)
 
         if due is not None and now >= due and not tracking.overdue_probe_requested:
             tracking.overdue_probe_requested = True
