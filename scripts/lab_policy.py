@@ -262,7 +262,7 @@ class LocalReadOnlySession:
             or target.path != "/"
         ):
             raise PermissionError("Only loopback laboratory origins are permitted")
-        self.session, self.origin = session, origin
+        self.session, self.origin = session, origin.rstrip("/")
         self.blocked = 0
 
     def request(self, method, url, **kwargs):
