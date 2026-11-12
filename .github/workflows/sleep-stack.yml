@@ -63,3 +63,19 @@ jobs:
             tests/test_sync_runtime.py \
             tests/test_climate_write_contract.py \
             tests/test_switch.py
+
+      - name: Full integration test suite on completed Sleep stack
+        if: github.ref_name == 'feat/171-sleep-overdue-five-minute'
+        env:
+          PYTHONPATH: .
+        run: |
+          set -euo pipefail
+          uv run --locked --no-sync python -m pytest -q \
+            --cov=custom_components.airzoneclouddaikin \
+            --cov-report=term-missing:skip-covered \
+            --cov-report=json:coverage.json
+          uv run --locked --no-sync python scripts/check_coverage.py \
+            coverage.json --min-total 74.0 \
+            --module-min __init__.py=73.0 \
+            --module-min airzone_api.py=75.0 \
+            --module-min climate.py=65.0
