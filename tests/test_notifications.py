@@ -664,8 +664,8 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
 
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
-                return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
-            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+                return [{"id": "dev-a", "name": "Unit A", "scenary": "home", "power": "0"}]
+            return [{"id": "dev-b", "name": "Unit B", "scenary": "home", "power": "0"}]
 
     first = await integration._async_update_data(hass, entry, DummyAPIOk())
     assert set(first) == {"dev-a", "dev-b"}
@@ -677,13 +677,17 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 raise RuntimeError("temporary")
-            return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
+            return [{"id": "dev-b", "name": "Unit B2", "scenary": "home", "power": "0"}]
 
     second = await integration._async_update_data(hass, entry, DummyAPIPartial())
 
     assert set(second) == {"dev-a", "dev-b"}
     assert second["dev-a"]["name"] == "Unit A"
     assert second["dev-b"]["name"] == "Unit B2"
+    assert first["dev-a"]["sleep_snapshot_fresh"] is True
+    assert first["dev-b"]["sleep_snapshot_fresh"] is True
+    assert second["dev-a"]["sleep_snapshot_fresh"] is False
+    assert second["dev-b"]["sleep_snapshot_fresh"] is True
 
 
 @pytest.mark.asyncio

@@ -237,6 +237,7 @@ async def _async_update_data(
         domain_bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
 
         data: dict[str, dict[str, Any]] = {}
+        fresh_power_ids: set[str] = set()
         relations = await api.fetch_installations()
         # Malformed installation responses are transient failures, not an
         # authoritative empty account: preserve the last good device snapshot.
@@ -337,6 +338,8 @@ async def _async_update_data(
 
                 dev_id_str = str(dev_id)
                 data[dev_id_str] = dev
+                if dev.get("power") is not None:
+                    fresh_power_ids.add(dev_id_str)
                 inst_device_ids.add(dev_id_str)
                 device_installation_map[dev_id_str] = inst_id
 
@@ -367,7 +370,10 @@ async def _async_update_data(
         domain_bucket["failed_installations_last_update"] = set(failed_installations)
         domain_bucket["has_successful_snapshot"] = True
         domain_bucket["last_data"] = dict(data)
-        _derive_state(hass, entry, data, had_non_auth_install_errors)
+        _derive_state(
+            hass, entry, data, had_non_auth_install_errors,
+            fresh_power_ids=fresh_power_ids,
+        )
 
         return data
 
@@ -386,7 +392,10 @@ async def _async_update_data(
         ) from err
 
 
-def _derive_state(hass, entry, data, had_non_auth_install_errors=False):
+def _derive_state(
+    hass, entry, data, had_non_auth_install_errors=False,
+    *, fresh_power_ids: set[str] | None = None,
+):
     """Recompute local scene state for snapshots, push and maintenance ticks."""
     bucket = hass.data[DOMAIN][entry.entry_id]
     sleep_tracking = bucket.setdefault("sleep_tracking", {})
@@ -398,6 +407,9 @@ def _derive_state(hass, entry, data, had_non_auth_install_errors=False):
         for stale_id in tracked_ids - active_ids:
             sleep_tracking.pop(stale_id, None)
     for dev_id, dev in data.items():
+        if fresh_power_ids is not None:
+            # Do not act on cached fallback OFF or unrelated partial push.
+            dev["sleep_snapshot_fresh"] = dev_id in fresh_power_ids
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
         if raw_scenary in {SCENARY_HOME, SCENARY_VACANT}:
             bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
@@ -674,7 +686,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     continue
 
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expired"):
+                if (
+                    raw_scenary != SCENARY_SLEEP
+                    or not dev.get("sleep_expired")
+                    or dev.get("sleep_snapshot_fresh", True) is False
+                ):
                     continue
 
                 if api is None:
@@ -729,7 +745,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             ):
                 continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_expired"):
+            if (
+                raw_scenary == SCENARY_SLEEP
+                and dev.get("sleep_expired")
+                and dev.get("sleep_snapshot_fresh", True) is not False
+            ):
                 has_candidate = True
                 break
         if not has_candidate:
@@ -918,7 +938,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     if connector is not None:
 
         def publish_sync(data, remote):
-            _derive_state(hass, entry, data)
+            fresh_power_ids = (
+                {device for device, keys in manager.touched.items() if "power" in keys}
+                if remote else set()
+            )
+            _derive_state(hass, entry, data, fresh_power_ids=fresh_power_ids)
             bucket["last_data"] = data
             if remote:
                 confirmed = confirm_optimistic(
@@ -1009,7 +1033,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             # derives local scene fields on a separate copy. Return the same
             # derived view so an explicit refresh cannot undo that publication.
             data = await manager.refresh()
-            _derive_state(hass, entry, data)
+            fresh_power_ids = {
+                device for device, keys in manager.touched.items() if "power" in keys
+            }
+            _derive_state(hass, entry, data, fresh_power_ids=fresh_power_ids)
             return data
 
         coordinator.update_method = refresh_sync

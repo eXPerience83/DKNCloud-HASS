@@ -359,6 +359,9 @@ async def async_auto_exit_sleep_if_needed(
             or device_id in pending
         ):
             return
+        if reason == "expiry" and current.get("sleep_snapshot_fresh") is False:
+            # A cached OFF cannot justify an automatic device write.
+            return True
         if not current.get("sleep_expired") and is_device_on():
             # A pending expiry may clear while waiting for the device lock.
             # Keep this session eligible if expiry becomes true again.

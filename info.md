@@ -106,6 +106,9 @@ requires a separately authorized real-device check.
 Active Sleep setpoint, fan and supported mode changes retain the Sleep scene.
 The optional expiry cleanup remains off by default with the existing ten-minute
 grace; no shorter timer or early manual-OFF cleanup is introduced by this change.
+An automatic cleanup may use only power newly returned in the current GET or
+Pusher event, never a cached installation fallback or unrelated partial event.
+This source guard is not proof of instantaneous physical state.
 
 ### Automatic synchronization policy (not a backend contract)
 

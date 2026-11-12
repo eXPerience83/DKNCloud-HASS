@@ -331,6 +331,44 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """Cached OFF from a failed installation must not authorize a scene PUT."""
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    recovery = Mock()
+    monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
+    coordinator.data["dev1"].update(
+        scenary="sleep",
+        power="0",
+        sleep_expired=True,
+        sleep_snapshot_fresh=False,
+    )
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_not_awaited()
+
+    coordinator.data["dev1"]["sleep_snapshot_fresh"] = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
+    recovery.assert_called_once_with("dev1")
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
