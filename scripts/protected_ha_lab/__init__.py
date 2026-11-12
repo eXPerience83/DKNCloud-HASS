@@ -60,7 +60,7 @@ async def async_setup(hass, config):
         # Trust only this disposable synthetic CA for the child HA process.
         # The real-service path never modifies the system trust store.
         os.environ["REQUESTS_CA_BUNDLE"] = str(
-            backend.directory / "synthetic-cert.pem"
+            Path(backend.directory) / "synthetic-cert.pem"
         )
         if case in {"duration", "authorization"}:
             backend.wait = asyncio.Event()
