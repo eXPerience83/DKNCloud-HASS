@@ -338,6 +338,76 @@ async def test_new_observed_sleep_session_rearms_after_convergence(hass):
     assert not tracking.force_exit_requested
 
 
+async def test_local_sleep_survives_retained_scene_on_maintenance_and_partial_push(
+    hass,
+):
+    """Only an explicitly received scenary may replace a new local session."""
+    from types import SimpleNamespace
+
+    from custom_components.airzoneclouddaikin import _derive_state
+
+    entry = SimpleNamespace(entry_id="entry", options={})
+    hass.data.setdefault(DOMAIN, {})["entry"] = {}
+    occupied = {"device": {"scenary": "occupied", "power": "1", "sleep_time": 30}}
+
+    _derive_state(
+        hass,
+        entry,
+        occupied,
+        fresh_scenary_ids={"device"},
+        fresh_power_ids={"device"},
+    )
+    optimistic_set(hass, "entry", "device", "scenary", "sleep")
+    tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["device"]
+    started = tracking.sleep_started_at_utc
+    revision = tracking.session_revision
+    assert started is not None
+
+    # Simulate SyncManager.maintenance() retaining the prior REST scene.
+    _derive_state(
+        hass,
+        entry,
+        occupied,
+        fresh_scenary_ids=set(),
+        fresh_power_ids=set(),
+    )
+    assert tracking.sleep_started_at_utc == started
+    assert tracking.session_revision == revision
+    assert tracking.last_scenary == "sleep"
+
+    # A genuine power-only patch is no scene confirmation either.
+    _derive_state(
+        hass,
+        entry,
+        {"device": {"scenary": "occupied", "power": "0", "sleep_time": 30}},
+        fresh_scenary_ids=set(),
+        fresh_power_ids={"device"},
+    )
+    assert tracking.sleep_started_at_utc == started
+    assert tracking.last_scenary == "sleep"
+
+    _derive_state(
+        hass,
+        entry,
+        {"device": {"scenary": "sleep", "power": "1", "sleep_time": 30}},
+        fresh_scenary_ids={"device"},
+        fresh_power_ids={"device"},
+    )
+    assert tracking.sleep_started_at_utc == started
+    assert tracking.session_revision == revision
+
+    # A newly received occupied scene, unlike the retained one, ends tracking.
+    _derive_state(
+        hass,
+        entry,
+        occupied,
+        fresh_scenary_ids={"device"},
+        fresh_power_ids={"device"},
+    )
+    assert tracking.sleep_started_at_utc is None
+    assert tracking.last_scenary == "occupied"
+
+
 async def test_explicit_new_sleep_rearms_local_tracking(hass):
     from datetime import UTC, datetime
 
