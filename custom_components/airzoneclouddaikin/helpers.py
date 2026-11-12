@@ -102,6 +102,8 @@ def optimistic_set(
                 tracking.sleep_started_at_utc = dt_util.utcnow()
                 tracking.last_scenary = SCENARY_SLEEP
                 tracking.force_exit_requested = False
+                tracking.observed_on = False
+                tracking.consecutive_off_reports = 0
         revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
         revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})
@@ -367,12 +369,20 @@ async def async_auto_exit_sleep_if_needed(
             # A manual request arrived while cleanup waited for the lock.
             # It takes precedence and must not be marked handled.
             return True
-        if reason == "expiry" and current.get("sleep_snapshot_fresh") is False:
-            # A cached OFF cannot justify an automatic device write.
-            return True
-        if not current.get("sleep_expired") and is_device_on():
-            # A pending expiry may clear while waiting for the device lock.
-            # Keep this session eligible if expiry becomes true again.
+        off_confirmed = current.get("sleep_off_confirmed") is True
+        if reason == "expiry":
+            if (
+                not off_confirmed
+                and current.get("sleep_snapshot_fresh") is False
+            ):
+                # A cached OFF cannot justify the legacy expiry cleanup.
+                return True
+            if not off_confirmed and not current.get("sleep_expired"):
+                # Recheck both possible cleanup triggers under the device lock.
+                return True
+        elif not current.get("sleep_expired") and is_device_on():
+            # A wake/helper operation may still exit an OFF Sleep session;
+            # an automatic cleanup must require independently observed OFF.
             return True
         api = getattr(coordinator, "api", None)
         if api is None:
