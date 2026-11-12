@@ -362,10 +362,7 @@ async def async_auto_exit_sleep_if_needed(
             or device_id in pending
         ):
             return
-        if (
-            bucket.get("scene_preset_intents", {}).get(device_id, 0)
-            != cleanup_intent
-        ):
+        if bucket.get("scene_preset_intents", {}).get(device_id, 0) != cleanup_intent:
             # A manual request arrived while cleanup waited for the lock.
             # It takes precedence and must not be marked handled.
             return True

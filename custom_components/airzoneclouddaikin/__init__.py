@@ -965,12 +965,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 else set()
             )
             fresh_scenary_ids = (
-                {device for device, keys in manager.touched.items() if "scenary" in keys}
+                {
+                    device
+                    for device, keys in manager.touched.items()
+                    if "scenary" in keys
+                }
                 if remote
                 else set()
             )
             _derive_state(
-                hass, entry, data,
+                hass,
+                entry,
+                data,
                 fresh_power_ids=fresh_power_ids,
                 fresh_scenary_ids=fresh_scenary_ids,
             )
@@ -1068,11 +1074,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 device for device, keys in manager.touched.items() if "power" in keys
             }
             fresh_scenary_ids = {
-                device for device, keys in manager.touched.items()
-                if "scenary" in keys
+                device for device, keys in manager.touched.items() if "scenary" in keys
             }
             _derive_state(
-                hass, entry, data,
+                hass,
+                entry,
+                data,
                 fresh_power_ids=fresh_power_ids,
                 fresh_scenary_ids=fresh_scenary_ids,
             )

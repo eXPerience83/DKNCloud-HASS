@@ -278,7 +278,8 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied", sleep_expired=True,
+        effective_scenary="occupied",
+        sleep_expired=True,
         sleep_snapshot_fresh=True,
     )
     entered, release = asyncio.Event(), asyncio.Event()
@@ -310,12 +311,12 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
         release.set()
     await asyncio.wait_for(asyncio.gather(cleanup, manual_sleep), timeout=3)
 
-    api.async_set_scenary.assert_awaited_once_with(
-        "unit-1", "occupied", retry=False
-    )
+    api.async_set_scenary.assert_awaited_once_with("unit-1", "occupied", retry=False)
     # With cached raw Sleep, a manual rearm still uses occupied → sleep.
-    assert [call.args[1]["device"]["scenary"] for call in
-            api.put_device_fields.await_args_list] == ["occupied", "sleep"]
+    assert [
+        call.args[1]["device"]["scenary"]
+        for call in api.put_device_fields.await_args_list
+    ] == ["occupied", "sleep"]
     assert entity.preset_mode == "sleep"
 
 
@@ -332,7 +333,8 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied", sleep_expired=True,
+        effective_scenary="occupied",
+        sleep_expired=True,
         sleep_snapshot_fresh=True,
     )
     api.async_set_scenary = AsyncMock()

@@ -671,9 +671,7 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
 
     first = await integration._async_update_data(hass, entry, DummyAPIOk())
     assert set(first) == {"dev-a", "dev-b"}
-    pending = hass.data[DOMAIN][entry.entry_id].setdefault(
-        "sleep_exit_pending", {}
-    )
+    pending = hass.data[DOMAIN][entry.entry_id].setdefault("sleep_exit_pending", {})
     pending.update({"dev-a": "unverified", "dev-b": "unverified"})
 
     class DummyAPIPartial:
