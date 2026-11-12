@@ -436,9 +436,8 @@ def _derive_state(
             bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
-        if (
-            raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}
-            and (fresh_scenary_ids is None or dev_id in fresh_scenary_ids)
+        if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT} and (
+            fresh_scenary_ids is None or dev_id in fresh_scenary_ids
         ):
             # A maintenance tick or power-only push can retain an older scene.
             # Do not erase a locally selected Sleep session without new scene
