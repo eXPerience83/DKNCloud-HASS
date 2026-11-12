@@ -306,7 +306,7 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
 
 
 async def test_new_observed_sleep_session_rearms_after_convergence(hass):
-    """Only a non-Sleep backend observation retires a pending session marker."""
+    """Only a newly observed Home scene retires an ambiguous session marker."""
     from types import SimpleNamespace
 
     from custom_components.airzoneclouddaikin import _derive_state
@@ -317,7 +317,16 @@ async def test_new_observed_sleep_session_rearms_after_convergence(hass):
     }
     _derive_state(hass, entry, {"device": {"scenary": "sleep", "power": "0"}})
     assert "device" in hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
-    _derive_state(hass, entry, {"device": {"scenary": "occupied"}})
+    _derive_state(
+        hass, entry, {"device": {"scenary": "occupied"}},
+        fresh_scenary_ids=set(),
+    )
+    # Retained Home (e.g. a partial power-only push) cannot unlock ambiguity.
+    assert "device" in hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
+    _derive_state(
+        hass, entry, {"device": {"scenary": "occupied"}},
+        fresh_scenary_ids={"device"},
+    )
     assert not hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
     _derive_state(hass, entry, {"device": {"scenary": "sleep"}})
     tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["device"]

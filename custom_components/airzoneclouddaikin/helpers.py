@@ -336,8 +336,9 @@ async def async_auto_exit_sleep_if_needed(
 ) -> bool | None:
     """Distinguish a no-longer-due recheck from an attempted scene exit.
 
-    Return True if expiry cleared while waiting for the device lock, False
-    if cooldown prevented any send, and None for other handled outcomes.
+    Return True if the locked recheck is no longer due or a newer manual
+    scene request superseded it. Return False if cooldown prevented any
+    send, and None for other handled outcomes.
     Never replay an ambiguous scene write."""
     bucket = _entry_bucket(hass, entry_id)
     revision = bucket.get("scene_revisions", {}).get(device_id, 0)
