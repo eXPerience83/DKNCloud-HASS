@@ -371,7 +371,10 @@ async def _async_update_data(
         domain_bucket["has_successful_snapshot"] = True
         domain_bucket["last_data"] = dict(data)
         _derive_state(
-            hass, entry, data, had_non_auth_install_errors,
+            hass,
+            entry,
+            data,
+            had_non_auth_install_errors,
             fresh_power_ids=fresh_power_ids,
         )
 
@@ -393,8 +396,12 @@ async def _async_update_data(
 
 
 def _derive_state(
-    hass, entry, data, had_non_auth_install_errors=False,
-    *, fresh_power_ids: set[str] | None = None,
+    hass,
+    entry,
+    data,
+    had_non_auth_install_errors=False,
+    *,
+    fresh_power_ids: set[str] | None = None,
 ):
     """Recompute local scene state for snapshots, push and maintenance ticks."""
     bucket = hass.data[DOMAIN][entry.entry_id]
@@ -940,7 +947,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         def publish_sync(data, remote):
             fresh_power_ids = (
                 {device for device, keys in manager.touched.items() if "power" in keys}
-                if remote else set()
+                if remote
+                else set()
             )
             _derive_state(hass, entry, data, fresh_power_ids=fresh_power_ids)
             bucket["last_data"] = data
