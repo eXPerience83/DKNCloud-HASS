@@ -462,6 +462,11 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     api.async_set_scenary.assert_not_awaited()
 
     coordinator.data["dev1"]["sleep_snapshot_fresh"] = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    # Expired local UI status alone cannot authorize an automatic PUT.
+    api.async_set_scenary.assert_not_awaited()
+
     coordinator.data["dev1"]["sleep_off_confirmed"] = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
