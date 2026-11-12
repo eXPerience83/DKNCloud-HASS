@@ -11,9 +11,11 @@ from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
 
-# Static RSA has no forward secrecy. Activation requires a separate security
-# decision; there is deliberately no automatic fallback or configuration toggle.
-STATIC_RSA_COMPATIBILITY_ENABLED = False
+# Explicitly approved for this service's WSS endpoint on 2026-11-12.
+# The observed server and official browser client negotiate TLS 1.2 with
+# TLS_RSA_WITH_AES_128_GCM_SHA256. Static RSA lacks forward secrecy.
+# Scope stays restricted to verified WSS; never change HA/REST TLS globally.
+STATIC_RSA_COMPATIBILITY_ENABLED = True
 PUSHER_HOST = "dkn.airzonecloud.com"
 PUSHER_PORT = 8080
 _ORIGIN = URL.build(scheme="wss", host=PUSHER_HOST, port=PUSHER_PORT)
