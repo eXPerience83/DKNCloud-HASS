@@ -239,15 +239,28 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         return scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Map HA preset → backend scenary and write via put_device_fields()."""
+        """Write the scene; a completed one-shot Sleep must transition via Home."""
         if preset_mode not in (self.preset_modes or []):
             _LOGGER.debug(
                 "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
             )
             return
 
-        current = self.preset_mode
-        if current == preset_mode:
+        def expired_raw_sleep() -> bool:
+            return (
+                str(self._device.get("scenary") or "").strip().lower() == "sleep"
+                and self._device.get("sleep_expired") is True
+            )
+
+        def needs_home_cleanup() -> bool:
+            return (
+                expired_raw_sleep()
+                and self._overlay_value("scenary", None) != "occupied"
+            )
+
+        if self.preset_mode == preset_mode and not (
+            preset_mode == "home" and needs_home_cleanup()
+        ):
             return
 
         scenary = preset_to_scenary(preset_mode)
@@ -260,16 +273,72 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.error("API handle missing in coordinator; cannot set scenary")
             return
 
+        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {})
+        revision = bucket.get("scene_revisions", {}).get(self._device_id, 0)
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            try:
-                # Canonical write path (no legacy helpers).
-                await api.put_device_fields(
-                    self._device_id, {"device": {"scenary": scenary}}
+            if (
+                bucket.get("closing")
+                or self.hass.is_stopping
+                or bucket.get("scene_revisions", {}).get(self._device_id, 0)
+                != revision
+            ):
+                # A newer manual scene command superseded this queued request.
+                return
+            if self.preset_mode == preset_mode and not (
+                preset_mode == "home" and needs_home_cleanup()
+            ):
+                return
+
+            expired = expired_raw_sleep()
+            rearm = preset_mode == "sleep" and expired
+            cleared_stale_sleep = False
+
+            def request_readback() -> None:
+                if manager := bucket.get("sync_manager"):
+                    manager.request_recovery(self._device_id)
+                else:
+                    schedule_post_write_refresh(
+                        self.hass, self.coordinator, entry_id=self._entry_id
+                    )
+
+            def preserve_partial_home() -> None:
+                # Only the first PUT was accepted. A failed second PUT may
+                # have reached the server: never blindly retry it or claim
+                # that a fresh one-shot Sleep timer has started.
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "scenary", "occupied"
                 )
+                self.async_write_ha_state()
+                request_readback()
+
+            try:
+                if rearm:
+                    # Repeating the unchanged backend 'sleep' scene does not
+                    # reliably start a new one-shot timer.
+                    await api.put_device_fields(
+                        self._device_id,
+                        {"device": {"scenary": "occupied"}},
+                        retry=False,
+                    )
+                    cleared_stale_sleep = True
+                if expired:
+                    # Two-stage re-arm and explicit expired cleanup cannot
+                    # safely replay a write after an ambiguous HTTP response.
+                    await api.put_device_fields(
+                        self._device_id, {"device": {"scenary": scenary}}, retry=False
+                    )
+                else:
+                    await api.put_device_fields(
+                        self._device_id, {"device": {"scenary": scenary}}
+                    )
             except asyncio.CancelledError:
+                if cleared_stale_sleep:
+                    preserve_partial_home()
                 raise
             except Exception as err:
+                if cleared_stale_sleep:
+                    preserve_partial_home()
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",
                     scenary,
@@ -278,13 +347,18 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
                 raise
 
+            # optimistic_set('sleep') also starts a new local session revision
+            # even if a backend snapshot did not expose the short Home step.
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, "scenary", scenary
             )
             self.async_write_ha_state()
-            schedule_post_write_refresh(
-                self.hass, self.coordinator, entry_id=self._entry_id
-            )
+            if expired:
+                request_readback()
+            else:
+                schedule_post_write_refresh(
+                    self.hass, self.coordinator, entry_id=self._entry_id
+                )
 
     # ---- Auto-exit AWAY on active commands -------------------------------
 

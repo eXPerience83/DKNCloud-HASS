@@ -92,6 +92,21 @@ stopping.
 Migration logs do not include normalized account email addresses; persisted
 config-entry identifiers remain unchanged.
 
+### Sleep one-shot re-arm (draft #190, not device-certified)
+
+When raw backend scene remains `sleep` after local expiry but HA displays Home,
+an explicit Home selection sends one canonical `occupied` scene update instead
+of treating it as a UI no-op. Selecting Sleep again requests an explicit
+`occupied → sleep` transition under the shared device write lock. Both steps
+disable automatic retries, and a failed or ambiguous second step keeps Home
+optimistic and requests a readback rather than claiming a new timer. A successful
+second step restarts **local** session tracking; physical timer restart still
+requires a separately authorized real-device check.
+
+Active Sleep setpoint, fan and supported mode changes retain the Sleep scene.
+The optional expiry cleanup remains off by default with the existing ten-minute
+grace; no shorter timer or early manual-OFF cleanup is introduced by this change.
+
 ### Automatic synchronization policy (not a backend contract)
 
 Push uses the service-specific secure WebSocket origin with certificate
