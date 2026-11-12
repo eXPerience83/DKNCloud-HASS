@@ -202,11 +202,12 @@ class SyncManager:
                 self._last_http_get[key] = self._clock()
         if checkpoint[0] != self.state.generation:
             raise ObsoleteSnapshot
-        self.touched = {
-            str(d.get("id")): {k for k, v in d.items() if v is not None}
-            for d in devices
-        }
-        self.state.snapshot(devices, checkpoint)
+        # A GET may complete after a newer Pusher event. Snapshot merge
+        # rejects superseded fields; only *applied* keys may count as fresh
+        # evidence or acknowledge an optimistic write.
+        applied_fields: dict[str, set[str]] = {}
+        self.state.snapshot(devices, checkpoint, applied_fields=applied_fields)
+        self.touched = applied_fields
         now = self._clock()
         for device in devices:
             key = str(device.get("id") or "")
