@@ -239,6 +239,76 @@ async def test_explicit_refresh_counts_single_off_snapshot_once(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_inflight_get_discarded_power_cannot_confirm_pushed_off(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """An old GET power rejected by SyncState is not a second OFF report."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    first = {**sample_device, "scenary": "occupied", "power": "1"}
+    old_get = {**sample_device, "scenary": "sleep", "power": "1"}
+    calls = 0
+
+    async def fetch(_installation):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return [first]
+        entered.set()
+        await release.wait()
+        return [old_get]
+
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=fetch)
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    recovery = Mock()
+    monkeypatch.setattr(manager, "request_recovery", recovery)
+    generation = manager.state.generation
+    refresh = None
+    try:
+        await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
+        tracking = bucket["sleep_tracking"]["dev1"]
+        assert tracking.observed_on
+        refresh = asyncio.create_task(coordinator.async_refresh())
+        await asyncio.wait_for(entered.wait(), timeout=3)
+
+        # GET began with an ON power value, but a newer Pusher OFF wins.
+        await manager.event("dev1", {"power": "0"}, generation)
+        assert tracking.consecutive_off_reports == 1
+        api.async_set_scenary.assert_not_awaited()
+        release.set()
+        await asyncio.wait_for(refresh, timeout=3)
+
+        # The returned GET did not apply its stale power field.
+        assert manager.state.data["dev1"]["power"] == "0"
+        assert "power" not in manager.touched.get("dev1", set())
+        assert tracking.consecutive_off_reports == 1
+        assert coordinator.data["dev1"]["sleep_off_confirmed"] is False
+        api.async_set_scenary.assert_not_awaited()
+        recovery.assert_called_once_with("dev1")
+
+        await manager.event("dev1", {"power": "0"}, generation)
+        await hass.async_block_till_done()
+        api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
+    finally:
+        release.set()
+        if refresh is not None and not refresh.done():
+            await asyncio.wait_for(refresh, timeout=3)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
