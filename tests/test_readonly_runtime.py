@@ -129,9 +129,7 @@ async def test_real_entry_loopback_and_control_barrier(
         coordinator = entry.runtime_data.coordinator
         # The security barrier must also protect an automatic cleanup
         # requested for a session-consistent OFF, not just a timeout hint.
-        coordinator.data["dev1"].update(
-            scenary="sleep", sleep_off_confirmed=True
-        )
+        coordinator.data["dev1"].update(scenary="sleep", sleep_off_confirmed=True)
         coordinator.async_update_listeners()
         await until(lambda: gateway.blocked > 4)
         assert not any(method in {"PUT", "PATCH", "DELETE"} for method, _ in calls)
