@@ -511,6 +511,13 @@ def _derive_state(
                 str(raw_power if raw_power is not None else "").strip().lower()
             )
             if power_value in {"1", "true", "on"}:
+                if (
+                    tracking.last_confirmed_on_utc is not None
+                    and now - tracking.last_confirmed_on_utc > timedelta(seconds=60)
+                ):
+                    # A long telemetry gap starts a new corroboration window;
+                    # one resumed ON report cannot reuse an old pair.
+                    tracking.overdue_on_reports = 0
                 tracking.observed_on = True
                 tracking.consecutive_off_reports = 0
                 tracking.last_confirmed_on_utc = now
