@@ -410,9 +410,7 @@ async def test_current_sleep_off_needs_on_then_two_fresh_off_reports(
     recovery.assert_called_once_with("dev1")
     await manager.event("dev1", {"power": "0"}, generation)
     await hass.async_block_till_done()
-    api.async_set_scenary.assert_awaited_once_with(
-        "dev1", "occupied", retry=False
-    )
+    api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
     assert bucket["sleep_exit_pending"]["dev1"] == "accepted"
 
     # Repeated OFF and maintenance cannot replay an already accepted PUT.
