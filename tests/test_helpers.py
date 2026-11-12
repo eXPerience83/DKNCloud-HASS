@@ -396,7 +396,19 @@ async def test_local_sleep_survives_retained_scene_on_maintenance_and_partial_pu
     assert tracking.sleep_started_at_utc == started
     assert tracking.session_revision == revision
 
-    # A newly received occupied scene, unlike the retained one, ends tracking.
+    # Even a newly fetched occupied scene may predate a recent manual Sleep.
+    # Keep local intent until the optimistic acknowledgement window ends.
+    _derive_state(
+        hass,
+        entry,
+        occupied,
+        fresh_scenary_ids={"device"},
+        fresh_power_ids={"device"},
+    )
+    assert tracking.sleep_started_at_utc == started
+    optimistic_invalidate(hass, "entry", "device", "scenary")
+
+    # Once the pending scene is no longer active, explicit Home ends tracking.
     _derive_state(
         hass,
         entry,
