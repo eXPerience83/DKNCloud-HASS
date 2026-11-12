@@ -1172,24 +1172,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         coordinator.update_interval = None
 
         async def refresh_sync():
-            # manager.refresh() returns transport state, while publish_sync()
-            # derives local scene fields on a separate copy. Return the same
-            # derived view so an explicit refresh cannot undo that publication.
+            # The manager publishes and derives each successful GET exactly
+            # once. Deriving the same touched fields again here would count
+            # one OFF as two independent observations, authorizing unsafe
+            # Sleep cleanup. Return the already derived publication instead.
             data = await manager.refresh()
-            fresh_power_ids = {
-                device for device, keys in manager.touched.items() if "power" in keys
-            }
-            fresh_scenary_ids = {
-                device for device, keys in manager.touched.items() if "scenary" in keys
-            }
-            _derive_state(
-                hass,
-                entry,
-                data,
-                fresh_power_ids=fresh_power_ids,
-                fresh_scenary_ids=fresh_scenary_ids,
-            )
-            return data
+            return deepcopy(bucket.get("last_data") or data)
 
         coordinator.update_method = refresh_sync
 
