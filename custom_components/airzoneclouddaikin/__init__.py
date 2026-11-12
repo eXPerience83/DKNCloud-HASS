@@ -459,9 +459,8 @@ def _derive_state(
             bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
-        if (
-            raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}
-            and (fresh_scenary_ids is None or dev_id in fresh_scenary_ids)
+        if raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT} and (
+            fresh_scenary_ids is None or dev_id in fresh_scenary_ids
         ):
             # A maintenance tick or power-only push can retain an older scene.
             # Do not erase a locally selected Sleep session without new scene
@@ -808,14 +807,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     continue
 
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if (
-                    raw_scenary != SCENARY_SLEEP
-                    or not (
-                        dev.get("sleep_off_confirmed")
-                        or (
-                            dev.get("sleep_expired")
-                            and dev.get("sleep_snapshot_fresh", True) is not False
-                        )
+                if raw_scenary != SCENARY_SLEEP or not (
+                    dev.get("sleep_off_confirmed")
+                    or (
+                        dev.get("sleep_expired")
+                        and dev.get("sleep_snapshot_fresh", True) is not False
                     )
                 ):
                     continue
@@ -872,14 +868,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             ):
                 continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if (
-                raw_scenary == SCENARY_SLEEP
-                and (
-                    dev.get("sleep_off_confirmed")
-                    or (
-                        dev.get("sleep_expired")
-                        and dev.get("sleep_snapshot_fresh", True) is not False
-                    )
+            if raw_scenary == SCENARY_SLEEP and (
+                dev.get("sleep_off_confirmed")
+                or (
+                    dev.get("sleep_expired")
+                    and dev.get("sleep_snapshot_fresh", True) is not False
                 )
             ):
                 has_candidate = True
