@@ -334,9 +334,11 @@ async def async_auto_exit_sleep_if_needed(
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
     on_success: Callable[[], None] | None = None,
 ) -> bool | None:
-    """Return False only for a provably unsent, cooldown-deferred exit.
+    """Distinguish a no-longer-due recheck from an attempted scene exit.
 
-    Serialize sleep exits and never replay an ambiguous scene write."""
+    Return True if expiry cleared while waiting for the device lock, False
+    if cooldown prevented any send, and None for other handled outcomes.
+    Never replay an ambiguous scene write."""
     bucket = _entry_bucket(hass, entry_id)
     revision = bucket.get("scene_revisions", {}).get(device_id, 0)
     raw = str(device.get("scenary") or "").lower()
@@ -354,10 +356,13 @@ async def async_auto_exit_sleep_if_needed(
             or bucket.get("scene_revisions", {}).get(device_id, 0) != revision
             or (overlay and overlay.get("value") != SCENARY_SLEEP)
             or str(current.get("scenary") or "").lower() != SCENARY_SLEEP
-            or (not current.get("sleep_expired") and is_device_on())
             or device_id in pending
         ):
             return
+        if not current.get("sleep_expired") and is_device_on():
+            # A pending expiry may clear while waiting for the device lock.
+            # Keep this session eligible if expiry becomes true again.
+            return True
         api = getattr(coordinator, "api", None)
         if api is None:
             return
