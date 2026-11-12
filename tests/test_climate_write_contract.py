@@ -318,6 +318,12 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
         for call in api.put_device_fields.await_args_list
     ] == ["occupied", "sleep"]
     assert entity.preset_mode == "sleep"
+    # The automatic Home path schedules a one-second coordinator refresh
+    # without a live SyncManager. The official HA harness requires this
+    # fixture-owned timer to be cancelled at test teardown.
+    if cancel := hass.data[DOMAIN]["climate-entry"].get("pending_refresh"):
+        cancel()
+
 
 
 async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
