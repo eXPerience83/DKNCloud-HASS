@@ -318,13 +318,17 @@ async def test_new_observed_sleep_session_rearms_after_convergence(hass):
     _derive_state(hass, entry, {"device": {"scenary": "sleep", "power": "0"}})
     assert "device" in hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
     _derive_state(
-        hass, entry, {"device": {"scenary": "occupied"}},
+        hass,
+        entry,
+        {"device": {"scenary": "occupied"}},
         fresh_scenary_ids=set(),
     )
     # Retained Home (e.g. a partial power-only push) cannot unlock ambiguity.
     assert "device" in hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
     _derive_state(
-        hass, entry, {"device": {"scenary": "occupied"}},
+        hass,
+        entry,
+        {"device": {"scenary": "occupied"}},
         fresh_scenary_ids={"device"},
     )
     assert not hass.data[DOMAIN]["entry"]["sleep_exit_pending"]
