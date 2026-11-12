@@ -191,6 +191,56 @@ async def test_explicit_refresh_preserves_derived_scenary_in_coordinator(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_explicit_refresh_counts_single_off_snapshot_once(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """The coordinator must not treat one refreshed GET as two OFF reports."""
+    first = {**sample_device, "scenary": "occupied", "power": "1"}
+    off = {**sample_device, "scenary": "sleep", "power": "0"}
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=[[first], [off]])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    recovery = Mock()
+    monkeypatch.setattr(manager, "request_recovery", recovery)
+    generation = manager.state.generation
+    try:
+        # The observed ON must belong to the same Sleep session.
+        await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
+        tracking = bucket["sleep_tracking"]["dev1"]
+        assert tracking.observed_on
+
+        # One GET publishes once, then returns via refresh_sync. The latter
+        # must reuse derived data without treating the same GET as a second OFF.
+        await coordinator.async_refresh()
+        assert api.fetch_devices.await_count == 2
+        assert tracking.consecutive_off_reports == 1
+        assert not coordinator.data["dev1"]["sleep_off_confirmed"]
+        api.async_set_scenary.assert_not_awaited()
+        recovery.assert_called_once_with("dev1")
+
+        # A genuinely separate follow-up OFF Pusher report can confirm it.
+        await manager.event("dev1", {"power": "0"}, generation)
+        await hass.async_block_till_done()
+        api.async_set_scenary.assert_awaited_once_with(
+            "dev1", "occupied", retry=False
+        )
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
