@@ -104,6 +104,11 @@ def optimistic_set(
                 tracking.force_exit_requested = False
                 tracking.observed_on = False
                 tracking.consecutive_off_reports = 0
+                tracking.start_known = True
+                tracking.expected_minutes = None
+                tracking.overdue_on_reports = 0
+                tracking.last_confirmed_on_utc = None
+                tracking.overdue_probe_requested = False
         revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
         revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})
