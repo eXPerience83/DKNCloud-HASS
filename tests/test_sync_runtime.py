@@ -331,6 +331,58 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """An expiry cleared during a lock wait must not latch the session."""
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data.coordinator
+    tracking = bucket["sleep_tracking"]["dev1"]
+    recovery = Mock()
+    monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
+
+    lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
+    await lock.acquire()
+    try:
+        coordinator.data["dev1"].update(scenary="sleep", sleep_expired=True)
+        coordinator.async_update_listeners()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        first_task = bucket["sleep_expiry_task"]
+        assert not first_task.done()
+        coordinator.data["dev1"]["sleep_expired"] = False
+    finally:
+        lock.release()
+
+    await asyncio.wait_for(first_task, timeout=5)
+    assert not tracking.force_exit_requested
+    assert "dev1" not in bucket.get("sleep_exit_pending", {})
+    api.async_set_scenary.assert_not_awaited()
+    recovery.assert_not_called()
+
+    # Expiry recurs in the same Sleep session: cleanup is still eligible.
+    coordinator.data["dev1"]["sleep_expired"] = True
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+    api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
+    assert tracking.force_exit_requested
+    assert bucket["sleep_exit_pending"]["dev1"] == "accepted"
+    recovery.assert_called_once_with("dev1")
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 @pytest.mark.parametrize("next_action", ["retry", "rearm", "manual", "stop"])
 async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
     hass, monkeypatch, dkn_config_entry_factory, sample_device, next_action
