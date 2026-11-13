@@ -37,6 +37,25 @@ async def test_finish_event_and_remaining_closes_survive_failure(tmp_path, failu
     assert hass.data["lab_failed"]
 
 
+async def test_finish_lab_continues_closing_after_cancellation(tmp_path):
+    """Even cancellation of the first resource must close the second."""
+    hass = SimpleNamespace(
+        data={"lab_finished": asyncio.Event()},
+        config=SimpleNamespace(path=lambda name: str(tmp_path / name)),
+    )
+    first = AsyncMock(side_effect=asyncio.CancelledError())
+    second = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await finish_lab(hass, {}, [first, second], lambda: {"closed": True})
+
+    first.assert_awaited_once()
+    second.assert_awaited_once()
+    assert hass.data["lab_finished"].is_set()
+    assert hass.data["lab_failed"]
+    assert not (tmp_path / "lab-result.json").exists()
+
+
 async def test_legacy_entry_constructor_failure_releases_real_lab(
     hass, monkeypatch, socket_enabled, tmp_path
 ):

@@ -299,7 +299,9 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
 
 
 @pytest.mark.parametrize("manual", [False, True])
-async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
+async def test_sleep_exit_serializes_pending_and_manual_scene(
+    hass, manual, monkeypatch
+):
     """An old decision cannot overwrite a later command or repeat an unknown write."""
     import asyncio
     from unittest.mock import AsyncMock
@@ -311,6 +313,15 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
     coordinator.data = {"device": device}
     lock = helpers.acquire_device_lock(hass, "entry", "device")
     await lock.acquire()
+    lock_reached = asyncio.Event()
+    original_acquire = helpers.acquire_device_lock
+
+    def observed_lock(*args, **kwargs):
+        acquired = original_acquire(*args, **kwargs)
+        lock_reached.set()
+        return acquired
+
+    monkeypatch.setattr(helpers, "acquire_device_lock", observed_lock)
 
     async def exit_sleep():
         await async_auto_exit_sleep_if_needed(
@@ -325,7 +336,8 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
         )
 
     task = asyncio.create_task(exit_sleep())
-    await asyncio.sleep(0)
+    await asyncio.wait_for(lock_reached.wait(), timeout=2)
+    assert not task.done()
     if manual:
         helpers.optimistic_set(hass, "entry", "device", "scenary", "vacant")
     lock.release()

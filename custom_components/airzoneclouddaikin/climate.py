@@ -366,13 +366,17 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except asyncio.CancelledError:
                 if cleared_stale_sleep:
                     preserve_partial_home()
-                elif rearm:
+                elif stale_sleep_off:
+                    # An interrupted explicit Home/Away write can also have
+                    # reached the server; block queued automatic cleanup.
                     fence_ambiguous_scene()
                 raise
             except Exception as err:
                 if cleared_stale_sleep:
                     preserve_partial_home()
-                elif rearm and not isinstance(err, CommandNotSentCooldown):
+                elif stale_sleep_off and not isinstance(err, CommandNotSentCooldown):
+                    # Home/Away, not only rearm, can be accepted despite a
+                    # missing reply. A provably unsent cooldown is exempt.
                     fence_ambiguous_scene()
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",

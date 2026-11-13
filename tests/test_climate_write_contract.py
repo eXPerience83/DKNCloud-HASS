@@ -343,6 +343,22 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
         cancel()
 
 
+def _arm_current_sleep_off_evidence(hass) -> None:
+    """Make a cleanup eligible so these tests exercise the intent/pending fence."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    hass.data[DOMAIN]["climate-entry"]["sleep_tracking"] = {
+        "unit-1": SleepTracking(
+            last_scenary="sleep",
+            sleep_started_at_utc=dt_util.utcnow(),
+            observed_on=True,
+            consecutive_off_reports=2,
+        )
+    }
+
+
 async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     hass, dummy_coordinator_factory, monkeypatch
 ):
@@ -360,6 +376,7 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
         sleep_snapshot_fresh=True,
     )
     api.async_set_scenary = AsyncMock()
+    _arm_current_sleep_off_evidence(hass)
     lock = acquire_device_lock(hass, "climate-entry", "unit-1")
     await lock.acquire()
     try:
@@ -402,6 +419,8 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
         sleep_snapshot_fresh=True,
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
+    _arm_current_sleep_off_evidence(hass)
+    api.async_set_scenary = AsyncMock()
     manager = Mock()
     bucket["sync_manager"] = manager
     api.put_device_fields.side_effect = TimeoutError("ambiguous first PUT")
@@ -424,6 +443,75 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
         allow_away_handling=False,
     )
     assert api.put_device_fields.await_count == 1
+    api.async_set_scenary.assert_not_awaited()
+
+
+@pytest.mark.parametrize("preset", ["home", "away"])
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+async def test_ambiguous_explicit_home_away_blocks_old_sleep_cleanup(
+    hass, dummy_coordinator_factory, monkeypatch, preset, failure
+):
+    """A timed-out or cancelled explicit scene must fence later automatic Home."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    _arm_current_sleep_off_evidence(hass)
+    api.async_set_scenary = AsyncMock()
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    api.put_device_fields.side_effect = failure()
+
+    with pytest.raises(failure):
+        await entity.async_set_preset_mode(preset)
+
+    expected = "occupied" if preset == "home" else "vacant"
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": expected}}, retry=False
+    )
+    assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
+    manager.request_recovery.assert_called_once_with("unit-1")
+
+    # Even if old Sleep OFF telemetry is still cached, the later automatic
+    # cleanup must not overwrite the possibly applied manual Home/Away.
+    await async_auto_exit_sleep_if_needed(
+        hass,
+        entry_id="climate-entry",
+        device_id="unit-1",
+        device=entity._device,
+        coordinator=entity.coordinator,
+        reason="expiry",
+        is_device_on=lambda: True,
+        allow_away_handling=False,
+    )
+    api.async_set_scenary.assert_not_awaited()
+
+
+@pytest.mark.parametrize("preset", ["home", "away"])
+async def test_proven_unsent_explicit_home_away_does_not_fence(
+    hass, dummy_coordinator_factory, monkeypatch, preset
+):
+    """Cooldown rejected before I/O must not create an ambiguous write fence."""
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        CommandNotSentCooldown,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    api.put_device_fields.side_effect = CommandNotSentCooldown(hass.loop.time() + 300)
+
+    with pytest.raises(CommandNotSentCooldown):
+        await entity.async_set_preset_mode(preset)
+    assert not bucket.get("sleep_exit_pending")
+    manager.request_recovery.assert_not_called()
 
 
 async def test_known_unsent_first_step_does_not_mark_ambiguous(
