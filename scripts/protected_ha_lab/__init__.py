@@ -280,89 +280,94 @@ async def async_setup(hass, config):
                 task.result()
             if not supervisor.stopped.is_set():
                 raise RuntimeError("Synthetic operation did not stop the laboratory")
+        except asyncio.CancelledError:
+            report["error"] = "scenario_cancelled"
+            raise
         except Exception:
             if case in {"tls", "redirect", "quota"} and supervisor.stopped.is_set():
                 report["security_stop"] = True
             else:
                 report["error"] = "scenario_failed"
         finally:
-            if case in {"get", "authorization"}:
-                report[f"inflight_{case}_at_deadline"] = bool(
-                    gateway.protected.session.connector._acquired
-                )
-            if case == "cooldown":
-                runtime = getattr(entry, "runtime_data", None)
-                report["cooldown_pending_at_deadline"] = bool(
-                    runtime and runtime.api._pending
-                )
-            task.cancel()
-            stopped.cancel()
-            watcher.cancel()
-            await asyncio.gather(task, stopped, watcher, return_exceptions=True)
-            if case == "get":
-                runtime = getattr(entry, "runtime_data", None)
-                report["get_pending_before_owner_shutdown"] = bool(
-                    runtime
-                    and runtime.api._pending
-                    and gateway.protected.session.connector._acquired
-                )
             try:
-                if entry is not None:
-                    if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
-                        if owner := bucket.get("sync_manager"):
-                            await owner.close()
-                            report["owned_tasks_closed"] = not owner._tasks and all(
-                                s._task is None for s in owner.schedulers.values()
-                            )
-                    await hass.config_entries.async_unload(entry.entry_id)
-                    if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
-                        if owner := bucket.get("sync_manager"):
-                            await owner.close()
-                    await hass.config_entries.async_remove(entry.entry_id)
-            except Exception:
-                report["error"] = "cleanup_failed"
+                if case in {"get", "authorization"}:
+                    report[f"inflight_{case}_at_deadline"] = bool(
+                        gateway.protected.session.connector._acquired
+                    )
+                if case == "cooldown":
+                    runtime = getattr(entry, "runtime_data", None)
+                    report["cooldown_pending_at_deadline"] = bool(
+                        runtime and runtime.api._pending
+                    )
+                task.cancel()
+                stopped.cancel()
+                watcher.cancel()
+                await asyncio.gather(task, stopped, watcher, return_exceptions=True)
+                if case == "get":
+                    runtime = getattr(entry, "runtime_data", None)
+                    report["get_pending_before_owner_shutdown"] = bool(
+                        runtime
+                        and runtime.api._pending
+                        and gateway.protected.session.connector._acquired
+                    )
+                try:
+                    if entry is not None:
+                        if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
+                            if owner := bucket.get("sync_manager"):
+                                await owner.close()
+                                report["owned_tasks_closed"] = not owner._tasks and all(
+                                    s._task is None for s in owner.schedulers.values()
+                                )
+                        await hass.config_entries.async_unload(entry.entry_id)
+                        if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
+                            if owner := bucket.get("sync_manager"):
+                                await owner.close()
+                        await hass.config_entries.async_remove(entry.entry_id)
+                except Exception:
+                    report["error"] = "cleanup_failed"
 
-        # Observe the shutdown owner before transport cleanup can mask pending I/O.
-        report["pending_http_tasks"] = sum(
-            not task.done()
-            and getattr(task.get_coro(), "__qualname__", "")
-            == "AirzoneAPI._authed_request_impl"
-            for task in asyncio.all_tasks()
-        )
-        report["transports_open_when_checked"] = (
-            not gateway.protected.session.closed
-            and (backend is None or bool(backend.runner.sites))
-        )
-
-        async def close_backend():
-            if backend is not None:
-                if backend.wait:
-                    backend.wait.set()
-                await backend.close()
-
-        def describe():
-            last = observations["last_device_age"]
-            observations["last_device_age"] = time.monotonic() - last if last else None
-            return dict(
-                observations=observations | gateway.observations,
-                pusher_result="verified"
-                if observations["device_applied"]
-                else "inconclusive",
-                safely_finished=report.get("pending_http_tasks") == 0
-                and gateway.protected.session.closed,
-                reason=supervisor.reason,
-                counts=supervisor.counts,
-                operations=backend.operations if backend else None,
-                cooldown_wait=case == "cooldown" and bool(report.get("loaded")),
-                backend_control_writes=backend.controls if backend else None,
-                session_closed=gateway.protected.session.closed,
-                server_closed=not backend.runner.sites if backend else True,
-                storage_files=len(list(Path(hass.config.path(".storage")).glob("*"))),
+            finally:
+            # Observe the shutdown owner before transport cleanup can mask pending I/O.
+            report["pending_http_tasks"] = sum(
+                not task.done()
+                and getattr(task.get_coro(), "__qualname__", "")
+                == "AirzoneAPI._authed_request_impl"
+                for task in asyncio.all_tasks()
+            )
+            report["transports_open_when_checked"] = (
+                not gateway.protected.session.closed
+                and (backend is None or bool(backend.runner.sites))
             )
 
-        await finish_lab(
-            hass, report, [gateway.protected.session.close, close_backend], describe
-        )
+            async def close_backend():
+                if backend is not None:
+                    if backend.wait:
+                        backend.wait.set()
+                    await backend.close()
+
+            def describe():
+                last = observations["last_device_age"]
+                observations["last_device_age"] = time.monotonic() - last if last else None
+                return dict(
+                    observations=observations | gateway.observations,
+                    pusher_result="verified"
+                    if observations["device_applied"]
+                    else "inconclusive",
+                    safely_finished=report.get("pending_http_tasks") == 0
+                    and gateway.protected.session.closed,
+                    reason=supervisor.reason,
+                    counts=supervisor.counts,
+                    operations=backend.operations if backend else None,
+                    cooldown_wait=case == "cooldown" and bool(report.get("loaded")),
+                    backend_control_writes=backend.controls if backend else None,
+                    session_closed=gateway.protected.session.closed,
+                    server_closed=not backend.runner.sites if backend else True,
+                    storage_files=len(list(Path(hass.config.path(".storage")).glob("*"))),
+                )
+
+            await finish_lab(
+                hass, report, [gateway.protected.session.close, close_backend], describe
+            )
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, scenario)
     return True
