@@ -291,5 +291,4 @@ def protected_launcher(tmp_path, socket_enabled):
         ]:
             assert secret not in result.stdout + result.stderr
 
-
     return run_case
