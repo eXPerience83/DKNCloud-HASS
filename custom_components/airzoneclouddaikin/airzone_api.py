@@ -16,7 +16,8 @@ P4-A/B:
 
 Timeouts:
 - Catch only built-in TimeoutError (asyncio.TimeoutError is an alias on 3.11+).
-- Do ONE gentle retry on timeouts.
+- Read-only calls with retry=True permit ONE gentle timeout retry.
+- Automatic retry=False operations delegate backoff to their scheduler.
 
 Important:
 - 401 is never retried here; it must bubble up to the coordinator.
@@ -27,8 +28,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import random
 from collections.abc import Callable
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from json import JSONDecodeError
 from typing import Any
 
@@ -62,6 +66,15 @@ _LOGGER = logging.getLogger(__name__)
 _MAX_RETRIES = 3
 _BASE_DELAY = 0.6
 _JITTER = 0.25
+_MAX_WRITE_COOLDOWN_WAIT = 10.0
+
+
+class CommandNotSentCooldown(HomeAssistantError):
+    """A local cooldown rejected this invocation before any HTTP attempt."""
+
+    def __init__(self, retry_at: float):
+        super().__init__("Cloud rate limit active; device command was not sent")
+        self.retry_at = retry_at
 
 
 class AirzoneAPI:
@@ -80,7 +93,20 @@ class AirzoneAPI:
         self._session = session
         self._token: str | None = token
         self._cooldown_until: float = 0.0
+        self._suspended = False
+        self._auth_suspended = False
+        self.request_allowed = lambda: True
+        self.on_information_started = None
+        self._pending = set()
         self.on_write_auth_failure: Callable[[], None] | None = None
+
+    def suspend(self, *, auth: bool = True):
+        """Fence future sends and cancel other pending authenticated operations."""
+        self._suspended = True
+        self._auth_suspended = self._auth_suspended or auth
+        for task in tuple(self._pending):
+            if task is not asyncio.current_task():
+                task.cancel()
 
     def __repr__(self) -> str:
         """Return a safe representation that never leaks secrets."""
@@ -148,6 +174,7 @@ class AirzoneAPI:
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        data: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> Any:
         """HTTP request helper (never logs full URLs with secrets)."""
@@ -161,8 +188,22 @@ class AirzoneAPI:
 
         safe_error: Exception
         try:
+            if self._suspended or not self.request_allowed():
+                raise asyncio.CancelledError
+            if (
+                self.on_information_started
+                and isinstance(json, dict)
+                and (event := json.get("event", {})).get("cgi") == "infomaquina"
+            ):
+                self.on_information_started(str(event.get("device_id")))
             async with self._session.request(
-                method, url, params=params, json=json, headers=headers, timeout=timeout
+                method,
+                url,
+                params=params,
+                json=json,
+                headers=headers,
+                timeout=timeout,
+                **({"data": data} if data is not None else {}),
             ) as resp:
                 resp.raise_for_status()
                 empty_body = resp.status == 204 or resp.content_length == 0
@@ -178,6 +219,8 @@ class AirzoneAPI:
                     return ""
                 return await resp.text()
         except ClientResponseError as cre:
+            if cre.status == 401:
+                self.suspend()
             _LOGGER.debug(
                 "HTTP %s %s failed with status %s",
                 method,
@@ -212,26 +255,71 @@ class AirzoneAPI:
         # from the sanitized error. Do not move this raise into a handler.
         raise safe_error
 
-    async def _authed_request_with_retries(
+    async def _authed_request_with_retries(self, *args, **kwargs):
+        task = asyncio.create_task(self._authed_request_impl(*args, **kwargs))
+        self._pending.add(task)
+        try:
+            return await task
+        except asyncio.CancelledError:
+            caller = asyncio.current_task()
+            if caller is not None and caller.cancelling():
+                raise
+            if (
+                self._auth_suspended
+                and args
+                and (
+                    args[0] == "PUT"
+                    or (
+                        args[0] == "POST"
+                        and args[1] == API_EVENTS
+                        and (kwargs.get("json") or {}).get("event", {}).get("cgi")
+                        != "infomaquina"
+                    )
+                )
+            ):
+                raise ConfigEntryAuthFailed("Entry authentication suspended") from None
+            raise
+        finally:
+            self._pending.discard(task)
+
+    async def _authed_request_impl(
         self,
         method: str,
         path: str,
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        data: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
+        retry: bool = True,
     ) -> Any:
-        """Authenticated request with limited retries for 429/5xx + ONE retry on timeout.
+        """Authenticated request with optional 429/5xx and read-only timeout retries.
 
         English:
         - 401 is *not* retried here; it is propagated so the coordinator opens reauth.
         """
+        is_device_write = method.upper() in {"PUT", "PATCH", "DELETE"} or (
+            method.upper() == "POST"
+            and path == API_EVENTS
+            and (json or {}).get("event", {}).get("cgi") != "infomaquina"
+        )
         attempt = 0
         while True:
-            now = self._now()
-            if self._cooldown_until > now:
-                await self._sleep(self._cooldown_until - now)
+            if self._suspended or not self.request_allowed():
+                raise asyncio.CancelledError
+            while (remaining := self._cooldown_until - self._now()) > 0:
+                if self._suspended or not self.request_allowed():
+                    raise asyncio.CancelledError
+                if is_device_write and remaining > _MAX_WRITE_COOLDOWN_WAIT:
+                    if attempt == 0:
+                        raise CommandNotSentCooldown(self._cooldown_until)
+                    raise HomeAssistantError(
+                        "Cloud rate limit active; device command was not sent"
+                    )
+                await self._sleep(remaining)
 
+            if self._suspended or not self.request_allowed():
+                raise asyncio.CancelledError
             try:
                 return await self._request(
                     method,
@@ -239,6 +327,7 @@ class AirzoneAPI:
                     params=params,
                     json=json,
                     extra_headers=extra_headers,
+                    **({"data": data} if data is not None else {}),
                 )
             except ClientResponseError as cre:
                 status = cre.status or 0
@@ -247,6 +336,7 @@ class AirzoneAPI:
                 # native HA reauth themselves: a service exception alone does
                 # not ask Home Assistant to start a reauth flow.
                 if status == 401:
+                    self.suspend()
                     if method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
                         if self.on_write_auth_failure is not None:
                             self.on_write_auth_failure()
@@ -254,19 +344,35 @@ class AirzoneAPI:
 
                 # Backoff for 429 and 5xx (transient errors)
                 if status == 429 or 500 <= status <= 599:
-                    if attempt >= _MAX_RETRIES:
-                        raise
                     delay = _BASE_DELAY * (2**attempt) + random.uniform(0.0, _JITTER)
                     if status == 429:
                         try:
                             retry_after = cre.headers.get("Retry-After")  # type: ignore[attr-defined]
                             if retry_after:
-                                delay = max(delay, float(retry_after))
+                                try:
+                                    seconds = float(retry_after)
+                                except ValueError:
+                                    date = parsedate_to_datetime(retry_after)
+                                    if date.tzinfo is None:
+                                        date = date.replace(tzinfo=UTC)
+                                    seconds = (date - datetime.now(UTC)).total_seconds()
+                                if math.isfinite(seconds):
+                                    delay = max(delay, seconds)
                         except Exception:  # noqa: BLE001
                             pass
                         self._cooldown_until = max(
-                            self._cooldown_until, now + min(delay, 10.0)
+                            self._cooldown_until, self._now() + delay
                         )
+                    # A long server pause must not queue a stale device
+                    # command or silently replay a rejected write.
+                    if (
+                        status == 429
+                        and is_device_write
+                        and delay > _MAX_WRITE_COOLDOWN_WAIT
+                    ):
+                        raise
+                    if not retry or attempt >= _MAX_RETRIES:
+                        raise
                     _LOGGER.debug(
                         "Retrying %s %s after %s due to HTTP %s (attempt %d/%d)",
                         method,
@@ -285,7 +391,7 @@ class AirzoneAPI:
 
             except TimeoutError:
                 # ONE gentle retry on timeout with short backoff
-                if attempt >= 1:
+                if is_device_write or not retry or attempt >= 1:
                     raise
                 delay = 0.4 * (2**attempt) + random.uniform(0.0, _JITTER)
                 _LOGGER.debug(
@@ -306,6 +412,42 @@ class AirzoneAPI:
     # --------------------------
     # Public API
     # --------------------------
+    async def authorize_channel(self, socket_id: str, channel: str) -> str:
+        """Authorize a private Channels subscription using the current token."""
+        response = await self._authed_request_with_retries(
+            "POST",
+            "/pusher/auth",
+            data=self._auth_params()
+            | {"socket_id": socket_id, "channel_name": channel},
+            extra_headers={"X-Requested-With": "XMLHttpRequest"},
+            retry=False,
+        )
+        if (
+            not isinstance(response, dict)
+            or not isinstance(response.get("auth"), str)
+            or not response["auth"]
+        ):
+            raise ValueError("Invalid channel authorization response")
+        return response["auth"]
+
+    async def request_information(self, device_id: str) -> Any:
+        """Request fresh information once; the scheduler owns retry timing."""
+        return await self._authed_request_with_retries(
+            "POST",
+            API_EVENTS,
+            params=self._auth_params(),
+            json={
+                "event": {
+                    "cgi": "infomaquina",
+                    "device_id": device_id,
+                    "option": "",
+                    "value": "",
+                }
+            },
+            extra_headers=HEADERS_EVENTS,
+            retry=False,
+        )
+
     async def login(self) -> bool:
         """Login and store authentication token (used by config/reauth flows)."""
         if not self._password:
@@ -337,13 +479,16 @@ class AirzoneAPI:
         except Exception:  # noqa: BLE001
             return
 
-    async def fetch_installations(self) -> list[dict[str, Any]] | None:
+    async def fetch_installations(
+        self, *, retry: bool = True
+    ) -> list[dict[str, Any]] | None:
         """GET /installation_relations with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {"format": "json"}
         resp = await self._authed_request_with_retries(
             "GET",
             API_INSTALLATION_RELATIONS,
             params=params,
+            retry=retry,
         )
         if isinstance(resp, dict) and "installation_relations" in resp:
             relations = resp["installation_relations"]
@@ -357,7 +502,9 @@ class AirzoneAPI:
             return relations
         return None
 
-    async def fetch_devices(self, installation_id: Any) -> list[dict[str, Any]] | None:
+    async def fetch_devices(
+        self, installation_id: Any, *, retry: bool = True
+    ) -> list[dict[str, Any]] | None:
         """GET /devices with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {
             "format": "json",
@@ -367,6 +514,7 @@ class AirzoneAPI:
             "GET",
             API_DEVICES,
             params=params,
+            retry=retry,
         )
         if isinstance(resp, dict) and "devices" in resp:
             devices = resp["devices"]
@@ -408,7 +556,9 @@ class AirzoneAPI:
                 translation_placeholders={"status": str(cre.status)},
             ) from None
 
-    async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> Any:
+    async def put_device_fields(
+        self, device_id: str, payload: dict[str, Any], *, retry: bool = True
+    ) -> Any:
         """PUT /devices/{id} with provided payload (retries for 429/5xx).
 
         Canonical method for *all* device field writes (including what used to be "scenary").
@@ -419,14 +569,18 @@ class AirzoneAPI:
         path = f"{API_DEVICES}/{device_id}"
         try:
             return await self._authed_request_with_retries(
-                "PUT", path, params=params, json=payload
+                "PUT", path, params=params, json=payload, retry=retry
             )
         except ClientResponseError as cre:
             if cre.status == 401:
                 raise ConfigEntryAuthFailed("Authentication failed") from None
             raise
 
-    async def async_set_scenary(self, device_id: str, scenary: str) -> Any:
+    async def async_set_scenary(
+        self, device_id: str, scenary: str, *, retry: bool = True
+    ) -> Any:
         """Set device scenary using the canonical device fields endpoint."""
 
-        return await self.put_device_fields(device_id, {"device": {"scenary": scenary}})
+        return await self.put_device_fields(
+            device_id, {"device": {"scenary": scenary}}, retry=retry
+        )

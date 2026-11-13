@@ -49,11 +49,13 @@ valid installation list is allowed. An HTTP 401 on authenticated reads raises
 `ConfigEntryAuthFailed` for native Home Assistant reauthentication. For
 authenticated device writes (`POST /events` and `PUT /devices/{id}`), a 401
 also starts native reauthentication for the specific entry, since HA does not
-automatically launch reauth from an entity service error. On success, Home
+automatically launch reauth from an entity service error. An authenticated 401
+suspends automatic synchronization until entry reload. On success, Home
 Assistant reloads the entry and constructs a fresh API client with the new
 token. If the entry was never fully loaded or DKN returns the same token,
 the flow explicitly schedules a reload; otherwise the update listener does so.
-The integration does not retain its own persistent reauth-request flag.
+An entry-lifetime flag coalesces write-side reauthentication requests; reload
+constructs a new client and resets that flag.
 Propagated HTTP errors strip credentials and device identifiers from request
 URLs, including hidden exception context, before reaching HA consumers.
 
@@ -85,9 +87,114 @@ Reauthentication delegates reload only to the registered integration update
 listener. Unrelated listeners do not suppress the explicit reload fallback.
 
 Write-side reauthentication callbacks are cleared on entry unload and only
-start flows for loaded entries while Home Assistant is not stopping.
+start flows for loaded or failed-unload entries while Home Assistant is not
+stopping.
 Migration logs do not include normalized account email addresses; persisted
 config-entry identifiers remain unchanged.
+
+### Sleep session cleanup and one-shot re-arm (draft #190)
+
+The backend can leave raw `scenary=sleep` after a natural OFF. Two supervised
+real five-minute Sleep cycles independently confirmed that guarded cleanup to
+`occupied` allowed the following Sleep timer to run and end normally, with
+no intervening manual Home command. The owner's final physical OFF observation
+corroborated the cloud/HA state.
+
+Automatic cleanup is **enabled by default** and can be disabled by the
+`sleep_cleanup_enabled` option. A session-consistent ON followed by two
+independent applied OFF reports authorizes one serialized, non-retried
+`occupied` write. The first OFF requests bounded readback. No elapsed-time
+condition authorizes an automatic scene or power write.
+
+If automatic cleanup is disabled and the backend remains in raw Sleep while
+reported OFF, an **explicit** new Sleep selection uses `occupied → sleep`
+to rearm the one-shot scene. Both commands have automatic retries disabled.
+An ambiguous or failed second command cannot be assumed to have restarted the
+timer; recovery readback is requested. Explicit Home and HA wake commands can
+also exit raw Sleep. Setpoint, fan and supported mode changes during active
+Sleep preserve the scene.
+
+The old `sleep_timeout_enabled` local effective-Home display was retired.
+The shared five-minute margin is used **only** for the read-only ON-overdue
+diagnostic. A reliable local session start and two fresh ON reports after the
+deadline are required, and no power/scene action follows from the diagnostic.
+Diagnostics exports include only aggregated anomaly counts, current count,
+and the last detection timestamp, **without device IDs**; these counters are
+kept since the current HA integration startup, not across HA restarts.
+A timer edit or unknown session start invalidates the deadline inference.
+Remote reports can be stale even when retrieved through a later GET.
+
+Manual early OFF and an ON that persists beyond the deadline were not
+provoked on real equipment; both have synthetic coverage. Live corrective
+actions on an overdue-ON anomaly are intentionally deferred until observed
+physical evidence supports a safe policy.
+
+### Automatic synchronization policy (not a backend contract)
+
+Push uses the service-specific secure WebSocket origin with certificate
+and hostname verification enabled. The socket transport rejects redirects using
+an isolated session and Home Assistant's verified TLS trust; ordinary REST
+sessions are unchanged. The separately protected research laboratory still
+disables live destinations by default.
+
+Following explicit owner approval on 2026-11-12, WebSocket-only static-RSA TLS
+compatibility is **enabled** for `wss://dkn.airzonecloud.com:8080/app/...`.
+The service's official web client was independently observed negotiating
+TLS 1.2 with `TLS_RSA_WITH_AES_128_GCM_SHA256`. The compatibility context adds
+only OpenSSL `AES128-GCM-SHA256`, after modern suites, to a fresh verified HA
+trust context for that origin. TLS 1.2 or newer, certificate and hostname
+verification remain mandatory; redirects are rejected. REST and shared TLS
+contexts are unchanged. Static RSA encrypts traffic but lacks forward secrecy.
+There is no automatic cipher fallback or user-facing configuration switch.
+Do not pin the service certificate fingerprint; normal certificate renewal
+must continue to pass standard trust and hostname verification.
+Diagnostics expose whether that policy is enabled. Pending channel authorization
+is cancelled and awaited before closing the WebSocket transport, including when
+connection establishment or entry shutdown fails.
+
+The coordinator initializes from a device snapshot, then accepts partial push
+updates without erasing absent fields. Each device requests information at a
+nominal fixed ten-second cadence while push is active. During push outages,
+automatic information requests and recovery snapshots share an entry-wide
+budget of at least ten seconds between starts. A single-device fallback
+alternates an information request and a snapshot ten seconds later; multiple
+devices share installation snapshots and may have longer cycles. Spacing is
+conservative from operation completion, so slow responses or server-directed
+cooldown cannot release queued bursts. These timings
+are client policies and do not guarantee physical-state convergence. REST
+failures back off; healthy fallback does not back off solely for a push outage.
+Failed connection attempts without any confirmed subscription do not invalidate
+in-flight REST snapshots. A subscribed connection ending still fences old push
+events and related in-flight reads.
+A successful subscription requires resynchronization before normal operation.
+Local time-based connectivity and scene maintenance continues without I/O.
+
+
+Automatic recovery retains snapshot eligibility after transient information-request
+failures. Information and recovery retries have separate deadlines; successful
+snapshots do not confirm physical freshness or clear information failures.
+Entry shutdown fences and awaits automatic scene cleanup. Channel authorization
+runs separately from socket reception with per-channel retry backoff capped at
+five minutes (the number of retries is not bounded).
+
+Authenticated operations are fenced again after cooldown waits; entry suspension
+cancels pending operations. Automatic scene cleanup shares device write locks.
+Channel authorization failures retry independently without closing healthy channels.
+A socket that stays active without acknowledging a channel subscription triggers
+a bounded per-channel ACK timeout (60 seconds), followed by the same backoff;
+other subscribed channels remain active. An ACK confirms subscription, not data
+freshness or a completed device update.
+The automatic request budget enforces spacing only; operation backoff and the
+server-directed cooldown remain separate. Device control requests fail fast when
+the remaining server cooldown exceeds ten seconds; long Retry-After responses
+do not schedule delayed control retries. Diagnostics export health summaries
+without raw device data or entry options.
+
+Failed socket attempts do not trigger extra topology discovery. Reconnection
+discovery waits for successful device resynchronization. Rejected information
+requests also retain recovery eligibility; authentication and server-directed
+rate-limit pauses remain authoritative.
+
 
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
@@ -155,6 +262,7 @@ disabling the entity or when a restored state has no active Climate instance),
 the switch uses its direct `P1` command fallback instead of assuming that a
 successful service dispatch means a command reached the device. The fallback
 retains the existing power idempotency and optimistic-state handling.
+Delegated calls propagate the native HA entity context to preserve automation attribution.
 Transport-level event payloads remain unchanged.
 
 
@@ -174,7 +282,7 @@ curl -sS --compressed \
   -H "Accept: application/json, text/plain, */*" \
   "$BASE/installation_relations?user_email=$EMAIL&user_token=$TOKEN&format=json"
 
-# 2) Snapshot devices (recommended polling endpoint)
+# 2) Device snapshot endpoint
 curl -sS --compressed \
   -H "Accept: application/json, text/plain, */*" \
   "$BASE/devices?format=json&installation_id=$INSTALLATION_ID&user_email=$EMAIL&user_token=$TOKEN"
@@ -209,6 +317,27 @@ curl -sS --compressed \
 
 
 ---
+
+
+### Sleep exit coordination (not a backend contract)
+
+Automatic confirmed-OFF cleanup and active-control preparation serialize scene
+exits with manual writes. They recheck current state and scene revisions after
+acquiring the lock. Automatic Home writes are never replayed after ambiguous
+results; readback requests are budgeted. HTTP acceptance alone does not prove
+physical application. The older optional expired-Home UI view is not authority
+for an automatic scene write.
+Pending exit state is runtime-local. Restarted HA does not know when an already
+active physical Sleep timer began; do not raise a deadline anomaly from that
+assumption. The shared monitoring margin is **five minutes** for both INFO/Pusher
+and GET paths; an ON beyond that deadline requests one recovery and requires two
+post-deadline fresh ON reports before being shown as a *reported* diagnostic,
+without sending an OFF or Home command. Automatic Sleep exit uses no API retry;
+manual command retry behavior remains unchanged.
+
+A non-Sleep backend observation retires a pending exit marker. A new explicit
+Sleep selection re-arms local tracking; an older discarded cleanup must not
+disarm that new selection. This does not establish physical timing.
 
 ## 3) Event Model (Px options) — Consolidated Table
 
@@ -410,8 +539,9 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - `/events` may respond 2xx even if the physical unit later clamps/corrects the value.
 - `/events` may return 422 when the WServer is not connected.
 - `/events` may return 423 when the device/machine is not ready.
-- Some changes propagate with delay; always prefer polling `/devices?...` to confirm settled state.
-- Treat repeated scenary writes (e.g., `sleep → occupied`) as **idempotent** and safe.
+- Updates are asynchronous. HTTP success acknowledges backend receipt, not physical convergence; recovery snapshots may contain cached state.
+- Automatic synchronization uses a fixed nominal cadence with recovery and backoff. There is no user-selectable refresh interval.
+- Do **not** automatically replay an ambiguous scenary write (e.g., `sleep → occupied`): an accepted or timed-out response does not prove whether the backend applied it. Follow the per-device lock, session revision and read-back rules before considering another command.
 
 ---
 
@@ -426,9 +556,11 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 Observed behavior:
 - After `sleep_time` elapses, devices typically power off but may keep reporting `scenary="sleep"` until explicitly changed.
 
-Integration policy (recommended):
-- Auto-exit Sleep (sleep → occupied) before HA-driven wake commands so backend state matches user-visible behavior.
-- Optionally (disabled by default): treat long-running Sleep sessions as “home/occupied” in the UI and perform a best-effort one-off backend cleanup write, **only once the backend reports `power=0`**.
+Integration policy (draft #190, two real natural Sleep cycles validated):
+- Auto-exit Sleep (sleep → occupied) before HA-driven wake commands.
+- When a current Sleep session has established an ON observation and two explicit OFF reports, request a single serialized `occupied` cleanup without waiting for timer expiry; verify backend readback before declaring convergence.
+- Automatic cleanup is enabled by default and may be disabled with `sleep_cleanup_enabled`. The legacy timer-based Home display was removed. A stale or previous-session OFF never independently authorizes cleanup.
+- If a session with sufficiently known start still reports ON after `sleep_time + 5 minutes`, request bounded recovery and expose a read-only `sleep_overdue` diagnostic only after repeated newly received ON; do not switch power or scene based on this diagnostic. Count the anomaly once per session in ID-free integration diagnostics for the current HA runtime.
 
 ---
 
@@ -450,3 +582,22 @@ Commonly used fields:
 - Confirm exact allowed ranges/encodings for slats (P9/P10/P19/P20) on at least one model.
 - Confirm whether devices that do not support Auto fan (0) fall back to a manual speed (observed fallback: 1) rather than persisting 0 or returning an error.
 
+### Snapshot ordering and control timeout limits
+
+Local field revisions prevent a GET already in progress from replacing fields
+received through push during that GET. They do not establish backend content
+age: a later GET may still return older cached values, and same-connection
+events have no verified monotonic version contract. No timestamp-based rejection
+or arbitrary freshness window is imposed. Resolving contradictory observations
+requires an explicit precedence contract; HTTP reception is not physical freshness.
+
+Device-control transport timeouts are never automatically replayed: acceptance
+may have preceded the timeout. Read-only calls with `retry=True` retain their bounded internal timeout retry.
+INFO and automatic recovery/discovery GETs use `retry=False`; their schedulers
+own backoff and do not perform an internal timeout retry. An ACK arriving during authorization or at its timeout
+boundary prevents another subscribe or a false channel-disconnected notification.
+
+A locally rejected Sleep exit carries an explicit no-send cooldown result. It
+remains eligible after that monotonic deadline, without a recovery GET or rapid
+retry loop. Any potentially submitted write retains its ambiguity guard. Entry
+suspension takes precedence over cooldown rejection, including after waits.

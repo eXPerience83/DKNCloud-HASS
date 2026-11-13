@@ -9,13 +9,13 @@ The integration version belongs to
 `custom_components/airzoneclouddaikin/manifest.json`, **not**
 `pyproject.toml`, whose version tracks independent development/test tooling.
 The first `CHANGELOG.md` version heading must match the integration version.
-The tag is derived as `v<version>`: `0.5.0a6` maps to `v0.5.0a6`.
+The tag is derived as `v<version>`: `0.6.0a1` maps to `v0.6.0a1`.
 Allowed formats are `X.Y.Z` (stable), `X.Y.ZaN` (alpha), `X.Y.ZbN`
 (beta) and `X.Y.ZrcN` (release candidate). Alpha, beta and RC must be
 marked as **Pre-release**.
 
-The published stable `v0.4.8` and alphas `v0.5.0a4`/`v0.5.0a5` remain
-immutable. Never reuse their tags, edit published ZIP assets, or move tags.
+The published stable `v0.4.8` and alphas `v0.5.0a4`, `v0.5.0a5` and
+`v0.5.0a6` remain immutable. Never reuse their tags, edit published ZIP assets, or move tags.
 
 ## Step 1 — Prepare the source
 
@@ -79,8 +79,9 @@ and publication remain manual, with no changes to the published ZIPs.
    existing tag target and release state. If safe, it creates or reuses the
    matching tag and creates a draft or reuses its identical ZIP.
 
-Do not run preparation against published `v0.5.0a5` on current `main`:
-it will refuse to modify that release. Create a new version first.
+Do not run preparation against any published tag (including `v0.5.0a6`):
+the workflow refuses to modify releases that already exist. Prepare a new
+integration version first.
 
 ## Step 3 — Review and manually publish
 

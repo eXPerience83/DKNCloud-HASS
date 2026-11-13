@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import traceback
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -444,7 +445,7 @@ async def test_async_set_scenary_uses_wrapped_payload() -> None:
     await api.async_set_scenary("123", "sleep")
 
     api.put_device_fields.assert_awaited_once_with(
-        "123", {"device": {"scenary": "sleep"}}
+        "123", {"device": {"scenary": "sleep"}}, retry=True
     )
 
 
@@ -523,10 +524,10 @@ async def test_timeout_retries_only_once_when_second_call_times_out(
     assert sleeps == pytest.approx([0.4])
 
 
-async def test_429_retry_after_is_honored_but_cooldown_is_bounded(
+async def test_429_retry_after_is_honored_without_truncating_cooldown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Server Retry-After determines actual sleep; shared cooldown caps at 10s."""
+    """Server Retry-After controls both sleep and shared cooldown."""
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
         lambda *_: 0.0,
@@ -536,7 +537,7 @@ async def test_429_retry_after_is_honored_but_cooldown_is_bounded(
     )
     assert await api._authed_request_with_retries("GET", "/devices") == {"ok": 1}
     assert sleeps == [100.0]
-    assert api._cooldown_until == pytest.approx(10.0)
+    assert api._cooldown_until == pytest.approx(100.0)
 
 
 async def test_request_cancellation_is_not_swallowed(
@@ -695,3 +696,327 @@ async def test_devices_accepts_valid_empty_http_list(
     async with ClientSession() as session:
         api = AirzoneAPI("user@example.com", session, token="token")
         assert await api.fetch_devices("site-A") == []
+
+
+async def test_shared_cooldown_preserves_long_retry_after(monkeypatch):
+    """Other callers must observe the complete server-directed pause."""
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"}), {}]
+    )
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert sleeps[0] == 120
+    assert api._cooldown_until == 120
+
+
+async def test_retry_after_http_date(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
+
+    deadline = datetime.now(UTC) + timedelta(seconds=120)
+    api, sleeps = _make_api(
+        monkeypatch,
+        [
+            _client_response_error(
+                429, {"Retry-After": format_datetime(deadline, usegmt=True)}
+            ),
+            {},
+        ],
+    )
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert 118 <= sleeps[0] <= 120
+    assert api._cooldown_until == sleeps[0]
+
+
+async def test_information_timeout_is_not_retried(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [TimeoutError()])
+    with pytest.raises(TimeoutError):
+        await api.request_information("fake-device")
+    assert api._request.await_count == 1
+    assert sleeps == []
+
+
+async def test_information_429_sets_shared_pause_without_retry(monkeypatch):
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"})]
+    )
+    with pytest.raises(ClientResponseError):
+        await api.request_information("fake-device")
+    assert api._request.await_count == 1
+    assert api._cooldown_until == 120
+    assert sleeps == []
+
+
+async def test_second_caller_rechecks_extended_shared_cooldown(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 20
+    now = [0.0]
+    monkeypatch.setattr(api, "_now", lambda: now[0])
+
+    async def sleep(delay):
+        sleeps.append(delay)
+        now[0] += delay
+        if len(sleeps) == 1:
+            api._cooldown_until = 50
+
+    monkeypatch.setattr(api, "_sleep", sleep)
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert sleeps == [20, 30]
+    assert now[0] == 50
+
+
+async def test_delayed_429_sets_pause_from_response_time(monkeypatch):
+    api, _ = _make_api(monkeypatch, [])
+    now = [0.0]
+    monkeypatch.setattr(api, "_now", lambda: now[0])
+
+    async def request(*args, **kwargs):
+        now[0] = 35
+        raise _client_response_error(429, {"Retry-After": "120"})
+
+    monkeypatch.setattr(api, "_request", request)
+    with pytest.raises(ClientResponseError):
+        await api.request_information("fake")
+    assert api._cooldown_until == 155
+
+
+async def test_authorization_uses_form_body_without_credential_query(
+    socket_enabled, aiohttp_server, monkeypatch
+):
+    async def handler(request):
+        assert not request.query
+        assert request.content_type == "application/x-www-form-urlencoded"
+        assert dict(await request.post()) == {
+            "user_email": "synthetic@example.invalid",
+            "user_token": "synthetic-token",
+            "socket_id": "1.2",
+            "channel_name": "private-fake",
+        }
+        return web.json_response({"auth": "synthetic-signature"})
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", "/pusher/auth", handler)
+    async with ClientSession() as session:
+        api = AirzoneAPI("synthetic@example.invalid", session, token="synthetic-token")
+        assert (
+            await api.authorize_channel("1.2", "private-fake") == "synthetic-signature"
+        )
+
+
+async def test_second_caller_waits_after_nonretrying_429(monkeypatch):
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"}), {}]
+    )
+    with pytest.raises(ClientResponseError):
+        await api.request_information("fake")
+    assert api._request.await_count == 1
+    await api._authed_request_with_retries("GET", API_DEVICES)
+    assert sleeps == [120]
+    assert api._request.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "operation", ["information", "devices", "installations", "authorize", "cleanup"]
+)
+async def test_auth_fence_after_cooldown_prevents_wire_send(operation):
+    import asyncio
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered, release = asyncio.Event(), asyncio.Event()
+    active = [True]
+    api.request_allowed = lambda: active[0]
+    api._request = AsyncMock(return_value={})
+    api._cooldown_until = 10
+    api._now = lambda: 0
+
+    async def sleep(_):
+        entered.set()
+        await release.wait()
+        api._cooldown_until = 0
+
+    api._sleep = sleep
+    operations = {
+        "information": lambda: api.request_information("synthetic"),
+        "devices": lambda: api.fetch_devices("synthetic"),
+        "installations": api.fetch_installations,
+        "authorize": lambda: api.authorize_channel("1.2", "private-synthetic"),
+        "cleanup": lambda: api.async_set_scenary("synthetic", "occupied"),
+    }
+    task = asyncio.create_task(operations[operation]())
+    await entered.wait()
+    active[0] = False
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    api._request.assert_not_awaited()
+
+
+@pytest.mark.parametrize("auth", [False, True])
+async def test_suspended_control_distinguishes_lifecycle_and_authentication(auth):
+    import asyncio
+
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered = asyncio.Event()
+
+    async def wait(_):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._cooldown_until = 10
+    api._now = lambda: 0
+    api._sleep = wait
+    api._request = AsyncMock()
+    task = asyncio.create_task(api.async_set_scenary("synthetic", "occupied"))
+    await entered.wait()
+    api.suspend(auth=auth)
+    with pytest.raises(ConfigEntryAuthFailed if auth else asyncio.CancelledError):
+        await task
+    api._request.assert_not_awaited()
+    assert not api._pending
+
+
+@pytest.mark.parametrize("auth", [False, True])
+async def test_fence_cancels_owned_io_without_cancelling_caller(auth):
+    import asyncio
+
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered = asyncio.Event()
+
+    async def wait(*_, **__):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._request = wait
+
+    async def caller():
+        try:
+            await api.async_set_scenary("synthetic", "occupied")
+        except ConfigEntryAuthFailed, asyncio.CancelledError:
+            assert asyncio.current_task().cancelling() == 0
+        await asyncio.sleep(0)
+        return "caller continued"
+
+    task = asyncio.create_task(caller())
+    await entered.wait()
+    assert task not in api._pending
+    api.suspend(auth=auth)
+    assert await task == "caller continued"
+    assert not api._pending
+
+
+async def test_external_cancellation_is_not_changed_to_authentication_error():
+    import asyncio
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    entered = asyncio.Event()
+
+    async def wait(*_, **__):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._request = wait
+    task = asyncio.create_task(api.async_set_scenary("synthetic", "occupied"))
+    await entered.wait()
+    api._auth_suspended = True
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not api._pending
+
+
+@pytest.mark.parametrize("value", ["inf", "nan", "-inf"])
+async def test_nonfinite_retry_after_cannot_suspend_entry_indefinitely(
+    monkeypatch, value
+):
+    import math
+
+    api, _ = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": value})]
+    )
+    with pytest.raises(ClientResponseError):
+        await api.request_information("synthetic")
+    assert math.isfinite(api._cooldown_until)
+
+
+async def test_control_fails_fast_on_long_cooldown_without_blocking_information(
+    monkeypatch,
+):
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 120
+    with pytest.raises(HomeAssistantError, match="command was not sent"):
+        await api.send_event({"event": {"cgi": "modmaquina"}})
+    assert api._request.await_count == 0
+    assert sleeps == []
+
+    await api.request_information("synthetic")
+    assert api._request.await_count == 1
+    assert sleeps == [120]
+
+
+async def test_short_cooldown_still_rechecks_before_control(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 10
+    await api.put_device_fields("synthetic", {"sleep_time": 30})
+    assert sleeps == [10]
+    assert api._request.await_count == 1
+
+
+async def test_long_retry_after_on_control_does_not_schedule_late_replay(
+    monkeypatch,
+):
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(429, {"Retry-After": "120"}), {}]
+    )
+    with pytest.raises(ClientResponseError) as error:
+        await api.put_device_fields("synthetic", {"sleep_time": 30})
+    assert error.value.status == 429
+    assert api._request.await_count == 1
+    assert sleeps == []
+    assert api._cooldown_until == 120
+
+
+async def test_ambiguous_control_timeout_is_never_replayed(monkeypatch):
+    api, sleeps = _make_api(monkeypatch, [TimeoutError(), {}])
+    with pytest.raises(TimeoutError):
+        await api._authed_request_with_retries(
+            "PUT", "/devices/synthetic", json={"device": {"scenary": "occupied"}}
+        )
+    assert api._request.await_count == 1
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("auth", [True, False])
+async def test_suspension_precedes_long_control_cooldown(monkeypatch, auth):
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api, sleeps = _make_api(monkeypatch, [{}])
+    api._cooldown_until = 600
+    api.suspend(auth=auth)
+    with pytest.raises(ConfigEntryAuthFailed if auth else asyncio.CancelledError):
+        await api.put_device_fields("synthetic", {"sleep_time": 30})
+    api._request.assert_not_awaited()
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("auth", [True, False])
+async def test_suspension_during_control_cooldown_prevents_send(monkeypatch, auth):
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    api, _ = _make_api(monkeypatch, [{}])
+    entered = asyncio.Event()
+
+    async def wait(_):
+        entered.set()
+        await asyncio.Event().wait()
+
+    api._sleep = wait
+    api._cooldown_until = 5
+    task = asyncio.create_task(api.put_device_fields("synthetic", {"sleep_time": 30}))
+    await entered.wait()
+    api.suspend(auth=auth)
+    with pytest.raises(ConfigEntryAuthFailed if auth else asyncio.CancelledError):
+        await task
+    api._request.assert_not_awaited()
+    assert not api._pending

@@ -10,7 +10,9 @@ DOMAIN = "airzoneclouddaikin"
 
 # Stable option keys shared across the integration (config flow, runtime buckets).
 CONF_ENABLE_HEAT_COOL = "enable_heat_cool_mode"
-CONF_SLEEP_TIMEOUT_ENABLED = "sleep_timeout_enabled"
+CONF_SLEEP_CLEANUP_ENABLED = "sleep_cleanup_enabled"
+# Retired local expiry-display flag, removed when the user next saves options.
+LEGACY_SLEEP_TIMEOUT_ENABLED = "sleep_timeout_enabled"
 
 # Backend scenary values
 SCENARY_HOME = "occupied"
@@ -55,8 +57,8 @@ HEADERS_EVENTS = {
 OPTIMISTIC_TTL_SEC: float = 2.5
 POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
 
-# Additional slack beyond the configured sleep_time before treating sleep as expired
-SLEEP_TIMEOUT_GRACE_MINUTES = 10
+# Uniform five-minute margin (Pusher and GET) for local Sleep monitoring
+SLEEP_TIMEOUT_GRACE_MINUTES = 5
 
 # -------------------- UX: Persistent notifications (PR A) -----------------
 # Debounce to avoid flapping (seconds the device must remain offline

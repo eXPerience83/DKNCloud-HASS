@@ -15,6 +15,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
+from .airzone_api import CommandNotSentCooldown
 from .commands import modmaquina_payload
 from .const import (
     CONF_ENABLE_HEAT_COOL,
@@ -227,28 +228,40 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Presets (HA) ----------------------------------------------------
 
     @property
+    def extra_state_attributes(self) -> dict[str, bool]:
+        """Expose read-only Sleep monitoring without asserting physical truth."""
+        dev = self._device
+        return {
+            "sleep_start_known": bool(dev.get("sleep_start_known", False)),
+            "sleep_overdue": bool(dev.get("sleep_overdue", False)),
+        }
+
+    @property
     def preset_modes(self) -> list[str] | None:
         return ["home", "away", "sleep"]
 
     @property
     def preset_mode(self) -> str | None:
-        scenary_base = self._device.get("effective_scenary") or self._device.get(
-            "scenary"
-        )
+        scenary_base = self._device.get("scenary")
         scen = self._overlay_value("scenary", scenary_base)
         return scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Map HA preset → backend scenary and write via put_device_fields()."""
+        """Write a scene; an explicit rearm from raw Sleep/OFF uses Home first."""
         if preset_mode not in (self.preset_modes or []):
             _LOGGER.debug(
                 "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
             )
             return
 
-        current = self.preset_mode
-        if current == preset_mode:
-            return
+        def terminated_raw_sleep() -> bool:
+            """Explicit rearm while raw Sleep/OFF requires an occupied transition."""
+            return (
+                str(self._device.get("scenary") or "").strip().lower() == "sleep"
+                and str(self._device.get("power")).strip().lower()
+                in {"0", "false", "off"}
+                and not self._device_power_on()
+            )
 
         scenary = preset_to_scenary(preset_mode)
         if not scenary:
@@ -260,16 +273,117 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.error("API handle missing in coordinator; cannot set scenary")
             return
 
+        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {})
+        revisions = bucket.setdefault("scene_revisions", {})
+        revision = revisions.get(self._device_id, 0)
+        intents = bucket.setdefault("scene_preset_intents", {})
+        intent = intents.get(self._device_id, 0) + 1
+        intents[self._device_id] = intent
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            try:
-                # Canonical write path (no legacy helpers).
-                await api.put_device_fields(
-                    self._device_id, {"device": {"scenary": scenary}}
+            if (
+                bucket.get("closing")
+                or self.hass.is_stopping
+                or intents.get(self._device_id) != intent
+            ):
+                # Only a newer queued request may supersede this one.
+                return
+            current_revision = revisions.get(self._device_id, 0)
+            previous_write = bucket.get("scene_preset_last_write", {}).get(
+                self._device_id
+            )
+            if current_revision != revision and not (
+                previous_write is not None
+                and previous_write[0] == current_revision
+                and previous_write[1] < intent
+            ):
+                # A write outside this preset command path changed the scene
+                # after the request was queued; do not overwrite it.
+                return
+            stale_sleep_off = terminated_raw_sleep()
+            # The scene may remain Sleep while power goes ON->OFF during the
+            # awaited PUT. Capture manual Home/Away intent before any await.
+            exits_raw_sleep = stale_sleep_off or (
+                preset_mode in {"home", "away"}
+                and str(self._device.get("scenary") or "").strip().lower() == "sleep"
+            )
+            if self.preset_mode == preset_mode and not (
+                preset_mode == "sleep" and stale_sleep_off
+            ):
+                return
+
+            rearm = preset_mode == "sleep" and stale_sleep_off
+            cleared_stale_sleep = False
+
+            def request_readback() -> None:
+                if manager := bucket.get("sync_manager"):
+                    manager.request_recovery(self._device_id)
+                else:
+                    schedule_post_write_refresh(
+                        self.hass, self.coordinator, entry_id=self._entry_id
+                    )
+
+            def record_preset_write() -> None:
+                bucket.setdefault("scene_preset_last_write", {})[self._device_id] = (
+                    revisions.get(self._device_id, 0),
+                    intent,
                 )
+
+            def fence_ambiguous_scene() -> None:
+                # An accepted server-side write may have lost its HTTP reply.
+                # Automatic Sleep expiry must not issue another scene command
+                # before a subsequent backend read confirms convergence.
+                bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
+                    "unverified"
+                )
+                request_readback()
+
+            def preserve_partial_home() -> None:
+                # Only the first PUT was accepted. A failed second PUT may
+                # have reached the server: never blindly retry it or claim
+                # that a fresh one-shot Sleep timer has started.
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "scenary", "occupied"
+                )
+                record_preset_write()
+                self.async_write_ha_state()
+                fence_ambiguous_scene()
+
+            try:
+                if rearm:
+                    # Repeating the unchanged backend 'sleep' scene does not
+                    # reliably start a new one-shot timer.
+                    await api.put_device_fields(
+                        self._device_id,
+                        {"device": {"scenary": "occupied"}},
+                        retry=False,
+                    )
+                    cleared_stale_sleep = True
+                if exits_raw_sleep:
+                    # Any scene write leaving Sleep (even while power is ON)
+                    # must not retry after a response of unknown outcome.
+                    await api.put_device_fields(
+                        self._device_id, {"device": {"scenary": scenary}}, retry=False
+                    )
+                else:
+                    await api.put_device_fields(
+                        self._device_id, {"device": {"scenary": scenary}}
+                    )
             except asyncio.CancelledError:
+                if cleared_stale_sleep:
+                    preserve_partial_home()
+                elif exits_raw_sleep:
+                    # A manual Home/Away may have reached the backend even
+                    # if power was ON when this command was initiated.
+                    fence_ambiguous_scene()
                 raise
             except Exception as err:
+                if cleared_stale_sleep:
+                    preserve_partial_home()
+                elif exits_raw_sleep and not isinstance(err, CommandNotSentCooldown):
+                    # Fence any ambiguous Sleep exit, even when ON->OFF
+                    # telemetry arrived during the PUT. Known-unsent exempt.
+                    fence_ambiguous_scene()
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",
                     scenary,
@@ -278,13 +392,24 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
                 raise
 
+            # optimistic_set('sleep') also starts a new local session revision
+            # even if a backend snapshot did not expose the short Home step.
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, "scenary", scenary
             )
+            record_preset_write()
             self.async_write_ha_state()
-            schedule_post_write_refresh(
-                self.hass, self.coordinator, entry_id=self._entry_id
-            )
+            if exits_raw_sleep:
+                if not rearm and scenary == "occupied":
+                    # Successful explicit cleanup still needs remote readback.
+                    bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
+                        "accepted"
+                    )
+                request_readback()
+            else:
+                schedule_post_write_refresh(
+                    self.hass, self.coordinator, entry_id=self._entry_id
+                )
 
     # ---- Auto-exit AWAY on active commands -------------------------------
 

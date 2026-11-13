@@ -8,9 +8,8 @@
         "data": {
           "username": "Email",
           "password": "Password",
-          "scan_interval": "Intervallo di scansione (secondi)",
           "expose_pii_identifiers": "Esporre identificatori PII (avanzato)",
-          "sleep_timeout_enabled": "Tratta lo Sleep scaduto come 'Home' e pulisci lo scenario backend"
+          "sleep_cleanup_enabled": "Ripristina automaticamente Home al termine di Sleep"
         }
       },
       "reauth_confirm": {
@@ -37,18 +36,15 @@
     "step": {
       "init": {
         "title": "Opzioni",
-        "description": "La modalità sperimentale HEAT_COOL è facoltativa, instrada i setpoint tramite P7 e le velocità della ventola tramite P3 e si applica solo alle installazioni i cui dispositivi dichiarano compatibilità. La gestione della scadenza Sleep è opzionale e tratta le sessioni scadute come Home tentando di ripulire lo scenario una volta.",
+        "description": "La modalità HEAT_COOL sperimentale è facoltativa e richiede un dispositivo compatibile. La pulizia automatica di Sleep è attiva per impostazione predefinita: dopo la conferma dello spegnimento, ripristina Home senza accendere il dispositivo. Disattivala per conservare lo scenario del backend.",
         "data": {
-          "scan_interval": "Intervallo di scansione (secondi)",
           "expose_pii_identifiers": "Esporre identificatori PII (avanzato)",
           "enable_heat_cool_mode": "Abilita modalità sperimentale HEAT_COOL (richiede installazione compatibile; utilizza instradamento P7/P3)",
-          "sleep_timeout_enabled": "Tratta lo Sleep scaduto come 'Home' e pulisci lo scenario backend"
+          "sleep_cleanup_enabled": "Ripristina automaticamente Home al termine di Sleep"
         }
       }
     },
-    "error": {
-      "invalid_scan_interval": "L'intervallo di aggiornamento deve essere compreso tra 10 e 30 secondi."
-    }
+    "error": {}
   },
   "exceptions": {
     "wserver_not_connected": {

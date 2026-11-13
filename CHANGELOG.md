@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.6.0a1] - 2026-11-13
+
+> **Experimental major-feature alpha, not stable or fully device-certified.**
+> **Breaking change:** The legacy `scan_interval` option and local
+> `sleep_timeout_enabled` Home-display behavior are retired. Backup Home
+> Assistant and retain a rollback path before installing this prerelease.
+> Requires Home Assistant **2026.11.0+** and Python 3.14. Real Marketplace/HACS
+> upgrade acceptance and some physical Sleep edge cases remain pending (#121).
+
+### Added
+- Add automatic per-device INFO-driven Pusher synchronization: apply subscribed
+  cloud `device` events directly to HA entities without a GET after each INFO.
+  Use an initial REST snapshot and bounded interleaved INFO/GET fallback with
+  nominal 10-second operation spacing when the push channel is unavailable
+  (#190, #101, #191).
+- Track Sleep sessions and attempt one serialized `occupied` scene cleanup
+  after a same-session ON observation followed by two fresh OFF reports.
+  Enable this by default with an explicit `sleep_cleanup_enabled` opt-out
+  (#171, #190).
+- Allow explicit Sleep rearm from retained raw Sleep/OFF through a guarded
+  `occupied → sleep` sequence, and expose ID-free read-only diagnostics for
+  repeated reported ON beyond the expected timer plus five minutes.
+  Never turn off a device solely from that overdue diagnostic (#190).
+
+### Changed
+- **Breaking change:** Retire user-configured `scan_interval` in favor of
+  integration-owned INFO/Pusher/recovery cadence; preserve unrelated stored
+  entry options, device identifiers and entity unique IDs (#190).
+- **Breaking change:** Remove the previous `sleep_timeout_enabled` effective-
+  Home display; the legacy setting is discarded when options are saved.
+  Presets reflect the raw backend scene, subject to pending local writes.
+- Prioritize explicit Home/Away and manual wake over queued automatic Sleep
+  cleanup. Preserve the scene on active-Sleep fan, setpoint and supported
+  mode adjustments; ambiguous scene writes are not automatically replayed.
+
+### Fixed
+- Prevent automatic Sleep cleanup from acting on cached startup OFF reports,
+  an earlier session's OFF, or telemetry that conflicts with a new selection.
+- Fence ambiguous Home/Away exits from raw Sleep, including ON→OFF during
+  an in-flight write; preserve safe known-unsent cooldown behavior and request
+  recovery after unverified outcomes (#171, #190).
+- Ensure protected read-only LAB shutdown closes its owned resources after
+  cancellation and counts blocked HVAC controls without counting forbidden
+  ordinary reads; normalize HTTP method-override header casing (#190).
+
+### Security
+- Enable narrowly scoped certificate/hostname-verified TLS 1.2 static-RSA
+  compatibility **only** for the observed DKN Pusher WSS endpoint.
+  This negotiated cipher does **not** provide forward secrecy; normal REST
+  TLS verification is unchanged (#60, #191).
+- Retain bounded authenticated request quotas and non-retried ambiguous scene
+  writes. Real INFO/Pusher/fallback was accepted in an isolated read-only
+  Home Assistant test; no physical HVAC control was used in that test.
+
+> **Validation boundary:** Two supervised physical five-minute Sleep cycles
+> passed on an earlier candidate, and the later manual-write races were
+> validated synthetically; neither establishes universal firmware behavior.
+> External wall-control latency, native installation/migration, real password-
+> change reauthentication and all hardware modes still need separate testing
+> (#101, #105, #121, #191). Do not treat 0.6.0a1 as stable-certified.
+
 ## [0.5.0a6] - 2026-11-08
 
 > **Experimental alpha for testing DKN Cloud for Home Assistant; not stable.**

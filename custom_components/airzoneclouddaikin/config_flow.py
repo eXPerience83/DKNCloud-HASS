@@ -4,14 +4,14 @@ What this delivers
 ------------------
 - Keeps the power-switch proxy transparent to the options storage; climate services
   still rely on the token saved in `entry.options`.
-- Maintains the 10–30 s `scan_interval` guardrails and hidden option preservation.
+- Uses a fixed information cadence and preserves hidden options.
 - Reauth continues to refresh the token in options without persisting passwords.
 
 Contract
 --------
 - `entry.data` keeps only the username (email).
-- `entry.options` contains `user_token`, `scan_interval`, `expose_pii_identifiers`,
-  and `enable_heat_cool_mode` (experimental opt-in).
+- `entry.options` contains `user_token`, `expose_pii_identifiers`,
+  `sleep_cleanup_enabled` (default on), and optional experimental HEAT_COOL.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
+    LEGACY_SLEEP_TIMEOUT_ENABLED,
 )
 from .helpers import device_supports_heat_cool
 
@@ -40,9 +41,6 @@ _LOGGER = logging.getLogger(__name__)
 # Stable option keys
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_EXPOSE_PII = "expose_pii_identifiers"
-
-# UI guardrails
-MIN_SCAN, MAX_SCAN = 10, 30
 
 
 def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
@@ -53,14 +51,11 @@ def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
             ): cv.string,
             vol.Required(CONF_PASSWORD): cv.string,
             vol.Optional(
-                CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, 10)
-            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)),
-            vol.Optional(
                 CONF_EXPOSE_PII, default=defaults.get(CONF_EXPOSE_PII, False)
             ): cv.boolean,
             vol.Optional(
-                CONF_SLEEP_TIMEOUT_ENABLED,
-                default=defaults.get(CONF_SLEEP_TIMEOUT_ENABLED, False),
+                CONF_SLEEP_CLEANUP_ENABLED,
+                default=defaults.get(CONF_SLEEP_CLEANUP_ENABLED, True),
             ): cv.boolean,
         }
     )
@@ -69,9 +64,6 @@ def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
 def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
     schema: dict[Any, Any] = {
         vol.Optional(
-            CONF_SCAN_INTERVAL, default=defaults.get(CONF_SCAN_INTERVAL, 10)
-        ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN, max=MAX_SCAN)),
-        vol.Optional(
             CONF_EXPOSE_PII, default=defaults.get(CONF_EXPOSE_PII, False)
         ): cv.boolean,
         vol.Optional(
@@ -79,8 +71,8 @@ def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
             default=defaults.get(CONF_ENABLE_HEAT_COOL, False),
         ): cv.boolean,
         vol.Optional(
-            CONF_SLEEP_TIMEOUT_ENABLED,
-            default=defaults.get(CONF_SLEEP_TIMEOUT_ENABLED, False),
+            CONF_SLEEP_CLEANUP_ENABLED,
+            default=defaults.get(CONF_SLEEP_CLEANUP_ENABLED, True),
         ): cv.boolean,
     }
 
@@ -90,7 +82,7 @@ def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
 class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Primary config flow for the integration."""
 
-    VERSION = 2
+    VERSION = 3
 
     @staticmethod
     def async_get_options_flow(
@@ -130,9 +122,8 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # NOTE: This will abort with the translated "already_configured"
         # reason if an entry for this account already exists.
         self._abort_if_unique_id_configured()
-        scan = int(user_input.get(CONF_SCAN_INTERVAL, 10))
         pii = bool(user_input.get(CONF_EXPOSE_PII, False))
-        sleep_timeout_enabled = bool(user_input.get(CONF_SLEEP_TIMEOUT_ENABLED, False))
+        sleep_cleanup_enabled = bool(user_input.get(CONF_SLEEP_CLEANUP_ENABLED, True))
 
         # Local import to avoid circulars at HA import time
         try:
@@ -191,9 +182,8 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data={CONF_USERNAME: email},
             options={
                 "user_token": token,
-                CONF_SCAN_INTERVAL: scan,
                 CONF_EXPOSE_PII: pii,
-                CONF_SLEEP_TIMEOUT_ENABLED: sleep_timeout_enabled,
+                CONF_SLEEP_CLEANUP_ENABLED: sleep_cleanup_enabled,
             },
         )
 
@@ -331,11 +321,10 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         current_heat_cool = bool(opts.get(CONF_ENABLE_HEAT_COOL, False))
 
         defaults = {
-            CONF_SCAN_INTERVAL: int(opts.get(CONF_SCAN_INTERVAL, 10)),
             CONF_EXPOSE_PII: bool(opts.get(CONF_EXPOSE_PII, False)),
             CONF_ENABLE_HEAT_COOL: current_heat_cool,
-            CONF_SLEEP_TIMEOUT_ENABLED: bool(
-                opts.get(CONF_SLEEP_TIMEOUT_ENABLED, False)
+            CONF_SLEEP_CLEANUP_ENABLED: bool(
+                opts.get(CONF_SLEEP_CLEANUP_ENABLED, True)
             ),
         }
 
@@ -346,52 +335,19 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
                 errors={},
             )
 
-        # Validate the submitted interval as well as the form schema, because
-        # options steps may be called directly without frontend validation.
-        try:
-            scan_interval = _options_schema(defaults)(
-                {
-                    CONF_SCAN_INTERVAL: user_input.get(
-                        CONF_SCAN_INTERVAL, defaults[CONF_SCAN_INTERVAL]
-                    )
-                }
-            )[CONF_SCAN_INTERVAL]
-        except vol.Invalid:
-            # Rebuild the error form with the submitted toggles, not the saved
-            # options, so fixing the interval does not discard other edits.
-            retry_defaults = {
-                **defaults,
-                CONF_EXPOSE_PII: bool(
-                    user_input.get(CONF_EXPOSE_PII, defaults[CONF_EXPOSE_PII])
-                ),
-                CONF_ENABLE_HEAT_COOL: bool(
-                    user_input.get(CONF_ENABLE_HEAT_COOL, current_heat_cool)
-                ),
-                CONF_SLEEP_TIMEOUT_ENABLED: bool(
-                    user_input.get(
-                        CONF_SLEEP_TIMEOUT_ENABLED,
-                        defaults[CONF_SLEEP_TIMEOUT_ENABLED],
-                    )
-                ),
-            }
-            return self.async_show_form(
-                step_id="init",
-                data_schema=_options_schema(retry_defaults),
-                errors={CONF_SCAN_INTERVAL: "invalid_scan_interval"},
-            )
-
         # Merge with existing options; never drop `user_token`
         next_opts = dict(self._entry.options)
-        next_opts[CONF_SCAN_INTERVAL] = scan_interval
+        next_opts.pop(CONF_SCAN_INTERVAL, None)
+        next_opts.pop(LEGACY_SLEEP_TIMEOUT_ENABLED, None)
         next_opts[CONF_EXPOSE_PII] = bool(
             user_input.get(CONF_EXPOSE_PII, defaults[CONF_EXPOSE_PII])
         )
         next_opts[CONF_ENABLE_HEAT_COOL] = bool(
             user_input.get(CONF_ENABLE_HEAT_COOL, current_heat_cool)
         )
-        next_opts[CONF_SLEEP_TIMEOUT_ENABLED] = bool(
+        next_opts[CONF_SLEEP_CLEANUP_ENABLED] = bool(
             user_input.get(
-                CONF_SLEEP_TIMEOUT_ENABLED, defaults[CONF_SLEEP_TIMEOUT_ENABLED]
+                CONF_SLEEP_CLEANUP_ENABLED, defaults[CONF_SLEEP_CLEANUP_ENABLED]
             )
         )
 

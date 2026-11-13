@@ -25,7 +25,7 @@ import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin.config_flow import CONF_SCAN_INTERVAL
 from custom_components.airzoneclouddaikin.const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
@@ -34,6 +34,10 @@ from custom_components.airzoneclouddaikin.const import (
 
 
 class FakeSetupAPI:
+    def suspend(self, *, auth=True):
+        """Mirror the entry-lifetime API fence in legacy fixtures."""
+        pass
+
     """Fake API used by setup and notification tests."""
 
     installations: list[dict[str, Any]] = []
@@ -660,11 +664,22 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
 
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
-                return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
-            return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
+                return [
+                    {
+                        "id": "dev-a",
+                        "name": "Unit A",
+                        "scenary": "occupied",
+                        "power": "0",
+                    }
+                ]
+            return [
+                {"id": "dev-b", "name": "Unit B", "scenary": "occupied", "power": "0"}
+            ]
 
     first = await integration._async_update_data(hass, entry, DummyAPIOk())
     assert set(first) == {"dev-a", "dev-b"}
+    pending = hass.data[DOMAIN][entry.entry_id].setdefault("sleep_exit_pending", {})
+    pending.update({"dev-a": "unverified", "dev-b": "unverified"})
 
     class DummyAPIPartial:
         async def fetch_installations(self) -> list[dict[str, Any]]:
@@ -673,13 +688,22 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 raise RuntimeError("temporary")
-            return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
+            return [
+                {"id": "dev-b", "name": "Unit B2", "scenary": "occupied", "power": "0"}
+            ]
 
     second = await integration._async_update_data(hass, entry, DummyAPIPartial())
 
     assert set(second) == {"dev-a", "dev-b"}
     assert second["dev-a"]["name"] == "Unit A"
     assert second["dev-b"]["name"] == "Unit B2"
+    assert first["dev-a"]["sleep_snapshot_fresh"] is True
+    assert first["dev-b"]["sleep_snapshot_fresh"] is True
+    assert second["dev-a"]["sleep_snapshot_fresh"] is False
+    assert second["dev-b"]["sleep_snapshot_fresh"] is True
+    # Backend scene uses canonical 'occupied': inst-a is cached and must not
+    # clear ambiguity, whereas inst-b explicitly reported occupied.
+    assert pending == {"dev-a": "unverified"}
 
 
 @pytest.mark.asyncio
@@ -890,7 +914,7 @@ async def test_entry_restart_simulation_reuses_token_and_cleans_state(
 
 
 @pytest.mark.asyncio
-async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
+async def test_options_update_reloads_with_fixed_compatibility_interval(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
     setup_api_class: type[FakeSetupAPI],
@@ -912,17 +936,17 @@ async def test_options_update_triggers_real_entry_reload_and_new_poll_interval(
     form = await hass.config_entries.options.async_init(entry.entry_id)
     assert form["type"] is FlowResultType.FORM
     result = await hass.config_entries.options.async_configure(
-        form["flow_id"], user_input={CONF_SCAN_INTERVAL: 20}
+        form["flow_id"], user_input={CONF_SLEEP_CLEANUP_ENABLED: False}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
 
     bucket = hass.data[DOMAIN][entry.entry_id]
-    assert entry.options[CONF_SCAN_INTERVAL] == 20
+    assert CONF_SCAN_INTERVAL not in entry.options
     assert entry.options["user_token"] == token
     assert bucket["api"] is not previous
-    assert bucket["scan_interval"] == 20
-    assert bucket["coordinator"].update_interval == timedelta(seconds=20)
+    assert bucket["scan_interval"] == 10
+    assert bucket["coordinator"].update_interval == timedelta(seconds=10)
     assert bucket["coordinator"].data["dev1"]["id"] == "dev1"
 
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -978,9 +1002,8 @@ async def test_options_heat_cool_toggle_reloads_without_identity_changes(
         result = await hass.config_entries.options.async_configure(
             form["flow_id"],
             user_input={
-                CONF_SCAN_INTERVAL: 10,
                 CONF_ENABLE_HEAT_COOL: enabled,
-                CONF_SLEEP_TIMEOUT_ENABLED: False,
+                CONF_SLEEP_CLEANUP_ENABLED: False,
             },
         )
         assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -1037,3 +1060,26 @@ async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
     assert bucket["notify_state"]["device"]["online_cancel"] is None
     assert "pending_refresh" not in bucket
     assert "device_locks" not in bucket
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_initial_snapshot_auth_error_precedes_sibling_cancellation(
+    hass, dkn_config_entry_factory, reverse
+):
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+
+    class API:
+        async def fetch_installations(self):
+            ids = ["cancel", "unauthorized"]
+            return [
+                {"installation_id": item} for item in (ids[::-1] if reverse else ids)
+            ]
+
+        async def fetch_devices(self, installation):
+            if installation == "cancel":
+                raise asyncio.CancelledError
+            raise _client_response_error(401)
+
+    with pytest.raises(ConfigEntryAuthFailed):
+        await integration._async_update_data(hass, entry, API())
