@@ -16,8 +16,8 @@ test = [
     "pytest-cov==7.1.0",
     # Keep pytest-asyncio aligned with the official Home Assistant test harness.
     "aiointercept==1.0.0",
-    "pytest-homeassistant==2026.11.0",
-    "homeassistant==2026.11.0",
+    "pytest-homeassistant==2026.11.1",
+    "homeassistant==2026.11.1",
 ]
 release = [
     { include-group = "lint" },
