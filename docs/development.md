@@ -64,6 +64,8 @@ Tests use **synthetic, deterministic data**, the Home Assistant in-memory harnes
 
 ## CI and dependency maintenance
 
+Performance baselines, bottlenecks and the two-worker pytest scheduling experiment are documented in [CI performance](./ci-performance.md).
+
 - **Required CI:** Lint (locked Ruff); Tests (current locked HA/official pytest harness and coverage gates); **Minimum HA Compatibility** (fixed SHA-256 hash-locked 2026.11.0 policy: full independent suite with coverage on every run, even when both HA version pins coincide); Package Test (integration-root ZIP layout). The release workflow performs its own full validation. Actionlint/ShellCheck, zizmor, pinned actions and least-privilege tokens are part of workflow hardening.
 - **Daily compatibility canary** ([workflow](../.github/workflows/ha-compatibility-canary.yml), 04:47 UTC): Selects the latest matching stable Home Assistant/official pytest pair and runs the full suite in isolation. It reports lag and failures without changing the locked baseline.
 - **Weekly normal baseline and minimum checks**: locked tests run Monday 04:23 UTC; minimum policy runs Monday 05:13 UTC. Both also run on PRs, pushes to main, and manual dispatch.
