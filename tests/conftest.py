@@ -214,6 +214,7 @@ def isolate_background_push_in_legacy_contract_tests(monkeypatch):
         lambda api, session: None,
     )
 
+
 @pytest.fixture
 def protected_launcher(tmp_path, socket_enabled):
     """Launch and verify one unchanged supervised synthetic HA scenario."""
