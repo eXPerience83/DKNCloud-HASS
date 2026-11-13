@@ -522,8 +522,11 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
     """An in-flight manual Sleep exit must outrank newly confirmed OFF cleanup."""
     from homeassistant.util import dt as dt_util
 
-    from custom_components.airzoneclouddaikin import SleepTracking, _derive_state
-    from custom_components.airzoneclouddaikin import helpers
+    from custom_components.airzoneclouddaikin import (
+        SleepTracking,
+        _derive_state,
+        helpers,
+    )
     from custom_components.airzoneclouddaikin.helpers import (
         async_auto_exit_sleep_if_needed,
     )
