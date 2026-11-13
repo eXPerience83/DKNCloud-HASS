@@ -90,7 +90,10 @@ jobs:
           PYTHONPATH: .
         run: |
           set -euo pipefail
-          uv run --locked --no-sync python -m pytest -q \
+          # Bound xdist to two workers on the hosted runner; keep all tests and
+          # pytest-cov's merged coverage gates. Report slow tests for profiling.
+          uv run --locked --no-sync python -m pytest -q -n 2 --dist=loadfile \
+            --durations=20 \
             --cov=custom_components.airzoneclouddaikin \
             --cov-report=term-missing:skip-covered \
             --cov-report=xml:coverage.xml \
