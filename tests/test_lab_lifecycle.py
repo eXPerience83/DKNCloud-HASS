@@ -56,9 +56,7 @@ async def test_finish_lab_continues_closing_after_cancellation(tmp_path):
     assert not (tmp_path / "lab-result.json").exists()
 
 
-async def test_cancelled_protected_scenario_finalizes_transports(
-    monkeypatch, tmp_path
-):
+async def test_cancelled_protected_scenario_finalizes_transports(monkeypatch, tmp_path):
     """Cancel the real scenario task before its finalization phase."""
     import logging
     from contextlib import nullcontext
@@ -78,9 +76,7 @@ async def test_cancelled_protected_scenario_finalizes_transports(
     async def close_backend():
         backend.runner.sites.clear()
 
-    session = SimpleNamespace(
-        closed=False, close=AsyncMock(side_effect=close_session)
-    )
+    session = SimpleNamespace(closed=False, close=AsyncMock(side_effect=close_session))
     gateway = SimpleNamespace(
         protected=SimpleNamespace(session=session),
         observations={},

@@ -303,13 +303,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             stale_sleep_off = terminated_raw_sleep()
             # The scene may remain Sleep while power goes ON->OFF during the
             # awaited PUT. Capture manual Home/Away intent before any await.
-            exits_raw_sleep = (
-                stale_sleep_off
-                or (
-                    preset_mode in {"home", "away"}
-                    and str(self._device.get("scenary") or "").strip().lower()
-                    == "sleep"
-                )
+            exits_raw_sleep = stale_sleep_off or (
+                preset_mode in {"home", "away"}
+                and str(self._device.get("scenary") or "").strip().lower() == "sleep"
             )
             if self.preset_mode == preset_mode and not (
                 preset_mode == "sleep" and stale_sleep_off

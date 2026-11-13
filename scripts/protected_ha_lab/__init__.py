@@ -312,14 +312,18 @@ async def async_setup(hass, config):
                     )
                 try:
                     if entry is not None:
-                        if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
+                        if bucket := hass.data.get(entry.domain, {}).get(
+                            entry.entry_id
+                        ):
                             if owner := bucket.get("sync_manager"):
                                 await owner.close()
                                 report["owned_tasks_closed"] = not owner._tasks and all(
                                     s._task is None for s in owner.schedulers.values()
                                 )
                         await hass.config_entries.async_unload(entry.entry_id)
-                        if bucket := hass.data.get(entry.domain, {}).get(entry.entry_id):
+                        if bucket := hass.data.get(entry.domain, {}).get(
+                            entry.entry_id
+                        ):
                             if owner := bucket.get("sync_manager"):
                                 await owner.close()
                         await hass.config_entries.async_remove(entry.entry_id)
@@ -347,7 +351,9 @@ async def async_setup(hass, config):
 
                 def describe():
                     last = observations["last_device_age"]
-                    observations["last_device_age"] = time.monotonic() - last if last else None
+                    observations["last_device_age"] = (
+                        time.monotonic() - last if last else None
+                    )
                     return dict(
                         observations=observations | gateway.observations,
                         pusher_result="verified"
@@ -362,11 +368,16 @@ async def async_setup(hass, config):
                         backend_control_writes=backend.controls if backend else None,
                         session_closed=gateway.protected.session.closed,
                         server_closed=not backend.runner.sites if backend else True,
-                        storage_files=len(list(Path(hass.config.path(".storage")).glob("*"))),
+                        storage_files=len(
+                            list(Path(hass.config.path(".storage")).glob("*"))
+                        ),
                     )
 
                 await finish_lab(
-                    hass, report, [gateway.protected.session.close, close_backend], describe
+                    hass,
+                    report,
+                    [gateway.protected.session.close, close_backend],
+                    describe,
                 )
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, scenario)
