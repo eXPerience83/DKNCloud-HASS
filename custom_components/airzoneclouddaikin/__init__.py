@@ -565,7 +565,9 @@ def _derive_state(
         if dev["sleep_overdue"] and not tracking.overdue_recorded:
             # Record only one sanitized anomaly per session for later diagnostics.
             tracking.overdue_recorded = True
-            bucket["sleep_overdue_sessions"] = bucket.get("sleep_overdue_sessions", 0) + 1
+            bucket["sleep_overdue_sessions"] = (
+                bucket.get("sleep_overdue_sessions", 0) + 1
+            )
             bucket["sleep_last_overdue_utc"] = now.isoformat()
 
 
