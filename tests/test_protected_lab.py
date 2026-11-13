@@ -111,7 +111,12 @@ async def test_forbidden_operation_stops_before_network(tls_backend, path, optio
         (
             "POST",
             "https://dkn.airzonecloud.com/devices/device",
-            {"headers": {"X-HTTP-Method-Override": "GET", "x-http-method-override": "PUT"}},
+            {
+                "headers": {
+                    "X-HTTP-Method-Override": "GET",
+                    "x-http-method-override": "PUT",
+                }
+            },
             1,
         ),
     ],
