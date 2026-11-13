@@ -54,25 +54,58 @@ file on a single worker; its serial subprocess cases dominate wall time while
 the other worker can finish earlier. Installation/uv-cache work is not the
 primary bottleneck.
 
-## Follow-up scheduling experiment
+## `--dist=load` experiment (reverted)
 
-Change only the xdist distribution algorithm to `--dist=load` in the
-two existing full-suite jobs. Keep `-n 2` because GitHub-hosted standard
-runners offer bounded CPU resources. This lets workers receive separate
-parametrized protected-lab cases while retaining worker process isolation.
-It does **not** shorten deadlines, bypass protected-lab scenarios, mock
-backend barriers, or skip coverage collection. The independent minimum HA
-hash-locked graph and the current locked HA graph continue to run separately.
+Both test lanes passed with two workers using `--dist=load` (same cases and
+coverage floors), but it did **not** improve time over `loadfile`:
 
-Acceptance criteria: all required checks, both 750-test suites and the
-existing statement-coverage gates must remain green; compare total workflow
-and pytest times against the above before/after runs, including possible
-variance and test fixture isolation. If worker distribution reveals flaky
-tests or slows the critical path, revert to `loadfile` and investigate
-the specific test isolation before trying again.
+| Check | `--dist=loadfile` | `--dist=load` | Outcome |
+| --- | ---: | ---: | --- |
+| Current locked HA pytest | 455.58 s | 470.81 s | 15.23 s slower |
+| Independent minimum HA pytest | 468.20 s | 478.85 s | 10.65 s slower |
+| Entire `tests` workflow | 10m 16s | 10m 43s | 27 s slower |
+| Entire minimum HA workflow | 8m 29s | 8m 27s | Similar, within variation |
 
-The normal workflow also performs an independent, fully synthetic HA loopback
-smoke after pytest. It takes roughly 2 minutes and is a potential separate
-optimization. Do **not** detach it without preserving the protected
-`tests` status check as a failure-sensitive aggregate for both the suite
-and smoke test. Do not relax the repository ruleset to make such a change.
+Evidence: [locked `load` run](https://github.com/eXPerience83/DKNCloud-HASS/actions/runs/43525591536)
+and [minimum `load` run](https://github.com/eXPerience83/DKNCloud-HASS/actions/runs/43525591634)
+(commit `adf4e4fca8c24dd275878b2f4377a6fc2170abca`).
+Both completed 750 tests; locked coverage 88.04%, minimum HA coverage
+88.16%. The slightly different minimum coverage is a measurement variation
+from worker/test ordering, not a threshold change. These are single-run
+measurements. The `load` strategy is now reverted to the previously green,
+faster `--dist=loadfile` in both jobs.
+
+## Isolated HA smoke: parallel required check
+
+The original `tests` job executed `scripts/run_isolated_ha.py` **after**
+the approximately 7m35s pytest/coverage suite, extending workflow completion
+by about two minutes even though the smoke is an independent synthetic HA
+process. The second optimization preserves the safety contract while moving
+the work in parallel:
+
+- **`pytest` job:** same locked HA test graph, full suite, coverage JSON/XML
+  artifacts, coverage thresholds and independent release-dependency check.
+- **`smoke` job:** separate GitHub-hosted runner, same Python version and
+  `uv.lock` test environment, fresh isolated `TMPDIR`, the unchanged
+  `scripts/run_isolated_ha.py` smoke command, and no production credentials.
+- **`tests` job (required by main ruleset and release policy):** a
+  fail-closed aggregation job with `needs: [pytest, smoke]` and
+  `if: always()`. It must fail if either prerequisite has any result
+  other than `success`, including a skipped or cancelled prerequisite.
+  Both jobs must succeed before the existing required `tests` check passes.
+
+This layout does not shorten the protected-lab deadlines, bypass any checks,
+weaken coverage, change the hash-locked minimum HA lane, or modify production
+integration code. It retains all existing required check names and their
+GitHub Actions identities; branch protection does not need to be edited.
+
+**Validation gate:** both upstream jobs and aggregate `tests`, full minimum
+HA suite, actionlint, zizmor, Ruff, HACS, hassfest, package and CodeQL must
+pass on the new PR head. Inspect actual per-job times; the ~2-minute benefit
+is an estimate until GitHub Actions confirms it. The separate smoke runner
+adds environment setup overhead, so record both latency and extra runner
+minutes. Do not claim that a green status implies hardware acceptance.
+
+Further safe work: investigate deliberate 50–121-second synthetic lab waits
+against their scenario contracts and review runtime/fixtures only when
+evidence supports a specific optimization.

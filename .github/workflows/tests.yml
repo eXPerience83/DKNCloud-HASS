@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 jobs:
-  tests:
+  pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -90,22 +90,14 @@ jobs:
           PYTHONPATH: .
         run: |
           set -euo pipefail
-          # Balance slow protected-lab subprocess cases across two workers.
-          # Keep the full suite and pytest-cov's merged coverage gates.
-          uv run --locked --no-sync python -m pytest -q -n 2 --dist=load \
+          # Bound xdist to two workers on the hosted runner; keep all tests and
+          # pytest-cov's merged coverage gates. Report slow tests for profiling.
+          uv run --locked --no-sync python -m pytest -q -n 2 --dist=loadfile \
             --durations=20 \
             --cov=custom_components.airzoneclouddaikin \
             --cov-report=term-missing:skip-covered \
             --cov-report=xml:coverage.xml \
             --cov-report=json:coverage.json
-
-      - name: Run independent Home Assistant loopback smoke
-        env:
-          TMPDIR: ${{ runner.temp }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          uv run --locked --no-sync python scripts/run_isolated_ha.py
 
       - name: Report and check incremental statement coverage
         shell: bash
@@ -134,3 +126,66 @@ jobs:
             coverage.xml
           if-no-files-found: warn
           retention-days: 14
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version-file: pyproject.toml
+          enable-cache: true
+          cache-dependency-glob: |
+            .python-version
+            pyproject.toml
+            uv.lock
+
+      - name: Verify locked smoke environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --check
+          uv sync --locked --only-group test
+          uv pip check --python .venv/bin/python
+
+      - name: Run independent Home Assistant loopback smoke
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          uv run --locked --no-sync python scripts/run_isolated_ha.py
+
+  # Required branch-protection status "tests": both independent jobs must pass.
+  # Always evaluate even if one prerequisite fails or is skipped.
+  tests:
+    if: ${{ always() }}
+    needs:
+      - pytest
+      - smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require successful tests and loopback smoke
+        shell: bash
+        env:
+          PYTEST_RESULT: ${{ needs.pytest.result }}
+          SMOKE_RESULT: ${{ needs.smoke.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$PYTEST_RESULT" != "success" || "$SMOKE_RESULT" != "success" ]]; then
+            printf 'Required tests gate failed: pytest=%s smoke=%s\\n' "$PYTEST_RESULT" "$SMOKE_RESULT" >&2
+            exit 1
+          fi
+          printf 'Both the complete HA pytest/coverage suite and the isolated loopback smoke passed.\\n' >> "$GITHUB_STEP_SUMMARY"
