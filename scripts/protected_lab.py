@@ -246,14 +246,16 @@ class LaboratoryGateway:
             # Every rejected operation still stops the lab, regardless.
             verb = str(method).upper()
             headers = kwargs.get("headers")
-            override = (
-                headers.get("X-HTTP-Method-Override", "")
-                if hasattr(headers, "get")
-                else ""
+            # Header names are case-insensitive. Check every occurrence so
+            # a mixed-case override cannot disappear from LAB diagnostics.
+            override_is_control = isinstance(headers, dict) and any(
+                str(name).lower() == "x-http-method-override"
+                and str(value).upper() in {"PUT", "PATCH", "DELETE"}
+                for name, value in headers.items()
             )
             is_control = (
                 verb in {"PUT", "PATCH", "DELETE"}
-                or str(override).upper() in {"PUT", "PATCH", "DELETE"}
+                or override_is_control
                 or (verb == "POST" and str(url).split("?", 1)[0].endswith("/events"))
             )
             if is_control:
