@@ -56,6 +56,98 @@ async def test_finish_lab_continues_closing_after_cancellation(tmp_path):
     assert not (tmp_path / "lab-result.json").exists()
 
 
+async def test_cancelled_protected_scenario_finalizes_transports(
+    monkeypatch, tmp_path
+):
+    """Cancel the real scenario task before its finalization phase."""
+    import logging
+    from contextlib import nullcontext
+
+    from custom_components.airzoneclouddaikin import airzone_api
+    from scripts import protected_ha_lab
+
+    finished = asyncio.Event()
+    login_entered = asyncio.Event()
+    registered = {}
+    original_handlers = list(logging.getLogger().handlers)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "synthetic-test")
+
+    async def close_session():
+        session.closed = True
+
+    async def close_backend():
+        backend.runner.sites.clear()
+
+    session = SimpleNamespace(
+        closed=False, close=AsyncMock(side_effect=close_session)
+    )
+    gateway = SimpleNamespace(
+        protected=SimpleNamespace(session=session),
+        observations={},
+        enforce=nullcontext,
+    )
+    backend = SimpleNamespace(
+        directory=str(tmp_path),
+        start=AsyncMock(),
+        connector=lambda **_: object(),
+        wait=None,
+        operations={},
+        controls=0,
+        runner=SimpleNamespace(sites={"synthetic"}),
+        close=AsyncMock(side_effect=close_backend),
+    )
+    backend.start.return_value = backend
+
+    class PausedLogin:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def login(self):
+            login_entered.set()
+            await asyncio.Event().wait()
+            return True
+
+    fake_hass = SimpleNamespace(
+        data={"lab_finished": finished},
+        config=SimpleNamespace(
+            config_dir=str(tmp_path),
+            path=lambda name: str(tmp_path / name),
+        ),
+        bus=SimpleNamespace(
+            async_listen_once=lambda event, callback: registered.update(
+                event=event, callback=callback
+            )
+        ),
+    )
+    monkeypatch.setattr(airzone_api, "AirzoneAPI", PausedLogin)
+    monkeypatch.setattr(
+        protected_ha_lab, "SyntheticBackend", lambda _directory: backend
+    )
+    monkeypatch.setattr(
+        protected_ha_lab, "create_gateway", AsyncMock(return_value=gateway)
+    )
+
+    try:
+        assert await protected_ha_lab.async_setup(fake_hass, {})
+        assert registered["event"] == "homeassistant_started"
+        task = asyncio.create_task(registered["callback"](None))
+        await asyncio.wait_for(login_entered.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+
+        session.close.assert_awaited_once()
+        backend.close.assert_awaited_once()
+        assert session.closed and not backend.runner.sites
+        assert finished.is_set()
+        assert fake_hass.data["lab_failed"]
+        assert (tmp_path / "lab-result.json").exists()
+    finally:
+        if restore := fake_hass.data.get("lab_restore_guard"):
+            restore()
+        logging.getLogger().handlers = original_handlers
+
+
 async def test_legacy_entry_constructor_failure_releases_real_lab(
     hass, monkeypatch, socket_enabled, tmp_path
 ):
