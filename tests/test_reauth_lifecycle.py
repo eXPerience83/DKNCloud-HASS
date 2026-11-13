@@ -55,6 +55,10 @@ async def test_reauth_restores_complete_ha_runtime_twice(
     clients: list[FakeAPI] = []
 
     class FakeAPI:
+        def suspend(self, *, auth=True):
+            """Mirror the entry-lifetime API fence in legacy fixtures."""
+            pass
+
         def __init__(
             self,
             username: str,
@@ -353,9 +357,9 @@ async def test_real_http_write_only_401_starts_native_reauth(
     )
     retired_api = entry.runtime_data.api
     assert await hass.config_entries.async_unload(entry.entry_id)
-    # A late 401 from a retired client must not reopen authentication.
+    # A retired client is fenced before any new send and must not reopen reauth.
     cloud["write_token"] = "another-token"
-    with pytest.raises(ConfigEntryAuthFailed):
+    with pytest.raises(asyncio.CancelledError):
         await retired_api.put_device_fields("dev1", {"sleep_time": 5})
     await hass.async_block_till_done()
     assert not list(hass.config_entries.flow.async_progress_by_handler(DOMAIN))
@@ -626,11 +630,10 @@ async def test_delayed_write_401_cannot_reauth_retired_entry(
             assert entry.runtime_data.api is not retired_api
 
         release.set()
-        from homeassistant.exceptions import ConfigEntryAuthFailed
-
-        with pytest.raises(ConfigEntryAuthFailed):
+        with pytest.raises(asyncio.CancelledError):
             await pending
         await hass.async_block_till_done()
+        assert not retired_api._auth_suspended
         assert retired_api.on_write_auth_failure is None
         assert not list(hass.config_entries.flow.async_progress_by_handler(DOMAIN))
         if transition == "reload":

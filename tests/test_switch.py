@@ -31,7 +31,7 @@ def _make_switch(
     coordinator = dummy_coordinator_factory({device_id: device_snapshot})
     entity = AirzonePowerSwitch(coordinator, entry_id, device_id)
     entity.hass = hass
-    entity.context = None
+    entity.async_set_context(None)
     entity.async_write_ha_state = lambda: None
     entity._climate_entity_id = climate_entity_id
 
@@ -76,7 +76,7 @@ async def test_successful_climate_proxy_does_not_use_p1_fallback(
         {"id": "dev1", "name": "Zone", "power": power},
     )
     originating_context = Context()
-    entity.context = originating_context
+    entity.async_set_context(originating_context)
     delegated: list[str] = []
     propagated_context_ids: list[str] = []
     hass.states.async_set("climate.device", "off")

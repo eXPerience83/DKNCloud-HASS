@@ -8,9 +8,8 @@
         "data": {
           "username": "Email",
           "password": "Password",
-          "scan_interval": "Scan interval (seconds)",
           "expose_pii_identifiers": "Expose PII identifiers (advanced)",
-          "sleep_timeout_enabled": "Treat expired sleep as 'Home' and clean backend scenary"
+          "sleep_cleanup_enabled": "Restore Home automatically when Sleep ends"
         }
       },
       "reauth_confirm": {
@@ -37,18 +36,15 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Experimental/beta HEAT_COOL mode is opt-in, routes setpoints via P7 and fan speeds via P3, and only takes effect for installations whose devices report compatibility. Sleep expiry handling is optional and treats expired sleep sessions as Home while attempting to clean up the scenary once.",
+        "description": "Experimental HEAT_COOL is opt-in and applies only to compatible devices. Automatic Sleep cleanup is enabled by default: when an active session's OFF is independently confirmed, it restores Home without turning the unit on. Disable it to keep the backend scene unchanged.",
         "data": {
-          "scan_interval": "Scan interval (seconds)",
           "expose_pii_identifiers": "Expose PII identifiers (advanced)",
           "enable_heat_cool_mode": "Enable experimental/beta HEAT_COOL mode (requires compatible installation; uses P7/P3 routing)",
-          "sleep_timeout_enabled": "Treat expired sleep as 'Home' and clean backend scenary"
+          "sleep_cleanup_enabled": "Restore Home automatically when Sleep ends"
         }
       }
     },
-    "error": {
-      "invalid_scan_interval": "Scan interval must be between 10 and 30 seconds."
-    }
+    "error": {}
   },
   "exceptions": {
     "wserver_not_connected": {

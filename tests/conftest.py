@@ -18,7 +18,7 @@ from custom_components.airzoneclouddaikin.config_flow import (
 )
 from custom_components.airzoneclouddaikin.const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
 )
 
@@ -64,7 +64,7 @@ def dkn_config_entry_factory(
             CONF_SCAN_INTERVAL: 10,
             CONF_EXPOSE_PII: False,
             CONF_ENABLE_HEAT_COOL: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: True,
         }
         if options:
             entry_options.update(options)
@@ -119,6 +119,10 @@ def sample_devices(sample_device: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 class FakeAirzoneAPI:
+    def suspend(self, *, auth=True):
+        """Mirror the entry-lifetime API fence in legacy fixtures."""
+        pass
+
     """Small fake API object for setup/coordinator tests."""
 
     def __init__(
@@ -196,3 +200,16 @@ def dummy_coordinator_factory(
         return DummyCoordinator(data=data, hass=hass, api=api)
 
     return _factory
+
+
+@pytest.fixture(autouse=True)
+def isolate_background_push_in_legacy_contract_tests(monkeypatch):
+    """Keep REST/entity unit fixtures isolated from automatic background I/O.
+
+    test_sync_runtime explicitly supplies its connector and exercises the complete
+    HA lifecycle. Adapter wire contracts are tested separately with synthetic data.
+    """
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.build_verified_adapter",
+        lambda api, session: None,
+    )

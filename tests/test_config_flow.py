@@ -6,7 +6,6 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-import voluptuous as vol
 from aiohttp import ClientResponseError
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.config_entries import SOURCE_USER
@@ -25,7 +24,7 @@ from custom_components.airzoneclouddaikin.config_flow import (
 )
 from custom_components.airzoneclouddaikin.const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
 )
 
@@ -134,9 +133,8 @@ async def test_user_step_success_creates_entry(
     user_input = {
         CONF_USERNAME: "User@Example.Com ",
         CONF_PASSWORD: fake_password,
-        CONF_SCAN_INTERVAL: 15,
         CONF_EXPOSE_PII: True,
-        CONF_SLEEP_TIMEOUT_ENABLED: True,
+        CONF_SLEEP_CLEANUP_ENABLED: True,
     }
 
     result = await hass.config_entries.flow.async_configure(
@@ -149,9 +147,8 @@ async def test_user_step_success_creates_entry(
     assert result["data"] == {CONF_USERNAME: normalized_email}
     assert result["options"] == {
         "user_token": fake_token,
-        CONF_SCAN_INTERVAL: 15,
         CONF_EXPOSE_PII: True,
-        CONF_SLEEP_TIMEOUT_ENABLED: True,
+        CONF_SLEEP_CLEANUP_ENABLED: True,
     }
     assert CONF_ENABLE_HEAT_COOL not in result["options"]
     assert login_api_class.instances[-1].cleared_password is True
@@ -175,9 +172,8 @@ async def test_user_step_invalid_auth_from_api(
         user_input={
             CONF_USERNAME: fake_email,
             CONF_PASSWORD: fake_password,
-            CONF_SCAN_INTERVAL: 15,
             CONF_EXPOSE_PII: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: False,
         },
     )
 
@@ -203,9 +199,8 @@ async def test_user_step_cannot_connect(
         user_input={
             CONF_USERNAME: fake_email,
             CONF_PASSWORD: fake_password,
-            CONF_SCAN_INTERVAL: 15,
             CONF_EXPOSE_PII: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: False,
         },
     )
 
@@ -227,7 +222,6 @@ async def test_reauth_flow_success_updates_token(
         options={
             "user_token": "old-token",
             "hidden_key": "keep-me",
-            CONF_SCAN_INTERVAL: 10,
             CONF_EXPOSE_PII: False,
         }
     )
@@ -578,10 +572,10 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
         options={
             "user_token": fake_token,
             "hidden_key": "keep-me",
-            CONF_SCAN_INTERVAL: 10,
             CONF_EXPOSE_PII: False,
             CONF_ENABLE_HEAT_COOL: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: False,
+            "sleep_timeout_enabled": True,
         }
     )
     entry.add_to_hass(hass)
@@ -594,71 +588,40 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_SCAN_INTERVAL: 20,
             CONF_EXPOSE_PII: True,
             CONF_ENABLE_HEAT_COOL: True,
-            CONF_SLEEP_TIMEOUT_ENABLED: True,
+            CONF_SLEEP_CLEANUP_ENABLED: True,
         },
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_SCAN_INTERVAL] == 20
+    assert CONF_SCAN_INTERVAL not in entry.options
     assert entry.options[CONF_EXPOSE_PII] is True
     assert entry.options[CONF_ENABLE_HEAT_COOL] is True
-    assert entry.options[CONF_SLEEP_TIMEOUT_ENABLED] is True
+    assert entry.options[CONF_SLEEP_CLEANUP_ENABLED] is True
+    assert "sleep_timeout_enabled" not in entry.options
     assert entry.options["user_token"] == fake_token
     assert entry.options["hidden_key"] == "keep-me"
 
 
 @pytest.mark.parametrize("invalid_value", [9, 31, "not-a-number"])
-async def test_options_scan_interval_rejects_invalid_values(
-    hass: HomeAssistant,
-    dkn_config_entry_factory: Callable[..., MockConfigEntry],
-    invalid_value: Any,
-) -> None:
-    """A bad interval must not be accepted or overwrite stored options."""
-    entry = dkn_config_entry_factory(
-        options={CONF_SCAN_INTERVAL: 10, "preserve-me": "untouched"}
-    )
+async def test_options_ignores_obsolete_interval(
+    hass, dkn_config_entry_factory, invalid_value
+):
+    entry = dkn_config_entry_factory(options={"preserve-me": "untouched"})
     entry.add_to_hass(hass)
-    original_options = dict(entry.options)
-
-    # The options form exposes the same bound checks to HA's form renderer.
     flow = AirzoneOptionsFlow(entry)
     flow.hass = hass
     form = await flow.async_step_init()
-    assert form["type"] is FlowResultType.FORM
-    with pytest.raises(vol.Invalid) as exc_info:
-        form["data_schema"]({CONF_SCAN_INTERVAL: invalid_value})
-    assert CONF_SCAN_INTERVAL in exc_info.value.path
-
-    # Keep other unsaved selections visible when retrying the invalid interval.
-    invalid_result = await flow.async_step_init(
-        {
-            CONF_SCAN_INTERVAL: invalid_value,
-            CONF_EXPOSE_PII: True,
-            CONF_ENABLE_HEAT_COOL: True,
-            CONF_SLEEP_TIMEOUT_ENABLED: True,
-        }
+    assert CONF_SCAN_INTERVAL not in form["data_schema"]({})
+    result = await flow.async_step_init(
+        {CONF_SCAN_INTERVAL: invalid_value, CONF_EXPOSE_PII: True}
     )
-    assert invalid_result["type"] is FlowResultType.FORM
-    assert invalid_result["errors"] == {CONF_SCAN_INTERVAL: "invalid_scan_interval"}
-    assert dict(entry.options) == original_options
-
-    # HA reconstructs the form from schema defaults when displaying the error.
-    retry_defaults = invalid_result["data_schema"]({})
-    assert retry_defaults[CONF_SCAN_INTERVAL] == 10
-    for option in (CONF_EXPOSE_PII, CONF_ENABLE_HEAT_COOL, CONF_SLEEP_TIMEOUT_ENABLED):
-        assert retry_defaults[option] is True
-
-    # A corrected submission must apply those choices without dropping hidden keys.
-    corrected = await flow.async_step_init({**retry_defaults, CONF_SCAN_INTERVAL: 20})
-    assert corrected["type"] is FlowResultType.CREATE_ENTRY
-    assert corrected["data"][CONF_SCAN_INTERVAL] == 20
-    for option in (CONF_EXPOSE_PII, CONF_ENABLE_HEAT_COOL, CONF_SLEEP_TIMEOUT_ENABLED):
-        assert corrected["data"][option] is True
-    assert corrected["data"]["user_token"] == original_options["user_token"]
-    assert corrected["data"]["preserve-me"] == "untouched"
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert CONF_SCAN_INTERVAL not in result["data"]
+    assert result["data"]["user_token"] == entry.options["user_token"]
+    assert result["data"]["preserve-me"] == "untouched"
+    assert result["data"][CONF_EXPOSE_PII] is True
 
 
 def test_options_flow_recomputes_heat_cool_when_cached_none(
@@ -688,11 +651,11 @@ def test_options_flow_recomputes_heat_cool_when_cached_none(
     assert hass.data[DOMAIN][entry.entry_id]["heat_cool_supported"] is True
 
 
-async def test_options_flow_defaults_sleep_timeout_when_missing(
+async def test_options_flow_defaults_sleep_cleanup_when_missing(
     hass: HomeAssistant,
     fake_token: str,
 ) -> None:
-    """Older entries without sleep timeout option should default it to False."""
+    """Legacy entries use the new automatic cleanup default of True."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         entry_id="legacy-entry",
@@ -708,11 +671,10 @@ async def test_options_flow_defaults_sleep_timeout_when_missing(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_SCAN_INTERVAL: 12,
             CONF_EXPOSE_PII: False,
             CONF_ENABLE_HEAT_COOL: False,
         },
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_SLEEP_TIMEOUT_ENABLED] is False
+    assert entry.options[CONF_SLEEP_CLEANUP_ENABLED] is True

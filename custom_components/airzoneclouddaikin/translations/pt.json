@@ -8,9 +8,8 @@
         "data": {
           "username": "Email",
           "password": "Palavra-passe",
-          "scan_interval": "Intervalo de consulta (segundos)",
           "expose_pii_identifiers": "Expor identificadores PII (avançado)",
-          "sleep_timeout_enabled": "Tratar Sleep expirado como 'Home' e limpar o cenário no backend"
+          "sleep_cleanup_enabled": "Restaurar automaticamente Home quando o Sleep terminar"
         }
       },
       "reauth_confirm": {
@@ -37,18 +36,15 @@
     "step": {
       "init": {
         "title": "Opções",
-        "description": "O modo experimental HEAT_COOL é opcional, envia as definições através de P7 e as velocidades do ventilador via P3, e só se aplica a instalações cujos dispositivos indiquem compatibilidade. O tratamento de expiração do Sleep é opcional e trata sessões expiradas como Home enquanto tenta limpar o cenário uma vez.",
+        "description": "O modo HEAT_COOL experimental é opcional e requer um dispositivo compatível. A limpeza automática do Sleep está ativada por predefinição: após confirmar que a sessão desligou o aparelho, restaura Home sem o ligar. Desative-a para manter o cenário do servidor.",
         "data": {
-          "scan_interval": "Intervalo de consulta (segundos)",
           "expose_pii_identifiers": "Expor identificadores PII (avançado)",
           "enable_heat_cool_mode": "Ativar modo HEAT_COOL experimental (requer instalação compatível; utiliza encaminhamento P7/P3)",
-          "sleep_timeout_enabled": "Tratar Sleep expirado como 'Home' e limpar o cenário no backend"
+          "sleep_cleanup_enabled": "Restaurar automaticamente Home quando o Sleep terminar"
         }
       }
     },
-    "error": {
-      "invalid_scan_interval": "O intervalo de atualização deve estar entre 10 e 30 segundos."
-    }
+    "error": {}
   },
   "exceptions": {
     "wserver_not_connected": {

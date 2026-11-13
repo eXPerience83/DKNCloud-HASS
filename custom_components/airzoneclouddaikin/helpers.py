@@ -23,11 +23,14 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
+from aiohttp import ClientResponseError
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
+from .airzone_api import CommandNotSentCooldown
 from .const import (
     DOMAIN,
     MANUFACTURER,
@@ -57,6 +60,8 @@ def _optimistic_bucket(hass: HomeAssistant, entry_id: str) -> OptimisticEntry:
 def _adaptive_ttl(hass: HomeAssistant, entry_id: str) -> float:
     bucket = _entry_bucket(hass, entry_id)
     scan_interval = bucket.get("scan_interval")
+    if bucket.get("sync_manager") is not None:
+        return 30.0
     ttl = float(OPTIMISTIC_TTL_SEC)
     try:
         if scan_interval is not None:
@@ -79,6 +84,34 @@ def optimistic_set(
     """Store an optimistic value for a device field with expiration."""
 
     optimistic = _optimistic_bucket(hass, entry_id)
+    if key == "scenary":
+        if value == SCENARY_SLEEP:
+            _entry_bucket(hass, entry_id).get("sleep_exit_retry_after", {}).pop(
+                device_id, None
+            )
+            _entry_bucket(hass, entry_id).get("sleep_exit_pending", {}).pop(
+                device_id, None
+            )
+            if (
+                tracking := _entry_bucket(hass, entry_id)
+                .get("sleep_tracking", {})
+                .get(device_id)
+            ):
+                # A new explicit command starts a local observation, not a physical clock.
+                tracking.session_revision += 1
+                tracking.sleep_started_at_utc = dt_util.utcnow()
+                tracking.last_scenary = SCENARY_SLEEP
+                tracking.force_exit_requested = False
+                tracking.observed_on = False
+                tracking.consecutive_off_reports = 0
+                tracking.start_known = True
+                tracking.expected_minutes = None
+                tracking.overdue_on_reports = 0
+                tracking.last_confirmed_on_utc = None
+                tracking.overdue_probe_requested = False
+                tracking.overdue_recorded = False
+        revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
+        revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})
 
     expires_in = ttl if ttl is not None else _adaptive_ttl(hass, entry_id)
@@ -108,9 +141,9 @@ def optimistic_get(
 
     expires = overlay.get("expires")
     if not isinstance(expires, (int, float)) or hass.loop.time() >= float(expires):
-        device_overlay.pop(key, None)
-        if not device_overlay:
-            optimistic.pop(device_id, None)
+        if manager := _entry_bucket(hass, entry_id).get("sync_manager"):
+            manager.request_recovery(device_id)
+        optimistic_invalidate(hass, entry_id, device_id, key)
         return backend_value
 
     return overlay.get("value", backend_value)
@@ -141,6 +174,9 @@ def schedule_post_write_refresh(
     """Request a coordinator refresh after a short delay (coalesced per entry)."""
 
     bucket = _entry_bucket(hass, entry_id)
+    if bucket.get("sync_manager") is not None:
+        # Existing device cycles observe accepted writes; never create a second GET.
+        return None
     cancel_handles: list[Callable[[], None]] = bucket.setdefault("cancel_handles", [])
 
     pending: Callable[[], None] | None = bucket.get("pending_refresh")
@@ -305,58 +341,104 @@ async def async_auto_exit_sleep_if_needed(
     allow_away_handling: bool,
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
     on_success: Callable[[], None] | None = None,
-) -> None:
-    """Best-effort auto-exit of sleep (and optionally vacant) scenary.
+) -> bool | None:
+    """Distinguish a no-longer-due recheck from an attempted scene exit.
 
-    NOTE: There is a small window where this helper and the coordinator-level
-    sleep expiry cleanup may both call async_set_scenary(..., SCENARY_HOME) for
-    the same device. The backend should handle this idempotently, and we prefer
-    a redundant write over leaving the device stuck in ``sleep``.
-    """
-
-    raw_scenary = str((device or {}).get("scenary") or "").strip().lower()
-
-    if raw_scenary == SCENARY_VACANT:
-        if allow_away_handling and auto_exit_away is not None:
+    Return True if the locked recheck is no longer due or a newer manual
+    scene request superseded it. Return False if cooldown prevented any
+    send, and None for other handled outcomes.
+    Never replay an ambiguous scene write."""
+    bucket = _entry_bucket(hass, entry_id)
+    revision = bucket.get("scene_revisions", {}).get(device_id, 0)
+    # Snapshot the manual intent before this cleanup can wait or send.
+    # A later preset request must not be discarded by our optimistic Home.
+    cleanup_intent = bucket.get("scene_preset_intents", {}).get(device_id, 0)
+    raw = str(device.get("scenary") or "").lower()
+    if raw == SCENARY_VACANT:
+        if allow_away_handling and auto_exit_away:
             await auto_exit_away(reason)
         return
-
-    if raw_scenary != SCENARY_SLEEP:
-        return
-
-    if not (device or {}).get("sleep_expired") and is_device_on():
-        return
-
-    api = getattr(coordinator, "api", None)
-    if api is None:
-        _LOGGER.debug(
-            "API handle missing; skipping auto-exit sleep before %s on %s",
-            reason,
-            device_id,
-        )
-        return
-
-    lock = acquire_device_lock(hass, entry_id, device_id)
-    async with lock:
+    async with acquire_device_lock(hass, entry_id, device_id):
+        current = (getattr(coordinator, "data", None) or {}).get(device_id, device)
+        overlay = bucket.get("optimistic", {}).get(device_id, {}).get("scenary")
+        pending = bucket.setdefault("sleep_exit_pending", {})
+        if (
+            bucket.get("closing")
+            or hass.is_stopping
+            or bucket.get("scene_revisions", {}).get(device_id, 0) != revision
+            or (overlay and overlay.get("value") != SCENARY_SLEEP)
+            or str(current.get("scenary") or "").lower() != SCENARY_SLEEP
+            or device_id in pending
+        ):
+            return
+        if bucket.get("scene_preset_intents", {}).get(device_id, 0) != cleanup_intent:
+            # A manual request arrived while cleanup waited for the lock.
+            # It takes precedence and must not be marked handled.
+            return True
+        if reason == "expiry":
+            # Validate session-owned telemetry after acquiring the device
+            # lock: a new Sleep selection resets tracking before the
+            # coordinator can refresh its old sleep_off_confirmed flag.
+            tracking = bucket.get("sleep_tracking", {}).get(device_id)
+            if not (
+                current.get("sleep_off_confirmed") is True
+                and tracking is not None
+                and tracking.last_scenary == SCENARY_SLEEP
+                and tracking.sleep_started_at_utc is not None
+                and tracking.observed_on
+                and tracking.consecutive_off_reports >= 2
+            ):
+                # Neither elapsed time nor a previous session's OFF may
+                # authorize an automatic scene write.
+                return True
+        elif is_device_on():
+            # Explicit wake preparation may exit an OFF Sleep session,
+            # but ordinary active controls must preserve the scene.
+            return True
+        api = getattr(coordinator, "api", None)
+        if api is None:
+            return
+        deadlines = bucket.setdefault("sleep_exit_retry_after", {})
+        if hass.loop.time() < deadlines.get(device_id, 0):
+            return False
+        deadlines.pop(device_id, None)
+        pending[device_id] = "unverified"
+        unsent = False
         try:
-            await api.async_set_scenary(device_id, SCENARY_HOME)
+            # No retries: a transport failure may follow acceptance by the server.
+            await api.async_set_scenary(device_id, SCENARY_HOME, retry=False)
+        except CommandNotSentCooldown as error:
+            # No I/O occurred in this invocation; keep this session eligible.
+            pending.pop(device_id, None)
+            deadlines[device_id] = error.retry_at
+            unsent = True
+            return False
         except asyncio.CancelledError:
             raise
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning(
-                "Failed to auto-exit sleep before %s on %s: %s",
-                reason,
-                device_id,
-                err,
-                exc_info=True,
+        except ClientResponseError as error:
+            if 400 <= error.status < 500:
+                pending[device_id] = "rejected"
+            _LOGGER.warning("Sleep exit not confirmed (HTTP %s)", error.status)
+        except Exception as error:  # noqa: BLE001
+            _LOGGER.warning("Sleep exit remains unverified (%s)", type(error).__name__)
+        else:
+            pending[device_id] = "accepted"
+            optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
+            # The cleanup wrote after its initial manual-intent snapshot.
+            # A later queued preset may proceed past the revision fence,
+            # while older requests and unrelated scene writes remain fenced.
+            bucket.setdefault("scene_preset_last_write", {})[device_id] = (
+                bucket["scene_revisions"][device_id],
+                cleanup_intent,
             )
-            return
-
-        optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
-        if on_success is not None:
-            on_success()
-
-    schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
+            if on_success:
+                on_success()
+        finally:
+            if not unsent and not bucket.get("closing"):
+                if manager := bucket.get("sync_manager"):
+                    manager.request_recovery(device_id)
+                else:
+                    schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
 
 
 def parse_float(value: Any, *, precision: int | None = None) -> float | None:
@@ -394,3 +476,30 @@ def build_device_info(device: dict[str, Any], device_id: str) -> DeviceInfo:
         name=device.get("name") or "Airzone Device",
         connections=connections,
     )
+
+
+def confirm_optimistic(hass, entry_id, data, touched):
+    """Retire only overlays for explicitly received matching fields."""
+    changed = False
+    optimistic = _optimistic_bucket(hass, entry_id)
+    for device, keys in touched.items():
+        state = data.get(device, {})
+        for key in keys:
+            overlay = optimistic.get(device, {}).get(key)
+            if overlay is not None and str(overlay.get("value")) == str(state.get(key)):
+                optimistic_invalidate(hass, entry_id, device, key)
+                changed = True
+    return changed
+
+
+def expire_optimistic(hass, entry_id):
+    """Expire overlays even when no enabled entity reads their properties."""
+    now = hass.loop.time()
+    optimistic = _optimistic_bucket(hass, entry_id)
+    for device, overlays in list(optimistic.items()):
+        for field, overlay in list(overlays.items()):
+            if overlay.get("expires", 0) <= now:
+                manager = _entry_bucket(hass, entry_id).get("sync_manager")
+                if manager is not None:
+                    manager.request_recovery(device)
+                optimistic_invalidate(hass, entry_id, device, field)
