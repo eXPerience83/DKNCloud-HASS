@@ -213,3 +213,82 @@ def isolate_background_push_in_legacy_contract_tests(monkeypatch):
         "custom_components.airzoneclouddaikin.build_verified_adapter",
         lambda api, session: None,
     )
+
+@pytest.fixture
+def protected_launcher(tmp_path, socket_enabled):
+    """Launch and verify one unchanged supervised synthetic HA scenario."""
+
+    def run_case(case):
+        """The final launcher owns the HA child, TLS backend and cleanup in every case."""
+        import json
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(root / "scripts/run_isolated_ha.py"),
+                "--protected",
+                "--protected-case",
+                case,
+                "--process-timeout",
+                "140" if case in {"reconnect", "reconnect_no_events"} else "75",
+            ],
+            cwd=root,
+            env={"TMPDIR": str(tmp_path)},
+            capture_output=True,
+            text=True,
+            timeout=150 if case in {"reconnect", "reconnect_no_events"} else 85,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        summary = json.loads(result.stdout.splitlines()[0])
+        assert summary.get("error") != "cleanup_failed"
+        assert summary["backend_control_writes"] == 0
+        if case == "sleep":
+            assert summary["observations"]["blocked_control_attempts"] >= 1
+        assert summary["session_closed"] and summary["server_closed"]
+        assert summary["storage_files"] == 0
+        if case in {"no_events", "invalid_event", "wrong_device"}:
+            assert summary["pusher_result"] == "inconclusive"
+            assert summary["observations"]["device_applied"] == 0
+            assert summary["observations"]["get_received"] > 0
+            assert summary["pending_http_tasks"] == 0
+        if case == "normal":
+            assert summary["observations"]["device_changed_state"] >= 1
+            assert summary["observations"]["device_applied"] >= 1
+            assert summary["observations"]["entity_observed_push"] >= 1
+        if case == "no_events":
+            assert summary["observations"]["subscribed"]
+            assert summary["observations"]["websocket_established"] > 0
+        if case == "reconnect_no_events":
+            assert not summary["push_recovered"]
+        if case == "authorization":
+            assert summary["operations"].get("authorize", 0) >= 1
+            assert summary["inflight_authorization_at_deadline"]
+        if case == "get":
+            assert summary["operations"].get("get", 0) >= 1
+            assert summary["inflight_get_at_deadline"]
+            assert summary["pending_recovery_get_reached"]
+            assert summary["get_pending_before_owner_shutdown"]
+            assert summary["pending_http_tasks"] == 0
+            assert summary["transports_open_when_checked"]
+        if case == "cooldown":
+            assert summary["cooldown_wait"]
+            assert summary["cooldown_pending_at_deadline"]
+        if case in {"reconnect", "reconnect_no_events"}:
+            assert summary["tls_fallback"] and summary["tls_reconnected"]
+        if case in {"normal", "reconnect", "sleep"}:
+            assert summary["owned_tasks_closed"]
+            assert summary["entities"] >= 5
+        assert not list(tmp_path.iterdir())
+        for secret in [
+            "synthetic-password",
+            "synthetic-token",
+            "synthetic@example.invalid",
+        ]:
+            assert secret not in result.stdout + result.stderr
+
+
+    return run_case
