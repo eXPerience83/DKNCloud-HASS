@@ -67,6 +67,46 @@ async def test_forbidden_operation_stops_before_network(tls_backend, path, optio
         await gateway.protected.session.close()
 
 
+@pytest.mark.parametrize(
+    ("method", "url", "options", "expected"),
+    [
+        ("GET", "https://elsewhere.invalid/devices", {}, 0),
+        ("POST", "https://dkn.airzonecloud.com/unknown", {}, 0),
+        (
+            "PUT",
+            "https://dkn.airzonecloud.com/devices/device",
+            {"json": {"device": {"scenary": "occupied"}}},
+            1,
+        ),
+        (
+            "POST",
+            "https://dkn.airzonecloud.com/events",
+            {"json": {"event": {"cgi": "modmaquina"}}},
+            1,
+        ),
+        (
+            "POST",
+            "https://dkn.airzonecloud.com/devices/device",
+            {"headers": {"X-HTTP-Method-Override": "PUT"}},
+            1,
+        ),
+    ],
+)
+async def test_blocked_control_counter_only_tracks_control_writes(
+    tls_backend, method, url, options, expected
+):
+    """Forbidden requests always stop; only HVAC commands count as control."""
+    gateway = await make_gateway(tls_backend)
+    try:
+        with gateway.enforce(), pytest.raises(LabStopped):
+            gateway.request(method, url, **options)
+        assert gateway.observations["blocked_control_attempts"] == expected
+        assert gateway.supervisor.reason == "forbidden_operation"
+        assert tls_backend.calls == 0
+    finally:
+        await gateway.protected.session.close()
+
+
 @pytest.mark.parametrize("failure", ["redirect", "malformed", "401", "429"])
 async def test_response_failures_stop_without_private_exception(tls_backend, failure):
     if failure.isdigit():
