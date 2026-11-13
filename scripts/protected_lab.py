@@ -254,10 +254,7 @@ class LaboratoryGateway:
             is_control = (
                 verb in {"PUT", "PATCH", "DELETE"}
                 or str(override).upper() in {"PUT", "PATCH", "DELETE"}
-                or (
-                    verb == "POST"
-                    and str(url).split("?", 1)[0].endswith("/events")
-                )
+                or (verb == "POST" and str(url).split("?", 1)[0].endswith("/events"))
             )
             if is_control:
                 self.observations["blocked_control_attempts"] += 1
