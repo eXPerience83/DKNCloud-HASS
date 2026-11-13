@@ -241,7 +241,26 @@ class LaboratoryGateway:
             # Validate synchronously so no hidden task can swallow a policy failure.
             self.protected.validate_request(method, url, **kwargs)
         except PermissionError, ValueError, TypeError:
-            self.observations["blocked_control_attempts"] += 1
+            # This diagnostic counts attempted HVAC control writes, not
+            # unrelated disallowed reads, auth calls or malformed URLs.
+            # Every rejected operation still stops the lab, regardless.
+            verb = str(method).upper()
+            headers = kwargs.get("headers")
+            override = (
+                headers.get("X-HTTP-Method-Override", "")
+                if hasattr(headers, "get")
+                else ""
+            )
+            is_control = (
+                verb in {"PUT", "PATCH", "DELETE"}
+                or str(override).upper() in {"PUT", "PATCH", "DELETE"}
+                or (
+                    verb == "POST"
+                    and str(url).split("?", 1)[0].endswith("/events")
+                )
+            )
+            if is_control:
+                self.observations["blocked_control_attempts"] += 1
             self.supervisor.abort("forbidden_operation")
         category = (
             "auth" if str(url).endswith(("/users/sign_in", "/pusher/auth")) else "state"
