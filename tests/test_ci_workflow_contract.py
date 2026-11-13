@@ -12,7 +12,7 @@ WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "test
 def test_full_suite_and_independent_smoke_both_gate_required_tests() -> None:
     """Never let a successful parallel branch mask a failing/skipped sibling."""
     text = WORKFLOW.read_text(encoding="utf-8")
-    jobs = text.split("\njobs:\n", 1)[1]
+    jobs = "\n" + text.split("\njobs:\n", 1)[1]
     pytest_job = jobs.split("\n  pytest:\n", 1)[1].split("\n  smoke:\n", 1)[0]
     smoke_job = jobs.split("\n  smoke:\n", 1)[1].split("\n  tests:\n", 1)[0]
     aggregate = jobs.split("\n  tests:\n", 1)[1]
