@@ -375,11 +375,21 @@ async def async_auto_exit_sleep_if_needed(
             # A manual request arrived while cleanup waited for the lock.
             # It takes precedence and must not be marked handled.
             return True
-        off_confirmed = current.get("sleep_off_confirmed") is True
         if reason == "expiry":
-            if not off_confirmed:
-                # Elapsed time, cached OFF or startup state alone do not
-                # authorize an automatic scene write for this Sleep session.
+            # Validate session-owned telemetry after acquiring the device
+            # lock: a new Sleep selection resets tracking before the
+            # coordinator can refresh its old sleep_off_confirmed flag.
+            tracking = bucket.get("sleep_tracking", {}).get(device_id)
+            if not (
+                current.get("sleep_off_confirmed") is True
+                and tracking is not None
+                and tracking.last_scenary == SCENARY_SLEEP
+                and tracking.sleep_started_at_utc is not None
+                and tracking.observed_on
+                and tracking.consecutive_off_reports >= 2
+            ):
+                # Neither elapsed time nor a previous session's OFF may
+                # authorize an automatic scene write.
                 return True
         elif is_device_on():
             # Explicit wake preparation may exit an OFF Sleep session,

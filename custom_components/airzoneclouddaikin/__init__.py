@@ -506,7 +506,19 @@ def _derive_state(
             )
             else None
         )
-        fresh_power = fresh_power_ids is not None and dev_id in fresh_power_ids
+        # A fresh, conflicting scene report cannot corroborate power for
+        # this locally selected Sleep session.
+        conflicting_scene = (
+            fresh_scenary_ids is not None
+            and dev_id in fresh_scenary_ids
+            and overlay_value is not None
+            and raw_scenary != overlay_value
+        )
+        fresh_power = (
+            fresh_power_ids is not None
+            and dev_id in fresh_power_ids
+            and not conflicting_scene
+        )
         if active_sleep and fresh_power:
             raw_power = dev.get("power")
             power_value = (

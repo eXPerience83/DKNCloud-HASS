@@ -41,7 +41,7 @@ In **Settings → Devices & Services**, add **DKN Cloud for Home Assistant** and
 
 Optional settings in the Home Assistant UI:
 
-- **Scan interval:** Refresh period in seconds (default: **10**).
+- **Automatic synchronization:** The integration owns its fixed nominal cadence and recovery; no scan interval option is exposed.
 - **Expose PII identifiers:** Add sensitive identifier entities (off by default; the entities themselves are disabled by default).
 - **Experimental HEAT_COOL:** Only when the device advertises support; this mode is not broadly validated on hardware.
 - **Automatic Sleep cleanup:** Enabled by default and configurable. When a current Sleep session reports ON then a confirmed OFF, send one guarded `occupied` write; disable to leave the backend scene unchanged. Manual Home/wake remains available. An ON anomaly after the expected timer plus five minutes is read-only and included in sanitized diagnostics.
