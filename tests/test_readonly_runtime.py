@@ -129,9 +129,9 @@ async def test_real_entry_loopback_and_control_barrier(
         coordinator = entry.runtime_data.coordinator
         # The security barrier must also protect an automatic cleanup
         # requested for a session-consistent OFF, not just a timeout hint.
-        tracking = hass.data[integration.DOMAIN][entry.entry_id][
-            "sleep_tracking"
-        ]["dev1"]
+        tracking = hass.data[integration.DOMAIN][entry.entry_id]["sleep_tracking"][
+            "dev1"
+        ]
         tracking.last_scenary = "sleep"
         tracking.sleep_started_at_utc = integration.dt_util.utcnow()
         tracking.observed_on = True

@@ -579,9 +579,7 @@ async def test_rejected_scene_power_cannot_auto_cleanup_new_sleep(
     tracking = bucket["sleep_tracking"]["dev1"]
 
     for power in ("1", "0", "0"):
-        await manager.event(
-            "dev1", {"scenary": "occupied", "power": power}, generation
-        )
+        await manager.event("dev1", {"scenary": "occupied", "power": power}, generation)
     assert tracking.last_scenary == "sleep"
     assert not tracking.observed_on
     assert tracking.consecutive_off_reports == 0

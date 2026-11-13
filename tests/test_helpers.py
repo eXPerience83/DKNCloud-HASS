@@ -257,7 +257,6 @@ async def test_entity_expiry_requests_recovery_before_local_maintenance(hass):
     manager.request_recovery.assert_called_once_with("fake")
 
 
-@pytest.mark.parametrize("manual", [False, True])
 async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     """A stale coordinator flag is not session-owned evidence after rearm."""
     from unittest.mock import AsyncMock
@@ -299,6 +298,7 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     assert not hass.data[DOMAIN]["entry"].get("sleep_exit_pending")
 
 
+@pytest.mark.parametrize("manual", [False, True])
 async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
     """An old decision cannot overwrite a later command or repeat an unknown write."""
     import asyncio
