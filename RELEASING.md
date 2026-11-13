@@ -9,7 +9,7 @@ The integration version belongs to
 `custom_components/airzoneclouddaikin/manifest.json`, **not**
 `pyproject.toml`, whose version tracks independent development/test tooling.
 The first `CHANGELOG.md` version heading must match the integration version.
-The tag is derived as `v<version>`: `0.5.0a6` maps to `v0.5.0a6`.
+The tag is derived as `v<version>`: `0.6.0a1` maps to `v0.6.0a1`.
 Allowed formats are `X.Y.Z` (stable), `X.Y.ZaN` (alpha), `X.Y.ZbN`
 (beta) and `X.Y.ZrcN` (release candidate). Alpha, beta and RC must be
 marked as **Pre-release**.
