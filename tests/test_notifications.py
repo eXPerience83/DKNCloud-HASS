@@ -25,7 +25,7 @@ import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin.config_flow import CONF_SCAN_INTERVAL
 from custom_components.airzoneclouddaikin.const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
     OFFLINE_DEBOUNCE_SEC,
     ONLINE_BANNER_TTL_SEC,
@@ -936,7 +936,7 @@ async def test_options_update_reloads_with_fixed_compatibility_interval(
     form = await hass.config_entries.options.async_init(entry.entry_id)
     assert form["type"] is FlowResultType.FORM
     result = await hass.config_entries.options.async_configure(
-        form["flow_id"], user_input={CONF_SLEEP_TIMEOUT_ENABLED: True}
+        form["flow_id"], user_input={CONF_SLEEP_CLEANUP_ENABLED: False}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
@@ -1003,7 +1003,7 @@ async def test_options_heat_cool_toggle_reloads_without_identity_changes(
             form["flow_id"],
             user_input={
                 CONF_ENABLE_HEAT_COOL: enabled,
-                CONF_SLEEP_TIMEOUT_ENABLED: False,
+                CONF_SLEEP_CLEANUP_ENABLED: False,
             },
         )
         assert result["type"] is FlowResultType.CREATE_ENTRY

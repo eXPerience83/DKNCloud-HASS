@@ -5,7 +5,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from custom_components.airzoneclouddaikin.const import CONF_SLEEP_CLEANUP_ENABLED, DOMAIN
+from custom_components.airzoneclouddaikin.const import (
+    CONF_SLEEP_CLEANUP_ENABLED,
+    DOMAIN,
+)
 from custom_components.airzoneclouddaikin.diagnostics import (
     async_get_config_entry_diagnostics,
 )
