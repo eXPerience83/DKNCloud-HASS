@@ -258,6 +258,47 @@ async def test_entity_expiry_requests_recovery_before_local_maintenance(hass):
 
 
 @pytest.mark.parametrize("manual", [False, True])
+async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
+    """A stale coordinator flag is not session-owned evidence after rearm."""
+    from unittest.mock import AsyncMock
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    api = DummyApi()
+    api.async_set_scenary = AsyncMock()
+    coordinator = DummyCoordinator(api)
+    device = {"scenary": "sleep", "power": "0", "sleep_off_confirmed": True}
+    coordinator.data = {"device": device}
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        sleep_started_at_utc=dt_util.utcnow(),
+        observed_on=True,
+        consecutive_off_reports=2,
+    )
+    hass.data.setdefault(DOMAIN, {})["entry"] = {
+        "sleep_tracking": {"device": tracking},
+    }
+
+    # A new manual Sleep resets tracking before a coordinator refresh.
+    optimistic_set(hass, "entry", "device", "scenary", "sleep")
+    assert device["sleep_off_confirmed"]
+    assert not tracking.observed_on
+    await async_auto_exit_sleep_if_needed(
+        hass,
+        entry_id="entry",
+        device_id="device",
+        device=device,
+        coordinator=coordinator,
+        reason="expiry",
+        is_device_on=lambda: True,
+        allow_away_handling=False,
+    )
+    api.async_set_scenary.assert_not_awaited()
+    assert not hass.data[DOMAIN]["entry"].get("sleep_exit_pending")
+
+
 async def test_sleep_exit_serializes_pending_and_manual_scene(hass, manual):
     """An old decision cannot overwrite a later command or repeat an unknown write."""
     import asyncio

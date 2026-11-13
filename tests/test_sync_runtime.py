@@ -15,6 +15,15 @@ from custom_components.airzoneclouddaikin import push_adapter
 from custom_components.airzoneclouddaikin.const import DOMAIN
 
 
+def _mark_synthetic_sleep_off(bucket, dev_id="dev1") -> None:
+    """Mark current Sleep ON/OFF evidence for narrowly scoped lock tests."""
+    tracking = bucket["sleep_tracking"][dev_id]
+    tracking.last_scenary = "sleep"
+    tracking.sleep_started_at_utc = integration.dt_util.utcnow()
+    tracking.observed_on = True
+    tracking.consecutive_off_reports = 2
+
+
 async def test_verified_connector_runtime_and_silent_local_clock(
     hass, monkeypatch, dkn_config_entry_factory, sample_device, freezer
 ):
@@ -391,6 +400,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
         sleep_off_confirmed=True,
         power="0",
     )
+    _mark_synthetic_sleep_off(bucket)
     if stop in {"race", "race_expired", "race_new_sleep"}:
         lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
         await lock.acquire()
@@ -417,6 +427,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
             assert not bucket["sleep_tracking"]["dev1"].force_exit_requested
             release.set()
             coordinator.data["dev1"]["sleep_off_confirmed"] = True
+            _mark_synthetic_sleep_off(bucket)
             coordinator.async_update_listeners()
             await hass.async_block_till_done()
             api.async_set_scenary.assert_awaited_once()
@@ -545,6 +556,44 @@ async def test_current_sleep_off_needs_on_then_two_fresh_off_reports(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_rejected_scene_power_cannot_auto_cleanup_new_sleep(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """An explicit scene conflicting with optimistic Sleep supplies no OFF evidence."""
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    generation = manager.state.generation
+    integration.optimistic_set(hass, entry.entry_id, "dev1", "scenary", "sleep")
+    tracking = bucket["sleep_tracking"]["dev1"]
+
+    for power in ("1", "0", "0"):
+        await manager.event(
+            "dev1", {"scenary": "occupied", "power": power}, generation
+        )
+    assert tracking.last_scenary == "sleep"
+    assert not tracking.observed_on
+    assert tracking.consecutive_off_reports == 0
+
+    # The delayed Sleep scene-only acknowledgement does not reuse old OFF.
+    await manager.event("dev1", {"scenary": "sleep"}, generation)
+    await hass.async_block_till_done()
+    assert not entry.runtime_data.coordinator.data["dev1"]["sleep_off_confirmed"]
+    api.async_set_scenary.assert_not_awaited()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_disabled_automatic_cleanup_keeps_raw_sleep_after_confirmed_off(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
@@ -611,10 +660,11 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     coordinator.data["dev1"]["sleep_snapshot_fresh"] = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
-    # Expired local UI status alone cannot authorize an automatic PUT.
+    # Cached OFF without a current session cannot authorize any PUT.
     api.async_set_scenary.assert_not_awaited()
 
     coordinator.data["dev1"]["sleep_off_confirmed"] = True
+    _mark_synthetic_sleep_off(bucket)
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
@@ -652,6 +702,7 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
             sleep_off_confirmed=True,
             power="0",
         )
+        _mark_synthetic_sleep_off(bucket)
         coordinator.async_update_listeners()
         await asyncio.sleep(0)
         await asyncio.sleep(0)
@@ -706,6 +757,7 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
         sleep_off_confirmed=True,
         power="0",
     )
+    _mark_synthetic_sleep_off(bucket)
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     tracking = bucket["sleep_tracking"]["dev1"]
@@ -743,6 +795,7 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
             assert await hass.config_entries.async_unload(entry.entry_id)
             return
         coordinator.data["dev1"]["sleep_off_confirmed"] = True
+        _mark_synthetic_sleep_off(bucket)
     api._cooldown_until = 0
     bucket["sleep_exit_retry_after"]["dev1"] = 0
     coordinator.async_update_listeners()

@@ -246,8 +246,15 @@ async def async_setup(hass, config):
                 # Inject the post-confirmation state, not merely a timed-out
                 # Sleep scene. The write barrier must reject the resulting
                 # automatic Home command even when OFF was corroborated.
+                tracking = hass.data[entry.domain][entry.entry_id][
+                    "sleep_tracking"
+                ][device]
+                tracking.last_scenary = "sleep"
+                tracking.sleep_started_at_utc = integration.dt_util.utcnow()
+                tracking.observed_on = True
+                tracking.consecutive_off_reports = 2
                 coordinator.data[device].update(
-                    scenary="sleep", sleep_off_confirmed=True
+                    scenary="sleep", power="0", sleep_off_confirmed=True
                 )
                 coordinator.async_update_listeners()
                 await supervisor.stopped.wait()

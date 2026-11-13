@@ -201,6 +201,8 @@ def test_independent_protected_launcher(case, tmp_path, socket_enabled):
     summary = json.loads(result.stdout.splitlines()[0])
     assert summary.get("error") != "cleanup_failed"
     assert summary["backend_control_writes"] == 0
+    if case == "sleep":
+        assert summary["observations"]["blocked_control_attempts"] >= 1
     assert summary["session_closed"] and summary["server_closed"]
     assert summary["storage_files"] == 0
     if case in {"no_events", "invalid_event", "wrong_device"}:
