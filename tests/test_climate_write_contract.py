@@ -286,6 +286,20 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
         sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
+    # The automatic cleanup now requires session-owned ON/OFF evidence
+    # inside the device lock; a bare coordinator flag is intentionally unsafe.
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    hass.data[DOMAIN]["climate-entry"]["sleep_tracking"] = {
+        "unit-1": SleepTracking(
+            last_scenary="sleep",
+            sleep_started_at_utc=dt_util.utcnow(),
+            observed_on=True,
+            consecutive_off_reports=2,
+        )
+    }
     entered, release = asyncio.Event(), asyncio.Event()
     api.async_set_scenary = AsyncMock()
 
