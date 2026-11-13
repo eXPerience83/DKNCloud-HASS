@@ -157,7 +157,10 @@ jobs:
           PYTHONPATH: .
         run: |
           set -euo pipefail
+          # Keep the independent hash-locked floor and full coverage, but
+          # distribute test files over two isolated xdist processes.
           "$MINIMUM_PYTHON" -m pytest -q -ra -p no:cacheprovider \
+            -n 2 --dist=loadfile --durations=20 \
             --cov=custom_components.airzoneclouddaikin \
             --cov-report=term-missing:skip-covered \
             --cov-report=json:coverage.json
