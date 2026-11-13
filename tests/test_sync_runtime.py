@@ -159,10 +159,10 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert not replacement._tasks
 
 
-async def test_explicit_refresh_preserves_derived_scenary_in_coordinator(
+async def test_explicit_refresh_preserves_raw_scene_without_old_local_display(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
-    """A coordinator refresh must return the scene fields it just published."""
+    """A coordinator refresh must not resurrect the removed legacy scene display."""
     first = {**sample_device, "scenary": "occupied"}
     second = {**sample_device, "scenary": "sleep"}
     api = Mock()

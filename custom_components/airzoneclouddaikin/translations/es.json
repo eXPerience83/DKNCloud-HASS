@@ -9,7 +9,7 @@
           "username": "Email",
           "password": "Contraseña",
           "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
-          "sleep_timeout_enabled": "Tratar sleep expirado como 'Home' y limpiar el escenario en el backend"
+          "sleep_cleanup_enabled": "Restablecer Home automáticamente al finalizar Sleep"
         }
       },
       "reauth_confirm": {
@@ -36,11 +36,11 @@
     "step": {
       "init": {
         "title": "Opciones",
-        "description": "El modo HEAT_COOL experimental/beta es opt-in, usa P7 para la consigna y P3 para el ventilador, y solo tendrá efecto si alguna instalación informa que es compatible. El manejo de expiración de Sleep es opcional y trata las sesiones expiradas como Home intentando limpiar el escenario una vez.",
+        "description": "HEAT_COOL experimental es opcional y requiere un equipo compatible. La limpieza automática de Sleep está activada por defecto: cuando se confirma el apagado de una sesión, restaura Home sin encender el equipo. Desactívala para conservar la escena del backend.",
         "data": {
           "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
           "enable_heat_cool_mode": "Activar modo HEAT_COOL experimental/beta (requiere instalación compatible; usa ruteo P7/P3)",
-          "sleep_timeout_enabled": "Tratar sleep expirado como 'Home' y limpiar el escenario en el backend"
+          "sleep_cleanup_enabled": "Restablecer Home automáticamente al finalizar Sleep"
         }
       }
     },

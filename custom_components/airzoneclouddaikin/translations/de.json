@@ -9,7 +9,7 @@
           "username": "E-Mail-Adresse",
           "password": "Passwort",
           "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)",
-          "sleep_timeout_enabled": "Abgelaufenen Sleep als 'Home' behandeln und Backend-Szenario bereinigen"
+          "sleep_cleanup_enabled": "Home nach dem Ende von Sleep automatisch wiederherstellen"
         }
       },
       "reauth_confirm": {
@@ -36,11 +36,11 @@
     "step": {
       "init": {
         "title": "Optionen",
-        "description": "Der experimentelle HEAT_COOL-Modus ist optional, leitet Sollwerte über P7 und Lüftergeschwindigkeiten über P3 und gilt nur für Installationen, deren Geräte Kompatibilität melden. Die Sleep-Ablaufbehandlung ist optional und behandelt abgelaufene Sleep-Sitzungen als Home und versucht, das Szenario einmal zu bereinigen.",
+        "description": "Der experimentelle HEAT_COOL-Modus ist optional und erfordert ein kompatibles Gerät. Die automatische Sleep-Bereinigung ist standardmäßig aktiviert: Nach bestätigtem Ausschalten einer Sitzung wird Home wiederhergestellt, ohne das Gerät einzuschalten. Bei Deaktivierung bleibt die Backend-Szene unverändert.",
         "data": {
           "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)",
           "enable_heat_cool_mode": "Experimentellen HEAT_COOL-Modus aktivieren (erfordert kompatible Installation; nutzt P7/P3-Routing)",
-          "sleep_timeout_enabled": "Abgelaufenen Sleep als 'Home' behandeln und Backend-Szenario bereinigen"
+          "sleep_cleanup_enabled": "Home nach dem Ende von Sleep automatisch wiederherstellen"
         }
       }
     },

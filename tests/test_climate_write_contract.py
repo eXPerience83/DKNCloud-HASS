@@ -174,9 +174,6 @@ async def test_expired_sleep_home_writes_real_backend_cleanup(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
-    entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied", sleep_expired=True
-    )
     assert entity.preset_mode == "sleep"
     await entity.async_set_preset_mode("home")
     api.put_device_fields.assert_awaited_once_with(
@@ -199,9 +196,6 @@ async def test_expired_sleep_rearms_via_occupied_then_sleep(
 
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
-    )
-    entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied", sleep_expired=True
     )
     old_start = dt_util.utcnow() - timedelta(hours=2)
     tracking = SleepTracking(
@@ -231,9 +225,6 @@ async def test_second_sleep_rearm_failure_preserves_home_and_requests_readback(
     """Do not claim Sleep activation after an ambiguous second PUT."""
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
-    )
-    entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied", sleep_expired=True
     )
     manager = Mock()
     hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
@@ -292,8 +283,6 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied",
-        sleep_expired=True,
         sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
@@ -353,8 +342,6 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied",
-        sleep_expired=True,
         sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
@@ -397,8 +384,6 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied",
-        sleep_expired=True,
         sleep_off_confirmed=True,
         sleep_snapshot_fresh=True,
     )
@@ -438,9 +423,6 @@ async def test_known_unsent_first_step_does_not_mark_ambiguous(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
-    entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied", sleep_expired=True
-    )
     bucket = hass.data[DOMAIN]["climate-entry"]
     manager = Mock()
     bucket["sync_manager"] = manager
@@ -464,9 +446,6 @@ async def test_expired_sleep_rearm_does_not_override_newer_queued_manual_scene(
 
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
-    )
-    entity.coordinator.data["unit-1"].update(
-        effective_scenary="occupied", sleep_expired=True
     )
     lock = acquire_device_lock(hass, "climate-entry", "unit-1")
     await lock.acquire()
