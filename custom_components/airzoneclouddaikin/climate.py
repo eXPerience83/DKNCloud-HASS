@@ -301,6 +301,16 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 # after the request was queued; do not overwrite it.
                 return
             stale_sleep_off = terminated_raw_sleep()
+            # The scene may remain Sleep while power goes ON->OFF during the
+            # awaited PUT. Capture manual Home/Away intent before any await.
+            exits_raw_sleep = (
+                stale_sleep_off
+                or (
+                    preset_mode in {"home", "away"}
+                    and str(self._device.get("scenary") or "").strip().lower()
+                    == "sleep"
+                )
+            )
             if self.preset_mode == preset_mode and not (
                 preset_mode == "sleep" and stale_sleep_off
             ):
@@ -353,9 +363,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                         retry=False,
                     )
                     cleared_stale_sleep = True
-                if stale_sleep_off:
-                    # Two-stage re-arm and explicit OFF cleanup cannot
-                    # safely replay a write after an ambiguous HTTP response.
+                if exits_raw_sleep:
+                    # Any scene write leaving Sleep (even while power is ON)
+                    # must not retry after a response of unknown outcome.
                     await api.put_device_fields(
                         self._device_id, {"device": {"scenary": scenary}}, retry=False
                     )
@@ -366,17 +376,17 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except asyncio.CancelledError:
                 if cleared_stale_sleep:
                     preserve_partial_home()
-                elif stale_sleep_off:
-                    # An interrupted explicit Home/Away write can also have
-                    # reached the server; block queued automatic cleanup.
+                elif exits_raw_sleep:
+                    # A manual Home/Away may have reached the backend even
+                    # if power was ON when this command was initiated.
                     fence_ambiguous_scene()
                 raise
             except Exception as err:
                 if cleared_stale_sleep:
                     preserve_partial_home()
-                elif stale_sleep_off and not isinstance(err, CommandNotSentCooldown):
-                    # Home/Away, not only rearm, can be accepted despite a
-                    # missing reply. A provably unsent cooldown is exempt.
+                elif exits_raw_sleep and not isinstance(err, CommandNotSentCooldown):
+                    # Fence any ambiguous Sleep exit, even when ON->OFF
+                    # telemetry arrived during the PUT. Known-unsent exempt.
                     fence_ambiguous_scene()
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",
@@ -393,7 +403,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
             record_preset_write()
             self.async_write_ha_state()
-            if stale_sleep_off:
+            if exits_raw_sleep:
                 if not rearm and scenary == "occupied":
                     # Successful explicit cleanup still needs remote readback.
                     bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
