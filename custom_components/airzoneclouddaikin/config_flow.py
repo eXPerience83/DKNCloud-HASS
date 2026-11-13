@@ -11,7 +11,7 @@ Contract
 --------
 - `entry.data` keeps only the username (email).
 - `entry.options` contains `user_token`, `expose_pii_identifiers`,
-  and `enable_heat_cool_mode` (experimental opt-in).
+  `sleep_cleanup_enabled` (default on), and optional experimental HEAT_COOL.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
+    LEGACY_SLEEP_TIMEOUT_ENABLED,
 )
 from .helpers import device_supports_heat_cool
 
@@ -53,8 +54,8 @@ def _user_schema(defaults: dict[str, Any]) -> vol.Schema:
                 CONF_EXPOSE_PII, default=defaults.get(CONF_EXPOSE_PII, False)
             ): cv.boolean,
             vol.Optional(
-                CONF_SLEEP_TIMEOUT_ENABLED,
-                default=defaults.get(CONF_SLEEP_TIMEOUT_ENABLED, False),
+                CONF_SLEEP_CLEANUP_ENABLED,
+                default=defaults.get(CONF_SLEEP_CLEANUP_ENABLED, True),
             ): cv.boolean,
         }
     )
@@ -70,8 +71,8 @@ def _options_schema(defaults: dict[str, Any]) -> vol.Schema:
             default=defaults.get(CONF_ENABLE_HEAT_COOL, False),
         ): cv.boolean,
         vol.Optional(
-            CONF_SLEEP_TIMEOUT_ENABLED,
-            default=defaults.get(CONF_SLEEP_TIMEOUT_ENABLED, False),
+            CONF_SLEEP_CLEANUP_ENABLED,
+            default=defaults.get(CONF_SLEEP_CLEANUP_ENABLED, True),
         ): cv.boolean,
     }
 
@@ -122,7 +123,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # reason if an entry for this account already exists.
         self._abort_if_unique_id_configured()
         pii = bool(user_input.get(CONF_EXPOSE_PII, False))
-        sleep_timeout_enabled = bool(user_input.get(CONF_SLEEP_TIMEOUT_ENABLED, False))
+        sleep_cleanup_enabled = bool(user_input.get(CONF_SLEEP_CLEANUP_ENABLED, True))
 
         # Local import to avoid circulars at HA import time
         try:
@@ -182,7 +183,7 @@ class AirzoneConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options={
                 "user_token": token,
                 CONF_EXPOSE_PII: pii,
-                CONF_SLEEP_TIMEOUT_ENABLED: sleep_timeout_enabled,
+                CONF_SLEEP_CLEANUP_ENABLED: sleep_cleanup_enabled,
             },
         )
 
@@ -322,8 +323,8 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         defaults = {
             CONF_EXPOSE_PII: bool(opts.get(CONF_EXPOSE_PII, False)),
             CONF_ENABLE_HEAT_COOL: current_heat_cool,
-            CONF_SLEEP_TIMEOUT_ENABLED: bool(
-                opts.get(CONF_SLEEP_TIMEOUT_ENABLED, False)
+            CONF_SLEEP_CLEANUP_ENABLED: bool(
+                opts.get(CONF_SLEEP_CLEANUP_ENABLED, True)
             ),
         }
 
@@ -337,15 +338,16 @@ class AirzoneOptionsFlow(config_entries.OptionsFlow):
         # Merge with existing options; never drop `user_token`
         next_opts = dict(self._entry.options)
         next_opts.pop(CONF_SCAN_INTERVAL, None)
+        next_opts.pop(LEGACY_SLEEP_TIMEOUT_ENABLED, None)
         next_opts[CONF_EXPOSE_PII] = bool(
             user_input.get(CONF_EXPOSE_PII, defaults[CONF_EXPOSE_PII])
         )
         next_opts[CONF_ENABLE_HEAT_COOL] = bool(
             user_input.get(CONF_ENABLE_HEAT_COOL, current_heat_cool)
         )
-        next_opts[CONF_SLEEP_TIMEOUT_ENABLED] = bool(
+        next_opts[CONF_SLEEP_CLEANUP_ENABLED] = bool(
             user_input.get(
-                CONF_SLEEP_TIMEOUT_ENABLED, defaults[CONF_SLEEP_TIMEOUT_ENABLED]
+                CONF_SLEEP_CLEANUP_ENABLED, defaults[CONF_SLEEP_CLEANUP_ENABLED]
             )
         )
 

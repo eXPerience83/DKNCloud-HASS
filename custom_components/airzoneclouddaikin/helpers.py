@@ -109,6 +109,7 @@ def optimistic_set(
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
                 tracking.overdue_probe_requested = False
+                tracking.overdue_recorded = False
         revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
         revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})
@@ -380,9 +381,9 @@ async def async_auto_exit_sleep_if_needed(
                 # Elapsed time, cached OFF or startup state alone do not
                 # authorize an automatic scene write for this Sleep session.
                 return True
-        elif not current.get("sleep_expired") and is_device_on():
-            # A wake/helper operation may still exit an OFF Sleep session;
-            # an automatic cleanup must require independently observed OFF.
+        elif is_device_on():
+            # Explicit wake preparation may exit an OFF Sleep session,
+            # but ordinary active controls must preserve the scene.
             return True
         api = getattr(coordinator, "api", None)
         if api is None:

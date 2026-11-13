@@ -24,7 +24,7 @@ from custom_components.airzoneclouddaikin.config_flow import (
 )
 from custom_components.airzoneclouddaikin.const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
 )
 
@@ -134,7 +134,7 @@ async def test_user_step_success_creates_entry(
         CONF_USERNAME: "User@Example.Com ",
         CONF_PASSWORD: fake_password,
         CONF_EXPOSE_PII: True,
-        CONF_SLEEP_TIMEOUT_ENABLED: True,
+        CONF_SLEEP_CLEANUP_ENABLED: True,
     }
 
     result = await hass.config_entries.flow.async_configure(
@@ -148,7 +148,7 @@ async def test_user_step_success_creates_entry(
     assert result["options"] == {
         "user_token": fake_token,
         CONF_EXPOSE_PII: True,
-        CONF_SLEEP_TIMEOUT_ENABLED: True,
+        CONF_SLEEP_CLEANUP_ENABLED: True,
     }
     assert CONF_ENABLE_HEAT_COOL not in result["options"]
     assert login_api_class.instances[-1].cleared_password is True
@@ -173,7 +173,7 @@ async def test_user_step_invalid_auth_from_api(
             CONF_USERNAME: fake_email,
             CONF_PASSWORD: fake_password,
             CONF_EXPOSE_PII: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: False,
         },
     )
 
@@ -200,7 +200,7 @@ async def test_user_step_cannot_connect(
             CONF_USERNAME: fake_email,
             CONF_PASSWORD: fake_password,
             CONF_EXPOSE_PII: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: False,
         },
     )
 
@@ -574,7 +574,8 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
             "hidden_key": "keep-me",
             CONF_EXPOSE_PII: False,
             CONF_ENABLE_HEAT_COOL: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: False,
+            "sleep_timeout_enabled": True,
         }
     )
     entry.add_to_hass(hass)
@@ -589,7 +590,7 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
         user_input={
             CONF_EXPOSE_PII: True,
             CONF_ENABLE_HEAT_COOL: True,
-            CONF_SLEEP_TIMEOUT_ENABLED: True,
+            CONF_SLEEP_CLEANUP_ENABLED: True,
         },
     )
 
@@ -597,7 +598,8 @@ async def test_options_flow_updates_options_and_preserves_hidden_keys(
     assert CONF_SCAN_INTERVAL not in entry.options
     assert entry.options[CONF_EXPOSE_PII] is True
     assert entry.options[CONF_ENABLE_HEAT_COOL] is True
-    assert entry.options[CONF_SLEEP_TIMEOUT_ENABLED] is True
+    assert entry.options[CONF_SLEEP_CLEANUP_ENABLED] is True
+    assert "sleep_timeout_enabled" not in entry.options
     assert entry.options["user_token"] == fake_token
     assert entry.options["hidden_key"] == "keep-me"
 
@@ -649,11 +651,11 @@ def test_options_flow_recomputes_heat_cool_when_cached_none(
     assert hass.data[DOMAIN][entry.entry_id]["heat_cool_supported"] is True
 
 
-async def test_options_flow_defaults_sleep_timeout_when_missing(
+async def test_options_flow_defaults_sleep_cleanup_when_missing(
     hass: HomeAssistant,
     fake_token: str,
 ) -> None:
-    """Older entries without sleep timeout option should default it to False."""
+    """Legacy entries use the new automatic cleanup default of True."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         entry_id="legacy-entry",
@@ -675,4 +677,4 @@ async def test_options_flow_defaults_sleep_timeout_when_missing(
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_SLEEP_TIMEOUT_ENABLED] is False
+    assert entry.options[CONF_SLEEP_CLEANUP_ENABLED] is True

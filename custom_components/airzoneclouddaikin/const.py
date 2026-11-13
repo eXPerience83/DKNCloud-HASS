@@ -10,7 +10,9 @@ DOMAIN = "airzoneclouddaikin"
 
 # Stable option keys shared across the integration (config flow, runtime buckets).
 CONF_ENABLE_HEAT_COOL = "enable_heat_cool_mode"
-CONF_SLEEP_TIMEOUT_ENABLED = "sleep_timeout_enabled"
+CONF_SLEEP_CLEANUP_ENABLED = "sleep_cleanup_enabled"
+# Retired local expiry-display flag, removed when the user next saves options.
+LEGACY_SLEEP_TIMEOUT_ENABLED = "sleep_timeout_enabled"
 
 # Backend scenary values
 SCENARY_HOME = "occupied"

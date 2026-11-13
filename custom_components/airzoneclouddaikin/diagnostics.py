@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from . import push_tls
-from .const import DOMAIN
+from .const import CONF_SLEEP_CLEANUP_ENABLED, DOMAIN
 
 
 async def async_get_config_entry_diagnostics(
@@ -21,6 +21,17 @@ async def async_get_config_entry_diagnostics(
         "transport_policy": {
             "static_rsa_compatibility_enabled": push_tls.STATIC_RSA_COMPATIBILITY_ENABLED
         },
+    }
+    device_data = (coordinator.data or {}) if coordinator is not None else {}
+    result["sleep"] = {
+        "automatic_cleanup_enabled": bool(
+            getattr(entry, "options", {}).get(CONF_SLEEP_CLEANUP_ENABLED, True)
+        ),
+        "overdue_devices_now": sum(
+            1 for device in device_data.values() if device.get("sleep_overdue") is True
+        ),
+        "overdue_sessions_since_restart": domain_data.get("sleep_overdue_sessions", 0),
+        "last_overdue_utc": domain_data.get("sleep_last_overdue_utc"),
     }
     if coordinator is not None:
         result["coordinator"] = {

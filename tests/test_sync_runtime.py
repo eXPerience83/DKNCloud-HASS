@@ -180,12 +180,12 @@ async def test_explicit_refresh_preserves_derived_scenary_in_coordinator(
     assert await hass.config_entries.async_setup(entry.entry_id)
     coordinator = entry.runtime_data.coordinator
     try:
-        assert coordinator.data["dev1"]["effective_scenary"] == "occupied"
-        assert coordinator.data["dev1"]["sleep_expired"] is False
+        assert "effective_scenary" not in coordinator.data["dev1"]
+        assert "sleep_expired" not in coordinator.data["dev1"]
         await coordinator.async_refresh()
         assert coordinator.data["dev1"]["scenary"] == "sleep"
-        assert coordinator.data["dev1"]["effective_scenary"] == "sleep"
-        assert coordinator.data["dev1"]["sleep_expired"] is False
+        assert "effective_scenary" not in coordinator.data["dev1"]
+        assert "sleep_expired" not in coordinator.data["dev1"]
         assert api.fetch_devices.await_count == 2
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
@@ -388,7 +388,6 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
     coordinator.data["dev1"].update(
         scenary="sleep",
-        sleep_expired=True,
         sleep_off_confirmed=True,
         power="0",
     )
@@ -410,7 +409,6 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
 
             optimistic_get(hass, entry.entry_id, "dev1", "scenary", "sleep")
         if stop == "race_new_sleep":
-            coordinator.data["dev1"]["sleep_expired"] = False
             coordinator.data["dev1"]["sleep_off_confirmed"] = False
         lock.release()
         await hass.async_block_till_done()
@@ -418,7 +416,6 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
         if stop == "race_new_sleep":
             assert not bucket["sleep_tracking"]["dev1"].force_exit_requested
             release.set()
-            coordinator.data["dev1"]["sleep_expired"] = True
             coordinator.data["dev1"]["sleep_off_confirmed"] = True
             coordinator.async_update_listeners()
             await hass.async_block_till_done()
@@ -548,6 +545,39 @@ async def test_current_sleep_off_needs_on_then_two_fresh_off_reports(
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_disabled_automatic_cleanup_keeps_raw_sleep_after_confirmed_off(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """An explicit opt-out prevents an unsolicited occupied write."""
+    from custom_components.airzoneclouddaikin.const import CONF_SLEEP_CLEANUP_ENABLED
+
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api.async_set_scenary = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
+    entry = dkn_config_entry_factory(options={CONF_SLEEP_CLEANUP_ENABLED: False})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    generation = manager.state.generation
+    await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
+    await manager.event("dev1", {"power": "0"}, generation)
+    await manager.event("dev1", {"power": "0"}, generation)
+    await hass.async_block_till_done()
+    assert bucket["sleep_tracking"]["dev1"].consecutive_off_reports == 2
+    assert entry.runtime_data.coordinator.data["dev1"]["scenary"] == "sleep"
+    assert not bucket.get("sleep_expiry_task")
+    api.async_set_scenary.assert_not_awaited()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
@@ -571,7 +601,6 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     coordinator.data["dev1"].update(
         scenary="sleep",
         power="0",
-        sleep_expired=True,
         sleep_off_confirmed=False,
         sleep_snapshot_fresh=False,
     )
@@ -620,7 +649,6 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     try:
         coordinator.data["dev1"].update(
             scenary="sleep",
-            sleep_expired=True,
             sleep_off_confirmed=True,
             power="0",
         )
@@ -629,7 +657,6 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
         await asyncio.sleep(0)
         first_task = bucket["sleep_expiry_task"]
         assert not first_task.done()
-        coordinator.data["dev1"]["sleep_expired"] = False
         coordinator.data["dev1"]["sleep_off_confirmed"] = False
     finally:
         lock.release()
@@ -641,7 +668,6 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     recovery.assert_not_called()
 
     # Expiry recurs in the same Sleep session: cleanup is still eligible.
-    coordinator.data["dev1"]["sleep_expired"] = True
     coordinator.data["dev1"]["sleep_off_confirmed"] = True
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
@@ -677,7 +703,6 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
     coordinator.data["dev1"].update(
         scenary="sleep",
-        sleep_expired=True,
         sleep_off_confirmed=True,
         power="0",
     )
@@ -710,7 +735,6 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
             assert tracking.session_revision > previous
             assert not tracking.force_exit_requested
             assert "dev1" not in bucket["sleep_exit_retry_after"]
-            coordinator.data["dev1"]["sleep_expired"] = False
             coordinator.data["dev1"]["sleep_off_confirmed"] = False
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
@@ -718,7 +742,6 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
         if next_action == "manual":
             assert await hass.config_entries.async_unload(entry.entry_id)
             return
-        coordinator.data["dev1"]["sleep_expired"] = True
         coordinator.data["dev1"]["sleep_off_confirmed"] = True
     api._cooldown_until = 0
     bucket["sleep_exit_retry_after"]["dev1"] = 0

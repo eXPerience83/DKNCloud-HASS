@@ -242,30 +242,25 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @property
     def preset_mode(self) -> str | None:
-        scenary_base = self._device.get("effective_scenary") or self._device.get(
-            "scenary"
-        )
+        scenary_base = self._device.get("scenary")
         scen = self._overlay_value("scenary", scenary_base)
         return scenary_to_preset(str(scen) if scen is not None else None)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
-        """Write the scene; a completed one-shot Sleep must transition via Home."""
+        """Write a scene; an explicit rearm from raw Sleep/OFF uses Home first."""
         if preset_mode not in (self.preset_modes or []):
             _LOGGER.debug(
                 "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
             )
             return
 
-        def expired_raw_sleep() -> bool:
+        def terminated_raw_sleep() -> bool:
+            """Explicit rearm while raw Sleep/OFF requires an occupied transition."""
             return (
                 str(self._device.get("scenary") or "").strip().lower() == "sleep"
-                and self._device.get("sleep_expired") is True
-            )
-
-        def needs_home_cleanup() -> bool:
-            return (
-                expired_raw_sleep()
-                and self._overlay_value("scenary", None) != "occupied"
+                and str(self._device.get("power")).strip().lower()
+                in {"0", "false", "off"}
+                and not self._device_power_on()
             )
 
         scenary = preset_to_scenary(preset_mode)
@@ -305,13 +300,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 # A write outside this preset command path changed the scene
                 # after the request was queued; do not overwrite it.
                 return
+            stale_sleep_off = terminated_raw_sleep()
             if self.preset_mode == preset_mode and not (
-                preset_mode == "home" and needs_home_cleanup()
+                preset_mode == "sleep" and stale_sleep_off
             ):
                 return
 
-            expired = expired_raw_sleep()
-            rearm = preset_mode == "sleep" and expired
+            rearm = preset_mode == "sleep" and stale_sleep_off
             cleared_stale_sleep = False
 
             def request_readback() -> None:
@@ -358,8 +353,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                         retry=False,
                     )
                     cleared_stale_sleep = True
-                if expired:
-                    # Two-stage re-arm and explicit expired cleanup cannot
+                if stale_sleep_off:
+                    # Two-stage re-arm and explicit OFF cleanup cannot
                     # safely replay a write after an ambiguous HTTP response.
                     await api.put_device_fields(
                         self._device_id, {"device": {"scenary": scenary}}, retry=False
@@ -394,7 +389,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
             record_preset_write()
             self.async_write_ha_state()
-            if expired:
+            if stale_sleep_off:
                 if not rearm and scenary == "occupied":
                     # Successful explicit cleanup still needs remote readback.
                     bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (

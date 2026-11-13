@@ -177,7 +177,7 @@ async def test_expired_sleep_home_writes_real_backend_cleanup(
     entity.coordinator.data["unit-1"].update(
         effective_scenary="occupied", sleep_expired=True
     )
-    assert entity.preset_mode == "home"
+    assert entity.preset_mode == "sleep"
     await entity.async_set_preset_mode("home")
     api.put_device_fields.assert_awaited_once_with(
         "unit-1", {"device": {"scenary": "occupied"}}, retry=False

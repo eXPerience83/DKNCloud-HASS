@@ -467,6 +467,8 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
         hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
     )
     assert sleep["device"]["sleep_overdue"] is True
+    assert hass.data[DOMAIN]["known"]["sleep_overdue_sessions"] == 1
+    assert "T" in hass.data[DOMAIN]["known"]["sleep_last_overdue_utc"]
 
     freezer.tick(timedelta(seconds=61))
     _derive_state(hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set())
@@ -481,6 +483,7 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
         hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
     )
     assert sleep["device"]["sleep_overdue"] is True
+    assert hass.data[DOMAIN]["known"]["sleep_overdue_sessions"] == 1
 
     # A Sleep already active at HA startup has no reliable start timestamp.
     unknown = SimpleNamespace(entry_id="unknown", options={})

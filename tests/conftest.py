@@ -18,7 +18,7 @@ from custom_components.airzoneclouddaikin.config_flow import (
 )
 from custom_components.airzoneclouddaikin.const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
 )
 
@@ -64,7 +64,7 @@ def dkn_config_entry_factory(
             CONF_SCAN_INTERVAL: 10,
             CONF_EXPOSE_PII: False,
             CONF_ENABLE_HEAT_COOL: False,
-            CONF_SLEEP_TIMEOUT_ENABLED: False,
+            CONF_SLEEP_CLEANUP_ENABLED: True,
         }
         if options:
             entry_options.update(options)

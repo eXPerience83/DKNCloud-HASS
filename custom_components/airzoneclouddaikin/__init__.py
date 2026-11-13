@@ -33,7 +33,7 @@ from homeassistant.util import dt as dt_util
 from .airzone_api import AirzoneAPI
 from .const import (
     CONF_ENABLE_HEAT_COOL,
-    CONF_SLEEP_TIMEOUT_ENABLED,
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
     INTERNAL_STALE_AFTER_SEC,
     OFFLINE_DEBOUNCE_SEC,
@@ -99,6 +99,7 @@ class SleepTracking:
     overdue_on_reports: int = 0
     last_confirmed_on_utc: datetime | None = None
     overdue_probe_requested: bool = False
+    overdue_recorded: bool = False
 
 
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
@@ -124,6 +125,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.overdue_on_reports = 0
             tracking.last_confirmed_on_utc = None
             tracking.overdue_probe_requested = False
+            tracking.overdue_recorded = False
     else:
         tracking.sleep_started_at_utc = None
         tracking.observed_on = False
@@ -133,6 +135,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
         tracking.overdue_on_reports = 0
         tracking.last_confirmed_on_utc = None
         tracking.overdue_probe_requested = False
+        tracking.overdue_recorded = False
 
     tracking.last_scenary = scenary
 
@@ -438,7 +441,6 @@ def _derive_state(
     """Recompute local scene state for snapshots, push and maintenance ticks."""
     bucket = hass.data[DOMAIN][entry.entry_id]
     sleep_tracking = bucket.setdefault("sleep_tracking", {})
-    sleep_timeout_enabled = bool(entry.options.get(CONF_SLEEP_TIMEOUT_ENABLED, False))
     now = dt_util.utcnow()
     tracked_ids = set(sleep_tracking)
     active_ids = set(data)
@@ -560,27 +562,11 @@ def _derive_state(
             and not _backend_power_is_off(dev)
         )
 
-        sleep_expired = False
-        backend_power_off = False
-
-        if (
-            sleep_timeout_enabled
-            and tracking.sleep_started_at_utc is not None
-            and sleep_time_minutes is not None
-            and sleep_time_minutes > 0
-        ):
-            timeout_at = tracking.sleep_started_at_utc + timedelta(
-                minutes=sleep_time_minutes + SLEEP_TIMEOUT_GRACE_MINUTES
-            )
-            backend_power_off = _backend_power_is_off(dev)
-            sleep_expired = now >= timeout_at and backend_power_off
-
-        dev["sleep_expired"] = sleep_expired
-
-        effective_scenary = raw_scenary
-        if sleep_timeout_enabled and raw_scenary == SCENARY_SLEEP and sleep_expired:
-            effective_scenary = SCENARY_HOME
-        dev["effective_scenary"] = effective_scenary
+        if dev["sleep_overdue"] and not tracking.overdue_recorded:
+            # Record only one sanitized anomaly per session for later diagnostics.
+            tracking.overdue_recorded = True
+            bucket["sleep_overdue_sessions"] = bucket.get("sleep_overdue_sessions", 0) + 1
+            bucket["sleep_last_overdue_utc"] = now.isoformat()
 
 
 async def _async_prepare_notify_strings(
@@ -811,6 +797,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         )
 
     async def _async_handle_sleep_expiry() -> None:
+        if not entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True):
+            return
         sleep_expiry_lock = bucket.setdefault("sleep_expiry_lock", asyncio.Lock())
         async with sleep_expiry_lock:
             if bucket.get("closing"):
@@ -828,8 +816,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
                 if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_off_confirmed"):
-                    # Expiry is now only a local UI hint. It is not a write
-                    # authorization without a session-consistent OFF.
+                    # Only a session-consistent OFF authorizes cleanup.
                     continue
 
                 if api is None:
@@ -861,6 +848,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     tracking.force_exit_requested = True
 
     def _on_sleep_candidate() -> None:
+        if not entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True):
+            return
         if (
             bucket.get("closing")
             or hass.is_stopping
