@@ -90,6 +90,30 @@ async def test_forbidden_operation_stops_before_network(tls_backend, path, optio
             {"headers": {"X-HTTP-Method-Override": "PUT"}},
             1,
         ),
+        (
+            "POST",
+            "https://dkn.airzonecloud.com/devices/device",
+            {"headers": {"x-http-method-override": "PUT"}},
+            1,
+        ),
+        (
+            "POST",
+            "https://dkn.airzonecloud.com/devices/device",
+            {"headers": {"x-HtTp-MeThOd-OvErRiDe": "pUt"}},
+            1,
+        ),
+        (
+            "POST",
+            "https://dkn.airzonecloud.com/devices/device",
+            {"headers": {"X-HTTP-Method-Override": "GET"}},
+            0,
+        ),
+        (
+            "POST",
+            "https://dkn.airzonecloud.com/devices/device",
+            {"headers": {"X-HTTP-Method-Override": "GET", "x-http-method-override": "PUT"}},
+            1,
+        ),
     ],
 )
 async def test_blocked_control_counter_only_tracks_control_writes(
