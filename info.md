@@ -346,7 +346,8 @@ assumption. The shared monitoring margin is **five minutes** for both INFO/Pushe
 and GET paths; an ON beyond that deadline requests one recovery and requires two
 post-deadline fresh ON reports before being shown as a *reported* diagnostic,
 without sending an OFF or Home command. Automatic Sleep exit uses no API retry;
-manual command retry behavior remains unchanged.
+other manual commands follow the shared API policy: bounded short 429 retries,
+never automatic replay after an ambiguous timeout or HTTP 5xx.
 
 A non-Sleep backend observation retires a pending exit marker. A new explicit
 Sleep selection re-arms local tracking; an older discarded cleanup must not
@@ -604,8 +605,12 @@ events have no verified monotonic version contract. No timestamp-based rejection
 or arbitrary freshness window is imposed. Resolving contradictory observations
 requires an explicit precedence contract; HTTP reception is not physical freshness.
 
-Device-control transport timeouts are never automatically replayed: acceptance
-may have preceded the timeout. Read-only calls with `retry=True` retain their bounded internal timeout retry.
+Device-control transport timeouts and HTTP 5xx responses are never
+automatically replayed: acceptance may have preceded either failure. This
+applies to P1/P2 events and device-field PUTs, including scene changes.
+HTTP 429 remains a server-directed rejection with bounded retry and cooldown;
+long pauses still fail fast without scheduling a delayed command. Read-only
+calls with `retry=True` retain their bounded timeout and 5xx retries.
 INFO and automatic recovery/discovery GETs use `retry=False`; their schedulers
 own backoff and do not perform an internal timeout retry. An ACK arriving during authorization or at its timeout
 boundary prevents another subscribe or a false channel-disconnected notification.
