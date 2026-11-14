@@ -101,7 +101,6 @@ async def test_switch_fallback_power_intent_wins_over_stale_get(
     assert entity.is_on is bool(command)
 
 
-
 @pytest.mark.parametrize(
     ("initial", "first", "second", "expected", "final"),
     [
@@ -193,7 +192,6 @@ async def test_switch_newer_off_supersedes_on_during_sleep_preparation(
 
     entity.coordinator.api.send_event.assert_not_awaited()
     assert not entity.is_on
-
 
 
 @pytest.mark.parametrize(
