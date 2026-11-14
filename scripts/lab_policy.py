@@ -278,11 +278,12 @@ class LocalReadOnlySession:
         )
         allowed = method == "GET" and path in {"/devices", "/installation_relations"}
         allowed |= method == "POST" and path in {"/users/sign_in", "/pusher/auth"}
-        payload = kwargs.get("json") or {}
-        event = payload.get("event", {})
+        payload = kwargs.get("json")
+        event = payload.get("event") if isinstance(payload, dict) else None
         allowed |= (
             method == "POST"
             and path == "/events"
+            and isinstance(event, dict)
             and set(payload) == {"event"}
             and event.get("cgi") == "infomaquina"
             and set(event) == {"cgi", "device_id", "option", "value"}
