@@ -235,7 +235,13 @@ async def test_subscription_does_not_start_resync_after_manager_close():
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             cancelling.set()
-            await release.wait()
+            # Model a task finishing its cleanup even if shutdown sends
+            # another cancellation while the callback waits for it.
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    continue
 
     old = asyncio.create_task(old_resync())
     await asyncio.wait_for(started.wait(), timeout=2)
@@ -275,7 +281,13 @@ async def test_cancelled_subscription_retains_old_task_for_manager_close():
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             cancelling.set()
-            await release.wait()
+            # Model a task finishing its cleanup even if shutdown sends
+            # another cancellation while the callback waits for it.
+            while not release.is_set():
+                try:
+                    await release.wait()
+                except asyncio.CancelledError:
+                    continue
 
     old = asyncio.create_task(held_resync())
     await asyncio.wait_for(started.wait(), timeout=2)
