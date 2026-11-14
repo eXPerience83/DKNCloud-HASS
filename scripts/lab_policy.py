@@ -266,7 +266,16 @@ class LocalReadOnlySession:
         self.blocked = 0
 
     def request(self, method, url, **kwargs):
-        path = URL(url).path.rstrip("/")
+        target = URL(url)
+        path = target.path.rstrip("/")
+        allowed_origin = (
+            target.scheme == "https"
+            and target.host == "dkn.airzonecloud.com"
+            and target.port == 443
+            and target.user is None
+            and not target.query
+            and not target.fragment
+        )
         allowed = method == "GET" and path in {"/devices", "/installation_relations"}
         allowed |= method == "POST" and path in {"/users/sign_in", "/pusher/auth"}
         payload = kwargs.get("json") or {}
@@ -280,7 +289,7 @@ class LocalReadOnlySession:
             and event.get("option", "") == ""
             and event.get("value", "") == ""
         )
-        if not allowed:
+        if not (allowed and allowed_origin):
             self.blocked += 1
             raise PermissionError("Control operation denied")
         return self.session.request(

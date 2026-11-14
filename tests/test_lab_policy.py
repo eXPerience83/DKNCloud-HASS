@@ -216,3 +216,48 @@ def test_loopback_preserves_canonical_information_request():
         json=payload,
     )
     assert local.blocked == 0
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://dkn.airzonecloud.com/devices",
+        "https://other.invalid/devices",
+        "https://dkn.airzonecloud.com:444/devices",
+        "https://user@dkn.airzonecloud.com/devices",
+        "https://dkn.airzonecloud.com/devices?user_token=synthetic",
+        "https://dkn.airzonecloud.com/devices#fragment",
+    ],
+)
+def test_loopback_rejects_noncanonical_http_destinations(url):
+    """Invalid production destinations must not become valid in the offline LAB."""
+    from scripts.lab_policy import LocalReadOnlySession
+
+    raw = Mock()
+    local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
+    with pytest.raises(PermissionError, match="Control operation denied"):
+        local.request("GET", url)
+    raw.request.assert_not_called()
+    assert local.blocked == 1
+
+
+def test_loopback_forwards_canonical_get_with_separate_auth_params():
+    """Keep the canonical production URL and separately supplied auth params."""
+    from scripts.lab_policy import LocalReadOnlySession
+
+    raw = Mock()
+    local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
+    params = {"user_email": "synthetic@example.invalid", "user_token": "fake"}
+
+    local.request(
+        "GET",
+        "https://dkn.airzonecloud.com/devices",
+        params=params,
+    )
+    raw.request.assert_called_once_with(
+        "GET",
+        "http://127.0.0.1:4567/devices",
+        allow_redirects=False,
+        params=params,
+    )
+    assert local.blocked == 0
