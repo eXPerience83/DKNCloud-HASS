@@ -202,12 +202,10 @@ async def test_concurrent_subscription_callbacks_do_not_replace_live_resync():
         await asyncio.sleep(0)
         # Without a device-scoped lock the ACK starts a new resync while
         # disconnect is still awaiting cancellation of the old one.
-        assert "fake" not in instance._resync_tasks
+        assert instance._resync_tasks["fake"] is previous
 
         release_old.set()
-        await asyncio.wait_for(
-            asyncio.gather(disconnected, connected), timeout=3
-        )
+        await asyncio.wait_for(asyncio.gather(disconnected, connected), timeout=3)
         resync = instance._resync_tasks["fake"]
         await asyncio.wait_for(resync, timeout=3)
         assert instance.schedulers["fake"].status.push_active
@@ -245,10 +243,14 @@ async def test_subscription_does_not_start_resync_after_manager_close():
     subscribing = asyncio.create_task(instance.subscription("fake", True))
     try:
         await asyncio.wait_for(cancelling.wait(), timeout=2)
-        await asyncio.wait_for(instance.close(), timeout=3)
-        assert instance._close_complete
+        assert instance._resync_tasks["fake"] is old
+        closing = asyncio.create_task(instance.close())
+        await asyncio.sleep(0)
+        assert instance._stopped
+        assert not closing.done()
         release.set()
-        await asyncio.wait_for(subscribing, timeout=3)
+        await asyncio.wait_for(asyncio.gather(subscribing, closing), timeout=3)
+        assert instance._close_complete
         assert not instance._resync_tasks
         assert old.done()
     finally:
@@ -258,9 +260,45 @@ async def test_subscription_does_not_start_resync_after_manager_close():
         await asyncio.gather(subscribing, return_exceptions=True)
         for task in instance._resync_tasks.values():
             task.cancel()
-        await asyncio.gather(
-            *instance._resync_tasks.values(), return_exceptions=True
-        )
+        await asyncio.gather(*instance._resync_tasks.values(), return_exceptions=True)
+        await instance.close()
+
+
+async def test_cancelled_subscription_retains_old_task_for_manager_close():
+    """Callback cancellation cannot orphan its still-running old resync."""
+    instance, _, _, _ = manager()
+    started, cancelling, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def held_resync():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelling.set()
+            await release.wait()
+
+    old = asyncio.create_task(held_resync())
+    await asyncio.wait_for(started.wait(), timeout=2)
+    instance._resync_tasks["fake"] = old
+    callback = asyncio.create_task(instance.subscription("fake", True))
+    try:
+        await asyncio.wait_for(cancelling.wait(), timeout=2)
+        callback.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await callback
+        assert instance._resync_tasks["fake"] is old
+        closing = asyncio.create_task(instance.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+        release.set()
+        await asyncio.wait_for(closing, timeout=3)
+        assert old.done()
+        assert not instance._resync_tasks
+    finally:
+        release.set()
+        if not callback.done():
+            callback.cancel()
+        await asyncio.gather(callback, return_exceptions=True)
         await instance.close()
 
 
