@@ -86,6 +86,8 @@ class SyncManager:
         self._recovery_failures: dict[str, int] = {}
         self._recovery_due: dict[str, float] = {}
         self._resync_tasks: dict[str, asyncio.Task] = {}
+        # Socket ACK and channel authorization callbacks can overlap.
+        self._subscription_locks = {device: asyncio.Lock() for device in initial}
         self._quiet_tasks: dict[str, asyncio.Task] = {}
         self._recovery_waiters: set[asyncio.Task] = set()
         self.schedulers = {
@@ -304,44 +306,57 @@ class SyncManager:
         """Never block the socket reader waiting for a REST resynchronization."""
         if self._stopped or device not in self.schedulers:
             return
-        if active:
-            if not self.connected:
-                _LOGGER.info("Cloud push connection active")
-            self._push_error_kind = None
-            self.connected = True
-        old = self._resync_tasks.pop(device, None)
-        if old:
-            old.cancel()
-            await asyncio.gather(old, return_exceptions=True)
-        if not active:
-            # Repeated failed socket attempts must not fence an independent
-            # fallback GET; a real push session or pending resync still does.
-            if old is not None or self.schedulers[device].status.push_active:
-                await self.schedulers[device].set_push(False)
-            return
+        async with self._subscription_locks[device]:
+            # Keep a cancelled resync owned until it has actually stopped.
+            if self._stopped or self._auth_failed:
+                return
+            if active:
+                if not self.connected:
+                    _LOGGER.info("Cloud push connection active")
+                self._push_error_kind = None
+                self.connected = True
+            old = self._resync_tasks.get(device)
+            if old:
+                old.cancel()
+                await asyncio.gather(old, return_exceptions=True)
+                # Keep the old task visible to close() until it has stopped,
+                # including when the subscription callback itself is cancelled.
+                if self._resync_tasks.get(device) is old:
+                    self._resync_tasks.pop(device, None)
+            # Close may have started while the previous task was cancelling.
+            # Do not register an untracked resync after teardown.
+            if self._stopped or self._auth_failed:
+                return
+            if not active:
+                # Repeated failed socket attempts must not fence an independent
+                # fallback GET; a real push session or pending resync still does.
+                if old is not None or self.schedulers[device].status.push_active:
+                    await self.schedulers[device].set_push(False)
+                return
 
-        async def resync() -> None:
-            while not self._stopped and not self._auth_failed:
-                try:
-                    await self.schedulers[device].set_push(True)
-                    if self._reconnect_discovery_pending and all(
-                        s.status.push_active for s in self.schedulers.values()
-                    ):
-                        self._reconnect_discovery_pending = False
-                        if self._discover is not None and (
-                            self._topology_task is None or self._topology_task.done()
+            async def resync() -> None:
+                while not self._stopped and not self._auth_failed:
+                    try:
+                        await self.schedulers[device].set_push(True)
+                        if self._reconnect_discovery_pending and all(
+                            s.status.push_active for s in self.schedulers.values()
                         ):
-                            self._topology_task = asyncio.create_task(
-                                self._discover_once()
-                            )
-                    return
-                except asyncio.CancelledError:
-                    raise
-                except Exception as error:
-                    delay = self._error(device, error)
-                    await self._sleep(delay)
+                            self._reconnect_discovery_pending = False
+                            if self._discover is not None and (
+                                self._topology_task is None
+                                or self._topology_task.done()
+                            ):
+                                self._topology_task = asyncio.create_task(
+                                    self._discover_once()
+                                )
+                        return
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as error:
+                        delay = self._error(device, error)
+                        await self._sleep(delay)
 
-        self._resync_tasks[device] = asyncio.create_task(resync())
+            self._resync_tasks[device] = asyncio.create_task(resync())
 
     async def _supervise(self) -> None:
         failures = 0
