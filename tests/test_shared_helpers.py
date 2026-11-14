@@ -8,7 +8,9 @@ from typing import Any
 import pytest
 from homeassistant.core import HomeAssistant
 
-from custom_components.airzoneclouddaikin.binary_sensor import AirzoneDeviceOnBinarySensor
+from custom_components.airzoneclouddaikin.binary_sensor import (
+    AirzoneDeviceOnBinarySensor,
+)
 from custom_components.airzoneclouddaikin.commands import modmaquina_payload
 from custom_components.airzoneclouddaikin.device_state import (
     power_is_on,
