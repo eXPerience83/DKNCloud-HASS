@@ -731,26 +731,53 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         async with lock:
+            powered_on = False
             if str(self._device.get("power", "0")).strip() != "1":
                 await self._send_p_event("P1", 1)
+                powered_on = True
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
-            if hvac_mode == HVACMode.FAN_ONLY:
-                await self._send_p_event("P2", fan_code)
-                optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "mode", fan_code
-                )
-                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
-            else:
-                mode_code = HVAC_TO_MODE.get(hvac_mode)
-                if mode_code:
-                    await self._send_p_event("P2", mode_code)
+            try:
+                if hvac_mode == HVACMode.FAN_ONLY:
+                    await self._send_p_event("P2", fan_code)
                     optimistic_set(
-                        self.hass, self._entry_id, self._device_id, "mode", mode_code
+                        self.hass, self._entry_id, self._device_id, "mode", fan_code
                     )
                     optimistic_set(
                         self.hass, self._entry_id, self._device_id, "power", "1"
                     )
+                else:
+                    mode_code = HVAC_TO_MODE.get(hvac_mode)
+                    if mode_code:
+                        await self._send_p_event("P2", mode_code)
+                        optimistic_set(
+                            self.hass,
+                            self._entry_id,
+                            self._device_id,
+                            "mode",
+                            mode_code,
+                        )
+                        optimistic_set(
+                            self.hass, self._entry_id, self._device_id, "power", "1"
+                        )
+            except Exception, asyncio.CancelledError:
+                if powered_on:
+                    # P1 was accepted but P2 may have reached the device.
+                    # Retain the ON overlay and read back; never replay a
+                    # possibly accepted mode write after an ambiguous failure.
+                    self.async_write_ha_state()
+                    manager = (
+                        self.hass.data.get(DOMAIN, {})
+                        .get(self._entry_id, {})
+                        .get("sync_manager")
+                    )
+                    if manager is not None:
+                        manager.request_recovery(self._device_id)
+                    else:
+                        schedule_post_write_refresh(
+                            self.hass, self.coordinator, entry_id=self._entry_id
+                        )
+                raise
 
             self.async_write_ha_state()
             schedule_post_write_refresh(
