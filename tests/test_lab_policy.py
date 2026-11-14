@@ -167,6 +167,7 @@ def test_loopback_lab_maps_verified_compatibility_only_to_local_socket():
     )
     raw.ws_connect.assert_called_once_with("http://127.0.0.1:4567/socket")
 
+
 @pytest.mark.parametrize("missing_field", ["device_id", "option", "value"])
 def test_loopback_rejects_incomplete_information_payload(missing_field):
     """Offline lab must reject INFO forms forbidden by the real read-only policy."""
