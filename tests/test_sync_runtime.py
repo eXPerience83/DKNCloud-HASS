@@ -628,7 +628,7 @@ async def test_disabled_automatic_cleanup_keeps_raw_sleep_after_confirmed_off(
 async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
-    """Cached OFF from a failed installation must not authorize a scene PUT."""
+    """Only two *fresh* OFF reports following this session's ON authorize Home."""
     api = Mock()
     api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
     api.fetch_devices = AsyncMock(return_value=[sample_device])
@@ -638,6 +638,7 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
         integration, "build_verified_adapter", Mock(connect=AsyncMock())
     )
     monkeypatch.setattr(integration.SyncManager, "start", Mock())
+
     entry = dkn_config_entry_factory()
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -645,29 +646,70 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
     bucket = hass.data[DOMAIN][entry.entry_id]
     recovery = Mock()
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
-    coordinator.data["dev1"].update(
-        scenary="sleep",
-        power="0",
-        sleep_off_confirmed=False,
-        sleep_snapshot_fresh=False,
-    )
-    coordinator.async_update_listeners()
-    await hass.async_block_till_done()
-    api.async_set_scenary.assert_not_awaited()
+    try:
+        device = coordinator.data["dev1"]
+        device.update(scenary="sleep", power="1")
+        integration._derive_state(
+            hass,
+            entry,
+            coordinator.data,
+            fresh_power_ids={"dev1"},
+            fresh_scenary_ids={"dev1"},
+        )
+        tracking = bucket["sleep_tracking"]["dev1"]
+        assert tracking.observed_on
+        assert tracking.consecutive_off_reports == 0
 
-    coordinator.data["dev1"]["sleep_snapshot_fresh"] = True
-    coordinator.async_update_listeners()
-    await hass.async_block_till_done()
-    # Cached OFF without a current session cannot authorize any PUT.
-    api.async_set_scenary.assert_not_awaited()
+        # A first newly received OFF is insufficient; request readback.
+        device["power"] = "0"
+        integration._derive_state(
+            hass,
+            entry,
+            coordinator.data,
+            fresh_power_ids={"dev1"},
+            fresh_scenary_ids=set(),
+        )
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        assert tracking.consecutive_off_reports == 1
+        assert not device["sleep_off_confirmed"]
+        api.async_set_scenary.assert_not_awaited()
+        recovery.assert_called_once_with("dev1")
 
-    coordinator.data["dev1"]["sleep_off_confirmed"] = True
-    _mark_synthetic_sleep_off(bucket)
-    coordinator.async_update_listeners()
-    await hass.async_block_till_done()
-    api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
-    recovery.assert_called_once_with("dev1")
-    assert await hass.config_entries.async_unload(entry.entry_id)
+        # A fallback/cache re-publication of the same OFF has no fresh
+        # power evidence, even if the coordinator notifies its listeners.
+        integration._derive_state(
+            hass,
+            entry,
+            coordinator.data,
+            fresh_power_ids=set(),
+            fresh_scenary_ids=set(),
+        )
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        assert tracking.consecutive_off_reports == 1
+        assert not device["sleep_off_confirmed"]
+        assert "sleep_snapshot_fresh" not in device
+        api.async_set_scenary.assert_not_awaited()
+
+        # A separate genuine fresh OFF completes the same-session pair.
+        integration._derive_state(
+            hass,
+            entry,
+            coordinator.data,
+            fresh_power_ids={"dev1"},
+            fresh_scenary_ids=set(),
+        )
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        assert tracking.consecutive_off_reports == 2
+        assert device["sleep_off_confirmed"]
+        api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
+        # One recovery follows the first OFF, and another verifies the scene PUT.
+        assert recovery.call_count == 2
+        recovery.assert_called_with("dev1")
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(

@@ -653,6 +653,7 @@ async def test_async_update_data_raises_on_initial_partial_installation_error(
 async def test_async_update_data_preserves_failed_installation_from_previous_snapshot(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Later partial errors should keep the last snapshot for failed installs."""
     entry = dkn_config_entry_factory()
@@ -676,6 +677,10 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
                 {"id": "dev-b", "name": "Unit B", "scenary": "occupied", "power": "0"}
             ]
 
+    # Capture the real per-fetch provenance supplied to the Sleep derivation.
+    # No coordinator device dictionary should expose a redundant freshness flag.
+    derive = Mock(wraps=integration._derive_state)
+    monkeypatch.setattr(integration, "_derive_state", derive)
     first = await integration._async_update_data(hass, entry, DummyAPIOk())
     assert set(first) == {"dev-a", "dev-b"}
     pending = hass.data[DOMAIN][entry.entry_id].setdefault("sleep_exit_pending", {})
@@ -697,10 +702,16 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
     assert set(second) == {"dev-a", "dev-b"}
     assert second["dev-a"]["name"] == "Unit A"
     assert second["dev-b"]["name"] == "Unit B2"
-    assert first["dev-a"]["sleep_snapshot_fresh"] is True
-    assert first["dev-b"]["sleep_snapshot_fresh"] is True
-    assert second["dev-a"]["sleep_snapshot_fresh"] is False
-    assert second["dev-b"]["sleep_snapshot_fresh"] is True
+    assert [call.kwargs["fresh_power_ids"] for call in derive.call_args_list] == [
+        {"dev-a", "dev-b"},
+        {"dev-b"},
+    ]
+    assert [call.kwargs["fresh_scenary_ids"] for call in derive.call_args_list] == [
+        {"dev-a", "dev-b"},
+        {"dev-b"},
+    ]
+    assert all("sleep_snapshot_fresh" not in dev for dev in first.values())
+    assert all("sleep_snapshot_fresh" not in dev for dev in second.values())
     # Backend scene uses canonical 'occupied': inst-a is cached and must not
     # clear ambiguity, whereas inst-b explicitly reported occupied.
     assert pending == {"dev-a": "unverified"}

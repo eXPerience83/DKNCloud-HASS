@@ -284,7 +284,6 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
     )
     entity.coordinator.data["unit-1"].update(
         sleep_off_confirmed=True,
-        sleep_snapshot_fresh=True,
     )
     # The automatic cleanup now requires session-owned ON/OFF evidence
     # inside the device lock; a bare coordinator flag is intentionally unsafe.
@@ -373,7 +372,6 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     )
     entity.coordinator.data["unit-1"].update(
         sleep_off_confirmed=True,
-        sleep_snapshot_fresh=True,
     )
     api.async_set_scenary = AsyncMock()
     _arm_current_sleep_off_evidence(hass)
@@ -416,7 +414,6 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
     )
     entity.coordinator.data["unit-1"].update(
         sleep_off_confirmed=True,
-        sleep_snapshot_fresh=True,
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
     _arm_current_sleep_off_evidence(hass)

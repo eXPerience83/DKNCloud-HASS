@@ -448,9 +448,6 @@ def _derive_state(
         for stale_id in tracked_ids - active_ids:
             sleep_tracking.pop(stale_id, None)
     for dev_id, dev in data.items():
-        if fresh_power_ids is not None:
-            # Do not act on cached fallback OFF or unrelated partial push.
-            dev["sleep_snapshot_fresh"] = dev_id in fresh_power_ids
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
         if (
             raw_scenary in {SCENARY_HOME, SCENARY_VACANT}
