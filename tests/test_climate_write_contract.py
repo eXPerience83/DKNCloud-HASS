@@ -720,6 +720,37 @@ async def test_invalid_preset_is_noop(
     api.put_device_fields.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    ("reported_power", "previous_overlay", "method", "command"),
+    [
+        ("0", "1", "async_turn_off", 0),
+        ("1", "0", "async_turn_on", 1),
+    ],
+)
+async def test_explicit_climate_power_intent_overrides_stale_backend_snapshot(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    reported_power: str,
+    previous_overlay: str,
+    method: str,
+    command: int,
+) -> None:
+    """Latest explicit P1 intent wins while older GET still disagrees."""
+    from custom_components.airzoneclouddaikin.helpers import optimistic_set
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power=reported_power
+    )
+    optimistic_set(hass, "climate-entry", "unit-1", "power", previous_overlay)
+    await getattr(entity, method)()
+    events = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert len(events) == 1
+    assert events[0]["option"] == "P1"
+    assert events[0]["value"] == command
+    assert entity._overlay_value("power", reported_power) == str(command)
+
+
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],

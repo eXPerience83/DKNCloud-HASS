@@ -23,7 +23,6 @@ from .helpers import (
     async_auto_exit_sleep_if_needed,
     build_device_info,
     optimistic_get,
-    optimistic_invalidate,
     optimistic_set,
     schedule_post_write_refresh,
 )
@@ -248,12 +247,6 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
         await self._ensure_occupied_before_active_action("switch.turn_on")
 
-        if self._backend_power_is_on():
-            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
-            self.async_write_ha_state()
-            _LOGGER.debug("Power already ON (backend); skipping redundant P1=1")
-            return
-
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
             await self._send_event("P1", 1)
@@ -275,12 +268,6 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         current = str(self._overlay_power() or "").strip().lower()
         if current in {"0", "false", "off", ""}:
             _LOGGER.debug("Power already optimistic OFF; skipping redundant P1=0")
-            return
-
-        if not self._backend_power_is_on():
-            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
-            self.async_write_ha_state()
-            _LOGGER.debug("Power already OFF (backend); skipping redundant P1=0")
             return
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)

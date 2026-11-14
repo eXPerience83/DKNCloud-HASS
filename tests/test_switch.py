@@ -59,6 +59,48 @@ def _register_failing_climate_service(
 
 
 @pytest.mark.parametrize(
+    ("reported_power", "previous_overlay", "method", "command"),
+    [
+        ("0", "1", "_fallback_turn_off", 0),
+        ("1", "0", "_fallback_turn_on", 1),
+    ],
+)
+async def test_switch_fallback_power_intent_wins_over_stale_get(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    monkeypatch: pytest.MonkeyPatch,
+    reported_power: str,
+    previous_overlay: str,
+    method: str,
+    command: int,
+) -> None:
+    """Do not suppress P1 when recent optimistic state contradicts old GET."""
+    from custom_components.airzoneclouddaikin.helpers import optimistic_set
+
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": reported_power},
+        climate_entity_id=None,
+    )
+    entity.coordinator.api = AsyncMock()
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        lambda *_args, **_kwargs: None,
+    )
+    optimistic_set(hass, "entry", "dev1", "power", previous_overlay)
+    await getattr(entity, method)()
+    events = [
+        call.args[0]["event"]
+        for call in entity.coordinator.api.send_event.await_args_list
+    ]
+    assert len(events) == 1
+    assert events[0]["option"] == "P1"
+    assert events[0]["value"] == command
+    assert entity.is_on is bool(command)
+
+
+@pytest.mark.parametrize(
     ("service", "power"),
     [("turn_on", "0"), ("turn_off", "1")],
 )
