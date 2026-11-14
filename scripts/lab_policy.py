@@ -276,7 +276,7 @@ class LocalReadOnlySession:
             and path == "/events"
             and set(payload) == {"event"}
             and event.get("cgi") == "infomaquina"
-            and set(event) <= {"cgi", "device_id", "option", "value"}
+            and set(event) == {"cgi", "device_id", "option", "value"}
             and event.get("option", "") == ""
             and event.get("value", "") == ""
         )
