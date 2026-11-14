@@ -99,7 +99,9 @@ def test_binary_sensor_uses_shared_raw_power_interpretation(
     expected: bool,
 ) -> None:
     """Diagnostic power stays identical to the established raw backend mapping."""
-    coordinator = dummy_coordinator_factory({"device": {"id": "device", "power": value}})
+    coordinator = dummy_coordinator_factory(
+        {"device": {"id": "device", "power": value}}
+    )
     entity = AirzoneDeviceOnBinarySensor(coordinator, "device")
     assert entity.is_on is expected
 
