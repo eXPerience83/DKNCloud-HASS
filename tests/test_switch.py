@@ -179,9 +179,7 @@ async def test_switch_newer_off_supersedes_on_during_sleep_preparation(
         started.set()
         await release.wait()
 
-    monkeypatch.setattr(
-        entity, "_ensure_occupied_before_active_action", paused_prepare
-    )
+    monkeypatch.setattr(entity, "_ensure_occupied_before_active_action", paused_prepare)
     old_on = asyncio.create_task(entity._fallback_turn_on())
     try:
         await asyncio.wait_for(started.wait(), timeout=2)
