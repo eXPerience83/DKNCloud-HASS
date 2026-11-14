@@ -199,6 +199,53 @@ async def test_pool_closes_fetch_after_its_last_waiter_is_cancelled():
     assert cleaned.is_set()
 
 
+@pytest.mark.parametrize("failed", [False, True])
+async def test_cancelled_last_waiter_retires_completed_shielded_read(failed):
+    """A shielded GET outliving its final waiter must release pool ownership."""
+    from custom_components.airzoneclouddaikin.recovery_pool import RecoveryPool
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    fetches = 0
+
+    async def fetch(_installation):
+        nonlocal fetches
+        fetches += 1
+        entered.set()
+        await release.wait()
+        if failed:
+            raise TimeoutError("orphaned read failed")
+        return {"power": "1"}
+
+    pool = RecoveryPool(fetch, clock=lambda: 0.0)
+    waiter = asyncio.create_task(pool.get("installation", 0.0))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        owned = pool._pending["installation"].task
+        assert owned is not None
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not owned.done()
+
+        release.set()
+        if failed:
+            with pytest.raises(TimeoutError, match="orphaned read failed"):
+                await asyncio.wait_for(owned, timeout=2)
+        else:
+            assert await asyncio.wait_for(owned, timeout=2) == {"power": "1"}
+        # Done callbacks must also retire the read with no live get() waiter.
+        await asyncio.sleep(0)
+        assert "installation" not in pool._pending
+
+        # The next request must start a separate GET, not reuse orphan data.
+        if not failed:
+            assert await pool.get("installation", 0.0) == {"power": "1"}
+            assert fetches == 2
+    finally:
+        release.set()
+        await pool.close()
+
+
 async def test_backoff_is_measured_after_slow_failure():
     now, waits = [0.0], []
 
