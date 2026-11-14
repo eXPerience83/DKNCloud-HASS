@@ -858,6 +858,52 @@ async def test_climate_wake_preparation_does_not_hold_power_lock(
     assert api.send_event.await_count == 1
 
 
+
+async def test_climate_and_switch_fallback_share_power_intent_order(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OFF in Climate followed by a fallback ON must preserve the last ON."""
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="1"
+    )
+    switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    monkeypatch.setattr(switch, "async_write_ha_state", Mock())
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        Mock(),
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    values: list[int] = []
+
+    async def paused_send(payload: dict[str, Any]) -> None:
+        values.append(payload["event"]["value"])
+        if len(values) == 1:
+            entered.set()
+            await release.wait()
+
+    api.send_event.side_effect = paused_send
+    climate_off = asyncio.create_task(entity.async_turn_off())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        switch_on = asyncio.create_task(switch._fallback_turn_on())
+        await asyncio.sleep(0)
+        assert not switch_on.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(climate_off, switch_on), timeout=3)
+
+    assert values == [0, 1]
+    assert entity._device_power_on()
+    assert switch.is_on
+
+
+
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
