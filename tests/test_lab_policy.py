@@ -262,6 +262,7 @@ def test_loopback_forwards_canonical_get_with_separate_auth_params():
     )
     assert local.blocked == 0
 
+
 @pytest.mark.parametrize(
     "payload",
     [
