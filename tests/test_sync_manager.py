@@ -154,9 +154,9 @@ async def test_superseded_get_only_updates_reception_not_applied_age():
         await instance.recover("fake")
         assert "power" in instance.touched["fake"]
         assert instance._last_get["fake"] == 45.0
-        assert instance.diagnostics()["devices"]["device_1"][
-            "last_applied_get_age"
-        ] == 0.0
+        assert (
+            instance.diagnostics()["devices"]["device_1"]["last_applied_get_age"] == 0.0
+        )
     finally:
         release.set()
         await instance.close()
