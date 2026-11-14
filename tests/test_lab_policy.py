@@ -261,3 +261,34 @@ def test_loopback_forwards_canonical_get_with_separate_auth_params():
         params=params,
     )
     assert local.blocked == 0
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        ["not-an-event"],
+        "not-an-event",
+        7,
+        {"event": None},
+        {"event": []},
+        {"event": "infomaquina"},
+        {"event": 7},
+    ],
+)
+def test_loopback_malformed_information_body_is_blocked(payload):
+    """Malformed INFO JSON must be denied without a backend call or type error."""
+    from scripts.lab_policy import LocalReadOnlySession
+
+    raw = Mock()
+    local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
+
+    with pytest.raises(PermissionError, match="Control operation denied"):
+        local.request(
+            "POST",
+            "https://dkn.airzonecloud.com/events",
+            json=payload,
+        )
+
+    raw.request.assert_not_called()
+    assert local.blocked == 1
