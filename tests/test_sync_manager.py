@@ -368,6 +368,51 @@ async def test_quiet_recovery_backoff_does_not_block_other_device():
     await instance.close()
 
 
+async def test_concurrent_close_waits_for_one_complete_teardown():
+    """Unload and HA stop must not close the same owned resources twice."""
+    instance, _, _, _ = manager()
+    entered, release = asyncio.Event(), asyncio.Event()
+    real_close = instance._pool.close
+    close_calls = 0
+
+    async def held_close():
+        nonlocal close_calls
+        close_calls += 1
+        entered.set()
+        await release.wait()
+        await real_close()
+
+    instance._pool.close = held_close
+    first = asyncio.create_task(instance.close())
+    second = None
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        assert instance._stopped
+        second = asyncio.create_task(instance.close())
+        await asyncio.sleep(0)
+        assert close_calls == 1
+        assert not second.done()
+    finally:
+        release.set()
+        await asyncio.wait_for(
+            asyncio.gather(
+                *(task for task in (first, second) if task is not None),
+                return_exceptions=True,
+            ),
+            timeout=3,
+        )
+
+    assert close_calls == 1
+    assert instance._close_complete
+    assert not instance._tasks
+    assert not instance._resync_tasks
+    assert not instance._quiet_tasks
+    assert not instance._recovery_waiters
+
+    await instance.close()
+    assert close_calls == 1
+
+
 async def test_close_owns_explicit_recovery_waiting_for_backoff():
     instance, _, _, _ = manager()
     entered = asyncio.Event()
