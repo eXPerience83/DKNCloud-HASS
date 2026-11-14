@@ -244,7 +244,9 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     return
                 current = str(self._overlay_power() or "").strip().lower()
                 if current in {"1", "true", "on"}:
-                    _LOGGER.debug("Power already optimistic ON; skipping redundant P1=1")
+                    _LOGGER.debug(
+                        "Power already optimistic ON; skipping redundant P1=1"
+                    )
                     return
                 if prepared:
                     await self._send_event("P1", 1)
