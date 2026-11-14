@@ -266,7 +266,11 @@ remains but its HA state is missing or `unavailable` (for example, after
 disabling the entity or when a restored state has no active Climate instance),
 the switch uses its direct `P1` command fallback instead of assuming that a
 successful service dispatch means a command reached the device. The fallback
-retains the existing power idempotency and optimistic-state handling.
+uses the latest optimistic power state for idempotency. If a previous accepted
+P1 is not yet reflected in an older backend snapshot, a new explicit opposite
+power command is sent rather than discarded based on that cached snapshot.
+The same intent rule applies to native Climate power services; an optimistic
+state is a display/intent hint, not physical confirmation.
 Delegated calls propagate the native HA entity context to preserve automation attribution.
 Transport-level event payloads remain unchanged.
 

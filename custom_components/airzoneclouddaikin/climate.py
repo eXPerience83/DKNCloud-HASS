@@ -641,12 +641,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         await self._ensure_occupied_before_active_action("turn_on")
 
-        backend_on = str(self._device.get("power", "0")).strip() == "1"
-        if backend_on:
-            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
-            self.async_write_ha_state()
-            return
-
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
             await self._send_p_event("P1", 1)
@@ -659,12 +653,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     async def async_turn_off(self) -> None:
         current = str(self._overlay_value("power", self._device.get("power")) or "")
         if current.strip().lower() in {"0", "false", "off", ""}:
-            return
-
-        backend_off = str(self._device.get("power", "0")).strip() != "1"
-        if backend_off:
-            optimistic_invalidate(self.hass, self._entry_id, self._device_id, "power")
-            self.async_write_ha_state()
             return
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
