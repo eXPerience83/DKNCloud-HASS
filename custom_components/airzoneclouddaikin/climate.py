@@ -33,6 +33,7 @@ from .helpers import (
     optimistic_set,
     parse_float,
     parse_modes_bitmask,
+    reserve_power_intent,
     schedule_post_write_refresh,
 )
 
@@ -635,28 +636,45 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Power / mode ----------------------------------------------------
 
     async def async_turn_on(self) -> None:
-        current = str(self._overlay_value("power", self._device.get("power")) or "")
-        if current.strip().lower() in {"1", "true", "on"}:
-            return
-
-        await self._ensure_occupied_before_active_action("turn_on")
-
+        intents, intent = reserve_power_intent(
+            self.hass, self._entry_id, self._device_id
+        )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
-        async with lock:
-            await self._send_p_event("P1", 1)
-            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
-            self.async_write_ha_state()
-            schedule_post_write_refresh(
-                self.hass, self.coordinator, entry_id=self._entry_id
-            )
+        prepared = False
+        while True:
+            async with lock:
+                if intents.get(self._device_id) != intent:
+                    return
+                current = str(
+                    self._overlay_value("power", self._device.get("power")) or ""
+                )
+                if current.strip().lower() in {"1", "true", "on"}:
+                    return
+                if prepared:
+                    await self._send_p_event("P1", 1)
+                    optimistic_set(
+                        self.hass, self._entry_id, self._device_id, "power", "1"
+                    )
+                    self.async_write_ha_state()
+                    schedule_post_write_refresh(
+                        self.hass, self.coordinator, entry_id=self._entry_id
+                    )
+                    return
+            # May take the same device lock for Sleep exit: never nest locks.
+            await self._ensure_occupied_before_active_action("turn_on")
+            prepared = True
 
     async def async_turn_off(self) -> None:
-        current = str(self._overlay_value("power", self._device.get("power")) or "")
-        if current.strip().lower() in {"0", "false", "off", ""}:
-            return
-
+        intents, intent = reserve_power_intent(
+            self.hass, self._entry_id, self._device_id
+        )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            if intents.get(self._device_id) != intent:
+                return
+            current = str(self._overlay_value("power", self._device.get("power")) or "")
+            if current.strip().lower() in {"0", "false", "off", ""}:
+                return
             await self._send_p_event("P1", 0)
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
             self.async_write_ha_state()
@@ -668,7 +686,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
 
         if hvac_mode == HVACMode.OFF:
+            intents, intent = reserve_power_intent(
+                self.hass, self._entry_id, self._device_id
+            )
             async with lock:
+                if intents.get(self._device_id) != intent:
+                    return
                 await self._send_p_event("P1", 0)
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
                 optimistic_invalidate(
@@ -713,26 +736,34 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
                 return
 
+        # A mode selection may implicitly power on the unit. Fence this P1
+        # against newer direct power commands before scene preparation awaits.
+        intents, intent = reserve_power_intent(
+            self.hass, self._entry_id, self._device_id
+        )
         await self._ensure_occupied_before_active_action("set_hvac_mode")
 
-        # A deliberate FAN_ONLY request can replace a reported P2=8 alias
-        # with the selectable P2=3 without writing on passive state reads.
-        normalize_fan_alias = (
-            hvac_mode == HVACMode.FAN_ONLY and self._backend_mode_code() == "8"
-        )
-        if (
-            self._device_power_on()
-            and self._hvac_from_device() == hvac_mode
-            and not normalize_fan_alias
-        ):
-            _LOGGER.debug(
-                "HVAC mode %s already active; skipping redundant P2", hvac_mode
-            )
-            return
-
         async with lock:
+            if intents.get(self._device_id) != intent:
+                return
+            # A deliberate FAN_ONLY selection normalizes the reported P2=8
+            # alias to the selectable P2=3.
+            normalize_fan_alias = (
+                hvac_mode == HVACMode.FAN_ONLY and self._backend_mode_code() == "8"
+            )
+            if (
+                self._device_power_on()
+                and self._hvac_from_device() == hvac_mode
+                and not normalize_fan_alias
+            ):
+                _LOGGER.debug(
+                    "HVAC mode %s already active; skipping redundant P2", hvac_mode
+                )
+                return
+
             powered_on = False
-            if str(self._device.get("power", "0")).strip() != "1":
+            # Consult the latest optimistic power intent, not stale raw GET.
+            if not self._device_power_on():
                 await self._send_p_event("P1", 1)
                 powered_on = True
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
