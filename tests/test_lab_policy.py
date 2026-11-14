@@ -166,3 +166,52 @@ def test_loopback_lab_maps_verified_compatibility_only_to_local_socket():
         ssl_context=create_compatibility_context(),
     )
     raw.ws_connect.assert_called_once_with("http://127.0.0.1:4567/socket")
+
+@pytest.mark.parametrize("missing_field", ["device_id", "option", "value"])
+def test_loopback_rejects_incomplete_information_payload(missing_field):
+    """Offline lab must reject INFO forms forbidden by the real read-only policy."""
+    from scripts.lab_policy import LocalReadOnlySession
+
+    raw = Mock()
+    local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
+    event = {"cgi": "infomaquina", "device_id": "d", "option": "", "value": ""}
+    event.pop(missing_field)
+
+    with pytest.raises(PermissionError, match="Control operation denied"):
+        local.request(
+            "POST",
+            "https://dkn.airzonecloud.com/events",
+            json={"event": event},
+        )
+
+    raw.request.assert_not_called()
+    assert local.blocked == 1
+
+
+def test_loopback_preserves_canonical_information_request():
+    """A complete INFO event still delegates only to the local test service."""
+    from scripts.lab_policy import LocalReadOnlySession
+
+    raw = Mock()
+    local = LocalReadOnlySession(raw, "http://127.0.0.1:4567/")
+    payload = {
+        "event": {
+            "cgi": "infomaquina",
+            "device_id": "d",
+            "option": "",
+            "value": "",
+        }
+    }
+
+    local.request(
+        "POST",
+        "https://dkn.airzonecloud.com/events",
+        json=payload,
+    )
+    raw.request.assert_called_once_with(
+        "POST",
+        "http://127.0.0.1:4567/events",
+        allow_redirects=False,
+        json=payload,
+    )
+    assert local.blocked == 0
