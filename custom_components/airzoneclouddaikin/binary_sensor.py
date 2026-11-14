@@ -27,6 +27,7 @@ from homeassistant.util import dt as dt_util
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
 from .const import INTERNAL_STALE_AFTER_SEC
+from .device_state import power_is_on
 from .helpers import build_device_info
 
 _LOGGER = logging.getLogger(__name__)
@@ -67,25 +68,10 @@ class AirzoneDeviceOnBinarySensor(
         """Return latest device snapshot from the coordinator."""
         return (self.coordinator.data or {}).get(self._device_id, {})
 
-    @staticmethod
-    def _normalize_power(val: Any) -> bool:
-        """Normalize backend power to boolean."""
-        s = str(val).strip().lower()
-        if s in ("1", "on", "true", "yes"):
-            return True
-        if s in ("0", "off", "false", "no", "", "none"):
-            return False
-        if isinstance(val, bool):
-            return val
-        try:
-            return bool(int(val))
-        except Exception:  # noqa: BLE001
-            return False
-
     @property
     def is_on(self) -> bool:
         """Return True if the device reports power ON."""
-        return self._normalize_power(self._device.get("power"))
+        return power_is_on(self._device.get("power"))
 
     @property
     def available(self) -> bool:

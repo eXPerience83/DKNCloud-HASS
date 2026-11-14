@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
+from homeassistant.core import HomeAssistant
 
+from custom_components.airzoneclouddaikin.binary_sensor import (
+    AirzoneDeviceOnBinarySensor,
+)
 from custom_components.airzoneclouddaikin.commands import modmaquina_payload
 from custom_components.airzoneclouddaikin.device_state import (
     power_is_on,
     preset_to_scenary,
     scenary_to_preset,
 )
+from custom_components.airzoneclouddaikin.helpers import optimistic_set
 
 
 def test_modmaquina_payload_preserves_canonical_event_shape_and_value_type() -> None:
@@ -71,3 +77,41 @@ def test_unknown_scene_is_not_treated_as_a_known_preset() -> None:
     """Unknown scene telemetry stays distinct from a selectable HA preset."""
     assert scenary_to_preset("custom") is None
     assert preset_to_scenary("custom") is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("1", True),
+        (" ON ", True),
+        ("YES", True),
+        (2, True),
+        (False, False),
+        ("0", False),
+        ("no", False),
+        (None, False),
+        ("unknown", False),
+    ],
+)
+def test_binary_sensor_uses_shared_raw_power_interpretation(
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    value: Any,
+    expected: bool,
+) -> None:
+    """Diagnostic power stays identical to the established raw backend mapping."""
+    coordinator = dummy_coordinator_factory(
+        {"device": {"id": "device", "power": value}}
+    )
+    entity = AirzoneDeviceOnBinarySensor(coordinator, "device")
+    assert entity.is_on is expected
+
+
+def test_binary_sensor_does_not_read_optimistic_power(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+) -> None:
+    """The passive diagnostic entity must not inherit Climate's power overlay."""
+    coordinator = dummy_coordinator_factory({"device": {"id": "device", "power": "0"}})
+    entity = AirzoneDeviceOnBinarySensor(coordinator, "device")
+    optimistic_set(hass, "entry", "device", "power", "1")
+    assert entity.is_on is False
