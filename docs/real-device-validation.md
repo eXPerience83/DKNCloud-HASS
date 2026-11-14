@@ -1,8 +1,9 @@
 # Real-device validation protocol (#109 phase 6)
 
 This is a **manual gate**, never a CI or synthetic fixture result. Home Assistant
-unit tests cannot prove DKN cloud-to-device state convergence. Do not merge
-[#102](https://github.com/eXPerience83/DKNCloud-HASS/pull/102) on CI alone.
+unit tests cannot prove DKN cloud-to-device state convergence. Historical
+[#102](https://github.com/eXPerience83/DKNCloud-HASS/pull/102) was closed
+without merging on 2026-10-31; CI did not certify real-device acceptance.
 
 ## Safe preparation
 
@@ -11,9 +12,10 @@ unit tests cannot prove DKN cloud-to-device state convergence. Do not merge
    Test only when changing HVAC state will not create discomfort or hazards.
 2. Confirm the official app and physical controls work before testing HA. Record
    any independent cloud outage, rather than assuming an integration failure.
-3. Write down the tested HA version and exact integration commit. Distinguish
-   `main` from an explicitly installed **PR #102 test build**. The published
-   0.5.0 alpha does not include the unmerged PR.
+3. Write down the tested HA version and exact integration commit. Compare the
+   current `main` baseline separately from any **historical PR #102 test build**.
+   PR #102 was closed without merging; it is not an active candidate, and
+   its test build must not be confused with a published release.
 4. Refer to the target unit only as **Device A**. Never put real email, password,
    token, PIN, MAC, device/installation ID, coordinates or unredacted diagnostics
    into a public report. Keep PII entities disabled.
@@ -41,8 +43,10 @@ python scripts/manual_device_evidence.py record --run RUN_NAME --case official_a
 python scripts/manual_device_evidence.py finish --run RUN_NAME
 ```
 
-For the PR test build set `--variant pr102`, ideally alongside
-`--revision <full-40-character-sha>`. Run names are generated and contain no
+Only for an archived comparison against the closed, unmerged PR #102 build,
+set `--variant pr102` and record the exact
+`--revision <full-40-character-sha>`. Use `--variant main` for current main
+validation. Run names are generated and contain no
 hardware identifiers. Results are stored under the ignored
 `secrets/manual-runs/RUN_NAME/` directory. The finalized `evidence.zip` contains
 **only** `session.json`, `observations.jsonl` and `SUMMARY.md` built from the
