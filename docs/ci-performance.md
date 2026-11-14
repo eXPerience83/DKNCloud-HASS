@@ -109,3 +109,31 @@ minutes. Do not claim that a green status implies hardware acceptance.
 Further safe work: investigate deliberate 50–121-second synthetic lab waits
 against their scenario contracts and review runtime/fixtures only when
 evidence supports a specific optimization.
+
+## Post-merge follow-up: protected launcher file-level scheduling (PR follow-up)
+
+The original protected subprocess test had fourteen parametrized cases in a
+**single test file**. With `pytest-xdist -n 2 --dist=loadfile`, all fourteen
+cases ran sequentially on one worker. The durations of the longest calls in
+[run 43528987901](https://github.com/eXPerience83/DKNCloud-HASS/actions/runs/43528987901)
+were ~121 s (`reconnect_no_events`), ~61 s each (`wrong_device`,
+`invalid_event`, `no_events`), ~51 s (`reconnect`) and ~36 s (`get`).
+These are **deliberate scenario windows**, not ordinary pytest fixture startup
+costs; reducing their deadlines could weaken negative-event and reconnect
+assurances.
+
+A follow-up experiment instead moves the *unchanged* launcher procedure and
+all of its assertions into a shared pytest fixture, and partitions its fourteen
+cases over two separate test files. Approximate observed durations suggest
+~230 s per file (rather than ~440 s on one worker), subject to runner variation,
+file scheduling and other test costs. The original `--dist=loadfile` CI option,
+full set of fourteen cases, timeout values, absence-of-event windows, security
+and cleanup checks are preserved. The new file is strictly a test-only module;
+production integration behavior is untouched.
+
+**Validation:** both current and independent minimum HA full suites must pass,
+with unchanged coverage floors and protected `tests`/smoke aggregation. Check
+`--durations=20` and *total* workflow wall time before claiming any gain.
+Revert the partition if it changes assertions, introduces flakiness, or fails
+to improve CI under repeated runs. This is a scheduling experiment, not a
+claim that waiting windows can safely be shortened.
