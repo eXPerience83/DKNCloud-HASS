@@ -365,9 +365,9 @@ class AirzoneAPI:
                         )
                     # An HTTP 5xx does not prove the server rejected a
                     # control request; P1/P2 or a device PUT might already
-                    # have been accepted before the error response. Preserve
-                    # the unknown outcome and request an independent readback
-                    # instead of sending the same physical command twice.
+                    # have been accepted before the error response. Surface
+                    # the unknown outcome to the caller instead of sending
+                    # the same physical command twice.
                     if is_device_write and 500 <= status <= 599:
                         raise
                     # 429 explicitly refuses the command: retain the existing
