@@ -2,7 +2,7 @@
 
 Auth & resilience:
 - No "silent re-login": HTTP 401 is surfaced so the coordinator opens a reauth flow.
-- Backoff with jitter is applied to transient 429/5xx responses (GET and writes).
+- Backoff retries transient 429 and read-only 5xx; ambiguous 5xx writes are not replayed.
 - Logging remains secret-safe (never logs full URLs with query params).
 
 P3:
@@ -363,8 +363,15 @@ class AirzoneAPI:
                         self._cooldown_until = max(
                             self._cooldown_until, self._now() + delay
                         )
-                    # A long server pause must not queue a stale device
-                    # command or silently replay a rejected write.
+                    # An HTTP 5xx does not prove the server rejected a
+                    # control request; P1/P2 or a device PUT might already
+                    # have been accepted before the error response. Preserve
+                    # the unknown outcome and request an independent readback
+                    # instead of sending the same physical command twice.
+                    if is_device_write and 500 <= status <= 599:
+                        raise
+                    # 429 explicitly refuses the command: retain the existing
+                    # bounded cooldown retry, never enqueue a delayed control.
                     if (
                         status == 429
                         and is_device_write

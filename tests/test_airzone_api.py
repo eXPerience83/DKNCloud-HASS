@@ -394,6 +394,63 @@ async def test_authed_request_5xx_backoff(monkeypatch: pytest.MonkeyPatch) -> No
     assert api._cooldown_until == 0.0
 
 
+@pytest.mark.parametrize("status", [500, 503, 599])
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    [
+        (
+            "POST",
+            API_EVENTS,
+            {"event": {"cgi": "modmaquina", "option": "P1", "value": "1"}},
+        ),
+        ("PUT", "/devices/synthetic", {"device": {"scenary": "occupied"}}),
+        ("PUT", "/devices/synthetic", {"sleep_time": 30}),
+    ],
+)
+async def test_ambiguous_5xx_device_control_is_not_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    method: str,
+    path: str,
+    payload: dict[str, Any],
+) -> None:
+    """Server 5xx may happen after accepting a command; no automatic replay."""
+    api, sleeps = _make_api(
+        monkeypatch, [_client_response_error(status=status), {"unexpected": True}]
+    )
+
+    with pytest.raises(ClientResponseError) as raised:
+        await api._authed_request_with_retries(
+            method, path, json=payload, retry=True
+        )
+
+    assert raised.value.status == status
+    assert api._request.await_count == 1
+    assert sleeps == []
+    assert api._cooldown_until == 0
+
+
+async def test_short_429_on_device_write_preserves_bounded_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit rate-limit rejection still permits the existing short retry."""
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.random.uniform",
+        lambda *_: 0.0,
+    )
+    api, sleeps = _make_api(
+        monkeypatch,
+        [_client_response_error(429, {"Retry-After": "2"}), {"accepted": True}],
+    )
+    result = await api._authed_request_with_retries(
+        "PUT", "/devices/synthetic", json={"sleep_time": 30}, retry=True
+    )
+
+    assert result == {"accepted": True}
+    assert api._request.await_count == 2
+    assert sleeps == [2.0]
+
+
 @pytest.mark.asyncio
 async def test_timeout_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Timeouts should get one short retry."""
