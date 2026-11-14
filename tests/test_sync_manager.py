@@ -296,14 +296,21 @@ async def test_cancelled_subscription_retains_old_task_for_manager_close():
     try:
         await asyncio.wait_for(cancelling.wait(), timeout=2)
         callback.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await callback
+        await asyncio.sleep(0)
+        # gather(old) propagates callback cancellation to the old task
+        # and waits for its cleanup. Awaiting the callback *before* releasing
+        # the cleanup event would deadlock this test on both HA suites.
         assert instance._resync_tasks["fake"] is old
         closing = asyncio.create_task(instance.close())
         await asyncio.sleep(0)
         assert not closing.done()
         release.set()
-        await asyncio.wait_for(closing, timeout=3)
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(callback, closing, return_exceptions=True),
+            timeout=3,
+        )
+        assert isinstance(outcomes[0], asyncio.CancelledError)
+        assert outcomes[1] is None
         assert old.done()
         assert not instance._resync_tasks
     finally:
