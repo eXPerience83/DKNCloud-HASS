@@ -33,6 +33,7 @@ from .helpers import (
     optimistic_set,
     parse_float,
     parse_modes_bitmask,
+    reserve_power_intent,
     schedule_post_write_refresh,
 )
 
@@ -635,28 +636,47 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Power / mode ----------------------------------------------------
 
     async def async_turn_on(self) -> None:
-        current = str(self._overlay_value("power", self._device.get("power")) or "")
-        if current.strip().lower() in {"1", "true", "on"}:
-            return
-
-        await self._ensure_occupied_before_active_action("turn_on")
-
+        intents, intent = reserve_power_intent(
+            self.hass, self._entry_id, self._device_id
+        )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
-        async with lock:
-            await self._send_p_event("P1", 1)
-            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
-            self.async_write_ha_state()
-            schedule_post_write_refresh(
-                self.hass, self.coordinator, entry_id=self._entry_id
-            )
+        prepared = False
+        while True:
+            async with lock:
+                if intents.get(self._device_id) != intent:
+                    return
+                current = str(
+                    self._overlay_value("power", self._device.get("power")) or ""
+                )
+                if current.strip().lower() in {"1", "true", "on"}:
+                    return
+                if prepared:
+                    await self._send_p_event("P1", 1)
+                    optimistic_set(
+                        self.hass, self._entry_id, self._device_id, "power", "1"
+                    )
+                    self.async_write_ha_state()
+                    schedule_post_write_refresh(
+                        self.hass, self.coordinator, entry_id=self._entry_id
+                    )
+                    return
+            # May take the same device lock for Sleep exit: never nest locks.
+            await self._ensure_occupied_before_active_action("turn_on")
+            prepared = True
 
     async def async_turn_off(self) -> None:
-        current = str(self._overlay_value("power", self._device.get("power")) or "")
-        if current.strip().lower() in {"0", "false", "off", ""}:
-            return
-
+        intents, intent = reserve_power_intent(
+            self.hass, self._entry_id, self._device_id
+        )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            if intents.get(self._device_id) != intent:
+                return
+            current = str(
+                self._overlay_value("power", self._device.get("power")) or ""
+            )
+            if current.strip().lower() in {"0", "false", "off", ""}:
+                return
             await self._send_p_event("P1", 0)
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
             self.async_write_ha_state()
