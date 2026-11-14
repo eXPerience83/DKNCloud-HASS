@@ -672,9 +672,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         async with lock:
             if intents.get(self._device_id) != intent:
                 return
-            current = str(
-                self._overlay_value("power", self._device.get("power")) or ""
-            )
+            current = str(self._overlay_value("power", self._device.get("power")) or "")
             if current.strip().lower() in {"0", "false", "off", ""}:
                 return
             await self._send_p_event("P1", 0)
