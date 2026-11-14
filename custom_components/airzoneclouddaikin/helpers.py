@@ -230,7 +230,6 @@ def acquire_device_lock(
     return lock
 
 
-
 def reserve_power_intent(
     hass: HomeAssistant, entry_id: str, device_id: str
 ) -> tuple[dict[str, int], int]:
