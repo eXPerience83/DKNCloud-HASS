@@ -315,10 +315,14 @@ class SyncManager:
                     _LOGGER.info("Cloud push connection active")
                 self._push_error_kind = None
                 self.connected = True
-            old = self._resync_tasks.pop(device, None)
+            old = self._resync_tasks.get(device)
             if old:
                 old.cancel()
                 await asyncio.gather(old, return_exceptions=True)
+                # Keep the old task visible to close() until it has stopped,
+                # including when the subscription callback itself is cancelled.
+                if self._resync_tasks.get(device) is old:
+                    self._resync_tasks.pop(device, None)
             # Close may have started while the previous task was cancelling.
             # Do not register an untracked resync after teardown.
             if self._stopped or self._auth_failed:
@@ -339,7 +343,8 @@ class SyncManager:
                         ):
                             self._reconnect_discovery_pending = False
                             if self._discover is not None and (
-                                self._topology_task is None or self._topology_task.done()
+                                self._topology_task is None
+                                or self._topology_task.done()
                             ):
                                 self._topology_task = asyncio.create_task(
                                     self._discover_once()
