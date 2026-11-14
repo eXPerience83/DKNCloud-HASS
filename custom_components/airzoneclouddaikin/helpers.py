@@ -230,6 +230,24 @@ def acquire_device_lock(
     return lock
 
 
+
+def reserve_power_intent(
+    hass: HomeAssistant, entry_id: str, device_id: str
+) -> tuple[dict[str, int], int]:
+    """Record an explicit power request before it can wait for device I/O.
+
+    A newer ON/OFF request supersedes an older one still preparing Sleep/Away
+    or waiting for the per-device lock. The lock protects the final decision
+    and P1 send together; the intent counter preserves request order across
+    preparation that must happen outside that lock.
+    """
+    bucket = _entry_bucket(hass, entry_id)
+    intents: dict[str, int] = bucket.setdefault("power_intents", {})
+    current = intents.get(device_id, 0) + 1
+    intents[device_id] = current
+    return intents, current
+
+
 def clamp_number(
     value: float | int,
     *,
