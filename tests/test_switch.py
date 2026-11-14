@@ -250,6 +250,8 @@ async def test_delegated_climate_failure_never_replays_ambiguous_power_command(
 
     async def accepted_then_failed(_call: Any) -> None:
         delegated.append(service)
+        if failure is ServiceNotFound:
+            raise ServiceNotFound("climate", service)
         raise failure("after P1 dispatch")
 
     hass.states.async_set("climate.device", "off")
@@ -259,7 +261,7 @@ async def test_delegated_climate_failure_never_replays_ambiguous_power_command(
         pytest.fail("Never replay a potentially accepted delegated P1")
 
     setattr(entity, f"_fallback_{service}", unexpected_fallback)
-    with pytest.raises(failure, match="after P1 dispatch"):
+    with pytest.raises(failure):
         await getattr(entity, f"async_{service}")()
 
     assert delegated == [service]
