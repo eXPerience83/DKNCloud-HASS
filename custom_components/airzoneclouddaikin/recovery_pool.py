@@ -55,6 +55,21 @@ class RecoveryPool:
                     return await self._fetch(installation)
 
                 pending.task = asyncio.create_task(read())
+
+                def forget_finished(
+                    completed: asyncio.Task, record: _Read = pending
+                ) -> None:
+                    # A cancelled last waiter leaves the shielded GET running.
+                    # Retire its record after completion even if nobody awaits
+                    # it again; never remove a newer read for this installation.
+                    if self._pending.get(installation) is record:
+                        self._pending.pop(installation, None)
+                    # Observe failures when every waiter was cancelled to
+                    # avoid unhandled background task exceptions.
+                    if not completed.cancelled():
+                        completed.exception()
+
+                pending.task.add_done_callback(forget_finished)
             task = pending.task
             assert task is not None
             try:
