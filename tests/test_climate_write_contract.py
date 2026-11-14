@@ -771,9 +771,7 @@ async def test_climate_concurrent_power_intents_are_serialized(
     final: str,
 ) -> None:
     """A queued P1 request rechecks power after the preceding command finishes."""
-    entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch, power=initial
-    )
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power=initial)
     entered = asyncio.Event()
     release = asyncio.Event()
     commands: list[int] = []
@@ -807,9 +805,7 @@ async def test_climate_newer_off_supersedes_on_during_scene_preparation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A later OFF still wins if an older ON waits outside the device lock."""
-    entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch, power="0"
-    )
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -840,9 +836,7 @@ async def test_climate_wake_preparation_does_not_hold_power_lock(
     """Sleep/Away preparation can use the shared lock without deadlocking ON."""
     from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
 
-    entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch, power="0"
-    )
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
     lock = acquire_device_lock(hass, "climate-entry", "unit-1")
     prepared: list[bool] = []
 
@@ -865,9 +859,7 @@ async def test_climate_and_switch_fallback_share_power_intent_order(
     """An OFF in Climate followed by a fallback ON must preserve the last ON."""
     from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
 
-    entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch, power="1"
-    )
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="1")
     switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
     switch.hass = hass
     monkeypatch.setattr(switch, "async_write_ha_state", Mock())
