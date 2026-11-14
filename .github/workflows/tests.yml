@@ -19,7 +19,7 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -93,7 +93,7 @@ jobs:
           # Bound xdist to two workers on the hosted runner; keep all tests and
           # pytest-cov's merged coverage gates. Report slow tests for profiling.
           uv run --locked --no-sync python -m pytest -q -n 2 --dist=loadfile \
-            --durations=20 \
+            --durations=20 --max-worker-restart=0 \
             --cov=custom_components.airzoneclouddaikin \
             --cov-report=term-missing:skip-covered \
             --cov-report=xml:coverage.xml \
