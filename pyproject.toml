@@ -64,3 +64,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-p no:respx"
+# Official pytest 9 faulthandler: 121s is an expected protected-lab case;
+# a 180s per-test ceiling catches blocked async teardown with a traceback.
+faulthandler_timeout = 180
+faulthandler_exit_on_timeout = true
