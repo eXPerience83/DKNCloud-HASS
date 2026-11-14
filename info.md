@@ -265,8 +265,13 @@ service while it has an active, usable HA state. If a Climate registry entry
 remains but its HA state is missing or `unavailable` (for example, after
 disabling the entity or when a restored state has no active Climate instance),
 the switch uses its direct `P1` command fallback instead of assuming that a
-successful service dispatch means a command reached the device. The fallback
-retains the existing power idempotency and optimistic-state handling.
+successful service dispatch means a command reached the device. Only a
+missing/unavailable Climate entity or a service that is not registered permits a
+direct P1 fallback. Once an actual Climate handler has been dispatched, a
+timeout or exception cannot prove whether P1 reached the backend; the switch
+propagates that failure **without retrying** the power command. This avoids
+ambiguous duplicate control writes. The fallback retains existing optimistic
+power idempotency and must not be mistaken for physical confirmation.
 Delegated calls propagate the native HA entity context to preserve automation attribution.
 Transport-level event payloads remain unchanged.
 
