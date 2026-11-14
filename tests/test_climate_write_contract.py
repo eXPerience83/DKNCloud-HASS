@@ -742,6 +742,42 @@ async def test_power_on_from_off_uses_p1_before_cooling_mode(
     )
 
 
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+@pytest.mark.parametrize("with_manager", [False, True])
+async def test_partial_hvac_power_on_failure_requests_readback_without_replaying(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[BaseException],
+    with_manager: bool,
+) -> None:
+    """An accepted P1 followed by an ambiguous P2 must trigger fresh readback."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode="1", power="0"
+    )
+    api.send_event.side_effect = [None, failure("P2 did not confirm")]
+    manager = Mock()
+    if with_manager:
+        hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+
+    with pytest.raises(failure):
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+
+    commands = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert [event["option"] for event in commands] == ["P1", "P2"]
+    assert [event["value"] for event in commands] == [1, "2"]
+    assert entity._overlay_value("power", entity._device["power"]) == "1"
+    assert "mode" not in hass.data[DOMAIN]["climate-entry"]["optimistic"]["unit-1"]
+    entity.async_write_ha_state.assert_called_once()
+    if with_manager:
+        manager.request_recovery.assert_called_once_with("unit-1")
+        climate_module.schedule_post_write_refresh.assert_not_called()
+    else:
+        climate_module.schedule_post_write_refresh.assert_called_once_with(
+            hass, entity.coordinator, entry_id="climate-entry"
+        )
+
+
 @pytest.mark.parametrize(
     ("modes", "heat_cool_opt_in"),
     [("11101", True), ("11111", False), ("", False)],

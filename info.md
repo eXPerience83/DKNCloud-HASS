@@ -173,6 +173,11 @@ Local time-based connectivity and scene maintenance continues without I/O.
 Automatic recovery retains snapshot eligibility after transient information-request
 failures. Information and recovery retries have separate deadlines; successful
 snapshots do not confirm physical freshness or clear information failures.
+If a climate mode change from OFF accepts the P1 power-on command but its
+subsequent P2 mode command fails or is cancelled, the integration retains the
+optimistic ON indication and requests a recovery readback. It propagates the
+original failure instead of replaying an ambiguously accepted mode command.
+This is a client recovery policy, not proof of physical activation.
 Entry shutdown fences and awaits automatic scene cleanup. Channel authorization
 runs separately from socket reception with per-channel retry backoff capped at
 five minutes (the number of retries is not bounded).
