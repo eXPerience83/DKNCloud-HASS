@@ -215,7 +215,12 @@ class SyncManager:
         for device in devices:
             key = str(device.get("id") or "")
             if key in self.schedulers:
-                self._last_get[key] = self._last_received[key] = now
+                # Receipt is not proof that a superseded GET supplied fresh
+                # device state. Exclude pure identity keys from the applied
+                # GET diagnostic when Pusher won the field-level race.
+                if applied_fields.get(key, set()) - {"id", "mac"}:
+                    self._last_get[key] = now
+                self._last_received[key] = now
         self._publish(deepcopy(self.state.data), True)
         return devices
 
