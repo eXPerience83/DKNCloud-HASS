@@ -420,9 +420,7 @@ async def test_ambiguous_5xx_device_control_is_not_replayed(
     )
 
     with pytest.raises(ClientResponseError) as raised:
-        await api._authed_request_with_retries(
-            method, path, json=payload, retry=True
-        )
+        await api._authed_request_with_retries(method, path, json=payload, retry=True)
 
     assert raised.value.status == status
     assert api._request.await_count == 1
