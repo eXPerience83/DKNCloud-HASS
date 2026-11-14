@@ -751,6 +751,113 @@ async def test_explicit_climate_power_intent_overrides_stale_backend_snapshot(
     assert entity._overlay_value("power", reported_power) == str(command)
 
 
+
+@pytest.mark.parametrize(
+    ("initial", "first", "second", "expected", "final"),
+    [
+        ("1", "async_turn_off", "async_turn_on", [0, 1], "1"),
+        ("0", "async_turn_on", "async_turn_off", [1, 0], "0"),
+        ("1", "async_turn_off", "async_turn_off", [0], "0"),
+        ("0", "async_turn_on", "async_turn_on", [1], "1"),
+    ],
+)
+async def test_climate_concurrent_power_intents_are_serialized(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    initial: str,
+    first: str,
+    second: str,
+    expected: list[int],
+    final: str,
+) -> None:
+    """A queued P1 request rechecks power after the preceding command finishes."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power=initial
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    commands: list[int] = []
+
+    async def paused_send(payload: dict[str, Any]) -> None:
+        event = payload["event"]
+        assert event["option"] == "P1"
+        commands.append(event["value"])
+        if len(commands) == 1:
+            entered.set()
+            await release.wait()
+
+    api.send_event.side_effect = paused_send
+    first_task = asyncio.create_task(getattr(entity, first)())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second_task = asyncio.create_task(getattr(entity, second)())
+        await asyncio.sleep(0)
+        assert not second_task.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(first_task, second_task), timeout=3)
+
+    assert commands == expected
+    assert entity._overlay_value("power", initial) == final
+
+
+async def test_climate_newer_off_supersedes_on_during_scene_preparation(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later OFF still wins if an older ON waits outside the device lock."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="0"
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def paused_preparation(_reason: str) -> None:
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(
+        entity, "_ensure_occupied_before_active_action", paused_preparation
+    )
+    old_on = asyncio.create_task(entity.async_turn_on())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await entity.async_turn_off()
+    finally:
+        release.set()
+    await asyncio.wait_for(old_on, timeout=3)
+
+    api.send_event.assert_not_awaited()
+    assert entity._overlay_value("power", "0") == "0"
+
+
+async def test_climate_wake_preparation_does_not_hold_power_lock(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sleep/Away preparation can use the shared lock without deadlocking ON."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="0"
+    )
+    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+    prepared: list[bool] = []
+
+    async def prepare(_reason: str) -> None:
+        async with lock:
+            prepared.append(True)
+
+    monkeypatch.setattr(entity, "_ensure_occupied_before_active_action", prepare)
+    await asyncio.wait_for(entity.async_turn_on(), timeout=3)
+
+    assert prepared == [True]
+    assert api.send_event.await_count == 1
+
+
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
