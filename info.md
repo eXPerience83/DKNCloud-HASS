@@ -270,7 +270,13 @@ uses the latest optimistic power state for idempotency. If a previous accepted
 P1 is not yet reflected in an older backend snapshot, a new explicit opposite
 power command is sent rather than discarded based on that cached snapshot.
 The same intent rule applies to native Climate power services; an optimistic
-state is a display/intent hint, not physical confirmation.
+state is a display/intent hint, not physical confirmation. Explicit Climate
+and direct-switch P1 commands serialize their idempotency check, send and
+optimistic update under the same per-device lock. A newer power request fences
+an older request still waiting for the lock or preparing a Sleep/Away exit;
+scene preparation releases the lock before retrying the guarded power send.
+This prevents queued opposite intents from being dropped and duplicate
+same-direction P1 sends; it does not imply physical confirmation.
 Direct P1 fallback is allowed only if Climate is unavailable or its HA service
 was never registered. After a dispatched Climate handler fails or times out,
 its P1 outcome is unknown: the switch propagates the error and never replays
