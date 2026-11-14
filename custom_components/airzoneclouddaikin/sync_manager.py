@@ -68,6 +68,9 @@ class SyncManager:
         self._budget = RequestBudget(clock, sleep)
         self._pool = RecoveryPool(self._read, clock, timed_fetch=self._read)
         self._tasks: list[asyncio.Task] = []
+        # HA unload and stop callbacks may concurrently request teardown.
+        self._close_lock = asyncio.Lock()
+        self._close_complete = False
         self._stopped = False
         self._auth_failed = False
         self.connected = False
@@ -527,24 +530,28 @@ class SyncManager:
         }
 
     async def close(self) -> None:
-        """Fence callbacks, cancel tasks and await all owned I/O."""
-        self._stopped = True
-        self.state.invalidate()
-        self._budget.close()
-        tasks = (
-            self._tasks
-            + list(self._resync_tasks.values())
-            + list(self._quiet_tasks.values())
-        )
-        if self._topology_task is not None:
-            tasks.append(self._topology_task)
-        tasks = set(tasks) | self._recovery_waiters
-        tasks.discard(asyncio.current_task())
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        await asyncio.gather(*(s.close() for s in self.schedulers.values()))
-        await self._pool.close()
-        self._tasks.clear()
-        self._resync_tasks.clear()
-        self._quiet_tasks.clear()
+        """Fence callbacks and await owned work once, even with concurrent callers."""
+        async with self._close_lock:
+            if self._close_complete:
+                return
+            self._stopped = True
+            self.state.invalidate()
+            self._budget.close()
+            tasks = (
+                self._tasks
+                + list(self._resync_tasks.values())
+                + list(self._quiet_tasks.values())
+            )
+            if self._topology_task is not None:
+                tasks.append(self._topology_task)
+            tasks = set(tasks) | self._recovery_waiters
+            tasks.discard(asyncio.current_task())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*(s.close() for s in self.schedulers.values()))
+            await self._pool.close()
+            self._tasks.clear()
+            self._resync_tasks.clear()
+            self._quiet_tasks.clear()
+            self._close_complete = True
