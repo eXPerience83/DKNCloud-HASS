@@ -293,7 +293,7 @@ class AirzoneAPI:
         extra_headers: dict[str, str] | None = None,
         retry: bool = True,
     ) -> Any:
-        """Authenticated request with optional 429/5xx and read-only timeout retries.
+        """Authenticated request with bounded 429 retries and read-only 5xx/timeout retries.
 
         English:
         - 401 is *not* retried here; it is propagated so the coordinator opens reauth.
@@ -535,7 +535,7 @@ class AirzoneAPI:
         return None
 
     async def send_event(self, payload: dict[str, Any]) -> Any:
-        """POST to /events (realtime control) with JSON/XHR headers + retries."""
+        """POST to /events with JSON/XHR headers and no ambiguous 5xx replay."""
         params = self._auth_params()
         try:
             return await self._authed_request_with_retries(
@@ -566,7 +566,7 @@ class AirzoneAPI:
     async def put_device_fields(
         self, device_id: str, payload: dict[str, Any], *, retry: bool = True
     ) -> Any:
-        """PUT /devices/{id} with provided payload (retries for 429/5xx).
+        """PUT /devices/{id} with bounded 429 retry; never replay ambiguous 5xx.
 
         Canonical method for *all* device field writes (including what used to be "scenary").
         Example:
