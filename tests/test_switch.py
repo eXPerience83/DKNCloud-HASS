@@ -220,112 +220,78 @@ async def test_missing_climate_proxy_calls_p1_fallback(
     assert entity._climate_entity_id is None
 
 
-@pytest.mark.asyncio
-async def test_turn_on_timeout_keeps_proxy_and_calls_fallback(
+@pytest.mark.parametrize(
+    ("service", "power"),
+    [("turn_on", "0"), ("turn_off", "1")],
+)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        TimeoutError,
+        HomeAssistantError,
+        RuntimeError,
+        ServiceNotFound,
+    ],
+)
+async def test_delegated_climate_failure_never_replays_ambiguous_power_command(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    service: str,
+    power: str,
+    failure: type[Exception],
 ) -> None:
-    """Timeouts in the climate proxy should not clear the cached entity id."""
+    """A delegated P1 may have been accepted even if Climate raises afterward."""
     entity = _make_switch(
         hass,
         dummy_coordinator_factory,
-        {"id": "dev1", "name": "Zone", "power": "0"},
+        {"id": "dev1", "name": "Zone", "power": power},
     )
+    delegated: list[str] = []
 
-    _register_failing_climate_service(hass, "turn_on", TimeoutError("boom"))
-    called = {"fallback": False}
+    async def accepted_then_failed(_call: Any) -> None:
+        delegated.append(service)
+        if failure is ServiceNotFound:
+            raise ServiceNotFound("climate", service)
+        raise failure("after P1 dispatch")
 
-    async def fake_fallback() -> None:
-        called["fallback"] = True
+    hass.states.async_set("climate.device", "off")
+    hass.services.async_register("climate", service, accepted_then_failed)
 
-    entity._fallback_turn_on = fake_fallback
+    async def unexpected_fallback() -> None:
+        pytest.fail("Never replay a potentially accepted delegated P1")
 
-    await entity.async_turn_on()
+    setattr(entity, f"_fallback_{service}", unexpected_fallback)
+    with pytest.raises(failure):
+        await getattr(entity, f"async_{service}")()
 
+    assert delegated == [service]
     assert entity._climate_entity_id == "climate.device"
-    assert called["fallback"] is True
 
 
-@pytest.mark.asyncio
-async def test_turn_on_service_not_found_drops_proxy(
+@pytest.mark.parametrize("service", ["turn_on", "turn_off"])
+async def test_missing_climate_service_delegates_to_direct_p1(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    service: str,
 ) -> None:
-    """ServiceNotFound must decouple the proxy and still call the fallback."""
+    """An absent service cannot have sent P1, so fallback remains safe."""
     entity = _make_switch(
         hass,
         dummy_coordinator_factory,
-        {"id": "dev1", "name": "Zone", "power": "0"},
+        {"id": "dev1", "name": "Zone", "power": "0" if service == "turn_on" else "1"},
     )
+    hass.states.async_set("climate.device", "off")
+    assert not hass.services.has_service("climate", service)
+    delegated: list[str] = []
 
-    _register_failing_climate_service(
-        hass, "turn_on", ServiceNotFound("climate", "turn_on")
-    )
-    called = {"fallback": False}
+    async def fallback() -> None:
+        delegated.append(service)
 
-    async def fake_fallback() -> None:
-        called["fallback"] = True
+    setattr(entity, f"_fallback_{service}", fallback)
+    await getattr(entity, f"async_{service}")()
 
-    entity._fallback_turn_on = fake_fallback
-
-    await entity.async_turn_on()
-
+    assert delegated == [service]
     assert entity._climate_entity_id is None
-    assert called["fallback"] is True
-
-
-@pytest.mark.asyncio
-async def test_turn_on_homeassistant_error_keeps_proxy_and_calls_fallback(
-    hass: HomeAssistant,
-    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
-) -> None:
-    """HomeAssistantError in the climate proxy should not clear the cached id."""
-    entity = _make_switch(
-        hass,
-        dummy_coordinator_factory,
-        {"id": "dev1", "name": "Zone", "power": "0"},
-    )
-
-    _register_failing_climate_service(
-        hass, "turn_on", HomeAssistantError("transient failure")
-    )
-    called = {"fallback": False}
-
-    async def fake_fallback() -> None:
-        called["fallback"] = True
-
-    entity._fallback_turn_on = fake_fallback
-
-    await entity.async_turn_on()
-
-    assert entity._climate_entity_id == "climate.device"
-    assert called["fallback"] is True
-
-
-@pytest.mark.asyncio
-async def test_turn_off_unexpected_error_drops_proxy_and_calls_fallback(
-    hass: HomeAssistant,
-    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
-) -> None:
-    """Unexpected exceptions in the climate proxy should drop the cached id."""
-    entity = _make_switch(
-        hass,
-        dummy_coordinator_factory,
-        {"id": "dev1", "name": "Zone", "power": "1"},
-    )
-
-    _register_failing_climate_service(hass, "turn_off", RuntimeError("unexpected boom"))
-    called = {"fallback": False}
-
-    async def fake_fallback() -> None:
-        called["fallback"] = True
-
-    entity._fallback_turn_off = fake_fallback
-
-    await entity.async_turn_off()
-
-    assert entity._climate_entity_id is None
-    assert called["fallback"] is True
 
 
 @pytest.mark.asyncio

@@ -191,6 +191,12 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             )
             return False
 
+        if not self.hass.services.has_service("climate", service):
+            # The service is not registered, so no delegated command was sent.
+            # This is distinct from an exception raised *inside* a handler.
+            self._climate_entity_id = None
+            return False
+
         try:
             await self.hass.services.async_call(
                 "climate",
@@ -200,36 +206,23 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                 context=self._context,
             )
             return True
-        except TimeoutError:
-            _LOGGER.debug(
-                "Climate proxy %s timed out for %s; falling back to P1",
-                service,
-                climate_eid,
-            )
-        except ServiceNotFound:
+        except (TimeoutError, ServiceNotFound, HomeAssistantError) as err:
+            # A dispatched Climate handler may have delivered P1 before
+            # raising. Never send an additional P1 with unknown outcome.
             _LOGGER.warning(
-                "Climate entity %s not found; decoupling and falling back to P1",
-                climate_eid,
-            )
-            self._climate_entity_id = None
-        except HomeAssistantError as err:
-            _LOGGER.debug(
-                "Climate proxy %s failed transiently for %s (%s); falling back to P1",
+                "Climate proxy %s failed after dispatch (%s); P1 fallback suppressed",
                 service,
-                climate_eid,
-                err,
+                type(err).__name__,
             )
+            raise
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning(
-                "Unexpected error in climate proxy %s for %s: %s; falling back to P1",
+                "Unexpected climate proxy %s error after dispatch (%s); "
+                "P1 fallback suppressed",
                 service,
-                climate_eid,
-                err,
-                exc_info=True,
+                type(err).__name__,
             )
-            self._climate_entity_id = None
-
-        return False
+            raise
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the device delegating to the climate entity when possible."""

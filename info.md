@@ -271,6 +271,10 @@ P1 is not yet reflected in an older backend snapshot, a new explicit opposite
 power command is sent rather than discarded based on that cached snapshot.
 The same intent rule applies to native Climate power services; an optimistic
 state is a display/intent hint, not physical confirmation.
+Direct P1 fallback is allowed only if Climate is unavailable or its HA service
+was never registered. After a dispatched Climate handler fails or times out,
+its P1 outcome is unknown: the switch propagates the error and never replays
+a second P1. This is a conservative client policy, not physical confirmation.
 Delegated calls propagate the native HA entity context to preserve automation attribution.
 Transport-level event payloads remain unchanged.
 
