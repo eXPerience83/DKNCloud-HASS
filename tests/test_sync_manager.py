@@ -113,6 +113,55 @@ async def test_event_during_get_wins_and_missing_fields_survive():
     await instance.close()
 
 
+async def test_superseded_get_only_updates_reception_not_applied_age():
+    """An old GET whose power lost to Pusher must not claim applied freshness."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def fetch(_installation):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            entered.set()
+            await release.wait()
+            return [{"id": "fake", "power": "0"}]
+        return [{"id": "fake", "power": "1"}]
+
+    instance, _, _, _ = manager(fetch)
+    now = [30.0]
+    instance._clock = lambda: now[0]
+    instance._pool._clock = instance._clock
+    recovery = asyncio.create_task(instance.recover("fake"))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        await instance.event("fake", {"power": "1"}, instance.state.generation)
+        release.set()
+        await asyncio.wait_for(recovery, timeout=2)
+
+        # Only identity from the old response was accepted; its OFF lost to
+        # the newer push. An HTTP GET was received, not a state-bearing GET.
+        assert instance.touched == {"fake": {"id"}}
+        assert instance.state.data["fake"]["power"] == "1"
+        assert instance._last_http_get["fake"] == 30.0
+        assert instance._last_received["fake"] == 30.0
+        assert instance._last_get["fake"] == 0.0
+        diagnostics = instance.diagnostics()["devices"]["device_1"]
+        assert diagnostics["last_get_age"] == 0.0
+        assert diagnostics["last_applied_get_age"] == 30.0
+
+        # A separate GET with a state-bearing applied field advances it.
+        now[0] = 45.0
+        await instance.recover("fake")
+        assert "power" in instance.touched["fake"]
+        assert instance._last_get["fake"] == 45.0
+        assert instance.diagnostics()["devices"]["device_1"][
+            "last_applied_get_age"
+        ] == 0.0
+    finally:
+        release.set()
+        await instance.close()
+
+
 async def test_subscribe_resynchronizes_then_information_has_no_get():
     fetch = AsyncMock(return_value=[{"id": "fake", "power": "0"}])
     instance, _, request, _ = manager(fetch)
