@@ -893,7 +893,6 @@ async def test_climate_and_switch_fallback_share_power_intent_order(
     assert switch.is_on
 
 
-
 @pytest.mark.parametrize("next_request", ["turn_off", "hvac_off"])
 async def test_hvac_active_mode_is_fenced_by_newer_turn_off_during_preparation(
     hass: HomeAssistant,
