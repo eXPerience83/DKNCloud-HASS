@@ -704,9 +704,7 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
         await hass.async_block_till_done()
         assert tracking.consecutive_off_reports == 2
         assert device["sleep_off_confirmed"]
-        api.async_set_scenary.assert_awaited_once_with(
-            "dev1", "occupied", retry=False
-        )
+        api.async_set_scenary.assert_awaited_once_with("dev1", "occupied", retry=False)
         recovery.assert_called_once_with("dev1")
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
