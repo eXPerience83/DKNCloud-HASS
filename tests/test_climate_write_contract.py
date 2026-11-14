@@ -751,7 +751,6 @@ async def test_explicit_climate_power_intent_overrides_stale_backend_snapshot(
     assert entity._overlay_value("power", reported_power) == str(command)
 
 
-
 @pytest.mark.parametrize(
     ("initial", "first", "second", "expected", "final"),
     [
@@ -858,7 +857,6 @@ async def test_climate_wake_preparation_does_not_hold_power_lock(
     assert api.send_event.await_count == 1
 
 
-
 async def test_climate_and_switch_fallback_share_power_intent_order(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
@@ -901,7 +899,6 @@ async def test_climate_and_switch_fallback_share_power_intent_order(
     assert values == [0, 1]
     assert entity._device_power_on()
     assert switch.is_on
-
 
 
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
