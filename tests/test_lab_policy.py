@@ -217,6 +217,7 @@ def test_loopback_preserves_canonical_information_request():
     )
     assert local.blocked == 0
 
+
 @pytest.mark.parametrize(
     "url",
     [
