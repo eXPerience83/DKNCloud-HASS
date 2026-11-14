@@ -346,7 +346,8 @@ assumption. The shared monitoring margin is **five minutes** for both INFO/Pushe
 and GET paths; an ON beyond that deadline requests one recovery and requires two
 post-deadline fresh ON reports before being shown as a *reported* diagnostic,
 without sending an OFF or Home command. Automatic Sleep exit uses no API retry;
-manual command retry behavior remains unchanged.
+other manual commands follow the shared API policy: bounded short 429 retries,
+never automatic replay after an ambiguous timeout or HTTP 5xx.
 
 A non-Sleep backend observation retires a pending exit marker. A new explicit
 Sleep selection re-arms local tracking; an older discarded cleanup must not
