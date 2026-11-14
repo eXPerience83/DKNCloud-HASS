@@ -763,20 +763,27 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     if mode_code:
                         await self._send_p_event("P2", mode_code)
                         optimistic_set(
-                            self.hass, self._entry_id, self._device_id, "mode", mode_code
+                            self.hass,
+                            self._entry_id,
+                            self._device_id,
+                            "mode",
+                            mode_code,
                         )
                         optimistic_set(
                             self.hass, self._entry_id, self._device_id, "power", "1"
                         )
-            except (Exception, asyncio.CancelledError):
+            except Exception, asyncio.CancelledError:
                 if powered_on:
                     # P1 was accepted but P2 may have reached the device.
                     # Retain the ON overlay and read back; never replay a
                     # possibly accepted mode write after an ambiguous failure.
                     self.async_write_ha_state()
-                    if manager := self.hass.data.get(DOMAIN, {}).get(
-                        self._entry_id, {}
-                    ).get("sync_manager"):
+                    manager = (
+                        self.hass.data.get(DOMAIN, {})
+                        .get(self._entry_id, {})
+                        .get("sync_manager")
+                    )
+                    if manager is not None:
                         manager.request_recovery(self._device_id)
                     else:
                         schedule_post_write_refresh(
