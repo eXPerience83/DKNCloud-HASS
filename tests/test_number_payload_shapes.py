@@ -166,7 +166,6 @@ async def test_unoccupied_cool_max_payload_is_root_level(
     assert api.calls == [("dev1", {"max_temp_unoccupied": 28})]
 
 
-
 @pytest.mark.parametrize(
     ("entity_cls", "field", "initial", "first_value"),
     [
@@ -215,7 +214,6 @@ async def test_concurrent_number_writes_recheck_state_under_lock(
         expected.append(("dev1", {field: initial}))
     assert api.calls == expected
     assert entity.native_value == second_value
-
 
 
 @pytest.mark.parametrize(
