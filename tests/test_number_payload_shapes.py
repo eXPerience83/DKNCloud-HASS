@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -35,6 +36,10 @@ def disable_post_write_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(
         "custom_components.airzoneclouddaikin.number.schedule_post_write_refresh",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         lambda *_args, **_kwargs: None,
     )
 
@@ -110,6 +115,78 @@ async def test_failed_number_write_preserves_backend_state(
         await entity.async_set_native_value(40)
 
     assert entity.native_value == 30
+
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "value"),
+    [
+        (DKNSleepTimeNumber, "sleep_time", 30, 40),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 18),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 26, 28),
+    ],
+)
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+async def test_number_ambiguous_put_requests_readback_without_optimistic_success(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    entity_cls: type[Any],
+    field: str,
+    initial: int,
+    value: int,
+    failure: type[BaseException],
+) -> None:
+    """Unknown PUT acceptance should trigger recovery without another write."""
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+    requests: list[dict[str, Any]] = []
+
+    async def ambiguous_put(_device_id: str, payload: dict[str, Any]) -> None:
+        requests.append(payload)
+        raise failure("unknown PUT result")
+
+    api.put_device_fields = ambiguous_put
+    manager = Mock()
+    hass.data[DOMAIN]["entry"]["sync_manager"] = manager
+
+    with pytest.raises(failure):
+        await entity.async_set_native_value(value)
+
+    assert requests == [{field: value}]
+    assert entity.native_value == initial
+    manager.request_recovery.assert_called_once_with("dev1")
+
+
+async def test_number_known_unsent_cooldown_does_not_request_readback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+) -> None:
+    """A local cooldown rejection does not have an ambiguous backend outcome."""
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        CommandNotSentCooldown,
+    )
+
+    entity, api = _make_entity(
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30},
+    )
+
+    async def unsent(_device_id: str, _payload: dict[str, Any]) -> None:
+        raise CommandNotSentCooldown(hass.loop.time() + 60)
+
+    api.put_device_fields = unsent
+    manager = Mock()
+    hass.data[DOMAIN]["entry"]["sync_manager"] = manager
+
+    with pytest.raises(CommandNotSentCooldown):
+        await entity.async_set_native_value(40)
+
+    manager.request_recovery.assert_not_called()
+    assert entity.native_value == 30
+
 
 
 @pytest.mark.asyncio
