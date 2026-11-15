@@ -247,7 +247,6 @@ def reserve_power_intent(
     return intents, current
 
 
-
 def request_ambiguous_control_readback(
     hass: HomeAssistant,
     coordinator: DataUpdateCoordinator[Any],
@@ -263,7 +262,6 @@ def request_ambiguous_control_readback(
         manager.request_recovery(device_id)
     else:
         schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
-
 
 
 def clamp_number(
