@@ -272,7 +272,10 @@ class BoundedSetpointPolicy(ReadOnlyPolicy):
             raise PermissionError("Trial control exhausted")
         expected = self.plan.exact_payload(restoring=stage == 2)
         if json != expected or set(json["event"]) != {
-            "cgi", "device_id", "option", "value"
+            "cgi",
+            "device_id",
+            "option",
+            "value",
         }:
             raise PermissionError("Trial control differs from frozen approval")
         self.plan.check_device(self._read_device(), restoring=stage == 2)
