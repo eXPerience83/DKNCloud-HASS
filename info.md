@@ -507,6 +507,12 @@ Fields:
 { "max_temp_unoccupied": 28 }
 ```
 
+**Integration write ordering (not a backend guarantee):** Sleep-time and
+unoccupied-limit number entities recheck their latest optimistic value inside
+the shared per-device write lock. Repeated queued identical values do not
+produce a second PUT; a later explicit opposite value is not discarded
+against an older backend snapshot. This does not prove physical application.
+
 ---
 
 ## 7) Temperatures, Units, Precision, and Availability

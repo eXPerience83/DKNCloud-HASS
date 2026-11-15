@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
@@ -163,6 +164,56 @@ async def test_unoccupied_cool_max_payload_is_root_level(
     await entity.async_set_native_value(28)
 
     assert api.calls == [("dev1", {"max_temp_unoccupied": 28})]
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "first_value"),
+    [
+        (DKNSleepTimeNumber, "sleep_time", 30, 40),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 18),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 26, 28),
+    ],
+)
+@pytest.mark.parametrize("same_value", [True, False])
+async def test_concurrent_number_writes_recheck_state_under_lock(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    entity_cls: type[Any],
+    field: str,
+    initial: int,
+    first_value: int,
+    same_value: bool,
+) -> None:
+    """A queued same value writes once; an opposite request cannot be lost."""
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def paused_put(device_id: str, payload: dict[str, Any]) -> None:
+        api.calls.append((device_id, payload))
+        if len(api.calls) == 1:
+            entered.set()
+            await release.wait()
+
+    api.put_device_fields = paused_put
+    first = asyncio.create_task(entity.async_set_native_value(first_value))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second_value = first_value if same_value else initial
+        second = asyncio.create_task(entity.async_set_native_value(second_value))
+        await asyncio.sleep(0)
+        assert not second.done()
+    finally:
+        release.set()
+
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=3)
+    expected = [("dev1", {field: first_value})]
+    if not same_value:
+        expected.append(("dev1", {field: initial}))
+    assert api.calls == expected
+    assert entity.native_value == second_value
 
 
 @pytest.mark.parametrize(
