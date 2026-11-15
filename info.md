@@ -396,6 +396,13 @@ replays P1 or claims a successful optimistic power change. Commands known
 to be unsent because of local cooldown do not request corrective readback;
 entry shutdown suppresses new recovery work.
 
+**Other ambiguous control writes:** The integration applies the same no-replay
+readback policy to Climate setpoint/fan events (P3/P4/P7/P8) and Number PUTs
+(sleep_time and unoccupied temperature limits). A timeout, cancellation or
+other uncertain write result does not produce an optimistic success; it requests
+an authoritative readback instead. A known-unsent local cooldown needs no
+readback. No uncertain physical command is retried.
+
 ---
 
 ## 4) HVAC Modes (P2) — Mapping, Classification, and Display Equivalences
