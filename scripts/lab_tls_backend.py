@@ -103,6 +103,25 @@ class SyntheticBackend:
         self.push_available = True
         self.wait = None
         self.wait_path = None
+        self.trial_put_field = None
+        self.trial_push_on_info = False
+        self.scenary = "occupied"
+        self.min_temp_unoccupied = 18
+        self.pending_put_patch = None
+
+    async def publish_put(self):
+        if self.pending_put_patch is not None:
+            for socket in self.sockets:
+                if not socket.closed:
+                    await socket.send_json(
+                        {
+                            "event": "device",
+                            "channel": "private-device",
+                            "data": self.pending_put_patch,
+                        }
+                    )
+            self.events += 1
+            self.pending_put_patch = None
 
     async def handle(self, request):
         self.calls += 1
@@ -192,7 +211,8 @@ class SyntheticBackend:
                         "id": "device",
                         "name": "Synthetic",
                         "mac": "02:00:00:00:00:01",
-                        "scenary": "occupied",
+                        "scenary": self.scenary,
+                        "min_temp_unoccupied": self.min_temp_unoccupied,
                         "power": self.power,
                         "mode": "1",
                         "modes": "11111",
@@ -211,10 +231,39 @@ class SyntheticBackend:
             )
         if request.path == "/pusher/auth":
             return web.json_response({"auth": "synthetic-signature"})
+        if (
+            request.method == "PUT"
+            and request.path == "/devices/device"
+            and self.trial_put_field in {"scenary", "min_temp_unoccupied"}
+        ):
+            payload = await request.json()
+            self.controls += 1
+            field = self.trial_put_field
+            value = (
+                payload.get("device", {}).get("scenary")
+                if field == "scenary"
+                else payload.get(field)
+            )
+            expected = (
+                {"device": {"scenary": value}} if field == "scenary" else {field: value}
+            )
+            if payload != expected or (
+                value not in {"occupied", "vacant"}
+                if field == "scenary"
+                else type(value) is not int or not 12 <= value <= 22
+            ):
+                return web.json_response({}, status=405)
+            setattr(self, field, value)
+            self.pending_put_patch = {"id": "device", field: value}
+            if not self.trial_push_on_info:
+                await self.publish_put()
+            return web.Response(status=204)
         if request.path == "/events" and request.method == "POST":
             payload = await request.json()
             event = payload.get("event", {})
             if event.get("cgi") == "infomaquina":
+                if self.trial_push_on_info:
+                    await self.publish_put()
                 return self.event_response or web.json_response({}, status=201)
             # Opt-in loopback fixture only: ordinary synthetic tests still
             # reject every control. Never change real LAB authorization here.

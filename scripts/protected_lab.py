@@ -141,13 +141,24 @@ class GuardedContext:
         self.category, self.websocket = category, websocket
         self.path, self.operation = path, operation
         self.context = None
+        self.read_lease = False
 
     async def __aenter__(self):
         owner = self.gateway.supervisor
-        if self.category:
-            await owner.admit(self.category)
-        else:
-            owner.socket()
+        window = self.gateway.read_window
+        if window is not None and self.operation in {"info", "get"}:
+            await window.enter()
+            self.read_lease = True
+        try:
+            if self.category:
+                await owner.admit(self.category)
+            else:
+                owner.socket()
+        except BaseException:
+            if self.read_lease:
+                window.leave()
+                self.read_lease = False
+            raise
         entered = False
         token = _NETWORK_LEASE.set(self.gateway)
         try:
@@ -168,6 +179,7 @@ class GuardedContext:
                         f"{self.operation}_result",
                         source="transport",
                         result="accepted" if result.status < 300 else "rejected",
+                        http_status=result.status,
                     )
                 if result.status < 300:
                     key = (
@@ -193,6 +205,10 @@ class GuardedContext:
                         value = None
                     if not isinstance(value, (dict, list)):
                         owner.abort("invalid_response")
+                    if observe := getattr(
+                        self.gateway.protected.policy, "observe", None
+                    ):
+                        observe(self.path, value)
                     if self.path == "/devices":
                         devices = (
                             value.get("devices") if isinstance(value, dict) else value
@@ -228,13 +244,29 @@ class GuardedContext:
             elif isinstance(error, ClientResponseError):
                 owner.response(error.status)
             if entered:
-                await self.context.__aexit__(None, None, None)
+                try:
+                    await self.context.__aexit__(None, None, None)
+                finally:
+                    if self.read_lease:
+                        window.leave()
+                        self.read_lease = False
             raise
         finally:
             _NETWORK_LEASE.reset(token)
+            if not entered and self.read_lease:
+                window.leave()
+                self.read_lease = False
 
     async def __aexit__(self, *args):
-        return await self.context.__aexit__(*args)
+        if self.operation == "control" and args and args[0] is not None:
+            if mark := getattr(self.gateway.protected.policy, "control_result", None):
+                mark(accepted=False)
+        try:
+            return await self.context.__aexit__(*args)
+        finally:
+            if self.read_lease:
+                self.gateway.read_window.leave()
+                self.read_lease = False
 
 
 class GuardedSocket:
@@ -275,6 +307,7 @@ class LaboratoryGateway:
     def __init__(self, protected, supervisor, *, timeline=None):
         self.protected, self.supervisor = protected, supervisor
         self.timeline = timeline
+        self.read_window = None
         self.observations = dict(
             websocket_established=0,
             get_received=0,
@@ -322,7 +355,8 @@ class LaboratoryGateway:
             "info"
             if method == "POST" and path == "/events" and cgi == "infomaquina"
             else "control"
-            if method == "POST" and path == "/events" and cgi == "modmaquina"
+            if (method == "POST" and path == "/events" and cgi == "modmaquina")
+            or method == "PUT"
             else "get"
             if method == "GET" and path == "/devices"
             else None

@@ -20,9 +20,14 @@ _ALLOWED = {
     "get_applied",
     "ha_optimistic",
     "ha_confirmed",
+    "ha_published",
+    "coordinator_applied",
+    "window_started",
+    "window_ended",
+    "info_resumed",
     "trial_stopped",
 }
-_FIELDS = {"cold_consign", "heat_consign"}
+_FIELDS = {"cold_consign", "heat_consign", "scenary", "min_temp_unoccupied"}
 _SOURCES = {"pusher", "get", "ha", "transport", "lab"}
 _RESULTS = {"accepted", "ambiguous", "rejected", "unavailable", "confirmed"}
 
@@ -59,6 +64,7 @@ class TrialTimeline:
         value: object = None,
         source: str | None = None,
         result: str | None = None,
+        http_status: int | None = None,
     ) -> None:
         if (
             kind not in _ALLOWED
@@ -71,13 +77,22 @@ class TrialTimeline:
             if field not in _FIELDS:
                 raise ValueError("Unapproved timeline field")
             record["field"] = field
-            record["value_c"] = _sanitized_temperature(value)
+            if field == "scenary":
+                if value not in {"occupied", "vacant"}:
+                    raise ValueError("Unapproved scene")
+                record["value"] = value
+            else:
+                record["value_c"] = _sanitized_temperature(value)
         elif value is not None:
             raise ValueError("Unscoped timeline value")
         if source is not None:
             record["source"] = source
         if result is not None:
             record["result"] = result
+        if http_status is not None:
+            if type(http_status) is not int or not 100 <= http_status <= 599:
+                raise ValueError("Invalid HTTP status")
+            record["http_status"] = http_status
         self._events.append(record)
 
     def record_push_patch(self, patch: dict, *, expected_field: str) -> None:

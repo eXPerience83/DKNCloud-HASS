@@ -1,17 +1,32 @@
 """One supervised run of the real integration through the TLS-only laboratory."""
 
 import asyncio
+import json
 import logging
 import os
+import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import callback
 
 from scripts.lab_lifecycle import finish_lab
 from scripts.lab_policy import ReadOnlyPolicy
 from scripts.lab_tls_backend import SyntheticBackend
 from scripts.protected_lab import LabSupervisor, create_gateway, real_policy
+from scripts.put_scenario import execute_put_trial
+from scripts.put_trial import PutPlan
+from scripts.session_grant import (
+    ScopedDiscoveryPolicy,
+    approval_values,
+    claim_child,
+    private_json,
+    validate_grant,
+    write_private,
+)
 from scripts.setpoint_trial import (
     BoundedSetpointPolicy,
     SetpointPlan,
@@ -29,9 +44,46 @@ async def async_setup(hass, config):
     # No arbitrary integration log record may escape a future authenticated run.
     root = logging.getLogger()
     root.handlers = [logging.NullHandler()]
+    session = None
+    if session_path := os.environ.get("DKN_LAB_SESSION"):
+        session = private_json(Path(session_path))
+        from scripts import session_grant
+
+        session["grant"] = validate_grant(
+            session["grant"], Path(session_grant.__file__).resolve().parents[1]
+        )
+        session["directory"] = Path(session["directory"])
+        claim_child(session["directory"], session["grant"])
     real = os.environ.get("DKN_LAB_TARGET") == "real"
     case = os.environ.get("DKN_LAB_CASE", "normal")
-    if real:
+    if session is not None:
+        grant = session["grant"]
+        device, installation = grant["device_id"], grant["installation_id"]
+        credentials = json.loads(await asyncio.to_thread(sys.stdin.readline))
+        username, password = credentials.pop("email"), credentials.pop("password")
+        credentials.clear()
+        policy = ScopedDiscoveryPolicy(PUSHER_APP_KEY, grant)
+        backend = None
+        if session.get("synthetic") is True:
+            backend = await SyntheticBackend(hass.config.config_dir).start()
+            backend.trial_controls = grant["mode"] == "control"
+            backend.event_kind = "setpoint_trial"
+            if grant["mode"] == "put":
+                backend.trial_put_field = grant["field"]
+                backend.trial_push_on_info = session.get("push_on_info", False)
+            os.environ["REQUESTS_CA_BUNDLE"] = str(
+                Path(backend.directory) / "synthetic-cert.pem"
+            )
+        remaining = (
+            datetime.fromisoformat(grant["expires_at"]) - datetime.now(UTC)
+        ).total_seconds()
+        supervisor = LabSupervisor(
+            duration=min(285, remaining), auth_limit=2, socket_limit=1
+        )
+        gateway = await create_gateway(
+            policy, supervisor, connector=backend.connector() if backend else None
+        )
+    elif real:
         # Gate before reading any account values or constructing a connector.
         from scripts.protected_lab import REAL_DESTINATIONS_ENABLED
 
@@ -83,9 +135,10 @@ async def async_setup(hass, config):
         gateway = await create_gateway(
             policy, supervisor, connector=backend.connector(trusted=case != "tls")
         )
-    import time
 
-    timeline = TrialTimeline() if case == "setpoint_trial" else None
+    timeline = (
+        TrialTimeline() if case == "setpoint_trial" or session is not None else None
+    )
     gateway.timeline = timeline
     from custom_components.airzoneclouddaikin.sync_manager import SyncManager
 
@@ -101,10 +154,58 @@ async def async_setup(hass, config):
     original_event = SyncManager.event
     original_read = SyncManager._read
     original_subscription = SyncManager.subscription
+    frozen_plan = None
+    remove_state_listener = None
+    from custom_components.airzoneclouddaikin import climate, number
+
+    original_optimistic = climate.optimistic_set
+    original_number_optimistic = number.optimistic_set
+
+    def observed_optimistic(*args, **kwargs):
+        result = original_optimistic(*args, **kwargs)
+        if (
+            timeline is not None
+            and len(args) >= 5
+            and args[3]
+            in {"cold_consign", "heat_consign", "scenary", "min_temp_unoccupied"}
+        ):
+            timeline.add("ha_optimistic", field=args[3], value=args[4], source="ha")
+        return result
+
+    if timeline is not None:
+        climate.optimistic_set = observed_optimistic
+        number.optimistic_set = observed_optimistic
 
     async def observed_event(manager, identity, patch, generation):
-        if timeline is not None and identity == device:
-            timeline.record_push_patch(patch, expected_field="cold_consign")
+        if (
+            timeline is not None
+            and identity in gateway.protected.policy.devices
+            and not manager._stopped
+            and not manager._auth_failed
+            and generation == manager.state.generation
+            and ("id" not in patch or str(patch["id"]) == identity)
+        ):
+            for field in (
+                "cold_consign",
+                "heat_consign",
+                "min_temp_unoccupied",
+                "scenary",
+            ):
+                timeline.record_push_patch(patch, expected_field=field)
+            if frozen_plan is not None and (
+                ("power" in patch and str(patch["power"]) != "1")
+                or ("mode" in patch and str(patch["mode"]) != frozen_plan.mode)
+                or (
+                    "scenary" in patch
+                    and patch["scenary"]
+                    not in (
+                        {frozen_plan.original, frozen_plan.modified}
+                        if frozen_plan.field == "scenary"
+                        else {"occupied"}
+                    )
+                )
+            ):
+                supervisor.abort("unexpected_trial_state")
         previous = dict(manager.state.data.get(identity, {}))
         revision = manager.state.revision
         await original_event(manager, identity, patch, generation)
@@ -120,6 +221,8 @@ async def async_setup(hass, config):
                 if v is not None
             ):
                 observations["device_applied"] += 1
+                if timeline is not None:
+                    timeline.add("coordinator_applied", source="pusher")
                 if patch.get("power") == "0" and any(
                     entity.domain == "climate" and entity.state == "off"
                     for entity in hass.states.async_all()
@@ -130,7 +233,15 @@ async def async_setup(hass, config):
     async def observed_read(manager, *args, **kwargs):
         result = await original_read(manager, *args, **kwargs)
         if timeline is not None:
-            timeline.add("get_applied", source="get")
+            if frozen_plan is not None:
+                timeline.add(
+                    "get_applied",
+                    field=frozen_plan.field,
+                    value=manager.state.data[device][frozen_plan.field],
+                    source="get",
+                )
+            else:
+                timeline.add("get_applied", source="get")
         observations["get_applied"] += 1
         return result
 
@@ -139,6 +250,10 @@ async def async_setup(hass, config):
             if timeline is not None:
                 timeline.add("subscription_ack", source="pusher")
             observations["subscribed"] = True
+        elif (
+            session is not None and observations["subscribed"] and not manager._stopped
+        ):
+            supervisor.abort("push_disconnected")
         return await original_subscription(manager, identity, active)
 
     entry_id = [None]
@@ -169,20 +284,32 @@ async def async_setup(hass, config):
         SyncManager.event = original_event
         SyncManager._read = original_read
         SyncManager.subscription = original_subscription
+        climate.optimistic_set = original_optimistic
+        number.optimistic_set = original_number_optimistic
         Store.async_save, Store.async_delay_save = original_save, original_delay
         integration.async_get_clientsession = original
         config_flow.async_get_clientsession = original_flow
+        if remove_state_listener is not None:
+            remove_state_listener()
 
     hass.data["lab_restore_guard"] = restore_guard
 
     async def scenario(_):
-        report = {}
+        report = {"real": backend is None and (session is not None or real)}
+        if session is not None:
+            report["source_digest"] = grant["source_digest"]
         entry = None
         trial_journal = None
         watcher = asyncio.create_task(supervisor.watch())
 
         async def exercise():
-            nonlocal entry, trial_journal
+            nonlocal \
+                entry, \
+                trial_journal, \
+                device, \
+                installation, \
+                frozen_plan, \
+                remove_state_listener
             login = AirzoneAPI(username, gateway, password=password)
             if not await login.login():
                 raise RuntimeError("Synthetic login failed")
@@ -211,6 +338,13 @@ async def async_setup(hass, config):
                 return
             coordinator = entry.runtime_data.coordinator
             manager = hass.data[entry.domain][entry.entry_id]["sync_manager"]
+            if session is not None:
+                device = next(iter(gateway.protected.policy.devices))
+                installation = next(iter(gateway.protected.policy.installations))
+                write_private(
+                    session["directory"] / "scope.json",
+                    {"device_id": device, "installation_id": installation},
+                )
             while not manager.schedulers[device].status.push_active:
                 await asyncio.sleep(0.05)
             while not all(
@@ -225,6 +359,100 @@ async def async_setup(hass, config):
                 await asyncio.sleep(0.05)
             report["push_applied"] = True
             report["entities"] = len(hass.states.async_all())
+            if session is not None:
+                # Private preflight facts needed to assess the effects of Away.
+                current = manager.state.data[device]
+                write_private(
+                    session["directory"] / "baseline.json",
+                    {
+                        key: current.get(key)
+                        for key in (
+                            "power",
+                            "mode",
+                            "scenary",
+                            "effective_scenary",
+                            "cold_consign",
+                            "heat_consign",
+                            "min_temp_unoccupied",
+                            "max_temp_unoccupied",
+                            "min_limit_cold",
+                            "max_limit_cold",
+                            "min_limit_heat",
+                            "max_limit_heat",
+                        )
+                    },
+                )
+            if session is not None and grant["mode"] == "put":
+                frozen_plan = PutPlan.from_device(
+                    manager.state.data[device],
+                    device_id=device,
+                    installation_id=installation,
+                    field=grant["field"],
+                )
+                await execute_put_trial(
+                    hass,
+                    entry,
+                    manager,
+                    gateway,
+                    session,
+                    timeline,
+                    observations,
+                    report,
+                    frozen_plan,
+                    fixture=backend is not None,
+                )
+                supervisor.reason = "put_finished"
+                supervisor.stopped.set()
+                return
+            if timeline is not None:
+
+                @callback
+                def state_published(event):
+                    state = event.data.get("new_state")
+                    if (
+                        state is not None
+                        and state.domain == "climate"
+                        and state.attributes.get("temperature") is not None
+                    ):
+                        field = (
+                            "heat_consign" if state.state == "heat" else "cold_consign"
+                        )
+                        timeline.add(
+                            "ha_published",
+                            field=field,
+                            value=state.attributes["temperature"],
+                            source="ha",
+                        )
+
+                remove_state_listener = hass.bus.async_listen(
+                    "state_changed", state_published
+                )
+            if session is not None and grant["mode"] == "observe":
+                before_info = gateway.observations["information_accepted"]
+                while gateway.observations["information_accepted"] < before_info + 2:
+                    await asyncio.sleep(0.05)
+                put_plans = []
+                for field in ("scenary", "min_temp_unoccupied"):
+                    try:
+                        candidate = PutPlan.from_device(
+                            manager.state.data[device],
+                            device_id=device,
+                            installation_id=installation,
+                            field=field,
+                        )
+                        put_plans.append(
+                            {**approval_values(grant, candidate), "approved": False}
+                        )
+                    except ValueError:
+                        pass
+                write_private(
+                    session["directory"] / "put-plans.json", {"candidates": put_plans}
+                )
+                report["session_passed"] = True
+                report["trial_timeline"] = timeline.export()
+                supervisor.reason = "observation_finished"
+                supervisor.stopped.set()
+                return
             if case == "setpoint_trial":
                 # Exercise the authentic HA Climate service and transport while
                 # targeting ONLY the local TLS fixture. This is not a real-run
@@ -233,6 +461,7 @@ async def async_setup(hass, config):
                 frozen = SetpointPlan.from_device(
                     current, device_id=device, installation_id=installation
                 )
+                frozen_plan = frozen
                 private = Path(hass.config.config_dir) / "trial-private"
                 private.mkdir(mode=0o700)
                 trial_journal = SingleUseTrialJournal(
@@ -265,6 +494,7 @@ async def async_setup(hass, config):
                 before_info = gateway.observations["information_accepted"]
                 first_event = len(timeline.export())
                 await set_temperature(frozen.modified)
+                before_info = gateway.observations["information_accepted"]
 
                 def observed_push(value, after):
                     return any(
@@ -276,8 +506,8 @@ async def async_setup(hass, config):
 
                 for _ in range(650):
                     if (
-                        str(manager.state.data[device].get(frozen.field))
-                        == f"{frozen.modified}.0"
+                        float(manager.state.data[device].get(frozen.field))
+                        == frozen.modified
                         and observed_push(frozen.modified, first_event)
                         and gateway.observations["information_accepted"]
                         >= before_info + 2
@@ -293,9 +523,9 @@ async def async_setup(hass, config):
                 restored_after = len(timeline.export())
                 await set_temperature(frozen.original)
                 for _ in range(100):
-                    if str(
+                    if float(
                         manager.state.data[device].get(frozen.field)
-                    ) == f"{frozen.original}.0" and observed_push(
+                    ) == frozen.original and observed_push(
                         frozen.original, restored_after
                     ):
                         break
@@ -464,6 +694,8 @@ async def async_setup(hass, config):
                         await backend.close()
 
                 def describe():
+                    if timeline is not None:
+                        report["trial_timeline"] = timeline.export()
                     last = observations["last_device_age"]
                     observations["last_device_age"] = (
                         time.monotonic() - last if last else None

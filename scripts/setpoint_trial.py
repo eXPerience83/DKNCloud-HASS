@@ -59,12 +59,19 @@ class SetpointPlan:
     def from_device(
         cls, device: dict, *, device_id: str, installation_id: str
     ) -> SetpointPlan:
-        if not device_id or not installation_id or device.get("id") != device_id:
+        if (
+            not device_id
+            or not installation_id
+            or isinstance(device.get("id"), bool)
+            or str(device.get("id")) != device_id
+        ):
             raise ValueError("Trial device scope is not confirmed")
         if str(device.get("power")) != "1":
             raise ValueError("The device must already be powered ON")
         if str(device.get("scenary") or "").strip().lower() != "occupied":
             raise ValueError("The device must already be in raw Home")
+        if device.get("effective_scenary") not in (None, "occupied"):
+            raise ValueError("The effective scene must also be Home")
         mode = str(device.get("mode"))
         if mode not in {"1", "2"}:
             raise ValueError("Trial only permits actual COOL or HEAT")
