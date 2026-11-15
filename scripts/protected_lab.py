@@ -49,9 +49,18 @@ class LabStopped(PermissionError):
 class LabSupervisor:
     """Own one experiment deadline, quotas, traffic spacing and fatal stop signal."""
 
-    def __init__(self, *, duration=300, state_limit=40, auth_limit=6, spacing=10):
-        if not (0 < duration <= 300 and 0 < state_limit <= 40 and 0 < auth_limit <= 6):
+    def __init__(
+        self, *, duration=300, state_limit=40, auth_limit=6, spacing=10,
+        socket_limit=6,
+    ):
+        if not (
+            0 < duration <= 300
+            and 0 < state_limit <= 40
+            and 0 < auth_limit <= 6
+            and 0 < socket_limit <= 6
+        ):
             raise ValueError("Invalid experiment limits")
+        self.socket_limit = socket_limit
         self.deadline = time.monotonic() + duration
         self.limits = {"state": state_limit, "auth": auth_limit}
         self.counts = {"state": 0, "auth": 0}
@@ -107,7 +116,7 @@ class LabSupervisor:
     def socket(self):
         self.check()
         self._sockets += 1
-        if self._sockets > 6:
+        if self._sockets > self.socket_limit:
             self.abort("socket_quota")
 
 
@@ -237,6 +246,10 @@ class LaboratoryGateway:
         )
 
     def request(self, method, url, **kwargs):
+        # Freeze the accepted P7/P8 payload before the first asynchronous
+        # budget wait, then validate again when delegation is actually made.
+        if freeze := getattr(self.protected.policy, "freeze_control_kwargs", None):
+            kwargs = freeze(method, url, kwargs)
         try:
             # Validate synchronously so no hidden task can swallow a policy failure.
             self.protected.validate_request(method, url, **kwargs)
