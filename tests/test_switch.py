@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE
@@ -386,6 +386,73 @@ async def test_missing_climate_service_delegates_to_direct_p1(
     assert entity._climate_entity_id is None
 
 
+
+@pytest.mark.parametrize(
+    ("method", "initial_power", "value"),
+    [("_fallback_turn_on", "0", 1), ("_fallback_turn_off", "1", 0)],
+)
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+async def test_ambiguous_switch_fallback_p1_requests_recovery_without_overlay(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    method: str,
+    initial_power: str,
+    value: int,
+    failure: type[BaseException],
+) -> None:
+    """A direct P1 fallback requests readback but never replays or claims success."""
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": initial_power},
+        climate_entity_id=None,
+    )
+    entity.coordinator.api = AsyncMock()
+    entity.coordinator.api.send_event.side_effect = failure("P1 outcome unknown")
+    manager = Mock()
+    hass.data[DOMAIN]["entry"]["sync_manager"] = manager
+
+    with pytest.raises(failure):
+        await getattr(entity, method)()
+
+    events = [
+        call.args[0]["event"]
+        for call in entity.coordinator.api.send_event.await_args_list
+    ]
+    assert [(event["option"], event["value"]) for event in events] == [("P1", value)]
+    manager.request_recovery.assert_called_once_with("dev1")
+    assert entity.is_on is (initial_power == "1")
+
+
+async def test_known_unsent_switch_fallback_p1_does_not_request_recovery(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+) -> None:
+    """A P1 rejected before network I/O needs no corrective GET."""
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        CommandNotSentCooldown,
+    )
+
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": "1"},
+        climate_entity_id=None,
+    )
+    entity.coordinator.api = AsyncMock()
+    entity.coordinator.api.send_event.side_effect = CommandNotSentCooldown(
+        hass.loop.time() + 60
+    )
+    manager = Mock()
+    hass.data[DOMAIN]["entry"]["sync_manager"] = manager
+
+    with pytest.raises(CommandNotSentCooldown):
+        await entity._fallback_turn_off()
+
+    manager.request_recovery.assert_not_called()
+
+
+
 @pytest.mark.asyncio
 async def test_send_event_logs_and_reraises_on_failure(
     hass: HomeAssistant,
@@ -403,9 +470,12 @@ async def test_send_event_logs_and_reraises_on_failure(
             raise RuntimeError("P1 failed")
 
     entity.coordinator.api = DummyAPI()
+    manager = Mock()
+    hass.data[DOMAIN]["entry"]["sync_manager"] = manager
 
     with pytest.raises(RuntimeError, match="P1 failed"):
         await entity._send_event("P1", 1)
+    manager.request_recovery.assert_called_once_with("dev1")
 
 
 def test_backend_power_is_on_normalizes_values(
