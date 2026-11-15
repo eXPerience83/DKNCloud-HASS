@@ -187,6 +187,36 @@ async def test_number_known_unsent_cooldown_does_not_request_readback(
     assert entity.native_value == 30
 
 
+async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy coordinator uses a bounded refresh when SyncManager is absent."""
+    entity, api = _make_entity(
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30},
+    )
+
+    async def unknown_write(_device_id: str, _payload: dict[str, Any]) -> None:
+        raise TimeoutError("unknown PUT acceptance")
+
+    api.put_device_fields = unknown_write
+    scheduled = Mock()
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
+        scheduled,
+    )
+
+    with pytest.raises(TimeoutError):
+        await entity.async_set_native_value(40)
+
+    scheduled.assert_called_once_with(hass, entity.coordinator, entry_id="entry")
+    assert entity.native_value == 30
+
+
 @pytest.mark.asyncio
 async def test_sleep_time_payload_is_root_level(
     hass: HomeAssistant,
