@@ -814,12 +814,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                         optimistic_set(
                             self.hass, self._entry_id, self._device_id, "power", "1"
                         )
-            except Exception, asyncio.CancelledError:
+            except (Exception, asyncio.CancelledError) as error:
                 if powered_on:
-                    # P1 was accepted but P2 may have reached the device.
-                    # Retain the ON overlay and read back; never replay a
-                    # possibly accepted mode write after an ambiguous failure.
+                    # P1 was accepted; keep the ON overlay even when P2
+                    # failed before any authoritative mode readback.
                     self.async_write_ha_state()
+                if powered_on or not isinstance(error, CommandNotSentCooldown):
+                    # An ambiguous P2 may have been accepted even when P1
+                    # was already ON. Never replay the write: request one
+                    # authoritative readback for either case.
                     manager = (
                         self.hass.data.get(DOMAIN, {})
                         .get(self._entry_id, {})
