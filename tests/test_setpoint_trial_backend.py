@@ -20,6 +20,7 @@ ENDPOINT = "https://dkn.airzonecloud.com/events"
 @pytest.mark.asyncio
 async def test_synthetic_tls_backend_accepts_exactly_two_controls_and_records_info(
     tmp_path,
+    socket_enabled,
 ):
     backend = await SyntheticBackend(tmp_path).start()
     backend.trial_controls = True
@@ -114,7 +115,9 @@ async def test_synthetic_tls_backend_accepts_exactly_two_controls_and_records_in
 
 
 @pytest.mark.asyncio
-async def test_synthetic_fixture_still_denies_controls_unless_opted_in(tmp_path):
+async def test_synthetic_fixture_still_denies_controls_unless_opted_in(
+    tmp_path, socket_enabled
+):
     backend = await SyntheticBackend(tmp_path).start()
     try:
         from aiohttp import ClientSession
