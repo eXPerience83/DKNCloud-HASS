@@ -92,6 +92,9 @@ class SyntheticBackend:
         self.emit_events = True
         self.event_kind = "normal"
         self.power = "1"
+        self.cold_consign = "24"
+        self.heat_consign = "20"
+        self.trial_controls = False
         self.sockets = []
         self.status = 200
         self.event_response = None
@@ -160,7 +163,18 @@ class SyntheticBackend:
                                     "id": "other"
                                     if self.event_kind == "wrong_device"
                                     else "device",
-                                    "power": "0",
+                                    "power": "1"
+                                    if self.event_kind == "setpoint_trial"
+                                    else "0",
+                                    **(
+                                        {
+                                            "scenary": "occupied",
+                                            "mode": "1",
+                                            "cold_consign": self.cold_consign,
+                                        }
+                                        if self.event_kind == "setpoint_trial"
+                                        else {}
+                                    ),
                                 }
                             ),
                         }
@@ -184,8 +198,12 @@ class SyntheticBackend:
                         "modes": "11111",
                         "local_temp": "22",
                         "sleep_time": 30,
-                        "cold_consign": "24",
-                        "heat_consign": "20",
+                        "cold_consign": self.cold_consign,
+                        "heat_consign": self.heat_consign,
+                        "min_limit_cold": "16.0",
+                        "max_limit_cold": "32.0",
+                        "min_limit_heat": "16.0",
+                        "max_limit_heat": "32.0",
                         "availables_speeds": "3",
                         "connection_date": "2024-01-01T00:00:00+00:00",
                     }
@@ -195,8 +213,37 @@ class SyntheticBackend:
             return web.json_response({"auth": "synthetic-signature"})
         if request.path == "/events" and request.method == "POST":
             payload = await request.json()
-            if payload.get("event", {}).get("cgi") == "infomaquina":
+            event = payload.get("event", {})
+            if event.get("cgi") == "infomaquina":
                 return self.event_response or web.json_response({}, status=201)
+            # Opt-in loopback fixture only: ordinary synthetic tests still
+            # reject every control. Never change real LAB authorization here.
+            if self.trial_controls:
+                self.controls += 1
+                if (
+                    set(payload) == {"event"}
+                    and set(event) == {"cgi", "device_id", "option", "value"}
+                    and event["cgi"] == "modmaquina"
+                    and event["device_id"] == "device"
+                    and event["option"] == "P7"
+                    and event["value"] in {"25.0", "24.0"}
+                ):
+                    self.cold_consign = event["value"]
+                    for socket in self.sockets:
+                        if not socket.closed:
+                            await socket.send_json(
+                                {
+                                    "event": "device",
+                                    "channel": "private-device",
+                                    "data": {
+                                        "id": "device",
+                                        "cold_consign": self.cold_consign,
+                                    },
+                                }
+                            )
+                    self.events += 1
+                    return web.json_response({}, status=201)
+                return web.json_response({}, status=405)
         self.controls += 1
         return web.json_response({}, status=405)
 
