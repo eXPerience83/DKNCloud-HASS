@@ -318,6 +318,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             cleared_stale_sleep = False
 
             def request_readback() -> None:
+                # The awaited PUT may finish after the config entry was
+                # unloaded. Never resurrect its bucket or recovery timer.
+                active = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+                if (
+                    active is not bucket
+                    or bucket.get("closing")
+                    or self.hass.is_stopping
+                ):
+                    return
                 if manager := bucket.get("sync_manager"):
                     manager.request_recovery(self._device_id)
                 else:
