@@ -888,7 +888,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         try:
             await api.send_event(payload)
         except asyncio.CancelledError:
-            if option == "P1":
+            if option in {"P1", "P3", "P4", "P7", "P8"}:
                 request_ambiguous_control_readback(
                     self.hass,
                     self.coordinator,
@@ -897,7 +897,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             raise
         except Exception as err:
-            if option == "P1" and not isinstance(err, CommandNotSentCooldown):
+            if option in {"P1", "P3", "P4", "P7", "P8"} and not isinstance(
+                err, CommandNotSentCooldown
+            ):
                 request_ambiguous_control_readback(
                     self.hass,
                     self.coordinator,
