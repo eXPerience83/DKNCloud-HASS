@@ -1117,7 +1117,6 @@ async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p
     assert entity.preset_mode == "home"
 
 
-
 async def test_turn_on_already_on_exits_away_without_duplicate_p1(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
