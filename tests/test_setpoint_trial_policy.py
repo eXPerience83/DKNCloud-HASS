@@ -256,6 +256,9 @@ async def test_http_429_stops_before_any_second_wire_attempt(tmp_path):
     assert gateway_obj.supervisor.reason == "http_security"
     assert len(network.writes) == 1
     assert book.path.read_text().count('"kind":"attempt"') == 1
+    raw["cold_consign"] = "25.0"
+    with pytest.raises(PermissionError, match="unavailable"):
+        policy.arm_restoration(confirmed_by_push=True, owner_approved=True)
     book.close()
 
 
@@ -277,6 +280,44 @@ async def test_concurrent_control_entries_consume_only_first_attempt(tmp_path):
     assert outcomes.count(True) == 1
     assert len(network.writes) == 1
     assert book.path.read_text().count('"kind":"attempt"') == 1
+    book.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+async def test_ambiguous_first_control_consumes_slot_and_revokes_restoration(
+    tmp_path, failure
+):
+    raw = device()
+    gateway_obj, policy, book, network = gateway(raw, tmp_path)
+    policy.arm_change()
+
+    class _Uncertain:
+        async def __aenter__(self):
+            raise failure("acceptance unknown")
+
+        async def __aexit__(self, *args):
+            return False
+
+    def uncertain_request(*args, **kwargs):
+        network.writes.append((args, kwargs))
+        return _Uncertain()
+
+    network.request = uncertain_request
+    with pytest.raises(failure):
+        async with gateway_obj.request(
+            "POST",
+            ENDPOINT,
+            params=AUTH,
+            json=policy.plan.exact_payload(restoring=False),
+        ):
+            pass
+
+    assert len(network.writes) == 1
+    assert book.path.read_text().count('"kind":"attempt"') == 1
+    raw["cold_consign"] = "25.0"
+    with pytest.raises(PermissionError, match="unavailable"):
+        policy.arm_restoration(confirmed_by_push=True, owner_approved=True)
     book.close()
 
 
