@@ -193,7 +193,7 @@ async def test_transport_allows_only_frozen_change_and_approved_restore(tmp_path
         ("P8", "23.0"),
         ("P7", "26.0"),
         ("P7", "24.0"),
-    ]
+    ],
 )
 async def test_other_controls_are_denied_before_network(tmp_path, option, value):
     raw = device()
