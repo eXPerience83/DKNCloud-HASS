@@ -557,8 +557,7 @@ async def test_queued_wake_does_not_resurrect_unloaded_entry(
     )
 
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        scenary="sleep", power="0"
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     monkeypatch.setattr(
         climate_module, "async_auto_exit_sleep_if_needed",
@@ -604,8 +603,7 @@ async def test_stale_wake_called_after_unload_cannot_create_bucket(
 ) -> None:
     """No power intent or lock may create a bucket for an unloaded entry."""
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        scenary="sleep", power="0"
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     hass.data[DOMAIN].pop("climate-entry")
     if method == "turn_on":
