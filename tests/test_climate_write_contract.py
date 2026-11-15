@@ -1079,6 +1079,45 @@ async def test_hvac_mode_avoids_duplicate_power_on_after_optimistic_wake(
     ]
 
 
+
+async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p2(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An active command explicitly clears Away even if P2 already matches.
+
+    Documented integration policy: a user selecting a supported active mode
+    leaves the vacant scene before any needed P1/P2 commands. The scene exit
+    remains intentional when the requested mode is already active.
+    """
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="1",
+        power="1",
+        scenary="vacant",
+    )
+    monkeypatch.setattr(
+        climate_module, "async_auto_exit_sleep_if_needed",
+        async_auto_exit_sleep_if_needed,
+    )
+
+    await entity.async_set_hvac_mode(HVACMode.COOL)
+
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": "occupied"}}
+    )
+    api.send_event.assert_not_awaited()
+    assert entity.preset_mode == "home"
+
+
+
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
