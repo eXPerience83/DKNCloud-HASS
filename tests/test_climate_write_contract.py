@@ -921,8 +921,7 @@ async def test_hvac_active_mode_is_fenced_by_newer_turn_off_during_preparation(
     await asyncio.wait_for(pending_mode, timeout=3)
 
     events = [c.args[0]["event"] for c in api.send_event.await_args_list]
-    expected = [("P1", 0)] if next_request == "hvac_off" else []
-    assert [(event["option"], event["value"]) for event in events] == expected
+    assert [(event["option"], event["value"]) for event in events] == []
     assert entity._overlay_value("power", "0") == "0"
 
 
@@ -966,7 +965,7 @@ async def test_hvac_off_supersedes_delayed_climate_or_switch_wake(
     await asyncio.wait_for(pending_wake, timeout=3)
 
     events = [c.args[0]["event"] for c in api.send_event.await_args_list]
-    assert [(e["option"], e["value"]) for e in events] == [("P1", 0)]
+    assert [(e["option"], e["value"]) for e in events] == []
 
 
 @pytest.mark.parametrize(
@@ -1020,6 +1019,48 @@ async def test_hvac_mode_and_power_commands_serialize_opposite_intents(
         assert calls == [("P1", 1), ("P2", "2"), ("P1", 0)]
         assert entity._overlay_value("power", initial) == "0"
 
+
+
+@pytest.mark.parametrize("initial_power", ["1", "0"])
+async def test_hvac_off_avoids_duplicate_p1_after_pending_power_off(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    initial_power: str,
+) -> None:
+    """A queued HVAC OFF must see a prior accepted OFF under the same lock."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power=initial_power
+    )
+    from custom_components.airzoneclouddaikin.helpers import optimistic_set
+
+    optimistic_set(hass, "climate-entry", "unit-1", "mode", "2")
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def blocked_send(payload: dict[str, Any]) -> None:
+        assert payload["event"]["option"] == "P1"
+        first_entered.set()
+        await release_first.wait()
+
+    api.send_event.side_effect = blocked_send
+    if initial_power == "1":
+        first_task = asyncio.create_task(entity.async_turn_off())
+        try:
+            await asyncio.wait_for(first_entered.wait(), timeout=2)
+            next_task = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.OFF))
+            await asyncio.sleep(0)
+            assert not next_task.done()
+        finally:
+            release_first.set()
+        await asyncio.wait_for(asyncio.gather(first_task, next_task), timeout=3)
+        assert api.send_event.await_count == 1
+    else:
+        await entity.async_set_hvac_mode(HVACMode.OFF)
+        api.send_event.assert_not_awaited()
+
+    assert entity._overlay_value("power", initial_power) == "0"
+    assert "mode" not in hass.data[DOMAIN]["climate-entry"]["optimistic"]["unit-1"]
 
 async def test_hvac_mode_avoids_duplicate_power_on_after_optimistic_wake(
     hass: HomeAssistant,
