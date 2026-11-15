@@ -24,6 +24,7 @@ from .helpers import (
     build_device_info,
     optimistic_get,
     optimistic_set,
+    reserve_power_intent,
     schedule_post_write_refresh,
 )
 
@@ -232,22 +233,34 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     async def _fallback_turn_on(self) -> None:
         """Direct P1 fallback when the climate entity is unavailable."""
-
-        current = str(self._overlay_power() or "").strip().lower()
-        if current in {"1", "true", "on"}:
-            _LOGGER.debug("Power already optimistic ON; skipping redundant P1=1")
-            return
-
-        await self._ensure_occupied_before_active_action("switch.turn_on")
-
+        intents, intent = reserve_power_intent(
+            self.hass, self._entry_id, self._device_id
+        )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
-        async with lock:
-            await self._send_event("P1", 1)
-            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
-            self.async_write_ha_state()
-            schedule_post_write_refresh(
-                self.hass, self.coordinator, entry_id=self._entry_id
-            )
+        prepared = False
+        while True:
+            async with lock:
+                if intents.get(self._device_id) != intent:
+                    return
+                current = str(self._overlay_power() or "").strip().lower()
+                if current in {"1", "true", "on"}:
+                    _LOGGER.debug(
+                        "Power already optimistic ON; skipping redundant P1=1"
+                    )
+                    return
+                if prepared:
+                    await self._send_event("P1", 1)
+                    optimistic_set(
+                        self.hass, self._entry_id, self._device_id, "power", "1"
+                    )
+                    self.async_write_ha_state()
+                    schedule_post_write_refresh(
+                        self.hass, self.coordinator, entry_id=self._entry_id
+                    )
+                    return
+            # Sleep exit may acquire the same lock; prepare before reacquiring.
+            await self._ensure_occupied_before_active_action("switch.turn_on")
+            prepared = True
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the device delegating to the climate entity when possible."""
@@ -257,15 +270,18 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     async def _fallback_turn_off(self) -> None:
         """Direct P1 fallback when the climate entity is unavailable."""
-
-        current = str(self._overlay_power() or "").strip().lower()
-        if current in {"0", "false", "off", ""}:
-            _LOGGER.debug("Power already optimistic OFF; skipping redundant P1=0")
-            return
-
+        intents, intent = reserve_power_intent(
+            self.hass, self._entry_id, self._device_id
+        )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            # NOTE: If _send_event raises, we bail out before applying any optimistic overlay
+            if intents.get(self._device_id) != intent:
+                return
+            current = str(self._overlay_power() or "").strip().lower()
+            if current in {"0", "false", "off", ""}:
+                _LOGGER.debug("Power already optimistic OFF; skipping redundant P1=0")
+                return
+            # If _send_event raises, no optimistic overlay is applied.
             await self._send_event("P1", 0)
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
             self.async_write_ha_state()

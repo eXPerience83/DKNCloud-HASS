@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock
@@ -98,6 +99,97 @@ async def test_switch_fallback_power_intent_wins_over_stale_get(
     assert events[0]["option"] == "P1"
     assert events[0]["value"] == command
     assert entity.is_on is bool(command)
+
+
+@pytest.mark.parametrize(
+    ("initial", "first", "second", "expected", "final"),
+    [
+        ("1", "_fallback_turn_off", "_fallback_turn_on", [0, 1], True),
+        ("0", "_fallback_turn_on", "_fallback_turn_off", [1, 0], False),
+        ("1", "_fallback_turn_off", "_fallback_turn_off", [0], False),
+        ("0", "_fallback_turn_on", "_fallback_turn_on", [1], True),
+    ],
+)
+async def test_switch_fallback_concurrent_power_intents_are_serialized(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    initial: str,
+    first: str,
+    second: str,
+    expected: list[int],
+    final: bool,
+) -> None:
+    """Fallback must recheck post-lock power instead of replaying pending P1."""
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": initial},
+        climate_entity_id=None,
+    )
+    entity.coordinator.api = AsyncMock()
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        lambda *_args, **_kwargs: None,
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    commands: list[int] = []
+
+    async def paused_send(payload: dict[str, Any]) -> None:
+        event = payload["event"]
+        assert event["option"] == "P1"
+        commands.append(event["value"])
+        if len(commands) == 1:
+            entered.set()
+            await release.wait()
+
+    entity.coordinator.api.send_event.side_effect = paused_send
+    first_task = asyncio.create_task(getattr(entity, first)())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        second_task = asyncio.create_task(getattr(entity, second)())
+        await asyncio.sleep(0)
+        assert not second_task.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(first_task, second_task), timeout=3)
+
+    assert commands == expected
+    assert entity.is_on is final
+
+
+async def test_switch_newer_off_supersedes_on_during_sleep_preparation(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A newer OFF prevents an older delayed fallback wake from sending P1."""
+    entity = _make_switch(
+        hass,
+        dummy_coordinator_factory,
+        {"id": "dev1", "name": "Zone", "power": "0"},
+        climate_entity_id=None,
+    )
+    entity.coordinator.api = AsyncMock()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def paused_prepare(_reason: str) -> None:
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(entity, "_ensure_occupied_before_active_action", paused_prepare)
+    old_on = asyncio.create_task(entity._fallback_turn_on())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await entity._fallback_turn_off()
+    finally:
+        release.set()
+    await asyncio.wait_for(old_on, timeout=3)
+
+    entity.coordinator.api.send_event.assert_not_awaited()
+    assert not entity.is_on
 
 
 @pytest.mark.parametrize(
