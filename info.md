@@ -278,6 +278,10 @@ power request fences an older request still waiting for the lock or preparing
 a Sleep/Away exit; scene preparation releases the lock before retrying the
 guarded power send. This prevents queued opposite intents from being dropped
 and duplicate same-direction P1 sends; it does not imply physical confirmation.
+After a potentially accepted P2 mode write fails, the integration requests
+a backend readback even if power was already ON (and no P1 preceded it);
+it never automatically replays the ambiguous P2. A known-unsent cooldown
+rejection with no accepted preceding P1 does not request that readback.
 Direct P1 fallback is allowed only if Climate is unavailable or its HA service
 was never registered. After a dispatched Climate handler fails or times out,
 its P1 outcome is unknown: the switch propagates the error and never replays
