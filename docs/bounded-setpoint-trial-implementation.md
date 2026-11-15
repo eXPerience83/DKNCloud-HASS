@@ -28,6 +28,11 @@ The existing `REAL_DESTINATIONS_ENABLED = False`, `--protected-real` denial,
   still rejects writes by default. A test-only opt-in supports exactly the
   24 → 25 → 24 °C P7 sequence and emits synthetic device frames. It proves
   local code behavior, **not** actual vendor push causality.
+- `protected_ha_lab` supports a synthetic-only `setpoint_trial` scenario
+  driven through the genuine Home Assistant Climate service. It waits for
+  Pusher-applied setpoint evidence, observes two ordinary INFO cycles and
+  attempts a strictly admitted restore. Its subprocess exit gate requires
+  two exact loopback transport controls and clean teardown.
 
 ## Already covered by offline regression tests
 
@@ -47,10 +52,12 @@ Unsolicited real vendor events have not been observed by this change.
    HA process, protected transport and bounded supervisor. Do not modify the
    old read-only `real_policy()` or flip the global disabled flag; do not
    introduce a general-purpose writable LAB.
-3. Authentication and scoped subscription, raw Home/ON/COOL-or-HEAT and
-   installation membership, no pending recovery/unknown state, owner plan
-   confirmation, exact full HA service → Climate → API → guarded transport
-   proof, one socket, strict timeline and evidence ownership.
+3. Real-session authentication and scoped subscription, raw
+   Home/ON/COOL-or-HEAT and installation membership, no pending
+   recovery/unknown state, explicit owner numeric-plan confirmation and
+   exact reviewed full HA service → Climate → API → guarded transport
+   acceptance. The synthetic service path is now exercised; it does not
+   grant access to the real DKN server.
 4. Real Pusher `cold_consign`/`heat_consign` field capture before merge,
    ordinary INFO dispatch/acceptance, GET and HA optimistic/confirmed
    publication with the same monotonic clock. No extra INFO/GET injected into
