@@ -155,6 +155,11 @@ class GuardedContext:
             result = await self.context.__aenter__()
             entered = True
             if not self.websocket:
+                if self.operation == "control":
+                    if mark := getattr(
+                        self.gateway.protected.policy, "control_result", None
+                    ):
+                        mark(accepted=result.status < 300)
                 if timeline is not None and self.operation in {"info", "control"}:
                     timeline.add(
                         f"{self.operation}_result",
@@ -202,15 +207,15 @@ class GuardedContext:
                 else result
             )
         except BaseException as error:
-            if (
-                self.context is not None
-                and not entered
-                and self.operation == "control"
-                and self.gateway.timeline is not None
-            ):
-                self.gateway.timeline.add(
-                    "control_result", source="transport", result="ambiguous"
-                )
+            if self.context is not None and not entered and self.operation == "control":
+                if mark := getattr(
+                    self.gateway.protected.policy, "control_result", None
+                ):
+                    mark(accepted=False)
+                if self.gateway.timeline is not None:
+                    self.gateway.timeline.add(
+                        "control_result", source="transport", result="ambiguous"
+                    )
             if isinstance(error, PermissionError) and not isinstance(error, LabStopped):
                 owner.reason = "transport_security"
                 owner.stopped.set()
