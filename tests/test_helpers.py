@@ -67,7 +67,6 @@ def test_optimistic_overlay_malformed_expiration(hass: HomeAssistant) -> None:
     assert "device" not in optimistic_bucket
 
 
-
 @pytest.mark.parametrize("entry_status", ["removed", "closing"])
 def test_late_ambiguous_control_failure_does_not_reopen_unloaded_entry(
     hass: HomeAssistant,
@@ -92,7 +91,6 @@ def test_late_ambiguous_control_failure_does_not_reopen_unloaded_entry(
         assert bucket["retired"]["closing"] is True
     manager.request_recovery.assert_not_called()
     coordinator.async_request_refresh.assert_not_called()
-
 
 
 class DummyApi:
