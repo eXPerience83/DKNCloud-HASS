@@ -1103,7 +1103,8 @@ async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p
         scenary="vacant",
     )
     monkeypatch.setattr(
-        climate_module, "async_auto_exit_sleep_if_needed",
+        climate_module,
+        "async_auto_exit_sleep_if_needed",
         async_auto_exit_sleep_if_needed,
     )
 
