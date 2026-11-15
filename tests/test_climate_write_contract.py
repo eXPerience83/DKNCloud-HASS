@@ -287,6 +287,91 @@ async def test_presets_are_device_put_requests_not_event_commands(
     api.send_event.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    ("initial_scenary", "preset", "expected_scenary"),
+    [
+        ("occupied", "away", "vacant"),
+        ("occupied", "sleep", "sleep"),
+        ("vacant", "home", "occupied"),
+    ],
+)
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+async def test_ambiguous_ordinary_preset_requests_readback_without_claiming_success(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    initial_scenary: str,
+    preset: str,
+    expected_scenary: str,
+    failure: type[BaseException],
+) -> None:
+    """An uncertain ordinary scene PUT gets readback but no Sleep exit fence."""
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        scenary=initial_scenary,
+        power="1",
+    )
+    manager = Mock()
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = manager
+    api.put_device_fields.side_effect = failure("scene result unknown")
+
+    with pytest.raises(failure):
+        await entity.async_set_preset_mode(preset)
+
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": expected_scenary}}
+    )
+    manager.request_recovery.assert_called_once_with("unit-1")
+    assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+    assert not bucket.get("sleep_exit_pending")
+    assert entity.preset_mode == (
+        "home" if initial_scenary == "occupied" else "away"
+    )
+    entity.async_write_ha_state.assert_not_called()
+
+
+async def test_known_unsent_ordinary_preset_does_not_trigger_readback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vendor cooldown rejected the scene request before any network send."""
+    from custom_components.airzoneclouddaikin.airzone_api import CommandNotSentCooldown
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    manager = Mock()
+    hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+    api.put_device_fields.side_effect = CommandNotSentCooldown(hass.loop.time() + 60)
+
+    with pytest.raises(CommandNotSentCooldown):
+        await entity.async_set_preset_mode("away")
+
+    api.put_device_fields.assert_awaited_once()
+    manager.request_recovery.assert_not_called()
+    assert entity.preset_mode == "home"
+
+
+async def test_ordinary_preset_timeout_without_manager_uses_legacy_refresh(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without SyncManager the existing scheduled refresh handles uncertainty."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    api.put_device_fields.side_effect = TimeoutError("backend acceptance unknown")
+
+    with pytest.raises(TimeoutError):
+        await entity.async_set_preset_mode("away")
+
+    climate_module.schedule_post_write_refresh.assert_called_once_with(
+        hass, entity.coordinator, entry_id="climate-entry"
+    )
+    assert entity.preset_mode == "home"
+
+
 async def test_climate_exposes_sleep_overdue_as_reported_diagnostic(
     hass, dummy_coordinator_factory, monkeypatch
 ):
