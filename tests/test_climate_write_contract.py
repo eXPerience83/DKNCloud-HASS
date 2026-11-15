@@ -1279,7 +1279,6 @@ async def test_partial_hvac_power_on_failure_requests_readback_without_replaying
         )
 
 
-
 @pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
 @pytest.mark.parametrize("with_manager", [False, True])
 async def test_ambiguous_hvac_p2_only_failure_requests_readback(
