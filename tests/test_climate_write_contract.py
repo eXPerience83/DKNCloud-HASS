@@ -117,7 +117,6 @@ async def test_set_fan_mode_respects_heat_and_ventilation_alias(
     )
 
 
-
 @pytest.mark.parametrize(
     ("initial_mode", "next_mode"),
     [("1", HVACMode.HEAT), ("2", HVACMode.COOL)],
@@ -186,7 +185,6 @@ async def test_fan_only_alias_change_while_queued_does_not_use_old_channel(
 
     await asyncio.wait_for(task, timeout=3)
     api.send_event.assert_not_awaited()
-
 
 
 @pytest.mark.parametrize("mode", ["5", "6", "7"])
