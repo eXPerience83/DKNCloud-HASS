@@ -33,6 +33,7 @@ from .helpers import (
     optimistic_set,
     parse_float,
     parse_modes_bitmask,
+    request_ambiguous_control_readback,
     reserve_power_intent,
     schedule_post_write_refresh,
 )
@@ -887,8 +888,22 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         try:
             await api.send_event(payload)
         except asyncio.CancelledError:
+            if option == "P1":
+                request_ambiguous_control_readback(
+                    self.hass,
+                    self.coordinator,
+                    entry_id=self._entry_id,
+                    device_id=self._device_id,
+                )
             raise
         except Exception as err:
+            if option == "P1" and not isinstance(err, CommandNotSentCooldown):
+                request_ambiguous_control_readback(
+                    self.hass,
+                    self.coordinator,
+                    entry_id=self._entry_id,
+                    device_id=self._device_id,
+                )
             _LOGGER.warning(
                 "Failed to send_event %s=%s: %s",
                 option,

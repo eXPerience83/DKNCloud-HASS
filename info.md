@@ -388,6 +388,14 @@ changed is discarded instead of sending an option for the previous mode;
 the FAN_ONLY P2=3/8 telemetry alias is rechecked for fan-channel routing.
 This is local ordering, not physical-state confirmation.
 
+**Ambiguous power-write safety:** A timed-out, cancelled or otherwise
+unconfirmed P1 write from Climate (including implicit HVAC power-on) or the
+direct Switch fallback schedules a readback through SyncManager, or the
+legacy refresh fallback when no manager exists. It never automatically
+replays P1 or claims a successful optimistic power change. Commands known
+to be unsent because of local cooldown do not request corrective readback;
+entry shutdown suppresses new recovery work.
+
 ---
 
 ## 4) HVAC Modes (P2) — Mapping, Classification, and Display Equivalences

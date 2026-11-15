@@ -822,6 +822,85 @@ async def test_explicit_climate_power_intent_overrides_stale_backend_snapshot(
 
 
 @pytest.mark.parametrize(
+    ("method", "initial_power", "value"),
+    [("async_turn_on", "0", 1), ("async_turn_off", "1", 0)],
+)
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+async def test_ambiguous_climate_p1_requests_readback_without_overlay(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    initial_power: str,
+    value: int,
+    failure: type[BaseException],
+) -> None:
+    """An uncertain power write is never silently treated as OFF/ON success."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power=initial_power
+    )
+    api.send_event.side_effect = failure("unconfirmed P1")
+    manager = Mock()
+    hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+
+    with pytest.raises(failure):
+        await getattr(entity, method)()
+
+    events = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert [(event["option"], event["value"]) for event in events] == [("P1", value)]
+    manager.request_recovery.assert_called_once_with("unit-1")
+    assert entity._overlay_value("power", initial_power) == initial_power
+    entity.async_write_ha_state.assert_not_called()
+    climate_module.schedule_post_write_refresh.assert_not_called()
+
+
+async def test_uncertain_implicit_hvac_p1_requests_refresh_without_p2_replay(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mode selection's failed P1 must request recovery before reaching P2."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
+        climate_module.schedule_post_write_refresh,
+    )
+    api.send_event.side_effect = TimeoutError("P1 outcome unknown")
+
+    with pytest.raises(TimeoutError):
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+
+    events = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert [(event["option"], event["value"]) for event in events] == [("P1", 1)]
+    assert entity.hvac_mode == HVACMode.OFF
+    climate_module.schedule_post_write_refresh.assert_called_once_with(
+        hass, entity.coordinator, entry_id="climate-entry"
+    )
+
+
+async def test_known_unsent_p1_does_not_request_readback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cooldown rejected before I/O is not an ambiguous accepted write."""
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        CommandNotSentCooldown,
+    )
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="1")
+    api.send_event.side_effect = CommandNotSentCooldown(hass.loop.time() + 60)
+    manager = Mock()
+    hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+
+    with pytest.raises(CommandNotSentCooldown):
+        await entity.async_turn_off()
+
+    manager.request_recovery.assert_not_called()
+    climate_module.schedule_post_write_refresh.assert_not_called()
+
+
+@pytest.mark.parametrize(
     ("initial", "first", "second", "expected", "final"),
     [
         ("1", "async_turn_off", "async_turn_on", [0, 1], "1"),

@@ -247,6 +247,25 @@ def reserve_power_intent(
     return intents, current
 
 
+def request_ambiguous_control_readback(
+    hass: HomeAssistant,
+    coordinator: DataUpdateCoordinator[Any],
+    *,
+    entry_id: str,
+    device_id: str,
+) -> None:
+    """Read back an uncertain command, never replay the possibly accepted write."""
+    # An in-flight write may fail after successful HA unload. Never create
+    # a fresh entry bucket or schedule a task for a removed config entry.
+    bucket = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not bucket or bucket.get("closing") or hass.is_stopping:
+        return
+    if manager := bucket.get("sync_manager"):
+        manager.request_recovery(device_id)
+    else:
+        schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
+
+
 def clamp_number(
     value: float | int,
     *,

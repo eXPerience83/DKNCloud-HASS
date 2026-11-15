@@ -67,6 +67,32 @@ def test_optimistic_overlay_malformed_expiration(hass: HomeAssistant) -> None:
     assert "device" not in optimistic_bucket
 
 
+@pytest.mark.parametrize("entry_status", ["removed", "closing"])
+def test_late_ambiguous_control_failure_does_not_reopen_unloaded_entry(
+    hass: HomeAssistant,
+    entry_status: str,
+) -> None:
+    """Do not revive an entry bucket or schedule recovery after HA unload."""
+    from unittest.mock import Mock
+
+    bucket = hass.data.setdefault(DOMAIN, {})
+    coordinator = Mock()
+    manager = Mock()
+    if entry_status == "closing":
+        bucket["retired"] = {"closing": True, "sync_manager": manager}
+
+    helpers.request_ambiguous_control_readback(
+        hass, coordinator, entry_id="retired", device_id="device"
+    )
+
+    if entry_status == "removed":
+        assert "retired" not in bucket
+    else:
+        assert bucket["retired"]["closing"] is True
+    manager.request_recovery.assert_not_called()
+    coordinator.async_request_refresh.assert_not_called()
+
+
 class DummyApi:
     """Stub API to capture scenary writes."""
 
