@@ -1057,6 +1057,7 @@ async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
         "device_locks": {"device": asyncio.Lock()},
     }
     original_lock = hass.data[DOMAIN][entry.entry_id]["device_locks"]["device"]
+    await original_lock.acquire()
     unload_platforms = AsyncMock(
         side_effect=failure if isinstance(failure, Exception) else None,
         return_value=failure if isinstance(failure, bool) else True,
@@ -1072,6 +1073,8 @@ async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
     assert bucket["notify_state"]["device"]["online_cancel"] is None
     assert "pending_refresh" not in bucket
     assert bucket["device_locks"]["device"] is original_lock
+    assert original_lock.locked()
+    original_lock.release()
 
 
 @pytest.mark.parametrize("reverse", [False, True])
