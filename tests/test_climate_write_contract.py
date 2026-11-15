@@ -560,7 +560,8 @@ async def test_queued_wake_does_not_resurrect_unloaded_entry(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     monkeypatch.setattr(
-        climate_module, "async_auto_exit_sleep_if_needed",
+        climate_module,
+        "async_auto_exit_sleep_if_needed",
         async_auto_exit_sleep_if_needed,
     )
     domain_bucket = hass.data[DOMAIN]
