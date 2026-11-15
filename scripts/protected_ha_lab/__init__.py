@@ -274,11 +274,11 @@ async def async_setup(hass, config):
                         break
                     await asyncio.sleep(0.05)
                 else:
-                    raise RuntimeError("Synthetic setpoint not confirmed by Pusher/INFO")
+                    raise RuntimeError(
+                        "Synthetic setpoint not confirmed by Pusher/INFO"
+                    )
 
-                policy.arm_restoration(
-                    confirmed_by_push=True, owner_approved=True
-                )
+                policy.arm_restoration(confirmed_by_push=True, owner_approved=True)
                 await set_temperature(frozen.original)
                 for _ in range(100):
                     if (
@@ -300,7 +300,8 @@ async def async_setup(hass, config):
                             for event in timeline.export()
                             if event["kind"] == "control_admitted"
                         ]
-                    ) == 2
+                    )
+                    == 2
                 )
                 report["trial_timeline"] = timeline.export()
                 supervisor.reason = "trial_finished"
