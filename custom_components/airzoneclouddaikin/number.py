@@ -178,14 +178,15 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         )
         ivalue = int(round(float(clamped)))
 
-        current = self.native_value
-        if current is not None and current == ivalue:
-            return
-
         payload: dict[str, Any] = {self._field_name: ivalue}
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            # Another queued number write may have changed the optimistic
+            # value while this request waited for the same device lock.
+            current = self.native_value
+            if current is not None and current == ivalue:
+                return
             await self._api.put_device_fields(self._device_id, payload)
 
             optimistic_set(
