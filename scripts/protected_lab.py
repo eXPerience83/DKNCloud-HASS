@@ -50,7 +50,12 @@ class LabSupervisor:
     """Own one experiment deadline, quotas, traffic spacing and fatal stop signal."""
 
     def __init__(
-        self, *, duration=300, state_limit=40, auth_limit=6, spacing=10,
+        self,
+        *,
+        duration=300,
+        state_limit=40,
+        auth_limit=6,
+        spacing=10,
         socket_limit=6,
     ):
         if not (
