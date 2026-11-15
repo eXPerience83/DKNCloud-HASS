@@ -12,6 +12,12 @@ from scripts.lab_lifecycle import finish_lab
 from scripts.lab_policy import ReadOnlyPolicy
 from scripts.lab_tls_backend import SyntheticBackend
 from scripts.protected_lab import LabSupervisor, create_gateway, real_policy
+from scripts.setpoint_trial import (
+    BoundedSetpointPolicy,
+    SetpointPlan,
+    SingleUseTrialJournal,
+)
+from scripts.trial_timeline import TrialTimeline
 
 
 async def async_setup(hass, config):
@@ -45,7 +51,7 @@ async def async_setup(hass, config):
         username, password = "synthetic@example.invalid", "synthetic-password"
         supervisor = LabSupervisor(
             duration=120
-            if case in {"reconnect", "reconnect_no_events"}
+            if case in {"reconnect", "reconnect_no_events", "setpoint_trial"}
             else 60
             if case in {"normal", "sleep", "no_events", "invalid_event", "wrong_device"}
             else 35
@@ -55,6 +61,7 @@ async def async_setup(hass, config):
             else 3,
             state_limit=1 if case == "quota" else 40,
             spacing=0.01,
+            socket_limit=1 if case == "setpoint_trial" else 6,
         )
         backend = await SyntheticBackend(hass.config.config_dir).start()
         # Trust only this disposable synthetic CA for the child HA process.
@@ -70,6 +77,7 @@ async def async_setup(hass, config):
             }[case]
         backend.emit_events = case != "no_events"
         backend.event_kind = case
+        backend.trial_controls = case == "setpoint_trial"
         backend.redirect = case == "redirect"
         policy = ReadOnlyPolicy({device}, {installation}, PUSHER_APP_KEY, enabled=True)
         gateway = await create_gateway(
@@ -77,6 +85,8 @@ async def async_setup(hass, config):
         )
     import time
 
+    timeline = TrialTimeline() if case == "setpoint_trial" else None
+    gateway.timeline = timeline
     from custom_components.airzoneclouddaikin.sync_manager import SyncManager
 
     observations = dict(
@@ -93,6 +103,8 @@ async def async_setup(hass, config):
     original_subscription = SyncManager.subscription
 
     async def observed_event(manager, identity, patch, generation):
+        if timeline is not None and identity == device:
+            timeline.record_push_patch(patch, expected_field="cold_consign")
         previous = dict(manager.state.data.get(identity, {}))
         revision = manager.state.revision
         await original_event(manager, identity, patch, generation)
@@ -117,11 +129,15 @@ async def async_setup(hass, config):
 
     async def observed_read(manager, *args, **kwargs):
         result = await original_read(manager, *args, **kwargs)
+        if timeline is not None:
+            timeline.add("get_applied", source="get")
         observations["get_applied"] += 1
         return result
 
     async def observed_subscription(manager, identity, active):
         if active:
+            if timeline is not None:
+                timeline.add("subscription_ack", source="pusher")
             observations["subscribed"] = True
         return await original_subscription(manager, identity, active)
 
@@ -162,10 +178,11 @@ async def async_setup(hass, config):
     async def scenario(_):
         report = {}
         entry = None
+        trial_journal = None
         watcher = asyncio.create_task(supervisor.watch())
 
         async def exercise():
-            nonlocal entry
+            nonlocal entry, trial_journal
             login = AirzoneAPI(username, gateway, password=password)
             if not await login.login():
                 raise RuntimeError("Synthetic login failed")
@@ -208,6 +225,87 @@ async def async_setup(hass, config):
                 await asyncio.sleep(0.05)
             report["push_applied"] = True
             report["entities"] = len(hass.states.async_all())
+            if case == "setpoint_trial":
+                # Exercise the authentic HA Climate service and transport while
+                # targeting ONLY the local TLS fixture. This is not a real-run
+                # authorization path; the global live gate remains disabled.
+                current = manager.state.data[device]
+                frozen = SetpointPlan.from_device(
+                    current, device_id=device, installation_id=installation
+                )
+                private = Path(hass.config.config_dir) / "trial-private"
+                private.mkdir(mode=0o700)
+                trial_journal = SingleUseTrialJournal(
+                    private, nonce="synthetic-session-" + "s" * 40, plan=frozen
+                )
+                policy = BoundedSetpointPolicy(
+                    frozen,
+                    trial_journal,
+                    lambda: manager.state.data[device],
+                    PUSHER_APP_KEY,
+                    deadline=supervisor.deadline,
+                )
+                gateway.protected.policy = policy
+                entity_id = next(
+                    state.entity_id
+                    for state in hass.states.async_all()
+                    if state.domain == "climate"
+                )
+
+                async def set_temperature(value):
+                    timeline.add("control_invoked", source="lab")
+                    await hass.services.async_call(
+                        "climate",
+                        "set_temperature",
+                        {"entity_id": entity_id, "temperature": value},
+                        blocking=True,
+                    )
+
+                policy.arm_change()
+                before_info = gateway.observations["information_accepted"]
+                await set_temperature(frozen.modified)
+                for _ in range(400):
+                    if (
+                        str(manager.state.data[device].get(frozen.field))
+                        == f"{frozen.modified}.0"
+                        and gateway.observations["information_accepted"]
+                        >= before_info + 2
+                    ):
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise RuntimeError("Synthetic setpoint not confirmed by Pusher/INFO")
+
+                policy.arm_restoration(
+                    confirmed_by_push=True, owner_approved=True
+                )
+                await set_temperature(frozen.original)
+                for _ in range(100):
+                    if (
+                        str(manager.state.data[device].get(frozen.field))
+                        == f"{frozen.original}.0"
+                    ):
+                        break
+                    await asyncio.sleep(0.05)
+                else:
+                    raise RuntimeError("Synthetic restoration not confirmed")
+
+                report["trial_passed"] = (
+                    backend.controls == 2
+                    and str(backend.cold_consign) == f"{frozen.original}.0"
+                    and not policy._revoked
+                    and len(
+                        [
+                            event
+                            for event in timeline.export()
+                            if event["kind"] == "control_admitted"
+                        ]
+                    ) == 2
+                )
+                report["trial_timeline"] = timeline.export()
+                supervisor.reason = "trial_finished"
+                supervisor.stopped.set()
+                return
             if case == "get":
                 before = backend.operations.get("get", 0)
                 backend.wait = asyncio.Event()
@@ -303,6 +401,8 @@ async def async_setup(hass, config):
                 stopped.cancel()
                 watcher.cancel()
                 await asyncio.gather(task, stopped, watcher, return_exceptions=True)
+                if trial_journal is not None:
+                    trial_journal.close()
                 if case == "get":
                     runtime = getattr(entry, "runtime_data", None)
                     report["get_pending_before_owner_shutdown"] = bool(
