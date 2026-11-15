@@ -1020,7 +1020,6 @@ async def test_hvac_mode_and_power_commands_serialize_opposite_intents(
         assert entity._overlay_value("power", initial) == "0"
 
 
-
 @pytest.mark.parametrize("initial_power", ["1", "0"])
 async def test_hvac_off_avoids_duplicate_p1_after_pending_power_off(
     hass: HomeAssistant,
@@ -1060,9 +1059,7 @@ async def test_hvac_off_avoids_duplicate_p1_after_pending_power_off(
         api.send_event.assert_not_awaited()
 
     assert entity._overlay_value("power", initial_power) == "0"
-    device_overlays = hass.data[DOMAIN]["climate-entry"]["optimistic"].get(
-        "unit-1", {}
-    )
+    device_overlays = hass.data[DOMAIN]["climate-entry"]["optimistic"].get("unit-1", {})
     assert "mode" not in device_overlays
 
 
