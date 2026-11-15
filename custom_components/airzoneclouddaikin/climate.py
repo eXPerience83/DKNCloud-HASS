@@ -378,6 +378,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     # A manual Home/Away may have reached the backend even
                     # if power was ON when this command was initiated.
                     fence_ambiguous_scene()
+                else:
+                    # Home/Away and Sleep-entry PUTs may also have been accepted.
+                    # Recover their actual state; no Sleep-exit fence is needed.
+                    request_readback()
                 raise
             except Exception as err:
                 if cleared_stale_sleep:
@@ -386,6 +390,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     # Fence any ambiguous Sleep exit, even when ON->OFF
                     # telemetry arrived during the PUT. Known-unsent exempt.
                     fence_ambiguous_scene()
+                elif not exits_raw_sleep and not isinstance(
+                    err, CommandNotSentCooldown
+                ):
+                    request_readback()
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",
                     scenary,
