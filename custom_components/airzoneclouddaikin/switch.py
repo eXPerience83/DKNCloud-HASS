@@ -15,6 +15,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
+from .airzone_api import CommandNotSentCooldown
 from .commands import modmaquina_payload
 from .const import DOMAIN
 from .device_state import power_is_on
@@ -25,6 +26,7 @@ from .helpers import (
     optimistic_get,
     optimistic_set,
     reserve_power_intent,
+    request_ambiguous_control_readback,
     schedule_post_write_refresh,
 )
 
@@ -123,8 +125,22 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         try:
             await api.send_event(payload)
         except asyncio.CancelledError:
+            if option == "P1":
+                request_ambiguous_control_readback(
+                    self.hass,
+                    self.coordinator,
+                    entry_id=self._entry_id,
+                    device_id=self._device_id,
+                )
             raise
         except Exception as err:  # noqa: BLE001
+            if option == "P1" and not isinstance(err, CommandNotSentCooldown):
+                request_ambiguous_control_readback(
+                    self.hass,
+                    self.coordinator,
+                    entry_id=self._entry_id,
+                    device_id=self._device_id,
+                )
             _LOGGER.warning(
                 "Device control event %s failed (%s)", option, type(err).__name__
             )
