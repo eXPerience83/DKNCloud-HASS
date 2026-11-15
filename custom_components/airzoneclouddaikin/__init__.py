@@ -1305,11 +1305,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
                 persistent_notification.async_dismiss(hass, offline_nid)
                 persistent_notification.async_dismiss(hass, f"{offline_nid}:online")
 
-        # Clear transient state while preserving the bucket on partial unloads.
+        # Preserve the lock map if platform unload failed: active entities
+        # may still be issuing commands against the retained entry bucket.
         bucket.pop("pending_refresh", None)
-        bucket.pop("device_locks", None)
 
         if unload_ok:
+            bucket.pop("device_locks", None)
             notify_state.clear()
             domain_bucket.pop(entry.entry_id, None)
             if not domain_bucket:
