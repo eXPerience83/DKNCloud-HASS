@@ -1117,6 +1117,41 @@ async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p
     assert entity.preset_mode == "home"
 
 
+
+async def test_turn_on_already_on_exits_away_without_duplicate_p1(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit ON in Away must request Home while preserving idempotent P1."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="1",
+        power="1",
+        scenary="vacant",
+    )
+    monkeypatch.setattr(
+        climate_module,
+        "async_auto_exit_sleep_if_needed",
+        async_auto_exit_sleep_if_needed,
+    )
+
+    await entity.async_turn_on()
+
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": "occupied"}}
+    )
+    api.send_event.assert_not_awaited()
+    assert entity.preset_mode == "home"
+    assert entity._device_power_on()
+
+
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
