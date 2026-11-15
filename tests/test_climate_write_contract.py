@@ -1029,11 +1029,11 @@ async def test_hvac_off_avoids_duplicate_p1_after_pending_power_off(
     initial_power: str,
 ) -> None:
     """A queued HVAC OFF must see a prior accepted OFF under the same lock."""
+    from custom_components.airzoneclouddaikin.helpers import optimistic_set
+
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, power=initial_power
     )
-    from custom_components.airzoneclouddaikin.helpers import optimistic_set
-
     optimistic_set(hass, "climate-entry", "unit-1", "mode", "2")
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
@@ -1060,7 +1060,11 @@ async def test_hvac_off_avoids_duplicate_p1_after_pending_power_off(
         api.send_event.assert_not_awaited()
 
     assert entity._overlay_value("power", initial_power) == "0"
-    assert "mode" not in hass.data[DOMAIN]["climate-entry"]["optimistic"]["unit-1"]
+    device_overlays = hass.data[DOMAIN]["climate-entry"]["optimistic"].get(
+        "unit-1", {}
+    )
+    assert "mode" not in device_overlays
+
 
 async def test_hvac_mode_avoids_duplicate_power_on_after_optimistic_wake(
     hass: HomeAssistant,
