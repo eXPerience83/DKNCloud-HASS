@@ -216,6 +216,7 @@ async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
     scheduled.assert_called_once_with(hass, entity.coordinator, entry_id="entry")
     assert entity.native_value == 30
 
+
 @pytest.mark.parametrize(
     ("entity_cls", "field", "initial", "value"),
     [
@@ -341,6 +342,7 @@ async def test_queued_number_put_does_not_send_after_unload(
     assert api.calls == []
     if unload_status == "removed":
         assert "entry" not in hass.data[DOMAIN]
+
 
 @pytest.mark.asyncio
 async def test_sleep_time_payload_is_root_level(

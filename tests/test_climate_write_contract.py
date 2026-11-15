@@ -411,6 +411,7 @@ async def test_late_ordinary_preset_failure_does_not_recreate_unloaded_entry(
     else:
         assert bucket["closing"] is True
 
+
 @pytest.mark.parametrize("unload_status", ["removed", "closing", "replaced"])
 async def test_late_successful_ordinary_preset_does_not_publish_after_unload(
     hass: HomeAssistant,
@@ -596,6 +597,7 @@ async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
     entity.async_write_ha_state.assert_not_called()
     if unload_status == "removed":
         assert "climate-entry" not in hass.data[DOMAIN]
+
 
 async def test_climate_exposes_sleep_overdue_as_reported_diagnostic(
     hass, dummy_coordinator_factory, monkeypatch
