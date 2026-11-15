@@ -1,4 +1,9 @@
-# Independent Astra review: LAB gates and 0.6.0 decision boundary
+# Preliminary Astra review: LAB gates and 0.6.0 decision boundary
+
+Historical notes from earlier authorized work. Final review of all five real
+trials was deferred at the owner's request; use the [handoff](197-astra-handoff.md)
+and final series report in a later session. No final 0.6.0 decision is recorded
+here.
 
 Review performed by a separate `gpt-6-astra` agent against the uncommitted
 follow-up to PR #223 at `aa4d0f5`, including the transport, fixed experiment
@@ -96,3 +101,20 @@ restoration corroborated and resources closed. The stale GET-first HA case passe
 on both pinned versions after Astra approved the raw-GET/raw-manager criterion.
 These are implementer-observed outcomes, separate from Astra's independent
 20-test rerun. The full-duration trace is linked in the experiment report.
+
+
+## Independent addendum after real trial 1
+
+Astra reviewed the anonymous real trial-1 trace separately. It provides the first
+accepted INFO-first observation: no LAB INFO/GET or matching Pusher in the 45 s
+after ACK, then matching Pusher during INFO-only operation before any GET. The
+event was 10.678 s after the first INFO, 0.469 s after the second. This supports
+INFO-associated delivery and shows a later LAB GET was unnecessary for that
+event, but cannot distinguish either INFO response from independent backend
+timing. Other clients being quiet is owner-reported context, not LAB verification.
+
+HA's temporary return to 16 was optimism expiry, not contradictory Pusher; it
+does not justify extending the production overlay while reads were artificially
+held. Restoration and cleanup passed, with 2/10 series attempts consumed.
+Trials 2–5 still need separate approvals. Astra's 0.6.0 recommendation remains
+unchanged pending those comparisons. No production policy change is approved.
