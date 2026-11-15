@@ -1302,9 +1302,7 @@ async def test_ambiguous_hvac_p2_only_failure_requests_readback(
         await entity.async_set_hvac_mode(HVACMode.HEAT)
 
     events = [call.args[0]["event"] for call in api.send_event.await_args_list]
-    assert [(event["option"], event["value"]) for event in events] == [
-        ("P2", "2")
-    ]
+    assert [(event["option"], event["value"]) for event in events] == [("P2", "2")]
     assert entity.hvac_mode == HVACMode.COOL
     entity.async_write_ha_state.assert_not_called()
     if with_manager:
@@ -1339,7 +1337,6 @@ async def test_unsent_hvac_p2_only_write_does_not_request_recovery(
     api.send_event.assert_awaited_once()
     manager.request_recovery.assert_not_called()
     climate_module.schedule_post_write_refresh.assert_not_called()
-
 
 
 @pytest.mark.parametrize(
