@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import Any
 
@@ -14,7 +15,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
-from .airzone_api import AirzoneAPI
+from .airzone_api import AirzoneAPI, CommandNotSentCooldown
 from .const import DOMAIN
 from .helpers import (
     acquire_device_lock,
@@ -22,6 +23,7 @@ from .helpers import (
     clamp_number,
     optimistic_get,
     optimistic_set,
+    request_ambiguous_control_readback,
     schedule_post_write_refresh,
 )
 
@@ -187,7 +189,17 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             current = self.native_value
             if current is not None and current == ivalue:
                 return
-            await self._api.put_device_fields(self._device_id, payload)
+            try:
+                await self._api.put_device_fields(self._device_id, payload)
+            except (Exception, asyncio.CancelledError) as error:
+                if not isinstance(error, CommandNotSentCooldown):
+                    request_ambiguous_control_readback(
+                        self.hass,
+                        self.coordinator,
+                        entry_id=self._entry_id,
+                        device_id=self._device_id,
+                    )
+                raise
 
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, self._field_name, ivalue
