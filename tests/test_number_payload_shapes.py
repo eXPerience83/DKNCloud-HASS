@@ -117,7 +117,6 @@ async def test_failed_number_write_preserves_backend_state(
     assert entity.native_value == 30
 
 
-
 @pytest.mark.parametrize(
     ("entity_cls", "field", "initial", "value"),
     [
@@ -186,7 +185,6 @@ async def test_number_known_unsent_cooldown_does_not_request_readback(
 
     manager.request_recovery.assert_not_called()
     assert entity.native_value == 30
-
 
 
 @pytest.mark.asyncio
