@@ -384,7 +384,10 @@ async def async_auto_exit_sleep_if_needed(
     scene request superseded it. Return False if cooldown prevented any
     send, and None for other handled outcomes.
     Never replay an ambiguous scene write."""
-    bucket = _entry_bucket(hass, entry_id)
+    # Never recreate an unloaded entry during a queued Sleep/wake recheck.
+    bucket = hass.data.get(DOMAIN, {}).get(entry_id)
+    if bucket is None or bucket.get("closing") or hass.is_stopping:
+        return
     revision = bucket.get("scene_revisions", {}).get(device_id, 0)
     # Snapshot the manual intent before this cleanup can wait or send.
     # A later preset request must not be discarded by our optimistic Home.

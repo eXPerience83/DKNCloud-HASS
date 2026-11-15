@@ -684,6 +684,17 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Power / mode ----------------------------------------------------
 
     async def async_turn_on(self) -> None:
+        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        if bucket is None or bucket.get("closing") or self.hass.is_stopping:
+            return
+
+        def entry_active() -> bool:
+            return (
+                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
+                and not bucket.get("closing")
+                and not self.hass.is_stopping
+            )
+
         intents, intent = reserve_power_intent(
             self.hass, self._entry_id, self._device_id
         )
@@ -691,7 +702,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         prepared = False
         while True:
             async with lock:
-                if intents.get(self._device_id) != intent:
+                if not entry_active() or intents.get(self._device_id) != intent:
                     return
                 current = str(
                     self._overlay_value("power", self._device.get("power")) or ""
@@ -714,6 +725,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     return
             # May take the same device lock for Sleep exit: never nest locks.
             await self._ensure_occupied_before_active_action("turn_on")
+            if not entry_active():
+                return
             prepared = True
 
     async def async_turn_off(self) -> None:
@@ -735,6 +748,17 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        if bucket is None or bucket.get("closing") or self.hass.is_stopping:
+            return
+
+        def entry_active() -> bool:
+            return (
+                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
+                and not bucket.get("closing")
+                and not self.hass.is_stopping
+            )
+
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
 
         if hvac_mode == HVACMode.OFF:
@@ -742,7 +766,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 self.hass, self._entry_id, self._device_id
             )
             async with lock:
-                if intents.get(self._device_id) != intent:
+                if not entry_active() or intents.get(self._device_id) != intent:
                     return
                 if self._device_power_on():
                     await self._send_p_event("P1", 0)
@@ -797,9 +821,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self.hass, self._entry_id, self._device_id
         )
         await self._ensure_occupied_before_active_action("set_hvac_mode")
+        if not entry_active():
+            return
 
         async with lock:
-            if intents.get(self._device_id) != intent:
+            if not entry_active() or intents.get(self._device_id) != intent:
                 return
             # A deliberate FAN_ONLY selection normalizes the reported P2=8
             # alias to the selectable P2=3.

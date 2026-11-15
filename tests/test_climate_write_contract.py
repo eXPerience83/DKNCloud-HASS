@@ -541,6 +541,82 @@ async def test_late_second_rearm_failure_does_not_restore_unloaded_entry(
         assert "climate-entry" not in hass.data[DOMAIN]
 
 
+@pytest.mark.parametrize("method", ["turn_on", "set_hvac_mode"])
+@pytest.mark.parametrize("entry_state", ["removed", "closing", "replaced"])
+async def test_queued_wake_does_not_resurrect_unloaded_entry(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    entry_state: str,
+) -> None:
+    """A queued wake must not create a bucket or command an old HA entity."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        acquire_device_lock,
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch,
+        scenary="sleep", power="0"
+    )
+    monkeypatch.setattr(
+        climate_module, "async_auto_exit_sleep_if_needed",
+        async_auto_exit_sleep_if_needed,
+    )
+    domain_bucket = hass.data[DOMAIN]
+    original_bucket = domain_bucket["climate-entry"]
+    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+    await lock.acquire()
+    if method == "turn_on":
+        task = asyncio.create_task(entity.async_turn_on())
+    else:
+        task = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.HEAT))
+    try:
+        await asyncio.sleep(0)
+        assert not task.done()
+        if entry_state == "removed":
+            domain_bucket.pop("climate-entry")
+        elif entry_state == "closing":
+            original_bucket["closing"] = True
+        else:
+            domain_bucket["climate-entry"] = {"replacement": True}
+    finally:
+        lock.release()
+    await asyncio.wait_for(task, timeout=3)
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+    if entry_state == "removed":
+        assert "climate-entry" not in domain_bucket
+    elif entry_state == "replaced":
+        assert domain_bucket["climate-entry"] == {"replacement": True}
+    else:
+        assert original_bucket["closing"] is True
+        assert "optimistic" not in original_bucket
+
+
+@pytest.mark.parametrize("method", ["turn_on", "set_hvac_mode"])
+async def test_stale_wake_called_after_unload_cannot_create_bucket(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+) -> None:
+    """No power intent or lock may create a bucket for an unloaded entry."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch,
+        scenary="sleep", power="0"
+    )
+    hass.data[DOMAIN].pop("climate-entry")
+    if method == "turn_on":
+        await entity.async_turn_on()
+    else:
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+    assert "climate-entry" not in hass.data[DOMAIN]
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+
+
 @pytest.mark.parametrize("unload_status", ["removed", "closing"])
 async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
     hass: HomeAssistant,

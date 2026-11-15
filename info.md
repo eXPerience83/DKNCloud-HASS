@@ -597,6 +597,7 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - Do **not** automatically replay an ambiguous scenary write (e.g., `sleep → occupied`): an accepted or timed-out response does not prove whether the backend applied it. Follow the per-device lock, session revision and read-back rules before considering another command.
 - For ordinary Home/Away and Sleep-entry scene PUTs, an ambiguous timeout or cancellation also requests an authoritative readback without optimistic success or replay. Preserve the special Sleep-exit pending fence only where the raw scene was Sleep; an explicitly unsent cooldown does not require readback.
 - A PUT completing after config-entry unload must not restore optimistic state, schedule recovery for a new entry instance, or continue a two-step Sleep rearm. Active entries retain their existing readback, overlay and scene-fence behavior.
+- A queued Sleep-exit or wake preparation must not create a removed config-entry bucket, act on a replacement entry or emit a follow-on power/mode command after unload.
 
 ---
 

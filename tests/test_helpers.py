@@ -118,6 +118,33 @@ class DummyCoordinator:
         self.refreshes += 1
 
 
+@pytest.mark.parametrize("state", ["removed", "closing"])
+async def test_sleep_exit_after_unload_does_not_recreate_entry_or_write(
+    hass: HomeAssistant, state: str
+) -> None:
+    """A stale wake helper must not create a new entry or emit scene writes."""
+    api = DummyApi()
+    coordinator = DummyCoordinator(api)
+    domain_bucket = hass.data.setdefault(DOMAIN, {})
+    if state == "closing":
+        domain_bucket["old-entry"] = {"closing": True}
+    await async_auto_exit_sleep_if_needed(
+        hass,
+        entry_id="old-entry",
+        device_id="device",
+        device={"scenary": "sleep", "power": "0"},
+        coordinator=coordinator,
+        reason="turn_on",
+        is_device_on=lambda: False,
+        allow_away_handling=False,
+    )
+    assert api.calls == []
+    if state == "removed":
+        assert "old-entry" not in domain_bucket
+    else:
+        assert domain_bucket["old-entry"] == {"closing": True}
+
+
 @pytest.mark.asyncio
 async def test_auto_exit_sleep_when_expired(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
@@ -139,6 +166,8 @@ async def test_auto_exit_sleep_when_expired(
     device_id = "device-1"
     entry_id = "entry-1"
     device = {"scenary": "sleep", "sleep_expired": True}
+    # Production creates the entry bucket during setup; the helper must not.
+    hass.data.setdefault(DOMAIN, {})[entry_id] = {}
 
     await async_auto_exit_sleep_if_needed(
         hass,
@@ -648,6 +677,7 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
         side_effect=ClientResponseError(None, (), status=422)
     )
     coordinator = DummyCoordinator(api)
+    hass.data.setdefault(DOMAIN, {})["entry"] = {}
     for _ in range(2):
         await async_auto_exit_sleep_if_needed(
             hass,
