@@ -1079,7 +1079,6 @@ async def test_hvac_mode_avoids_duplicate_power_on_after_optimistic_wake(
     ]
 
 
-
 async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p2(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
@@ -1115,7 +1114,6 @@ async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p
     )
     api.send_event.assert_not_awaited()
     assert entity.preset_mode == "home"
-
 
 
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
