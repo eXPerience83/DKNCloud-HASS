@@ -128,10 +128,13 @@ class LabSupervisor:
 class GuardedContext:
     """Grant a transport lease only around a previously validated operation."""
 
-    def __init__(self, gateway, factory, category=None, websocket=False, path=None):
+    def __init__(
+        self, gateway, factory, category=None, websocket=False, path=None,
+        operation=None,
+    ):
         self.gateway, self.factory = gateway, factory
         self.category, self.websocket = category, websocket
-        self.path = path
+        self.path, self.operation = path, operation
         self.context = None
 
     async def __aenter__(self):
@@ -144,15 +147,26 @@ class GuardedContext:
         token = _NETWORK_LEASE.set(self.gateway)
         try:
             self.context = self.factory()
+            timeline = self.gateway.timeline
+            if timeline is not None and self.operation in {"info", "control", "get"}:
+                timeline.add(
+                    f"{self.operation}_admitted", source="transport"
+                )
             result = await self.context.__aenter__()
             entered = True
             if not self.websocket:
+                if timeline is not None and self.operation in {"info", "control"}:
+                    timeline.add(
+                        f"{self.operation}_result",
+                        source="transport",
+                        result="accepted" if result.status < 300 else "rejected",
+                    )
                 if result.status < 300:
                     key = (
                         "get_received"
-                        if self.path == "/devices"
+                        if self.operation == "get"
                         else "information_accepted"
-                        if self.path == "/events"
+                        if self.operation == "info"
                         else None
                     )
                     if key:
@@ -188,6 +202,15 @@ class GuardedContext:
                 else result
             )
         except BaseException as error:
+            if (
+                self.context is not None
+                and not entered
+                and self.operation == "control"
+                and self.gateway.timeline is not None
+            ):
+                self.gateway.timeline.add(
+                    "control_result", source="transport", result="ambiguous"
+                )
             if isinstance(error, PermissionError) and not isinstance(error, LabStopped):
                 owner.reason = "transport_security"
                 owner.stopped.set()
@@ -241,8 +264,9 @@ class GuardedSocket:
 class LaboratoryGateway:
     """The sole transport injected into every integration API and adapter."""
 
-    def __init__(self, protected, supervisor):
+    def __init__(self, protected, supervisor, *, timeline=None):
         self.protected, self.supervisor = protected, supervisor
+        self.timeline = timeline
         self.observations = dict(
             websocket_established=0,
             get_received=0,
@@ -282,11 +306,25 @@ class LaboratoryGateway:
         category = (
             "auth" if str(url).endswith(("/users/sign_in", "/pusher/auth")) else "state"
         )
+        path = URL(url).path
+        payload = kwargs.get("json")
+        event = payload.get("event") if type(payload) is dict else None
+        cgi = event.get("cgi") if type(event) is dict else None
+        operation = (
+            "info"
+            if method == "POST" and path == "/events" and cgi == "infomaquina"
+            else "control"
+            if method == "POST" and path == "/events" and cgi == "modmaquina"
+            else "get"
+            if method == "GET" and path == "/devices"
+            else None
+        )
         return GuardedContext(
             self,
             lambda: self.protected.request(method, url, **kwargs),
             category,
-            path=URL(url).path,
+            path=path,
+            operation=operation,
         )
 
     def ws_connect(self, url, **kwargs):
