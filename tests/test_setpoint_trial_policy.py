@@ -185,8 +185,15 @@ async def test_transport_allows_only_frozen_change_and_approved_restore(tmp_path
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "option,value", [("P1", "1"), ("P2", "2"), ("P3", "1"), ("P8", "23.0"),
-                     ("P7", "26.0"), ("P7", "24.0")]
+    "option,value",
+    [
+        ("P1", "1"),
+        ("P2", "2"),
+        ("P3", "1"),
+        ("P8", "23.0"),
+        ("P7", "26.0"),
+        ("P7", "24.0"),
+    ]
 )
 async def test_other_controls_are_denied_before_network(tmp_path, option, value):
     raw = device()
@@ -263,7 +270,7 @@ async def test_concurrent_control_entries_consume_only_first_attempt(tmp_path):
         try:
             async with gateway_obj.request("POST", ENDPOINT, params=AUTH, json=request):
                 return True
-        except (LabStopped, PermissionError):
+        except LabStopped, PermissionError:
             return False
 
     outcomes = await asyncio.gather(send(), send())
