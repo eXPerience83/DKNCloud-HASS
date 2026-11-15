@@ -327,9 +327,7 @@ async def test_ambiguous_ordinary_preset_requests_readback_without_claiming_succ
     manager.request_recovery.assert_called_once_with("unit-1")
     assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
     assert not bucket.get("sleep_exit_pending")
-    assert entity.preset_mode == (
-        "home" if initial_scenary == "occupied" else "away"
-    )
+    assert entity.preset_mode == ("home" if initial_scenary == "occupied" else "away")
     entity.async_write_ha_state.assert_not_called()
 
 
@@ -370,6 +368,48 @@ async def test_ordinary_preset_timeout_without_manager_uses_legacy_refresh(
         hass, entity.coordinator, entry_id="climate-entry"
     )
     assert entity.preset_mode == "home"
+
+
+@pytest.mark.parametrize("unload_status", ["removed", "closing"])
+async def test_late_ordinary_preset_failure_does_not_recreate_unloaded_entry(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    unload_status: str,
+) -> None:
+    """A late HTTP error after unload must not start fresh recovery work."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    manager = Mock()
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = manager
+
+    async def delayed_put(_device_id: str, _payload: dict[str, Any]) -> None:
+        started.set()
+        await release.wait()
+        raise TimeoutError("PUT response lost after unload")
+
+    api.put_device_fields.side_effect = delayed_put
+    task = asyncio.create_task(entity.async_set_preset_mode("away"))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        if unload_status == "removed":
+            hass.data[DOMAIN].pop("climate-entry")
+        else:
+            bucket["closing"] = True
+    finally:
+        release.set()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(task, timeout=3)
+
+    manager.request_recovery.assert_not_called()
+    climate_module.schedule_post_write_refresh.assert_not_called()
+    if unload_status == "removed":
+        assert "climate-entry" not in hass.data[DOMAIN]
+    else:
+        assert bucket["closing"] is True
 
 
 async def test_climate_exposes_sleep_overdue_as_reported_diagnostic(
