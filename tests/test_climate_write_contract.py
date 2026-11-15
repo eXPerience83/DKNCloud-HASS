@@ -411,9 +411,6 @@ async def test_late_ordinary_preset_failure_does_not_recreate_unloaded_entry(
     else:
         assert bucket["closing"] is True
 
-
-
-
 @pytest.mark.parametrize("unload_status", ["removed", "closing", "replaced"])
 async def test_late_successful_ordinary_preset_does_not_publish_after_unload(
     hass: HomeAssistant,
@@ -454,7 +451,9 @@ async def test_late_successful_ordinary_preset_does_not_publish_after_unload(
     if unload_status == "removed":
         assert "climate-entry" not in hass.data[DOMAIN]
     elif unload_status == "replaced":
-        hass.data[DOMAIN]["climate-entry"]["sync_manager"].request_recovery.assert_not_called()
+        hass.data[DOMAIN]["climate-entry"][
+            "sync_manager"
+        ].request_recovery.assert_not_called()
 
 
 @pytest.mark.parametrize("unload_status", ["removed", "closing"])
@@ -471,7 +470,9 @@ async def test_unload_after_first_rearm_put_prevents_second_put(
     bucket = hass.data[DOMAIN]["climate-entry"]
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_first_put(_device_id: str, _payload: dict[str, Any], **_kwargs: Any) -> None:
+    async def held_first_put(
+        _device_id: str, _payload: dict[str, Any], **_kwargs: Any
+    ) -> None:
         entered.set()
         await release.wait()
 
@@ -510,7 +511,9 @@ async def test_late_second_rearm_failure_does_not_restore_unloaded_entry(
     bucket["sync_manager"] = manager
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def second_put(_device_id: str, _payload: dict[str, Any], **_kwargs: Any) -> None:
+    async def second_put(
+        _device_id: str, _payload: dict[str, Any], **_kwargs: Any
+    ) -> None:
         if api.put_device_fields.await_count == 2:
             entered.set()
             await release.wait()

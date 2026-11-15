@@ -216,9 +216,6 @@ async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
     scheduled.assert_called_once_with(hass, entity.coordinator, entry_id="entry")
     assert entity.native_value == 30
 
-
-
-
 @pytest.mark.parametrize(
     ("entity_cls", "field", "initial", "value"),
     [
@@ -284,8 +281,10 @@ async def test_replaced_entry_ignores_late_ambiguous_number_put(
 ) -> None:
     """An old PUT error cannot request recovery on the reloaded entry."""
     entity, api = _make_entity(
-        hass, dummy_coordinator_factory, DKNSleepTimeNumber,
-        device_data={"sleep_time": 30}
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30},
     )
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -319,8 +318,10 @@ async def test_queued_number_put_does_not_send_after_unload(
     from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
 
     entity, api = _make_entity(
-        hass, dummy_coordinator_factory, DKNSleepTimeNumber,
-        device_data={"sleep_time": 30}
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30},
     )
     bucket = hass.data[DOMAIN]["entry"]
     lock = acquire_device_lock(hass, "entry", "dev1")
