@@ -56,3 +56,49 @@ def test_isolated_ha_put_and_restore_with_read_window(
         e["kind"] in {"get_admitted", "info_admitted"} for e in events[first:end]
     )
     assert "fake" not in result.stdout and "synthetic-password" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("experiment", "mode", "expected_probe"),
+    [
+        ("info-first", "synthetic-put-after-info", None),
+        ("get-first", "synthetic-put-after-info", 19),
+        ("get-first", "synthetic-put-stale-get", 18),
+        ("spontaneous", "synthetic-put", None),
+    ],
+)
+def test_independent_ha_read_experiments(tmp_path, experiment, mode, expected_probe):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_supervised_ha.py",
+            "--mode",
+            mode,
+            "--field",
+            "min_temp_unoccupied",
+            "--experiment",
+            experiment,
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env={"TMPDIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=320,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    (tmp_path / "result.json").write_text(json.dumps(report, indent=2))
+    assert report["real"] is False
+    assert report["experiment"] == experiment
+    assert report["session_passed"] and report["put_without_lab_reads"]
+    assert report["info_phase_without_get"]
+    assert report["restoration_snapshot_confirmed"]
+    assert report["backend_control_writes"] == 2
+    assert report["pending_http_tasks"] == 0 and report["session_closed"]
+    assert report["temporary_configuration_removed"] and report["storage_files"] == 0
+    if expected_probe is not None:
+        assert report["get_first_isolated"]
+        assert report["get_first_raw_value"] == expected_probe
+        assert report["get_first_push"] is False
+    assert report["put_push_during_isolation"] is (experiment == "spontaneous")
+    assert "synthetic-token" not in result.stdout

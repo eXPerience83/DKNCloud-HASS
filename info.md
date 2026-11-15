@@ -222,6 +222,15 @@ rate-limit pauses remain authoritative.
   - `scenary` is sent **nested** under `device`.
   - Most other “simple fields” are sent **root-level** (top-level JSON).
 
+**Observed delivery, not a backend guarantee (#197):** one supervised real
+`min_temp_unoccupied` PUT returned 204, with no matching Pusher field during
+20 seconds after its response without further LAB INFO/GET. A matching event
+arrived about 4.117 seconds after INFO resumed and before the next GET. The full
+nominal isolation failed because a budget-queued INFO escaped before the PUT.
+Other clients were not excluded. This does not prove INFO causality, exclude an
+independent backend refresh, establish scene/Sleep behavior, or justify changing
+recovery/cadence. See the [anonymous trace and follow-up protocols](docs/lab-evidence/197-info-pusher-get.md).
+
 #### Canonical `PUT` examples
 
 **Scene (scenary)**

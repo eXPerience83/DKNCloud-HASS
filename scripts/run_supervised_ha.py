@@ -46,6 +46,7 @@ def main():
             "synthetic-put",
             "synthetic-put-after-info",
             "synthetic-put-off",
+            "synthetic-put-stale-get",
             "observe",
             "put",
         ],
@@ -59,6 +60,16 @@ def main():
         choices=["scenary", "min_temp_unoccupied"],
         default="scenary",
         help="Only selects the local synthetic PUT field; real field is frozen in the grant",
+    )
+    parser.add_argument(
+        "--experiment",
+        choices=("info-first", "get-first", "spontaneous"),
+        help="Synthetic only; real protocol is frozen in the grant",
+    )
+    parser.add_argument(
+        "--fixture-wall-clock",
+        action="store_true",
+        help="Synthetic only: cross overlay/watchdog deadlines without compressed waits",
     )
     args = parser.parse_args()
     if args.digest:
@@ -81,6 +92,7 @@ def main():
         "synthetic-put",
         "synthetic-put-after-info",
         "synthetic-put-off",
+        "synthetic-put-stale-get",
     }
     if fixture:
         if args.grant or args.session_dir:
@@ -100,7 +112,13 @@ def main():
         }
         if grant["mode"] == "put":
             grant["field"] = args.field
+        if args.experiment:
+            if grant["mode"] != "put" or args.field != "min_temp_unoccupied":
+                parser.error("Experiment requires a synthetic minimum-field PUT")
+            grant["experiment"] = args.experiment
     else:
+        if args.experiment or args.fixture_wall_clock:
+            parser.error("Real experiment is frozen in the owner grant")
         if not args.grant or not args.session_dir or not os.environ.get("TMPDIR"):
             parser.error(
                 "Real sessions require a private grant, session dir and TMPDIR"
@@ -157,8 +175,12 @@ def main():
                 "grant": grant,
                 "directory": str(folder.resolve()),
                 "synthetic": fixture,
-                "push_on_info": args.mode == "synthetic-put-after-info",
-                "fixture_off": args.mode == "synthetic-put-off",
+                "push_on_info": args.mode
+                in {"synthetic-put-after-info", "synthetic-put-stale-get"},
+                "stale_get": args.mode == "synthetic-put-stale-get",
+                "fixture_wall_clock": args.fixture_wall_clock,
+                "fixture_off": args.mode == "synthetic-put-off"
+                or bool(args.experiment),
             },
         )
         environment = {

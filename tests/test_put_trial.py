@@ -150,19 +150,20 @@ def test_put_preserves_original_off_power_without_requiring_wake():
 
 async def test_read_window_drains_pending_reads_and_releases_waiters():
     window = ReadWindow()
-    await window.enter()
+    assert window.acquire("info")
     pause = asyncio.create_task(window.pause())
     await asyncio.sleep(0)
-    waiter = asyncio.create_task(window.enter())
+    waiter = asyncio.create_task(window.wait("info"))
     await asyncio.sleep(0)
     assert not pause.done() and not waiter.done()
-    window.leave()
+    window.leave("info")
     await pause
     assert not waiter.done()
-    window.resume()
+    window.resume("info")
     await waiter
-    window.leave()
-    assert window.active == 0 and window.idle.is_set()
+    assert window.acquire("info")
+    window.leave("info")
+    assert window._active["info"] == 0 and window._idle["info"].is_set()
 
 
 @pytest.mark.parametrize("failure", ["429", "timeout", "cancel"])
@@ -213,3 +214,13 @@ async def test_authentic_api_put_never_replays_uncertain_or_rejected_attempt(
         await gateway.protected.session.close()
         await backend.close()
         book.close()
+
+
+def test_effective_scene_change_fences_a_frozen_put_plan():
+    raw = device() | {"power": "0"}
+    plan = PutPlan.from_device(
+        raw, device_id="device", installation_id="site", field="min_temp_unoccupied"
+    )
+    raw["effective_scenary"] = "sleep"
+    with pytest.raises(PermissionError):
+        plan.check_device(raw, restoring=False)

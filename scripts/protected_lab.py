@@ -89,17 +89,29 @@ class LabSupervisor:
         if time.monotonic() >= self.deadline:
             self.abort("duration")
 
-    async def admit(self, category):
-        async with self._lock:
-            self.check()
-            if category == "state":
-                await asyncio.sleep(max(0, self._next_state - time.monotonic()))
+    async def admit(self, category, *, window=None, operation=None):
+        # A blocked read never owns the budget lock. Recheck after spacing:
+        # pause may have happened while this request was already queued.
+        while True:
+            if window is not None:
+                await window.wait(operation)
+            async with self._lock:
                 self.check()
-            if self.counts[category] >= self.limits[category]:
-                self.abort("quota")
-            self.counts[category] += 1
-            if category == "state":
-                self._next_state = time.monotonic() + self.spacing
+                if window is not None and window.paused(operation):
+                    continue
+                if category == "state":
+                    await asyncio.sleep(max(0, self._next_state - time.monotonic()))
+                    self.check()
+                if window is not None and window.paused(operation):
+                    continue
+                if self.counts[category] >= self.limits[category]:
+                    self.abort("quota")
+                if window is not None and not window.acquire(operation):
+                    continue
+                self.counts[category] += 1
+                if category == "state":
+                    self._next_state = time.monotonic() + self.spacing
+                return window is not None
 
     def response(self, status):
         if status in {401, 429} or 300 <= status < 400:
@@ -145,20 +157,13 @@ class GuardedContext:
 
     async def __aenter__(self):
         owner = self.gateway.supervisor
-        window = self.gateway.read_window
-        if window is not None and self.operation in {"info", "get"}:
-            await window.enter()
-            self.read_lease = True
-        try:
-            if self.category:
-                await owner.admit(self.category)
-            else:
-                owner.socket()
-        except BaseException:
-            if self.read_lease:
-                window.leave()
-                self.read_lease = False
-            raise
+        window = self.gateway.read_window if self.operation in {"info", "get"} else None
+        if self.category:
+            self.read_lease = await owner.admit(
+                self.category, window=window, operation=self.operation
+            )
+        else:
+            owner.socket()
         entered = False
         token = _NETWORK_LEASE.set(self.gateway)
         try:
@@ -174,7 +179,11 @@ class GuardedContext:
                         self.gateway.protected.policy, "control_result", None
                     ):
                         mark(accepted=result.status < 300)
-                if timeline is not None and self.operation in {"info", "control"}:
+                if timeline is not None and self.operation in {
+                    "info",
+                    "control",
+                    "get",
+                }:
                     timeline.add(
                         f"{self.operation}_result",
                         source="transport",
@@ -205,6 +214,30 @@ class GuardedContext:
                         value = None
                     if not isinstance(value, (dict, list)):
                         owner.abort("invalid_response")
+                    if self.operation == "get" and timeline is not None:
+                        rows = (
+                            value.get("devices") if isinstance(value, dict) else value
+                        )
+                        if isinstance(rows, list):
+                            for row in rows:
+                                if (
+                                    isinstance(row, dict)
+                                    and str(row.get("id"))
+                                    in self.gateway.protected.policy.devices
+                                ):
+                                    for field in (
+                                        "min_temp_unoccupied",
+                                        "scenary",
+                                        "cold_consign",
+                                        "heat_consign",
+                                    ):
+                                        if row.get(field) is not None:
+                                            timeline.add(
+                                                "get_received",
+                                                field=field,
+                                                value=row[field],
+                                                source="get",
+                                            )
                     if observe := getattr(
                         self.gateway.protected.policy, "observe", None
                     ):
@@ -226,7 +259,7 @@ class GuardedContext:
                 else result
             )
         except BaseException as error:
-            if self.context is not None and not entered and self.operation == "control":
+            if not entered and self.operation == "control":
                 if mark := getattr(
                     self.gateway.protected.policy, "control_result", None
                 ):
@@ -248,13 +281,13 @@ class GuardedContext:
                     await self.context.__aexit__(None, None, None)
                 finally:
                     if self.read_lease:
-                        window.leave()
+                        window.leave(self.operation)
                         self.read_lease = False
             raise
         finally:
             _NETWORK_LEASE.reset(token)
             if not entered and self.read_lease:
-                window.leave()
+                window.leave(self.operation)
                 self.read_lease = False
 
     async def __aexit__(self, *args):
@@ -265,7 +298,7 @@ class GuardedContext:
             return await self.context.__aexit__(*args)
         finally:
             if self.read_lease:
-                self.gateway.read_window.leave()
+                self.gateway.read_window.leave(self.operation)
                 self.read_lease = False
 
 
@@ -307,7 +340,9 @@ class LaboratoryGateway:
     def __init__(self, protected, supervisor, *, timeline=None):
         self.protected, self.supervisor = protected, supervisor
         self.timeline = timeline
-        self.read_window = None
+        from scripts.put_trial import ReadWindow
+
+        self.read_window = ReadWindow()
         self.observations = dict(
             websocket_established=0,
             get_received=0,

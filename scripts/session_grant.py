@@ -57,6 +57,7 @@ def validate_grant(value: dict, root: Path) -> dict:
             "installation_id",
         }
         | ({"field"} if value.get("mode") == "put" else set())
+        | ({"experiment"} if "experiment" in value else set())
     ):
         raise PermissionError("Invalid session grant fields")
     if (
@@ -67,6 +68,12 @@ def validate_grant(value: dict, root: Path) -> dict:
         or value["source_digest"] != source_digest(root)
     ):
         raise PermissionError("Session grant not approved for this source")
+    if "experiment" in value and (
+        value["mode"] != "put"
+        or value["field"] != "min_temp_unoccupied"
+        or value["experiment"] not in {"info-first", "get-first", "spontaneous"}
+    ):
+        raise PermissionError("Independent-read experiments require the minimum field")
     expiry = datetime.fromisoformat(value["expires_at"])
     remaining = (expiry - datetime.now(UTC)).total_seconds()
     if not 0 < remaining <= 3600:
@@ -145,6 +152,7 @@ def write_private(path: Path, value: dict) -> None:
 
 def approval_values(grant: dict, plan) -> dict:
     return {
+        **({"experiment": grant["experiment"]} if "experiment" in grant else {}),
         "field": plan.field,
         "baseline_power": getattr(plan, "power", "1"),
         "baseline_mode": plan.mode,

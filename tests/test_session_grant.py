@@ -85,6 +85,7 @@ def test_runner_refuses_unapproved_session_before_reading_credentials(
 
     value = grant(tmp_path)
     value["approved"] = False
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     path = tmp_path / "grant.json"
     write_private(path, value)
     monkeypatch.setattr(
@@ -107,3 +108,19 @@ def test_runner_refuses_unapproved_session_before_reading_credentials(
     )
     with pytest.raises(PermissionError):
         run_supervised_ha.main()
+
+
+@pytest.mark.parametrize("experiment", ["info-first", "get-first", "spontaneous"])
+def test_experiment_is_bound_to_exact_minimum_field_approval(tmp_path, experiment):
+    value = grant(tmp_path) | {"field": "min_temp_unoccupied", "experiment": experiment}
+    assert validate_grant(value, tmp_path)["experiment"] == experiment
+    plan = PutPlan("device", "site", "1", "min_temp_unoccupied", 16, 17, power="0")
+    path = tmp_path / "approval.json"
+    approval = {**approval_values(value, plan), "approved": True}
+    write_private(path, approval | {"experiment": "different"})
+    with pytest.raises(PermissionError):
+        check_plan_approval(path, value, plan)
+    write_private(path, approval)
+    assert check_plan_approval(path, value, plan)
+    with pytest.raises(PermissionError):
+        validate_grant(value | {"field": "scenary"}, tmp_path)

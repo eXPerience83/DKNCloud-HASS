@@ -108,6 +108,10 @@ class SyntheticBackend:
         self.scenary = "occupied"
         self.min_temp_unoccupied = 18
         self.pending_put_patch = None
+        self.trial_stale_get = False
+        self.snapshot_minimum = self.min_temp_unoccupied
+        self.put_response_wait = None
+        self.info_status = 201
 
     async def publish_put(self):
         if self.pending_put_patch is not None:
@@ -212,7 +216,9 @@ class SyntheticBackend:
                         "name": "Synthetic",
                         "mac": "02:00:00:00:00:01",
                         "scenary": self.scenary,
-                        "min_temp_unoccupied": self.min_temp_unoccupied,
+                        "min_temp_unoccupied": self.snapshot_minimum
+                        if self.trial_stale_get
+                        else self.min_temp_unoccupied,
                         "power": self.power,
                         "mode": "1",
                         "modes": "11111",
@@ -257,11 +263,16 @@ class SyntheticBackend:
             self.pending_put_patch = {"id": "device", field: value}
             if not self.trial_push_on_info:
                 await self.publish_put()
+            if self.put_response_wait is not None:
+                await self.put_response_wait.wait()
             return web.Response(status=204)
         if request.path == "/events" and request.method == "POST":
             payload = await request.json()
             event = payload.get("event", {})
             if event.get("cgi") == "infomaquina":
+                if self.info_status != 201:
+                    return web.json_response({}, status=self.info_status)
+                self.snapshot_minimum = self.min_temp_unoccupied
                 if self.trial_push_on_info:
                     await self.publish_put()
                 return self.event_response or web.json_response({}, status=201)

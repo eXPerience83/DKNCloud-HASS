@@ -6,7 +6,8 @@ import time
 from homeassistant.core import callback
 from homeassistant.helpers import entity_registry as er
 
-from scripts.put_trial import BoundedPutPolicy, ReadWindow
+from scripts.put_trial import BoundedPutPolicy
+from scripts.read_experiment import REQUIRED_SECONDS, observe_reads, snapshot_confirmed
 from scripts.session_grant import approval_values, check_plan_approval, write_private
 from scripts.setpoint_trial import SingleUseTrialJournal
 
@@ -45,8 +46,11 @@ async def execute_put_trial(
         deadline=gateway.supervisor.deadline,
     )
     gateway.protected.policy = policy
-    window = ReadWindow()
-    gateway.read_window = window
+    window = gateway.read_window
+    experiment = grant.get("experiment")
+    if experiment and (plan.field != "min_temp_unoccupied" or plan.power != "0"):
+        journal.close()
+        raise PermissionError("Read experiments require the OFF/Home minimum field")
     domain = "climate" if plan.field == "scenary" else "number"
     unique = (
         f"{plan.device_id}_climate"
@@ -93,48 +97,91 @@ async def execute_put_trial(
             for x in records
         )
 
+    probe_task = None
+
+    async def probe():
+        nonlocal probe_task
+        before = observations["get_applied"]
+        probe_task = asyncio.create_task(manager.recover(plan.device_id))
+        while observations["get_applied"] <= before:
+            if probe_task.done():
+                await probe_task
+                raise RuntimeError("GET probe supplied no applied snapshot")
+            await asyncio.sleep(0.05)
+
+    async def confirmed_snapshot(restoring):
+        # Do not mistake an optimistic/coordinator value for a received GET field.
+        first = len(timeline.export())
+        before = observations["get_applied"]
+        await manager.recover(plan.device_id)
+        expected = plan.modified if restoring else plan.original
+        if (
+            not snapshot_confirmed(
+                timeline.export()[first:],
+                plan.field,
+                expected,
+                state_value=manager.state.data[plan.device_id].get(plan.field),
+            )
+            or observations["get_applied"] <= before
+        ):
+            raise RuntimeError(
+                "Fresh raw GET and raw manager state did not corroborate the expected value"
+            )
+        plan.check_device(manager.state.data[plan.device_id], restoring=restoring)
+        return True
+
     try:
         await window.pause()  # Drain prior reads before starting the isolated window.
-        if gateway.supervisor.deadline - time.monotonic() < 100:
+        required = REQUIRED_SECONDS[experiment] if experiment else 100
+        if gateway.supervisor.deadline - time.monotonic() < required:
             gateway.supervisor.abort("insufficient_restoration_time")
         timeline.add("window_started", source="lab")
         start = len(timeline.export())
         policy.arm_change()
         await put(plan.modified)
-        await asyncio.sleep(5 if fixture else 20)
-        isolated = timeline.export()[start:]
+        if experiment:
+            await observe_reads(
+                window,
+                gateway,
+                timeline,
+                report,
+                plan,
+                experiment,
+                probe,
+                fixture=fixture and not session.get("fixture_wall_clock", False),
+            )
+        else:
+            await asyncio.sleep(5 if fixture else 20)
+            timeline.add("window_ended", source="lab")
+            before_info = gateway.observations["information_accepted"]
+            timeline.add("info_resumed", source="lab")
+            window.resume()
+            while gateway.observations["information_accepted"] < before_info + 2:
+                await asyncio.sleep(0.05)
+        records = timeline.export()
+        end = next(
+            i
+            for i in range(start, len(records))
+            if records[i]["kind"] == "window_ended"
+        )
+        isolated = records[start:end]
         report["put_without_lab_reads"] = not any(
             x["kind"] in {"info_admitted", "get_admitted"} for x in isolated
         )
         report["put_push_during_isolation"] = push_seen(plan.modified, isolated)
-        timeline.add("window_ended", source="lab")
-        before_info = gateway.observations["information_accepted"]
-        timeline.add("info_resumed", source="lab")
-        resumed_at = len(timeline.export())
-        window.resume()
-        while gateway.observations["information_accepted"] < before_info + 2:
-            await asyncio.sleep(0.05)
-        report["put_push_after_resume"] = push_seen(
-            plan.modified, timeline.export()[resumed_at:]
-        )
+        report["put_push_after_resume"] = push_seen(plan.modified, records[end + 1 :])
         report["put_push_received"] = (
             report["put_push_during_isolation"] or report["put_push_after_resume"]
         )
-        before_get = observations["get_applied"]
-        await manager.recover(plan.device_id)
-        snapshot = observations["get_applied"] > before_get
-        plan.check_device(manager.state.data[plan.device_id], restoring=True)
+        snapshot = await confirmed_snapshot(restoring=True)
         policy.arm_restoration(
             confirmed_by_push=report["put_push_received"],
             confirmed_by_snapshot=snapshot,
             owner_approved=True,
         )
         await put(plan.original)
-        before_get = observations["get_applied"]
-        await manager.recover(plan.device_id)
-        plan.check_device(manager.state.data[plan.device_id], restoring=False)
-        report["restoration_snapshot_confirmed"] = (
-            observations["get_applied"] > before_get
+        report["restoration_snapshot_confirmed"] = await confirmed_snapshot(
+            restoring=False
         )
         report["put_field"] = plan.field
         report["put_payload"] = plan.exact_payload(restoring=False)
@@ -144,7 +191,7 @@ async def execute_put_trial(
             and not policy._revoked
         )
     finally:
-        if not window.open.is_set():
+        if window.paused("info") or window.paused("get"):
             timeline.add("window_ended", source="lab")
             timeline.add(
                 "trial_stopped",
@@ -156,6 +203,9 @@ async def execute_put_trial(
             "restoration_snapshot_confirmed", False
         )
         window.resume()
+        if probe_task is not None:
+            probe_task.cancel()
+            await asyncio.gather(probe_task, return_exceptions=True)
         remove_listener()
         journal.close()
         report["trial_timeline"] = timeline.export()

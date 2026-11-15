@@ -110,14 +110,32 @@ and revocation of restoration. An error/ambiguous result stops the experiment;
 ask the owner to verify and decide how to restore, rather than replaying it.
 Private claim/attempt/plan data survives for that intervention.
 
+## Independent INFO / GET experiments
+
+The fixed five-session follow-up and anonymous previous real trace are tracked in
+[the experiment report](lab-evidence/197-info-pusher-get.md). The optional grant
+`experiment` binds `info-first`, `get-first` or `spontaneous` to a minimum-field
+PUT, an OFF/Home baseline and its separate exact numeric approval. Each session
+still allows only two PUT attempts. Real waits are 45 s, 45 s plus one GET and
+20 s observation, or 80 s respectively, followed by INFO-only observation before
+GET verification/restoration. No previous physical permission is reused.
+
+For offline validation, add `--experiment get-first --field min_temp_unoccupied`
+to a synthetic mode. `synthetic-put-stale-get` holds its GET snapshot old until
+INFO. `--fixture-wall-clock` is synthetic-only and retains full observation waits
+to exercise long isolation across overlay-expiry and quiet-age thresholds.
+
 ## Read isolation and evidence
 
-The LAB-only `ReadWindow` drains already-started HTTP reads, then defers new
-INFO/GET transport contexts. It neither closes Pusher nor changes production
+The LAB-only `ReadWindow` exists before any scheduler work. Independent INFO and
+GET gates drain delegated HTTP reads and defer already queued or new reads at
+atomic transport admission after budget spacing. A single GET permit cannot be
+consumed by two competing refreshes. It neither closes Pusher nor changes production
 SyncManager/scheduler code. This also holds post-PUT refresh and watchdog GETs
 so they cannot contaminate the isolated window. Deferred operations resume
 through the same ordinary request budget; no extra INFO is injected.
 
+The original legacy profile remains available for regression coverage.
 After approval, check enough time remains for restoration. Pause reads, log the
 window start, invoke one authentic service PUT, and observe for **20 seconds**
 following its HTTP result in real mode (**5 seconds** in synthetic fixtures).
@@ -128,7 +146,7 @@ or shutdown handler sends an automatic restoration PUT.
 
 The same monotonic clock records last INFO before PUT, control invocation and
 transport admission, HTTP status/result, actual decoded Pusher field/value before
-merge, applied GET values, coordinator completion, optimistic overlay calls and
+merge, raw GET fields separately from actually applied GET values, coordinator completion, optimistic overlay calls and
 HA state publication. Transport admission precedes aiohttp I/O; it is not a
 packet capture or an exact server timestamp. Pusher can arrive before HTTP ACK.
 A public report contains only allowlisted status/timing/field/value data and

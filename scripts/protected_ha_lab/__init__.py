@@ -73,6 +73,7 @@ async def async_setup(hass, config):
             if grant["mode"] == "put":
                 backend.trial_put_field = grant["field"]
                 backend.trial_push_on_info = session.get("push_on_info", False)
+                backend.trial_stale_get = session.get("stale_get", False)
             os.environ["REQUESTS_CA_BUNDLE"] = str(
                 Path(backend.directory) / "synthetic-cert.pem"
             )
@@ -238,7 +239,9 @@ async def async_setup(hass, config):
     async def observed_read(manager, *args, **kwargs):
         result = await original_read(manager, *args, **kwargs)
         if timeline is not None:
-            if frozen_plan is not None:
+            if frozen_plan is not None and frozen_plan.field in manager.touched.get(
+                device, set()
+            ):
                 timeline.add(
                     "get_applied",
                     field=frozen_plan.field,
