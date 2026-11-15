@@ -6,8 +6,6 @@ These never start a live laboratory or authorize real destinations.
 import asyncio
 import json
 import stat
-from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
@@ -218,6 +216,7 @@ async def test_payload_freezes_before_budget_wait_and_revalidates_live_state(tmp
     book.close()
 
     other_root = tmp_path / "other"
+    other_root.mkdir()
     raw2 = device()
     gateway2, policy2, book2, network2 = gateway(raw2, other_root)
     policy2.arm_change()
