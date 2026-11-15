@@ -60,9 +60,11 @@ class TrialTimeline:
         source: str | None = None,
         result: str | None = None,
     ) -> None:
-        if kind not in _ALLOWED or (
-            source is not None and source not in _SOURCES
-        ) or (result is not None and result not in _RESULTS):
+        if (
+            kind not in _ALLOWED
+            or (source is not None and source not in _SOURCES)
+            or (result is not None and result not in _RESULTS)
+        ):
             raise ValueError("Unapproved timeline event")
         record = {"kind": kind, "elapsed_ms": (self._clock() - self._origin) / 1e6}
         if field is not None:
