@@ -105,9 +105,7 @@ async def test_synthetic_tls_backend_accepts_exactly_two_controls_and_records_in
             "control_admitted",
             "control_result",
         ]
-        records = [
-            json.loads(line) for line in journal.path.read_text().splitlines()
-        ]
+        records = [json.loads(line) for line in journal.path.read_text().splitlines()]
         assert [x["kind"] for x in records] == ["claim", "attempt", "attempt"]
     finally:
         journal.close()
