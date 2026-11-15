@@ -117,7 +117,6 @@ async def test_set_fan_mode_respects_heat_and_ventilation_alias(
     )
 
 
-
 @pytest.mark.parametrize(
     ("mode", "setter", "option", "key"),
     [
@@ -180,7 +179,6 @@ async def test_climate_known_unsent_setpoint_does_not_request_recovery(
         await entity.async_set_temperature(temperature=23)
 
     manager.request_recovery.assert_not_called()
-
 
 
 @pytest.mark.parametrize(
