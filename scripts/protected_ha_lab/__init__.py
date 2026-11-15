@@ -263,11 +263,22 @@ async def async_setup(hass, config):
 
                 policy.arm_change()
                 before_info = gateway.observations["information_accepted"]
+                first_event = len(timeline.export())
                 await set_temperature(frozen.modified)
-                for _ in range(400):
+
+                def observed_push(value, after):
+                    return any(
+                        item["kind"] == "pusher_received"
+                        and item.get("field") == frozen.field
+                        and item.get("value_c") == value
+                        for item in timeline.export()[after:]
+                    )
+
+                for _ in range(650):
                     if (
                         str(manager.state.data[device].get(frozen.field))
                         == f"{frozen.modified}.0"
+                        and observed_push(frozen.modified, first_event)
                         and gateway.observations["information_accepted"]
                         >= before_info + 2
                     ):
@@ -279,11 +290,13 @@ async def async_setup(hass, config):
                     )
 
                 policy.arm_restoration(confirmed_by_push=True, owner_approved=True)
+                restored_after = len(timeline.export())
                 await set_temperature(frozen.original)
                 for _ in range(100):
                     if (
                         str(manager.state.data[device].get(frozen.field))
                         == f"{frozen.original}.0"
+                        and observed_push(frozen.original, restored_after)
                     ):
                         break
                     await asyncio.sleep(0.05)
