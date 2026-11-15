@@ -219,6 +219,8 @@ class BoundedSetpointPolicy(ReadOnlyPolicy):
         self._next_slot = 1
         self._armed = False
         self._restoration_approved = False
+        self._first_accepted = False
+        self._revoked = False
 
     @staticmethod
     def _is_control(method: str, url: str, data: object) -> bool:
@@ -237,7 +239,12 @@ class BoundedSetpointPolicy(ReadOnlyPolicy):
         self._armed = True
 
     def arm_restoration(self, *, confirmed_by_push: bool, owner_approved: bool) -> None:
-        if self._next_slot != 2 or self._restoration_approved:
+        if (
+            self._next_slot != 2
+            or self._restoration_approved
+            or not self._first_accepted
+            or self._revoked
+        ):
             raise PermissionError("Trial restoration unavailable")
         if not (confirmed_by_push and owner_approved):
             raise PermissionError("Restoration requires telemetry and owner approval")
@@ -268,7 +275,11 @@ class BoundedSetpointPolicy(ReadOnlyPolicy):
             raise PermissionError("Trial change not armed")
         if stage == 2 and not self._restoration_approved:
             raise PermissionError("Trial restoration not armed")
-        if stage not in {1, 2} or time.monotonic() >= self.deadline:
+        if (
+            stage not in {1, 2}
+            or self._revoked
+            or time.monotonic() >= self.deadline
+        ):
             raise PermissionError("Trial control exhausted")
         expected = self.plan.exact_payload(restoring=stage == 2)
         if json != expected or set(json["event"]) != {
@@ -297,6 +308,13 @@ class BoundedSetpointPolicy(ReadOnlyPolicy):
             option=self.plan.option,
             value=self.plan.exact_payload(restoring=stage == 2)["event"]["value"],
         )
+
+    def control_result(self, *, accepted: bool) -> None:
+        """Record the response once; failed/ambiguous control revokes slot two."""
+        if not accepted:
+            self._revoked = True
+        elif self._next_slot == 2:
+            self._first_accepted = True
 
     @staticmethod
     def freeze_control_kwargs(method: str, url: str, kwargs: dict) -> dict:
