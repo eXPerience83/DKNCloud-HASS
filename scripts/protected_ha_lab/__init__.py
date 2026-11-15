@@ -293,10 +293,10 @@ async def async_setup(hass, config):
                 restored_after = len(timeline.export())
                 await set_temperature(frozen.original)
                 for _ in range(100):
-                    if (
-                        str(manager.state.data[device].get(frozen.field))
-                        == f"{frozen.original}.0"
-                        and observed_push(frozen.original, restored_after)
+                    if str(
+                        manager.state.data[device].get(frozen.field)
+                    ) == f"{frozen.original}.0" and observed_push(
+                        frozen.original, restored_after
                     ):
                         break
                     await asyncio.sleep(0.05)
