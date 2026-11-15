@@ -45,6 +45,7 @@ def main():
             "synthetic-observe",
             "synthetic-put",
             "synthetic-put-after-info",
+            "synthetic-put-off",
             "observe",
             "put",
         ],
@@ -79,6 +80,7 @@ def main():
         "synthetic-observe",
         "synthetic-put",
         "synthetic-put-after-info",
+        "synthetic-put-off",
     }
     if fixture:
         if args.grant or args.session_dir:
@@ -156,6 +158,7 @@ def main():
                 "directory": str(folder.resolve()),
                 "synthetic": fixture,
                 "push_on_info": args.mode == "synthetic-put-after-info",
+                "fixture_off": args.mode == "synthetic-put-off",
             },
         )
         environment = {

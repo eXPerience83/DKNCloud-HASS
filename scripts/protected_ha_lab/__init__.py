@@ -68,6 +68,8 @@ async def async_setup(hass, config):
             backend = await SyntheticBackend(hass.config.config_dir).start()
             backend.trial_controls = grant["mode"] == "control"
             backend.event_kind = "setpoint_trial"
+            if session.get("fixture_off"):
+                backend.power = "0"
             if grant["mode"] == "put":
                 backend.trial_put_field = grant["field"]
                 backend.trial_push_on_info = session.get("push_on_info", False)
@@ -193,7 +195,10 @@ async def async_setup(hass, config):
             ):
                 timeline.record_push_patch(patch, expected_field=field)
             if frozen_plan is not None and (
-                ("power" in patch and str(patch["power"]) != "1")
+                (
+                    "power" in patch
+                    and str(patch["power"]) != getattr(frozen_plan, "power", "1")
+                )
                 or ("mode" in patch and str(patch["mode"]) != frozen_plan.mode)
                 or (
                     "scenary" in patch

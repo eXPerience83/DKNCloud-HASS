@@ -182,7 +182,7 @@ class SyntheticBackend:
                                     "id": "other"
                                     if self.event_kind == "wrong_device"
                                     else "device",
-                                    "power": "1"
+                                    "power": self.power
                                     if self.event_kind == "setpoint_trial"
                                     else "0",
                                     **(

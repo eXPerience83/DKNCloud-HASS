@@ -14,6 +14,7 @@ import pytest
         ("synthetic-put", "scenary", True),
         ("synthetic-put-after-info", "scenary", False),
         ("synthetic-put", "min_temp_unoccupied", True),
+        ("synthetic-put-off", "scenary", True),
     ],
 )
 def test_isolated_ha_put_and_restore_with_read_window(

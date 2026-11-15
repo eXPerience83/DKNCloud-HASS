@@ -42,7 +42,9 @@ the new read-only session entry point against loopback.
    and resynchronization, the LAB writes a private `plan.json`. Present the exact
    device, field, original, proposed value and effects to the owner. Only the
    matching private `approval.json` with `approved: true` arms the pair of PUTs.
-   Approval of the session alone never permits a physical control.
+   Approval of the session alone never permits a physical control. The exact plan
+   also binds the original power and HVAC mode; an OFF unit is never woken for
+   a PUT experiment.
 
 A private 0600 grant has exactly these fields (actual identities stay private):
 
@@ -90,7 +92,7 @@ manifest/translations and lock contract. The integration copy is byte-checked.
 
 ## PUT scope and possible effects
 
-- `scenary`: only raw and effective Home, powered ON, an ordinary supported mode,
+- `scenary`: only raw and effective Home, known unchanged power (ON or OFF), an ordinary supported mode,
   then exact `occupied → vacant → occupied`, using nested device payloads.
   Away can apply configured unoccupied limits and change demand or power. The
   owner must approve those effects. If this is unsuitable, do not run the scene

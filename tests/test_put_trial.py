@@ -124,7 +124,7 @@ def test_put_plan_requires_home_and_preserves_exact_restore(field):
 
 
 @pytest.mark.parametrize(
-    "updates", [{"scenary": "sleep"}, {"power": "0"}, {"min_temp_unoccupied": 23}]
+    "updates", [{"scenary": "sleep"}, {"power": "unknown"}, {"min_temp_unoccupied": 23}]
 )
 def test_inappropriate_put_state_denied(updates):
     raw = device() | updates
@@ -132,6 +132,20 @@ def test_inappropriate_put_state_denied(updates):
         PutPlan.from_device(
             raw, device_id="device", installation_id="site", field="min_temp_unoccupied"
         )
+
+
+def test_put_preserves_original_off_power_without_requiring_wake():
+    raw = device() | {"power": "0"}
+    plan = PutPlan.from_device(
+        raw, device_id="device", installation_id="site", field="scenary"
+    )
+    assert plan.power == "0"
+    plan.check_device(raw, restoring=False)
+    raw["scenary"] = "vacant"
+    plan.check_device(raw, restoring=True)
+    raw["power"] = "1"
+    with pytest.raises(PermissionError):
+        plan.check_device(raw, restoring=True)
 
 
 async def test_read_window_drains_pending_reads_and_releases_waiters():

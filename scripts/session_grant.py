@@ -146,6 +146,8 @@ def write_private(path: Path, value: dict) -> None:
 def approval_values(grant: dict, plan) -> dict:
     return {
         "field": plan.field,
+        "baseline_power": getattr(plan, "power", "1"),
+        "baseline_mode": plan.mode,
         "nonce": grant["nonce"],
         "source_digest": grant["source_digest"],
         "device_id": plan.device_id,

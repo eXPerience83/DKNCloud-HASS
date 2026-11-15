@@ -23,17 +23,20 @@ class PutPlan:
     minimum: Decimal | None = None
     maximum: Decimal | None = None
     option: str = "PUT"
+    power: str = "1"
 
     @classmethod
     def from_device(cls, device, *, device_id, installation_id, field):
         if (
             str(device.get("id")) != device_id
-            or str(device.get("power")) != "1"
+            or str(device.get("power")) not in {"0", "1"}
             or device.get("scenary") != "occupied"
             or device.get("effective_scenary") not in {None, "occupied"}
             or str(device.get("mode")) not in {"1", "2", "3", "5"}
         ):
-            raise ValueError("PUT baseline requires a scoped, powered Home device")
+            raise ValueError(
+                "PUT baseline requires a scoped Home device with known power"
+            )
         if field == "scenary":
             return cls(
                 device_id,
@@ -42,6 +45,7 @@ class PutPlan:
                 field,
                 "occupied",
                 "vacant",
+                power=str(device["power"]),
             )
         if field != "min_temp_unoccupied":
             raise ValueError("PUT field is not authorized")
@@ -59,6 +63,7 @@ class PutPlan:
             original + 1 if original < 22 else original - 1,
             Decimal(12),
             Decimal(22),
+            power=str(device["power"]),
         )
 
     def check_device(self, device, *, restoring):
@@ -69,7 +74,7 @@ class PutPlan:
             value = _whole(value)
         if (
             str(device.get("id")) != self.device_id
-            or str(device.get("power")) != "1"
+            or str(device.get("power")) != self.power
             or str(device.get("mode")) != self.mode
             or device.get("scenary") != scene
             or value != expected
