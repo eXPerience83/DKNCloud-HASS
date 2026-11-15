@@ -255,8 +255,10 @@ def request_ambiguous_control_readback(
     device_id: str,
 ) -> None:
     """Read back an uncertain command, never replay the possibly accepted write."""
-    bucket = _entry_bucket(hass, entry_id)
-    if bucket.get("closing") or hass.is_stopping:
+    # An in-flight write may fail after successful HA unload. Never create
+    # a fresh entry bucket or schedule a task for a removed config entry.
+    bucket = hass.data.get(DOMAIN, {}).get(entry_id)
+    if not bucket or bucket.get("closing") or hass.is_stopping:
         return
     if manager := bucket.get("sync_manager"):
         manager.request_recovery(device_id)
