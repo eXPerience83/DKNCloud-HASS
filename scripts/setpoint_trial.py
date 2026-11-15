@@ -275,11 +275,7 @@ class BoundedSetpointPolicy(ReadOnlyPolicy):
             raise PermissionError("Trial change not armed")
         if stage == 2 and not self._restoration_approved:
             raise PermissionError("Trial restoration not armed")
-        if (
-            stage not in {1, 2}
-            or self._revoked
-            or time.monotonic() >= self.deadline
-        ):
+        if stage not in {1, 2} or self._revoked or time.monotonic() >= self.deadline:
             raise PermissionError("Trial control exhausted")
         expected = self.plan.exact_payload(restoring=stage == 2)
         if json != expected or set(json["event"]) != {
