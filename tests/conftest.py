@@ -235,13 +235,17 @@ def protected_launcher(tmp_path, socket_enabled):
                 "--protected-case",
                 case,
                 "--process-timeout",
-                "140" if case in {"reconnect", "reconnect_no_events", "setpoint_trial"} else "75",
+                "140"
+                if case in {"reconnect", "reconnect_no_events", "setpoint_trial"}
+                else "75",
             ],
             cwd=root,
             env={"TMPDIR": str(tmp_path)},
             capture_output=True,
             text=True,
-            timeout=150 if case in {"reconnect", "reconnect_no_events", "setpoint_trial"} else 85,
+            timeout=150
+            if case in {"reconnect", "reconnect_no_events", "setpoint_trial"}
+            else 85,
         )
         assert result.returncode == 0, result.stdout + result.stderr
         summary = json.loads(result.stdout.splitlines()[0])
@@ -252,10 +256,13 @@ def protected_launcher(tmp_path, socket_enabled):
         if case == "setpoint_trial":
             assert summary["trial_passed"] is True
             assert summary["reason"] == "trial_finished"
-            assert sum(
-                event["kind"] == "control_admitted"
-                for event in summary["trial_timeline"]
-            ) == 2
+            assert (
+                sum(
+                    event["kind"] == "control_admitted"
+                    for event in summary["trial_timeline"]
+                )
+                == 2
+            )
         if case == "sleep":
             assert summary["observations"]["blocked_control_attempts"] >= 1
         assert summary["session_closed"] and summary["server_closed"]
