@@ -117,6 +117,78 @@ async def test_set_fan_mode_respects_heat_and_ventilation_alias(
     )
 
 
+
+@pytest.mark.parametrize(
+    ("initial_mode", "next_mode"),
+    [("1", HVACMode.HEAT), ("2", HVACMode.COOL)],
+)
+@pytest.mark.parametrize("setter", ["temperature", "fan"])
+async def test_mode_change_supersedes_queued_setpoint_and_fan_route(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    initial_mode: str,
+    next_mode: HVACMode,
+    setter: str,
+) -> None:
+    """No old P7/P8 or P3/P4 command may follow a newer completed P2."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode=initial_mode, power="1"
+    )
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    sent: list[str] = []
+
+    async def held_p2(payload: dict[str, Any]) -> None:
+        option = payload["event"]["option"]
+        sent.append(option)
+        if option == "P2":
+            entered.set()
+            await release.wait()
+
+    api.send_event.side_effect = held_p2
+    mode_change = asyncio.create_task(entity.async_set_hvac_mode(next_mode))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        if setter == "temperature":
+            queued = asyncio.create_task(entity.async_set_temperature(temperature=23))
+        else:
+            queued = asyncio.create_task(entity.async_set_fan_mode("high"))
+        await asyncio.sleep(0)
+        assert not queued.done()
+    finally:
+        release.set()
+
+    await asyncio.wait_for(asyncio.gather(mode_change, queued), timeout=3)
+    assert sent == ["P2"]
+
+
+async def test_fan_only_alias_change_while_queued_does_not_use_old_channel(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P2 alias 3->8 keeps FAN_ONLY but changes fan routing P3->P4."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode="3", power="1"
+    )
+    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+    await lock.acquire()
+    try:
+        task = asyncio.create_task(entity.async_set_fan_mode("high"))
+        await asyncio.sleep(0)
+        assert not task.done()
+        entity.coordinator.data["unit-1"]["mode"] = "8"
+    finally:
+        lock.release()
+
+    await asyncio.wait_for(task, timeout=3)
+    api.send_event.assert_not_awaited()
+
+
+
 @pytest.mark.parametrize("mode", ["5", "6", "7"])
 async def test_unsupported_modes_do_not_send_setpoint_or_fan_commands(
     hass: HomeAssistant,
