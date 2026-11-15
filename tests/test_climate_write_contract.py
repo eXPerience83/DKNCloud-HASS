@@ -925,6 +925,10 @@ async def test_uncertain_implicit_hvac_p1_requests_refresh_without_p2_replay(
 ) -> None:
     """A mode selection's failed P1 must request recovery before reaching P2."""
     entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
+        climate_module.schedule_post_write_refresh,
+    )
     api.send_event.side_effect = TimeoutError("P1 outcome unknown")
 
     with pytest.raises(TimeoutError):
