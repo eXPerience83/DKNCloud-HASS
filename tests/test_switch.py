@@ -386,7 +386,6 @@ async def test_missing_climate_service_delegates_to_direct_p1(
     assert entity._climate_entity_id is None
 
 
-
 @pytest.mark.parametrize(
     ("method", "initial_power", "value"),
     [("_fallback_turn_on", "0", 1), ("_fallback_turn_off", "1", 0)],
@@ -450,7 +449,6 @@ async def test_known_unsent_switch_fallback_p1_does_not_request_recovery(
         await entity._fallback_turn_off()
 
     manager.request_recovery.assert_not_called()
-
 
 
 @pytest.mark.asyncio
