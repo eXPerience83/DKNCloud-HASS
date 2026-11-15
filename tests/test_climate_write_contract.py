@@ -821,7 +821,6 @@ async def test_explicit_climate_power_intent_overrides_stale_backend_snapshot(
     assert entity._overlay_value("power", reported_power) == str(command)
 
 
-
 @pytest.mark.parametrize(
     ("method", "initial_power", "value"),
     [("async_turn_on", "0", 1), ("async_turn_off", "1", 0)],
@@ -895,7 +894,6 @@ async def test_known_unsent_p1_does_not_request_readback(
 
     manager.request_recovery.assert_not_called()
     climate_module.schedule_post_write_refresh.assert_not_called()
-
 
 
 @pytest.mark.parametrize(
