@@ -377,6 +377,13 @@ disarm that new selection. This does not establish physical timing.
 | P19   | Horizontal slats (cold)           | model-dependent         | Advanced; not implemented by the integration (for now) |
 | P20   | Horizontal slats (heat)           | model-dependent         | Advanced; not implemented by the integration (for now) |
 
+**Integration mode-route safety (not a backend guarantee):** Climate setpoint
+(P7/P8) and fan (P3/P4) requests recheck the selected HVAC mode after
+acquiring the shared per-device write lock. A queued request whose mode has
+changed is discarded instead of sending an option for the previous mode;
+the FAN_ONLY P2=3/8 telemetry alias is rechecked for fan-channel routing.
+This is local ordering, not physical-state confirmation.
+
 ---
 
 ## 4) HVAC Modes (P2) — Mapping, Classification, and Display Equivalences

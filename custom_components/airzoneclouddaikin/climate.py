@@ -523,6 +523,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            # A concurrent P2 write may have changed the mode while this
+            # request waited. Never route a stale COOL setpoint into HEAT.
+            if self.hvac_mode != mode or self._display_only_heat_cool_alias():
+                return
             if mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
                 await self._send_p_event("P7", f"{temp_int}.0")
                 optimistic_set(
@@ -623,6 +627,18 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            if (
+                self.hvac_mode != mode
+                or self._display_only_heat_cool_alias()
+                or fan_mode not in (self.fan_modes or [])
+            ):
+                return
+            if mode == HVACMode.FAN_ONLY:
+                # P2=3 and reported P2=8 share an HA mode but use different
+                # fan channels. Recheck that routing while holding the lock.
+                active_option = "P4" if self._backend_mode_code() == "8" else "P3"
+                if option != active_option:
+                    return
             await self._send_p_event(option, value_to_send)
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, key, value_to_send
