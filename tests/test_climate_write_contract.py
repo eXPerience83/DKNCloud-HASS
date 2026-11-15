@@ -412,6 +412,188 @@ async def test_late_ordinary_preset_failure_does_not_recreate_unloaded_entry(
         assert bucket["closing"] is True
 
 
+
+
+@pytest.mark.parametrize("unload_status", ["removed", "closing", "replaced"])
+async def test_late_successful_ordinary_preset_does_not_publish_after_unload(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    unload_status: str,
+) -> None:
+    """A late accepted PUT must not recreate or update an unloaded entry."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_put(_device_id: str, _payload: dict[str, Any]) -> None:
+        entered.set()
+        await release.wait()
+
+    api.put_device_fields.side_effect = held_put
+    task = asyncio.create_task(entity.async_set_preset_mode("away"))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        if unload_status == "removed":
+            hass.data[DOMAIN].pop("climate-entry")
+        elif unload_status == "replaced":
+            hass.data[DOMAIN]["climate-entry"] = {"sync_manager": Mock()}
+        else:
+            bucket["closing"] = True
+    finally:
+        release.set()
+
+    await asyncio.wait_for(task, timeout=3)
+    api.put_device_fields.assert_awaited_once()
+    manager.request_recovery.assert_not_called()
+    climate_module.schedule_post_write_refresh.assert_not_called()
+    assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+    entity.async_write_ha_state.assert_not_called()
+    if unload_status == "removed":
+        assert "climate-entry" not in hass.data[DOMAIN]
+    elif unload_status == "replaced":
+        hass.data[DOMAIN]["climate-entry"]["sync_manager"].request_recovery.assert_not_called()
+
+
+@pytest.mark.parametrize("unload_status", ["removed", "closing"])
+async def test_unload_after_first_rearm_put_prevents_second_put(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    unload_status: str,
+) -> None:
+    """An accepted first Home step must not launch a new Sleep PUT after unload."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_first_put(_device_id: str, _payload: dict[str, Any], **_kwargs: Any) -> None:
+        entered.set()
+        await release.wait()
+
+    api.put_device_fields.side_effect = held_first_put
+    task = asyncio.create_task(entity.async_set_preset_mode("sleep"))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        if unload_status == "removed":
+            hass.data[DOMAIN].pop("climate-entry")
+        else:
+            bucket["closing"] = True
+    finally:
+        release.set()
+
+    await asyncio.wait_for(task, timeout=3)
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": "occupied"}}, retry=False
+    )
+    assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+    entity.async_write_ha_state.assert_not_called()
+
+
+@pytest.mark.parametrize("unload_status", ["removed", "closing"])
+async def test_late_second_rearm_failure_does_not_restore_unloaded_entry(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    unload_status: str,
+) -> None:
+    """Partial-rearm recovery must not publish Home after the entry has gone."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def second_put(_device_id: str, _payload: dict[str, Any], **_kwargs: Any) -> None:
+        if api.put_device_fields.await_count == 2:
+            entered.set()
+            await release.wait()
+            raise TimeoutError("second response unknown")
+
+    api.put_device_fields.side_effect = second_put
+    task = asyncio.create_task(entity.async_set_preset_mode("sleep"))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        if unload_status == "removed":
+            hass.data[DOMAIN].pop("climate-entry")
+        else:
+            bucket["closing"] = True
+    finally:
+        release.set()
+
+    with pytest.raises(TimeoutError, match="second response unknown"):
+        await asyncio.wait_for(task, timeout=3)
+    assert api.put_device_fields.await_count == 2
+    assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+    manager.request_recovery.assert_not_called()
+    entity.async_write_ha_state.assert_not_called()
+    if unload_status == "removed":
+        assert "climate-entry" not in hass.data[DOMAIN]
+
+
+@pytest.mark.parametrize("unload_status", ["removed", "closing"])
+async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    unload_status: str,
+) -> None:
+    """An awaited automatic Sleep exit cannot revive an unloaded entry."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    entity.coordinator.data["unit-1"]["sleep_off_confirmed"] = True
+    _arm_current_sleep_off_evidence(hass)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_home(*_args: Any, **_kwargs: Any) -> None:
+        entered.set()
+        await release.wait()
+
+    api.async_set_scenary = AsyncMock(side_effect=held_home)
+    task = asyncio.create_task(
+        async_auto_exit_sleep_if_needed(
+            hass,
+            entry_id="climate-entry",
+            device_id="unit-1",
+            device=entity._device,
+            coordinator=entity.coordinator,
+            reason="expiry",
+            is_device_on=lambda: True,
+            allow_away_handling=False,
+            on_success=entity.async_write_ha_state,
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        if unload_status == "removed":
+            hass.data[DOMAIN].pop("climate-entry")
+        else:
+            bucket["closing"] = True
+    finally:
+        release.set()
+
+    await asyncio.wait_for(task, timeout=3)
+    api.async_set_scenary.assert_awaited_once_with("unit-1", "occupied", retry=False)
+    assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+    manager.request_recovery.assert_not_called()
+    entity.async_write_ha_state.assert_not_called()
+    if unload_status == "removed":
+        assert "climate-entry" not in hass.data[DOMAIN]
+
 async def test_climate_exposes_sleep_overdue_as_reported_diagnostic(
     hass, dummy_coordinator_factory, monkeypatch
 ):

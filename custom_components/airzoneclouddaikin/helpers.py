@@ -399,7 +399,8 @@ async def async_auto_exit_sleep_if_needed(
         overlay = bucket.get("optimistic", {}).get(device_id, {}).get("scenary")
         pending = bucket.setdefault("sleep_exit_pending", {})
         if (
-            bucket.get("closing")
+            hass.data.get(DOMAIN, {}).get(entry_id) is not bucket
+            or bucket.get("closing")
             or hass.is_stopping
             or bucket.get("scene_revisions", {}).get(device_id, 0) != revision
             or (overlay and overlay.get("value") != SCENARY_SLEEP)
@@ -458,6 +459,13 @@ async def async_auto_exit_sleep_if_needed(
         except Exception as error:  # noqa: BLE001
             _LOGGER.warning("Sleep exit remains unverified (%s)", type(error).__name__)
         else:
+            # The PUT can complete after unload; its state belongs to the old entry.
+            if (
+                hass.data.get(DOMAIN, {}).get(entry_id) is not bucket
+                or bucket.get("closing")
+                or hass.is_stopping
+            ):
+                return
             pending[device_id] = "accepted"
             optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
             # The cleanup wrote after its initial manual-intent snapshot.
@@ -470,7 +478,12 @@ async def async_auto_exit_sleep_if_needed(
             if on_success:
                 on_success()
         finally:
-            if not unsent and not bucket.get("closing"):
+            if (
+                not unsent
+                and hass.data.get(DOMAIN, {}).get(entry_id) is bucket
+                and not bucket.get("closing")
+                and not hass.is_stopping
+            ):
                 if manager := bucket.get("sync_manager"):
                     manager.request_recovery(device_id)
                 else:

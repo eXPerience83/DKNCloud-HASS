@@ -275,7 +275,19 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.error("API handle missing in coordinator; cannot set scenary")
             return
 
-        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id, {})
+        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        if bucket is None:
+            return
+
+        def entry_active() -> bool:
+            return (
+                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
+                and not bucket.get("closing")
+                and not self.hass.is_stopping
+            )
+
+        if not entry_active():
+            return
         revisions = bucket.setdefault("scene_revisions", {})
         revision = revisions.get(self._device_id, 0)
         intents = bucket.setdefault("scene_preset_intents", {})
@@ -283,11 +295,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         intents[self._device_id] = intent
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            if (
-                bucket.get("closing")
-                or self.hass.is_stopping
-                or intents.get(self._device_id) != intent
-            ):
+            if not entry_active() or intents.get(self._device_id) != intent:
                 # Only a newer queued request may supersede this one.
                 return
             current_revision = revisions.get(self._device_id, 0)
@@ -320,12 +328,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             def request_readback() -> None:
                 # The awaited PUT may finish after the config entry was
                 # unloaded. Never resurrect its bucket or recovery timer.
-                active = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-                if (
-                    active is not bucket
-                    or bucket.get("closing")
-                    or self.hass.is_stopping
-                ):
+                if not entry_active():
                     return
                 if manager := bucket.get("sync_manager"):
                     manager.request_recovery(self._device_id)
@@ -341,6 +344,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
 
             def fence_ambiguous_scene() -> None:
+                if not entry_active():
+                    return
                 # An accepted server-side write may have lost its HTTP reply.
                 # Automatic Sleep expiry must not issue another scene command
                 # before a subsequent backend read confirms convergence.
@@ -350,6 +355,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 request_readback()
 
             def preserve_partial_home() -> None:
+                if not entry_active():
+                    return
                 # Only the first PUT was accepted. A failed second PUT may
                 # have reached the server: never blindly retry it or claim
                 # that a fresh one-shot Sleep timer has started.
@@ -370,6 +377,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                         retry=False,
                     )
                     cleared_stale_sleep = True
+                    # Do not send the second rearm PUT after entry unload.
+                    if not entry_active():
+                        return
                 if exits_raw_sleep:
                     # Any scene write leaving Sleep (even while power is ON)
                     # must not retry after a response of unknown outcome.
@@ -410,6 +420,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     exc_info=True,
                 )
                 raise
+
+            # A late successful PUT must not recreate a removed entry bucket.
+            if not entry_active():
+                return
 
             # optimistic_set('sleep') also starts a new local session revision
             # even if a backend snapshot did not expose the short Home step.

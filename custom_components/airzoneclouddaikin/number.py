@@ -182,8 +182,21 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
 
         payload: dict[str, Any] = {self._field_name: ivalue}
 
+        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        if bucket is None:
+            return
+
+        def entry_active() -> bool:
+            return (
+                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
+                and not bucket.get("closing")
+                and not self.hass.is_stopping
+            )
+
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
+            if not entry_active():
+                return
             # Another queued number write may have changed the optimistic
             # value while this request waited for the same device lock.
             current = self.native_value
@@ -192,7 +205,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             try:
                 await self._api.put_device_fields(self._device_id, payload)
             except (Exception, asyncio.CancelledError) as error:
-                if not isinstance(error, CommandNotSentCooldown):
+                if entry_active() and not isinstance(error, CommandNotSentCooldown):
                     request_ambiguous_control_readback(
                         self.hass,
                         self.coordinator,
@@ -201,6 +214,9 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
                     )
                 raise
 
+            # An accepted late PUT must not publish into an unloaded entry.
+            if not entry_active():
+                return
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, self._field_name, ivalue
             )

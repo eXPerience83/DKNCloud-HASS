@@ -217,6 +217,130 @@ async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
     assert entity.native_value == 30
 
 
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "value"),
+    [
+        (DKNSleepTimeNumber, "sleep_time", 30, 40),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 17),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 26, 27),
+    ],
+)
+@pytest.mark.parametrize("unload_status", ["removed", "closing", "replaced"])
+async def test_late_successful_number_put_cannot_update_unloaded_entry(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    entity_cls: type[Any],
+    field: str,
+    initial: int,
+    value: int,
+    unload_status: str,
+) -> None:
+    """An accepted field PUT cannot recreate the bucket after unload/reload."""
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+    bucket = hass.data[DOMAIN]["entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    writes: list[dict[str, Any]] = []
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_put(_device_id: str, payload: dict[str, Any]) -> None:
+        writes.append(payload)
+        entered.set()
+        await release.wait()
+
+    api.put_device_fields = held_put
+    state_updates = Mock()
+    entity.async_write_ha_state = state_updates
+    task = asyncio.create_task(entity.async_set_native_value(value))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        if unload_status == "removed":
+            hass.data[DOMAIN].pop("entry")
+        elif unload_status == "replaced":
+            hass.data[DOMAIN]["entry"] = {"sync_manager": Mock()}
+        else:
+            bucket["closing"] = True
+    finally:
+        release.set()
+
+    await asyncio.wait_for(task, timeout=3)
+    assert writes == [{field: value}]
+    assert field not in bucket.get("optimistic", {}).get("dev1", {})
+    state_updates.assert_not_called()
+    manager.request_recovery.assert_not_called()
+    if unload_status == "removed":
+        assert "entry" not in hass.data[DOMAIN]
+    elif unload_status == "replaced":
+        hass.data[DOMAIN]["entry"]["sync_manager"].request_recovery.assert_not_called()
+
+
+async def test_replaced_entry_ignores_late_ambiguous_number_put(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+) -> None:
+    """An old PUT error cannot request recovery on the reloaded entry."""
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, DKNSleepTimeNumber,
+        device_data={"sleep_time": 30}
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def held_error(_device_id: str, _payload: dict[str, Any]) -> None:
+        entered.set()
+        await release.wait()
+        raise TimeoutError("late response lost")
+
+    api.put_device_fields = held_error
+    task = asyncio.create_task(entity.async_set_native_value(40))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        new_manager = Mock()
+        hass.data[DOMAIN]["entry"] = {"sync_manager": new_manager}
+    finally:
+        release.set()
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(task, timeout=3)
+    new_manager.request_recovery.assert_not_called()
+    assert "optimistic" not in hass.data[DOMAIN]["entry"]
+
+
+@pytest.mark.parametrize("unload_status", ["removed", "closing"])
+async def test_queued_number_put_does_not_send_after_unload(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
+    unload_status: str,
+) -> None:
+    """An old queued field PUT must not send after its entry closes."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, DKNSleepTimeNumber,
+        device_data={"sleep_time": 30}
+    )
+    bucket = hass.data[DOMAIN]["entry"]
+    lock = acquire_device_lock(hass, "entry", "dev1")
+    await lock.acquire()
+    try:
+        task = asyncio.create_task(entity.async_set_native_value(40))
+        await asyncio.sleep(0)
+        assert not task.done()
+        if unload_status == "removed":
+            hass.data[DOMAIN].pop("entry")
+        else:
+            bucket["closing"] = True
+    finally:
+        lock.release()
+
+    await asyncio.wait_for(task, timeout=3)
+    assert api.calls == []
+    if unload_status == "removed":
+        assert "entry" not in hass.data[DOMAIN]
+
 @pytest.mark.asyncio
 async def test_sleep_time_payload_is_root_level(
     hass: HomeAssistant,
