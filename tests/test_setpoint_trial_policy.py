@@ -10,7 +10,7 @@ import stat
 import pytest
 
 from scripts.lab_policy import ProtectedSession
-from scripts.protected_lab import LabStopped, LabSupervisor, LaboratoryGateway
+from scripts.protected_lab import LaboratoryGateway, LabStopped, LabSupervisor
 from scripts.setpoint_trial import (
     BoundedSetpointPolicy,
     SetpointPlan,
