@@ -10,7 +10,9 @@ def test_timeline_captures_exact_source_order_with_monotonic_clock():
     timeline = TrialTimeline(clock=lambda: next(now))
     timeline.add("control_invoked", source="lab")
     timeline.add("info_admitted", source="transport")
-    timeline.record_push_patch({"heat_consign": "21.0", "mac": "private"}, expected_field="heat_consign")
+    timeline.record_push_patch(
+        {"heat_consign": "21.0", "mac": "private"}, expected_field="heat_consign"
+    )
     timeline.add("get_applied", source="get", result="confirmed")
     records = timeline.export()
     assert [item["kind"] for item in records] == [
@@ -52,7 +54,9 @@ def test_timeline_rejects_unapproved_field_values_and_status(kind, options):
 
 def test_push_observation_ignores_unrelated_fields_and_export_is_immutable():
     timeline = TrialTimeline()
-    timeline.record_push_patch({"power": "1", "mac": "secret"}, expected_field="cold_consign")
+    timeline.record_push_patch(
+        {"power": "1", "mac": "secret"}, expected_field="cold_consign"
+    )
     assert timeline.export() == []
     timeline.record_push_patch(
         {"cold_consign": 25, "device_id": "hidden"}, expected_field="cold_consign"
