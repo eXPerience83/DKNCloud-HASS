@@ -649,8 +649,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     self._overlay_value("power", self._device.get("power")) or ""
                 )
                 if current.strip().lower() in {"1", "true", "on"}:
-                    return
-                if prepared:
+                    # An explicit wake while Away should still request Home,
+                    # even when P1 is already ON. Keep preparation outside
+                    # this non-reentrant lock and avoid a duplicate P1.
+                    if prepared or self.preset_mode != "away":
+                        return
+                elif prepared:
                     await self._send_p_event("P1", 1)
                     optimistic_set(
                         self.hass, self._entry_id, self._device_id, "power", "1"
