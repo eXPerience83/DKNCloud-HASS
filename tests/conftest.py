@@ -235,18 +235,27 @@ def protected_launcher(tmp_path, socket_enabled):
                 "--protected-case",
                 case,
                 "--process-timeout",
-                "140" if case in {"reconnect", "reconnect_no_events"} else "75",
+                "140" if case in {"reconnect", "reconnect_no_events", "setpoint_trial"} else "75",
             ],
             cwd=root,
             env={"TMPDIR": str(tmp_path)},
             capture_output=True,
             text=True,
-            timeout=150 if case in {"reconnect", "reconnect_no_events"} else 85,
+            timeout=150 if case in {"reconnect", "reconnect_no_events", "setpoint_trial"} else 85,
         )
         assert result.returncode == 0, result.stdout + result.stderr
         summary = json.loads(result.stdout.splitlines()[0])
         assert summary.get("error") != "cleanup_failed"
-        assert summary["backend_control_writes"] == 0
+        assert summary["backend_control_writes"] == (
+            2 if case == "setpoint_trial" else 0
+        )
+        if case == "setpoint_trial":
+            assert summary["trial_passed"] is True
+            assert summary["reason"] == "trial_finished"
+            assert sum(
+                event["kind"] == "control_admitted"
+                for event in summary["trial_timeline"]
+            ) == 2
         if case == "sleep":
             assert summary["observations"]["blocked_control_attempts"] >= 1
         assert summary["session_closed"] and summary["server_closed"]
@@ -280,7 +289,7 @@ def protected_launcher(tmp_path, socket_enabled):
             assert summary["cooldown_pending_at_deadline"]
         if case in {"reconnect", "reconnect_no_events"}:
             assert summary["tls_fallback"] and summary["tls_reconnected"]
-        if case in {"normal", "reconnect", "sleep"}:
+        if case in {"normal", "reconnect", "sleep", "setpoint_trial"}:
             assert summary["owned_tasks_closed"]
             assert summary["entities"] >= 5
         assert not list(tmp_path.iterdir())
