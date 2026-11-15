@@ -692,8 +692,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             async with lock:
                 if intents.get(self._device_id) != intent:
                     return
-                await self._send_p_event("P1", 0)
-                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
+                if self._device_power_on():
+                    await self._send_p_event("P1", 0)
+                    optimistic_set(
+                        self.hass, self._entry_id, self._device_id, "power", "0"
+                    )
                 optimistic_invalidate(
                     self.hass, self._entry_id, self._device_id, "mode"
                 )
