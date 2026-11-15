@@ -1279,6 +1279,69 @@ async def test_partial_hvac_power_on_failure_requests_readback_without_replaying
         )
 
 
+
+@pytest.mark.parametrize("failure", [TimeoutError, asyncio.CancelledError])
+@pytest.mark.parametrize("with_manager", [False, True])
+async def test_ambiguous_hvac_p2_only_failure_requests_readback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[BaseException],
+    with_manager: bool,
+) -> None:
+    """P2 timeouts require readback even when no preceding P1 was sent."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode="1", power="1"
+    )
+    api.send_event.side_effect = failure("P2 may have been accepted")
+    manager = Mock()
+    if with_manager:
+        hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+
+    with pytest.raises(failure):
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+
+    events = [call.args[0]["event"] for call in api.send_event.await_args_list]
+    assert [(event["option"], event["value"]) for event in events] == [
+        ("P2", "2")
+    ]
+    assert entity.hvac_mode == HVACMode.COOL
+    entity.async_write_ha_state.assert_not_called()
+    if with_manager:
+        manager.request_recovery.assert_called_once_with("unit-1")
+        climate_module.schedule_post_write_refresh.assert_not_called()
+    else:
+        climate_module.schedule_post_write_refresh.assert_called_once_with(
+            hass, entity.coordinator, entry_id="climate-entry"
+        )
+
+
+async def test_unsent_hvac_p2_only_write_does_not_request_recovery(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A known-unsent cooldown rejection must not request a pointless readback."""
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        CommandNotSentCooldown,
+    )
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode="1", power="1"
+    )
+    api.send_event.side_effect = CommandNotSentCooldown(hass.loop.time() + 60)
+    manager = Mock()
+    hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+
+    with pytest.raises(CommandNotSentCooldown):
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+
+    api.send_event.assert_awaited_once()
+    manager.request_recovery.assert_not_called()
+    climate_module.schedule_post_write_refresh.assert_not_called()
+
+
+
 @pytest.mark.parametrize(
     ("modes", "heat_cool_opt_in"),
     [("11101", True), ("11111", False), ("", False)],
