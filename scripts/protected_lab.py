@@ -129,7 +129,12 @@ class GuardedContext:
     """Grant a transport lease only around a previously validated operation."""
 
     def __init__(
-        self, gateway, factory, category=None, websocket=False, path=None,
+        self,
+        gateway,
+        factory,
+        category=None,
+        websocket=False,
+        path=None,
         operation=None,
     ):
         self.gateway, self.factory = gateway, factory
@@ -149,9 +154,7 @@ class GuardedContext:
             self.context = self.factory()
             timeline = self.gateway.timeline
             if timeline is not None and self.operation in {"info", "control", "get"}:
-                timeline.add(
-                    f"{self.operation}_admitted", source="transport"
-                )
+                timeline.add(f"{self.operation}_admitted", source="transport")
             result = await self.context.__aenter__()
             entered = True
             if not self.websocket:
