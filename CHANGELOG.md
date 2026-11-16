@@ -39,11 +39,11 @@
   tooling-only; the Home Assistant runtime dependency contract is unchanged.
 
 ### Fixed
-- Recover potentially accepted but unacknowledged Climate P1/P2/P3/P4/P7/P8
-  events, Switch P1 commands, and supported device-field PUTs through
-  coalesced readback. Do not replay ambiguous commands or claim optimistic
-  success; skip readback for a known-unsent local cooldown (#218, #219,
-  #221, #222).
+- Request coalesced GET readback after ambiguous Climate P1/P2/P3/P4/P7/P8
+  events, Switch P1 commands and supported device-field PUTs. A cloud GET
+  snapshot may be stale and does not establish whether the command applied.
+  Never replay an ambiguous command or claim optimistic success; skip a
+  known-unsent local cooldown (#218, #219, #221, #222).
 - Request readback after ambiguous ordinary Home/Away/Sleep-entry scene PUTs
   without incorrectly activating the special Sleep-exit fence. Prevent
   queued wake/Sleep work and late successful PUTs from recreating unloaded
