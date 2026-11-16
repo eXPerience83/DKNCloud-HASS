@@ -34,8 +34,21 @@
 - Prioritize explicit Home/Away and manual wake over queued automatic Sleep
   cleanup. Preserve the scene on active-Sleep fan, setpoint and supported
   mode adjustments; ambiguous scene writes are not automatically replayed.
+- Update the locked development and CI tooling to uv **0.13.8** and Ruff
+  **0.17.5** after separate reviewed dependency PRs (#224, #225). This is
+  tooling-only; the Home Assistant runtime dependency contract is unchanged.
 
 ### Fixed
+- Request coalesced GET readback after ambiguous Climate P1/P2/P3/P4/P7/P8
+  events, Switch P1 commands and supported device-field PUTs. A cloud GET
+  snapshot may be stale and does not establish whether the command applied.
+  Never replay an ambiguous command or claim optimistic success; skip a
+  known-unsent local cooldown (#218, #219, #221, #222).
+- Request readback after ambiguous ordinary Home/Away/Sleep-entry scene PUTs
+  without incorrectly activating the special Sleep-exit fence. Prevent
+  queued wake/Sleep work and late successful PUTs from recreating unloaded
+  entry state, publishing stale overlays, or continuing a second rearm PUT
+  after unload (#222).
 - Prevent automatic Sleep cleanup from acting on cached startup OFF reports,
   an earlier session's OFF, or telemetry that conflicts with a new selection.
 - Fence ambiguous Home/Away exits from raw Sleep, including ON→OFF during
@@ -60,6 +73,10 @@
 > External wall-control latency, native installation/migration, real password-
 > change reauthentication and all hardware modes still need separate testing
 > (#101, #105, #121, #191). Do not treat 0.6.0a1 as stable-certified.
+> An isolated real ten-PUT numerical-field series showed that GET can expose
+> updated cloud state before INFO-associated Pusher delivery. This does not
+> establish causality, physical hardware convergence, scene/Sleep behavior
+> or real timeout outcomes (#197).
 
 ## [0.5.0a6] - 2026-11-08
 

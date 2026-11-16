@@ -35,6 +35,25 @@ Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**.
 
 **Published versions:** Check [GitHub Releases](https://github.com/eXPerience83/DKNCloud-HASS/releases) for the stable release and optional prereleases. Code on `main` can contain changes **not yet published**; passing CI is not a real-device compatibility certification.
 
+### 0.6.0a1 experimental alpha — important upgrade notes
+
+This prerelease introduces **automatic INFO-driven Pusher updates** with a
+nominal 10-second information cycle and budgeted REST GET recovery. Its
+default-on, session-guarded Sleep cleanup differs from earlier versions.
+It also retires the user-configurable `scan_interval` and the previous local
+`sleep_timeout_enabled` Home-display behavior; existing device/entity
+identifiers are preserved. The minimum is **Home Assistant 2026.11.0**
+(Python 3.14).
+
+**Before upgrading:** Back up Home Assistant, record your currently installed
+DKN version and options, and keep a known-good restore path. An integration
+downgrade alone may not reverse configuration-option migration; restoring
+the pre-upgrade HA backup is the safer rollback path if the alpha misbehaves.
+Select the prerelease explicitly when it becomes available, and validate
+normal operation before relying on automations. Real Marketplace/HACS upgrade
+and physical-device acceptance are still pending [#121](https://github.com/eXPerience83/DKNCloud-HASS/issues/121)
+and [#191](https://github.com/eXPerience83/DKNCloud-HASS/issues/191).
+
 ## Configuration
 
 In **Settings → Devices & Services**, add **DKN Cloud for Home Assistant** and enter your DKN Cloud email/username and password. **No YAML is required.**
@@ -76,6 +95,14 @@ For the API commands, device modes, capabilities and detailed backend behavior, 
 **Why does Sleep sometimes remain active after the unit turns off?** Some devices retain the raw Sleep scene after powering off. By default, the integration waits for an independently confirmed ON→OFF in the active session, then writes `occupied` once and verifies backend convergence. This was validated during two real Sleep cycles, but some edge conditions (such as a manual OFF) remain covered synthetically only. If cleanup is disabled, selecting Sleep again while the backend still shows Sleep/OFF explicitly rearms it through `occupied → sleep`.
 
 **Why can't I select HEAT_COOL?** Both the device capability bit and the **Enable experimental HEAT_COOL mode** option are required. Even then, its physical behavior is not fully validated across devices.
+
+**Why might a wall-controller change appear late in Home Assistant?**
+The backend's GET snapshot can temporarily lag the physical equipment.
+The new integration sends bounded `infomaquina` information requests and
+consumes incoming Pusher updates; GET remains useful for initial state and
+recovery, but a successful GET alone is not proof of physical freshness.
+External wall-controller latency still needs real-device acceptance
+([#101](https://github.com/eXPerience83/DKNCloud-HASS/issues/101)).
 
 **Can I change the fan speed or slats in every mode?** No. Fan settings are capability- and mode-dependent; slat control is not implemented.
 
