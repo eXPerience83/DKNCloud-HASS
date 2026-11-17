@@ -830,3 +830,94 @@ async def test_repeated_disconnected_notice_preserves_deferred_fallback_get():
     await cycle
     scheduler._fallback_recover.assert_awaited_once()
     await instance.close()
+
+
+async def test_transport_mode_transitions_are_per_device_and_do_not_fake_receipts():
+    """Mode notifications follow PUSH, fallback and auth without new telemetry."""
+    from aiohttp import ClientResponseError
+
+    fetch = AsyncMock(
+        return_value=[{"id": "a", "power": "1"}, {"id": "b", "power": "0"}]
+    )
+    request, publish, reauth = AsyncMock(), Mock(), Mock()
+    locks = {}
+    observations = []
+
+    instance = SyncManager(
+        {"a": {"id": "a", "power": "1"}, "b": {"id": "b", "power": "0"}},
+        {"a": "installation", "b": "installation"},
+        request,
+        fetch,
+        publish,
+        reauth,
+        lambda d: locks.setdefault(d, asyncio.Lock()),
+        connect=AsyncMock(),
+        on_mode_change=lambda: observations.append(
+            (instance.mode("a"), instance.mode("b"))
+        ),
+    )
+
+    class ImmediateBudget:
+        async def run(self, operation):
+            return await operation()
+
+        def mark_started(self):
+            pass
+
+        def close(self):
+            pass
+
+        def diagnostics(self):
+            return {}
+
+    instance._budget = ImmediateBudget()
+    try:
+        assert instance.mode("a") == instance.mode("b") == "rest_fallback"
+        assert instance.mode("unknown") is None
+        received_before = dict(instance._last_received)
+        await instance.subscription("a", True)
+        assert instance.mode("a") == "resyncing"
+        assert instance.mode("b") == "rest_fallback"
+        await instance._resync_tasks["a"]
+        await asyncio.sleep(0)
+        assert instance.mode("a") == "push"
+        assert observations[:2] == [
+            ("resyncing", "rest_fallback"),
+            ("push", "rest_fallback"),
+        ]
+        assert fetch.await_count == 1  # required subscription resync only
+        # The resync GET can refresh both devices; local mode reads cannot.
+        assert instance._last_received["b"] >= received_before["b"]
+        reception_after_get = dict(instance._last_received)
+
+        diagnostics = instance.diagnostics()
+        assert diagnostics["devices"]["device_1"]["mode"] == instance.mode("a")
+        assert diagnostics["devices"]["device_2"]["mode"] == instance.mode("b")
+        assert fetch.await_count == 1  # mode and diagnostics are pure reads
+        assert instance._last_received == reception_after_get
+
+        await instance.subscription("a", False)
+        assert instance.mode("a") == "rest_fallback"
+        assert observations[-1] == ("rest_fallback", "rest_fallback")
+        count = len(observations)
+        await instance.subscription("a", False)
+        assert len(observations) == count  # repeat disconnect is idempotent
+
+        await instance.subscription("a", True)
+        await instance._resync_tasks["a"]
+        await asyncio.sleep(0)
+        assert instance.mode("a") == "push"
+        assert instance.mode("b") == "rest_fallback"
+
+        with pytest.raises(asyncio.CancelledError):
+            instance._error("a", ClientResponseError(None, (), status=401))
+        assert instance.mode("a") == instance.mode("b") == "auth_required"
+        assert observations[-1] == ("auth_required", "auth_required")
+        reauth.assert_called_once()
+        count = len(observations)
+    finally:
+        await instance.close()
+    assert instance.mode("a") == instance.mode("b") == "stopped"
+    assert len(observations) == count  # no callbacks after clean shutdown
+    assert not instance._resync_tasks
+    assert not instance._tasks

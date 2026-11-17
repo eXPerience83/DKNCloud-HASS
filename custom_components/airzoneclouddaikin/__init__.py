@@ -742,6 +742,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         api.suspend()
         if manager := bucket.get("sync_manager"):
             manager._auth_failed = True
+            manager._notify_mode_changes()
         if (
             not auth_requested
             and not hass.is_stopping
@@ -1169,6 +1170,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             connect=connector,
             discover=discover_sync,
             on_topology_change=topology_changed,
+            on_mode_change=coordinator.async_update_listeners,
         )
         bucket["sync_manager"] = manager
 

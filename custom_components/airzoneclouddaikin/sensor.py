@@ -33,6 +33,7 @@ from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
 from .const import DOMAIN
 from .device_state import scenary_to_preset
 from .helpers import build_device_info, device_supports_heat_cool, parse_float
+from .sync_manager import SyncManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -291,9 +292,14 @@ async def async_setup_entry(
         specs += PII_SENSORS
 
     entities: list[AirzoneSensor] = []
+    manager: SyncManager | None = (
+        hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("sync_manager")
+    )
     for device_id in list((coordinator.data or {}).keys()):
         for spec in specs:
             entities.append(AirzoneSensor(coordinator, device_id, *spec))
+        if manager is not None:
+            entities.append(AirzoneSyncModeSensor(coordinator, manager, device_id))
 
     async_add_entities(entities)
 
@@ -452,3 +458,34 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
 
         # Plain values
         return self._device.get(self._attribute)
+
+
+class AirzoneSyncModeSensor(AirzoneSensor):
+    """Read SyncManager's transport choice, never the physical HVAC mode."""
+
+    _attr_translation_key = "sync_mode"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["push", "rest_fallback", "resyncing", "auth_required", "stopped"]
+
+    def __init__(
+        self, coordinator: AirzoneCoordinator, manager: SyncManager, device_id: str
+    ) -> None:
+        super().__init__(
+            coordinator,
+            device_id,
+            "sync_mode",
+            "Synchronization Mode",
+            "mdi:cloud-sync",
+            True,
+            None,
+            None,
+        )
+        # The base sensor sets an explicit name; remove it so HA resolves
+        # the translated entity name via the sync_mode translation key.
+        del self._attr_name
+        self._manager = manager
+
+    @property
+    def native_value(self) -> str | None:
+        """Match sanitized diagnostics without making network requests."""
+        return self._manager.mode(self._device_id)

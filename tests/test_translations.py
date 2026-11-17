@@ -329,3 +329,13 @@ def _extract_config_flow_keys() -> set[str]:
     FlowVisitor().visit(config_tree)
 
     return keys
+
+
+def test_sync_mode_enum_states_localized_in_all_languages() -> None:
+    """The enum's five machine values retain stable translation keys."""
+    expected = {"push", "rest_fallback", "resyncing", "auth_required", "stopped"}
+    for path in TRANSLATIONS_DIR.glob("*.json"):
+        config = _load_translation(path)["entity"]["sensor"]["sync_mode"]
+        assert config["name"]
+        assert set(config["state"]) == expected
+        assert all(config["state"][key] for key in expected)

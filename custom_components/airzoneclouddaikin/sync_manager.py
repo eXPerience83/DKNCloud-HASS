@@ -49,6 +49,7 @@ class SyncManager:
         sleep=asyncio.sleep,
         discover=None,
         on_topology_change=None,
+        on_mode_change: Callable[[], None] | None = None,
     ) -> None:
         self.state = SyncState()
         self.state.snapshot(list(initial.values()), self.state.checkpoint())
@@ -60,6 +61,7 @@ class SyncManager:
         self._information_ready: dict[str, float] = {}
         self._discover = discover
         self._on_topology_change = on_topology_change
+        self._on_mode_change = on_mode_change
         self._discovery_lock = asyncio.Lock()
         self._last_discovery = None
         self._topology_task = None
@@ -104,6 +106,30 @@ class SyncManager:
             )
             for device in initial
         }
+        self._last_modes = {device: self.mode(device) for device in self.schedulers}
+
+    def mode(self, device: str) -> str | None:
+        """Return the same authoritative mode reported by diagnostics."""
+        scheduler = self.schedulers.get(device)
+        if scheduler is None:
+            return None
+        if self._stopped:
+            return "stopped"
+        if self._auth_failed:
+            return "auth_required"
+        task = self._resync_tasks.get(device)
+        if task is not None and not task.done():
+            return "resyncing"
+        return "push" if scheduler.status.push_active else "rest_fallback"
+
+    def _notify_mode_changes(self) -> None:
+        """Notify local listeners only when the effective transport changes."""
+        modes = {device: self.mode(device) for device in self.schedulers}
+        if modes == self._last_modes:
+            return
+        self._last_modes = modes
+        if not self._stopped and self._on_mode_change is not None:
+            self._on_mode_change()
 
     def start(self) -> None:
         """Start once after platforms and coordinator listeners are ready."""
@@ -127,6 +153,7 @@ class SyncManager:
         if isinstance(error, ClientResponseError) and error.status == 401:
             if not self._auth_failed:
                 self._auth_failed = True
+                self._notify_mode_changes()
                 self._reauth()
             raise asyncio.CancelledError from None
         failures = (
@@ -332,6 +359,7 @@ class SyncManager:
                 # fallback GET; a real push session or pending resync still does.
                 if old is not None or self.schedulers[device].status.push_active:
                     await self.schedulers[device].set_push(False)
+                self._notify_mode_changes()
                 return
 
             async def resync() -> None:
@@ -356,7 +384,10 @@ class SyncManager:
                         delay = self._error(device, error)
                         await self._sleep(delay)
 
-            self._resync_tasks[device] = asyncio.create_task(resync())
+            task = asyncio.create_task(resync())
+            self._resync_tasks[device] = task
+            task.add_done_callback(lambda _finished: self._notify_mode_changes())
+            self._notify_mode_changes()
 
     async def _supervise(self) -> None:
         failures = 0
@@ -370,6 +401,7 @@ class SyncManager:
                 if isinstance(error, ClientResponseError) and error.status == 401:
                     if not self._auth_failed:
                         self._auth_failed = True
+                        self._notify_mode_changes()
                         self._reauth()
                     return
                 self._push_error_code = (
@@ -415,6 +447,7 @@ class SyncManager:
                 if isinstance(error, ClientResponseError) and error.status == 401:
                     if not self._auth_failed:
                         self._auth_failed = True
+                        self._notify_mode_changes()
                         self._reauth()
                 _LOGGER.warning(
                     "Cloud topology refresh failed (%s)", type(error).__name__
@@ -488,17 +521,7 @@ class SyncManager:
             "devices": {
                 f"device_{i}": {
                     "channel_authorization_error": self.channel_errors.get(d),
-                    "mode": (
-                        "stopped"
-                        if self._stopped
-                        else "auth_required"
-                        if self._auth_failed
-                        else "resyncing"
-                        if d in self._resync_tasks and not self._resync_tasks[d].done()
-                        else "push"
-                        if s.status.push_active
-                        else "rest_fallback"
-                    ),
+                    "mode": self.mode(d),
                     "last_event_age": now - self._last_event[d]
                     if d in self._last_event
                     else None,
