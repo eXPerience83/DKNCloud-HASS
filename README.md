@@ -89,7 +89,6 @@ In versions that include [#227](https://github.com/eXPerience83/DKNCloud-HASS/is
 
 These are **cloud synchronization transport modes**, not HVAC operating modes or proof that the **physical WServer** is online. The separate WServer connectivity binary sensor and its offline notifications are unchanged. This diagnostic only observes the existing synchronization manager; it adds no requests or polling.
 
-
 ## Compatibility and limitations
 
 - **Primary target:** DAIKIN ES.DKNWSERVER (Cloud). Other Daikin/Airzone adapters are not guaranteed to work.
