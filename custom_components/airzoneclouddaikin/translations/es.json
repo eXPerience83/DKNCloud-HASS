@@ -72,5 +72,19 @@
       "title": "DKN Cloud — {name} en línea de nuevo",
       "description": "Conexión restablecida a las {ts_local}."
     }
+  },
+  "entity": {
+    "sensor": {
+      "sync_mode": {
+        "name": "Modo de sincronización",
+        "state": {
+          "push": "PUSH",
+          "rest_fallback": "REST de respaldo",
+          "resyncing": "Resincronizando",
+          "auth_required": "Reautenticación necesaria",
+          "stopped": "Detenido"
+        }
+      }
+    }
   }
 }
