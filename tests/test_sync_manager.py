@@ -871,12 +871,15 @@ async def test_transport_mode_transitions_are_per_device_and_do_not_fake_receipt
             ("push", "rest_fallback"),
         ]
         assert fetch.await_count == 1  # required subscription resync only
-        assert instance._last_received["b"] == received_before["b"]
+        # The resync GET can refresh both devices; local mode reads cannot.
+        assert instance._last_received["b"] >= received_before["b"]
+        reception_after_get = dict(instance._last_received)
 
         diagnostics = instance.diagnostics()
         assert diagnostics["devices"]["device_1"]["mode"] == instance.mode("a")
         assert diagnostics["devices"]["device_2"]["mode"] == instance.mode("b")
         assert fetch.await_count == 1  # mode and diagnostics are pure reads
+        assert instance._last_received == reception_after_get
 
         await instance.subscription("a", False)
         assert instance.mode("a") == "rest_fallback"
