@@ -107,6 +107,26 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     manager = hass.data[DOMAIN][entry.entry_id]["sync_manager"]
     assert coordinator.update_interval is None
     assert coordinator.data["dev1"]["power"] == "0"
+    registry = er.async_get(hass)
+    sync_id = registry.async_get_entity_id("sensor", DOMAIN, "dev1_sync_mode")
+    assert sync_id is not None
+    await hass.async_block_till_done()
+    assert hass.states.get(sync_id).state == "push"
+    assert manager.mode("dev1") == manager.diagnostics()["devices"]["device_1"]["mode"]
+
+    # Transport changes refresh the new entity, without changing WServer state.
+    reads = len(fetches)
+    await manager.subscription("dev1", False)
+    await hass.async_block_till_done()
+    assert hass.states.get(sync_id).state == "rest_fallback"
+    assert len(fetches) == reads
+    await manager.subscription("dev1", True)
+    await manager._resync_tasks["dev1"]
+    await asyncio.sleep(0)
+    await hass.async_block_till_done()
+    assert hass.states.get(sync_id).state == "push"
+    assert len(fetches) == reads + 1  # only the existing resync GET
+
     with monkeypatch.context() as patch:
         patch.setattr(
             hass.config_entries, "async_unload_platforms", AsyncMock(return_value=False)
@@ -155,6 +175,12 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert registry_ids == {
         e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)
     }
+    assert hass.states.get(sync_id).state == "push"
+    registry.async_update_entity(
+        sync_id, disabled_by=er.RegistryEntryDisabler.USER
+    )
+    await hass.async_block_till_done()
+    assert registry.async_get(sync_id).disabled_by == er.RegistryEntryDisabler.USER
     with monkeypatch.context() as patch:
         patch.setattr(
             hass.config_entries, "async_unload_platforms", AsyncMock(return_value=False)
