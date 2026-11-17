@@ -856,6 +856,21 @@ async def test_transport_mode_transitions_are_per_device_and_do_not_fake_receipt
             (instance.mode("a"), instance.mode("b"))
         ),
     )
+
+    class ImmediateBudget:
+        async def run(self, operation):
+            return await operation()
+
+        def mark_started(self):
+            pass
+
+        def close(self):
+            pass
+
+        def diagnostics(self):
+            return {}
+
+    instance._budget = ImmediateBudget()
     try:
         assert instance.mode("a") == instance.mode("b") == "rest_fallback"
         assert instance.mode("unknown") is None
