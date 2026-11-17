@@ -831,11 +831,14 @@ async def test_repeated_disconnected_notice_preserves_deferred_fallback_get():
     scheduler._fallback_recover.assert_awaited_once()
     await instance.close()
 
+
 async def test_transport_mode_transitions_are_per_device_and_do_not_fake_receipts():
     """Mode notifications follow PUSH, fallback and auth without new telemetry."""
     from aiohttp import ClientResponseError
 
-    fetch = AsyncMock(return_value=[{"id": "a", "power": "1"}, {"id": "b", "power": "0"}])
+    fetch = AsyncMock(
+        return_value=[{"id": "a", "power": "1"}, {"id": "b", "power": "0"}]
+    )
     request, publish, reauth = AsyncMock(), Mock(), Mock()
     locks = {}
     observations = []
