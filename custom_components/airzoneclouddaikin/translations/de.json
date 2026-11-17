@@ -72,5 +72,19 @@
       "title": "DKN Cloud — {name} wieder online",
       "description": "Verbindung um {ts_local} wiederhergestellt."
     }
+  },
+  "entity": {
+    "sensor": {
+      "sync_mode": {
+        "name": "Synchronisierungsmodus",
+        "state": {
+          "push": "PUSH",
+          "rest_fallback": "REST-Ersatzverbindung",
+          "resyncing": "Erneute Synchronisierung",
+          "auth_required": "Erneute Anmeldung erforderlich",
+          "stopped": "Gestoppt"
+        }
+      }
+    }
   }
 }
