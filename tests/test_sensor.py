@@ -109,6 +109,8 @@ async def test_sync_mode_sensors_are_per_device_readonly_and_user_disableable(
         assert entity.entity_registry_enabled_default
         assert entity.device_class == sensor.SensorDeviceClass.ENUM
         assert entity.translation_key == "sync_mode"
+        # None is NOT equivalent to absence in HA's entity-name resolver.
+        assert not hasattr(entity, "_attr_name")
         assert entity.extra_state_attributes is None
     assert modes["device_a"].native_value == "push"
     assert modes["device_b"].native_value == "rest_fallback"
