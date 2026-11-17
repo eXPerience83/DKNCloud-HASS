@@ -480,8 +480,9 @@ class AirzoneSyncModeSensor(AirzoneSensor):
             None,
             None,
         )
-        # Use HA's localized entity name and enum labels.
-        self._attr_name = None
+        # The base sensor sets an explicit name; remove it so HA resolves
+        # the translated entity name via the sync_mode translation key.
+        del self._attr_name
         self._manager = manager
 
     @property
