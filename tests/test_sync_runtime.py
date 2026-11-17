@@ -176,9 +176,7 @@ async def test_verified_connector_runtime_and_silent_local_clock(
         e.entity_id for e in er.async_entries_for_config_entry(registry, entry.entry_id)
     }
     assert hass.states.get(sync_id).state == "push"
-    registry.async_update_entity(
-        sync_id, disabled_by=er.RegistryEntryDisabler.USER
-    )
+    registry.async_update_entity(sync_id, disabled_by=er.RegistryEntryDisabler.USER)
     await hass.async_block_till_done()
     assert registry.async_get(sync_id).disabled_by == er.RegistryEntryDisabler.USER
     with monkeypatch.context() as patch:
