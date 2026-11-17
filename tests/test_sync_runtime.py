@@ -112,6 +112,7 @@ async def test_verified_connector_runtime_and_silent_local_clock(
     assert sync_id is not None
     await hass.async_block_till_done()
     assert hass.states.get(sync_id).state == "push"
+    assert "Synchronization Mode" in hass.states.get(sync_id).attributes["friendly_name"]
     assert manager.mode("dev1") == manager.diagnostics()["devices"]["device_1"]["mode"]
 
     # Transport changes refresh the new entity, without changing WServer state.
