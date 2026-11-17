@@ -330,6 +330,7 @@ def _extract_config_flow_keys() -> set[str]:
 
     return keys
 
+
 def test_sync_mode_enum_states_localized_in_all_languages() -> None:
     """The enum's five machine values retain stable translation keys."""
     expected = {"push", "rest_fallback", "resyncing", "auth_required", "stopped"}
