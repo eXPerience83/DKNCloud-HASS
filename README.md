@@ -72,10 +72,23 @@ Optional settings in the Home Assistant UI:
 | **Climate** | Modes `COOL`, `HEAT`, `FAN_ONLY`, `DRY`; supported fan speeds, setpoints and `home/away/sleep` presets |
 | **Switch** | Power on/off for each device |
 | **Number** | Sleep timer (`sleep_time`), away minimum (`min_temp_unoccupied`, **12–22 °C**) and away maximum (`max_temp_unoccupied`, **24–34 °C**) |
-| **Sensor** | Current temperature, last connection and available diagnostic data |
+| **Sensor** | Current temperature, last connection, and diagnostic data including per-device Synchronization Mode |
 | **Binary sensor** | Device power state and passive WServer connectivity |
 
 The exact entities and available controls vary by device capabilities and configuration.
+
+### PUSH/REST synchronization diagnostic
+
+In versions that include [#227](https://github.com/eXPerience83/DKNCloud-HASS/issues/227), go to **Settings → Devices & Services → DKN Cloud → Devices**, open a device, and show its **Diagnostic** entities to find **Synchronization Mode** (you can also search Entities for `sync_mode`). The sensor is enabled by default, read-only, and can be disabled in the entity registry.
+
+- `push` — the cloud Pusher/INFO subscription is active.
+- `rest_fallback` — automatic REST GET fallback is being used because PUSH is inactive.
+- `resyncing` — the subscription is being restored and reconciled.
+- `auth_required` — the cloud account needs reauthentication.
+- `stopped` — transient teardown state; the entity normally becomes unavailable or is removed on unload.
+
+These are **cloud synchronization transport modes**, not HVAC operating modes or proof that the **physical WServer** is online. The separate WServer connectivity binary sensor and its offline notifications are unchanged. This diagnostic only observes the existing synchronization manager; it adds no requests or polling.
+
 
 ## Compatibility and limitations
 
