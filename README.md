@@ -15,7 +15,7 @@
 - **Climate control:** Power, cooling, heating, ventilation, dehumidification, target temperature and supported fan speeds.
 - **Native presets:** `home`, `away` and `sleep` on each climate entity. No separate `select.scenary` entity.
 - **Sleep and away settings:** Configurable sleep timer and minimum/maximum unoccupied temperatures. Wake commands exit a stale Sleep scene. A session-consistent ON→OFF transition also initiates one guarded Home cleanup by default, without waiting for timer expiry. Two real one-shot Sleep cycles and cleanup were verified on a test device.
-- **Status and diagnostics:** Room temperature, device power, connection status, last connection and other available device data. Connection monitoring is passive (no additional pings).
+- **Status and diagnostics:** Room temperature, device power, connection status, last connection, and (starting with 0.6.0b1) a per-device cloud PUSH/REST synchronization-mode sensor. Connection monitoring is passive (no additional pings).
 - **Privacy by default:** Identifiers such as MAC, PIN and installation/location are only exposed by opting in; those entities remain disabled by default.
 - **Localized UI:** English, Spanish, French, German, Italian and Portuguese.
 
@@ -23,7 +23,7 @@ Some features depend on your device and firmware. Experimental `HEAT_COOL` contr
 
 ## Installation
 
-Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**. Automated checks now pass on the locked HA 2026.11 baseline, including a separate hash-locked minimum-version test suite, but **real-device and native Marketplace/HACS migration acceptance are still pending**. An optional alpha prerelease is not a stable compatibility certification. See the [validation checklist](./docs/ha-2026.11-smoke.md).
+Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**. Automated checks pass on the locked HA 2026.11 baseline, including a separate hash-locked minimum-version test suite. The owner's installed 0.6.0a1 alpha has shown healthy PUSH after a HA 2026.11.2 restart and Marketplace update, but fresh-install / legacy HACS migration, broad hardware control and the first beta still require their own acceptance. **Neither alpha nor beta is stable-certified.** See the [validation checklist](./docs/ha-2026.11-smoke.md).
 
 ### Install with Marketplace
 
@@ -35,9 +35,26 @@ Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**.
 
 **Published versions:** Check [GitHub Releases](https://github.com/eXPerience83/DKNCloud-HASS/releases) for the stable release and optional prereleases. Code on `main` can contain changes **not yet published**; passing CI is not a real-device compatibility certification.
 
-### 0.6.0a1 experimental alpha — important upgrade notes
+### 0.6.0b1 experimental beta — what changes from the alpha
 
-This prerelease introduces **automatic INFO-driven Pusher updates** with a
+Compared with published `0.6.0a1`, the first beta adds a read-only,
+per-device **Synchronization Mode** diagnostic that reports cloud
+`push`, `rest_fallback`, `resyncing`, `auth_required`, or a transient
+`stopped` state. It refreshes through existing local notifications,
+including when reauthentication is needed; it does **not** trigger extra
+REST requests or indicate whether the physical WServer is online.
+
+No new configuration migration, entity renaming, HVAC command or
+Sleep / notification policy change is introduced relative to 0.6.0a1.
+The `0.6.0b1` release is **not published merely by merging its preparation
+PR**: select it explicitly as a prerelease only after it is published.
+Back up HA before upgrading, and verify the sensor, existing entities and
+normal operation after restarting. Real beta-installation acceptance is
+still pending [#191](https://github.com/eXPerience83/DKNCloud-HASS/issues/191).
+
+### 0.6.0a1 alpha baseline — upgrading from earlier versions
+
+The 0.6.0a1 baseline introduces **automatic INFO-driven Pusher updates** with a
 nominal 10-second information cycle and budgeted REST GET recovery. Its
 default-on, session-guarded Sleep cleanup differs from earlier versions.
 It also retires the user-configurable `scan_interval` and the previous local
@@ -79,7 +96,7 @@ The exact entities and available controls vary by device capabilities and config
 
 ### PUSH/REST synchronization diagnostic
 
-In versions that include [#227](https://github.com/eXPerience83/DKNCloud-HASS/issues/227), go to **Settings → Devices & Services → DKN Cloud → Devices**, open a device, and show its **Diagnostic** entities to find **Synchronization Mode** (you can also search Entities for `sync_mode`). The sensor is enabled by default, read-only, and can be disabled in the entity registry.
+Starting with **0.6.0b1** (once published), go to **Settings → Devices & Services → DKN Cloud → Devices**, open a device, and show its **Diagnostic** entities to find **Synchronization Mode** (you can also search Entities for `sync_mode`). The sensor is enabled by default, read-only, and can be disabled in the entity registry.
 
 - `push` — the cloud Pusher/INFO subscription is active.
 - `rest_fallback` — automatic REST GET fallback is being used because PUSH is inactive.

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.6.0b1] - 2026-11-17
+
+> **Experimental first beta; not stable or fully device-certified.**
+> Compared with the published `0.6.0a1` alpha, this candidate changes
+> observability only: no new configuration-option migrations, command formats,
+> polling defaults or WServer notification thresholds. The inherited
+> `0.6.0a1` migration from older versions still applies; back up Home
+> Assistant before upgrading. Minimum Home Assistant **2026.11.0**
+> (Python 3.14). Publication is a separate manual decision.
+
+### Added
+- Expose one enabled-by-default, disableable, read-only diagnostic
+  **Synchronization Mode** sensor per cloud device, matching the authoritative
+  sanitized SyncManager diagnostics: `push`, `rest_fallback`, `resyncing`,
+  `auth_required` and transient `stopped` (#227, #228).
+- Update the diagnostic locally on transport, resynchronization and
+  reauthentication changes, including a write-side HTTP 401. Use no extra
+  REST requests, timers, polling or physical-telemetry freshness updates.
+  Localize the sensor name and state labels in all six supported languages.
+
+### Changed
+- Document the distinction between cloud PUSH/REST synchronization, HVAC
+  operating mode and physical WServer online/offline status; retain
+  existing entity IDs, cloud request policy and WServer offline alerts.
+
+> **Validation boundary:** The new sensor's transitions, HA entity lifecycle,
+> localization and packaging are covered by automated tests, not by a
+> real-device beta installation yet. The owner's previously installed
+> `0.6.0a1` on HA 2026.11.2 recovered healthy PUSH after a reported
+> reload/restart and Marketplace update, but this is **not** proof of the
+> `0.6.0b1` ZIP, fresh Marketplace install, legacy HACS migration,
+> physical device convergence or real password-change reauthentication
+> (#101, #105, #121, #191). Experimental HEAT_COOL remains opt-in.
+
 ## [0.6.0a1] - 2026-11-13
 
 > **Experimental major-feature alpha, not stable or fully device-certified.**
