@@ -374,10 +374,20 @@ async def test_queued_topology_discovery_is_fenced_after_auth_failure(
     api.fetch_installations.reset_mock()
     monkeypatch.setattr(entry, "async_start_reauth_if_available", Mock())
     entry._async_set_state(hass, ConfigEntryState.FAILED_UNLOAD, None)
-    api.on_write_auth_failure()
-    assert manager._auth_failed
-    api.on_write_auth_failure()
-    entry.async_start_reauth_if_available.assert_called_once_with(hass)
+    seen_modes = []
+    unlisten = entry.runtime_data.coordinator.async_add_listener(
+        lambda: seen_modes.append(manager.mode("dev1"))
+    )
+    try:
+        assert manager.mode("dev1") == "rest_fallback"
+        api.on_write_auth_failure()
+        assert manager._auth_failed
+        assert seen_modes == ["auth_required"]
+        api.on_write_auth_failure()
+        assert seen_modes == ["auth_required"]  # 401 retries are idempotent
+        entry.async_start_reauth_if_available.assert_called_once_with(hass)
+    finally:
+        unlisten()
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await discovery
