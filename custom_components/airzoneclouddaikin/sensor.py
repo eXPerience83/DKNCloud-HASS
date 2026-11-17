@@ -471,8 +471,14 @@ class AirzoneSyncModeSensor(AirzoneSensor):
         self, coordinator: AirzoneCoordinator, manager: SyncManager, device_id: str
     ) -> None:
         super().__init__(
-            coordinator, device_id, "sync_mode", "Synchronization Mode",
-            "mdi:cloud-sync", True, None, None,
+            coordinator,
+            device_id,
+            "sync_mode",
+            "Synchronization Mode",
+            "mdi:cloud-sync",
+            True,
+            None,
+            None,
         )
         # Use HA's localized entity name and enum labels.
         self._attr_name = None
