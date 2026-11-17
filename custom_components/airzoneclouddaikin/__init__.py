@@ -1169,6 +1169,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             connect=connector,
             discover=discover_sync,
             on_topology_change=topology_changed,
+            on_mode_change=coordinator.async_update_listeners,
         )
         bucket["sync_manager"] = manager
 
