@@ -84,10 +84,19 @@ rather than claiming it happened.
 | `reload` | Reload integration in HA | Same devices/entities, no duplicates; updated state after settling |
 | `restart` | Restart HA after backup | Entry and entities recover; no missing data after settling |
 | `offline_recovery` | If safe, disconnect/reconnect device/network; observe cloud outages separately | Time to disconnected and recovered UI state |
-| `options` | Change and restore polling/notification options | Config persists through reload; hidden token/options retained |
+| `options` | Change and restore supported UI options (experimental HEAT_COOL, Sleep cleanup and PII visibility); no legacy scan interval | Config persists through reload; hidden token/options retained |
 | `reauth` | In a planned maintenance window, test expiry/password change | Reauth must retain the same entry and existing options; #105 remains independently tracked |
 | `marketplace_install` | On HA 2026.11 stable, install from native Marketplace | Pending until a **real Marketplace test** is recorded; the official 2026.11 test harness is tracked separately |
 | `hacs_upgrade` | Test HACS-to-Marketplace migration in a backed-up HA 2026.11 instance | Pending until a **real migrated-installation test** is recorded |
+
+For the first beta (`0.6.0b1`), inspect the per-device diagnostic
+Synchronization Mode in the HA UI while observing a normally healthy PUSH
+session. Compare its transport state with **sanitized** synchronization
+diagnostics; note the HA integration version and whether the entity survives
+reload/restart without duplication. This read-only observation needs no HVAC
+command. Do **not** deliberately disconnect a working device merely to
+force a fallback or confuse this cloud transport indicator with the separate
+physical WServer connectivity sensor.
 
 Follow `info.md` for backend contracts. Do not force unsupported fan Auto,
 P2 aliases or out-of-range setpoints. An HTTP success does not establish that
