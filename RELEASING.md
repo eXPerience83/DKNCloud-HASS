@@ -9,13 +9,14 @@ The integration version belongs to
 `custom_components/airzoneclouddaikin/manifest.json`, **not**
 `pyproject.toml`, whose version tracks independent development/test tooling.
 The first `CHANGELOG.md` version heading must match the integration version.
-The tag is derived as `v<version>`: `0.6.0a1` maps to `v0.6.0a1`.
+The tag is derived as `v<version>`: `0.6.0b1` maps to `v0.6.0b1`.
 Allowed formats are `X.Y.Z` (stable), `X.Y.ZaN` (alpha), `X.Y.ZbN`
 (beta) and `X.Y.ZrcN` (release candidate). Alpha, beta and RC must be
 marked as **Pre-release**.
 
-The published stable `v0.4.8` and alphas `v0.5.0a4`, `v0.5.0a5` and
-`v0.5.0a6` remain immutable. Never reuse their tags, edit published ZIP assets, or move tags.
+The published stable `v0.4.8` and alphas `v0.5.0a4`, `v0.5.0a5`,
+`v0.5.0a6` and `v0.6.0a1` remain immutable. Never reuse their tags, edit
+published ZIP assets, or move tags.
 
 ## Step 1 — Prepare the source
 
@@ -58,6 +59,25 @@ Release checks ensure that `pyproject.toml` and `uv.lock` agree on the
 cutoffs and reject preparing a stable version while a scoped exception
 remains. Prereleases continue using the existing draft-first checks; approval
 and publication remain manual, with no changes to the published ZIPs.
+
+### First beta candidate: 0.6.0b1
+
+The beta is a **new prerelease**, not a rewrite of published `v0.6.0a1`.
+Compare the final beta source with the alpha tag, not with a laboratory
+branch: the intended new user-facing change is the per-device, read-only
+PUSH/REST Synchronization Mode diagnostic (#227/#228). Do not include the
+still-unmerged #223 experiments or make claims of new physical command
+validation. Retain HA 2026.11.0 / Python 3.14, the existing
+`hacs.json` ZIP contract and normal Sleep, request and WServer behavior.
+No `pyproject.toml` / `uv.lock` version bump is needed.
+
+After merging the reviewed beta PR, require the final main-branch checks.
+Run `dry_run=true` first; check `0.6.0b1`, `v0.6.0b1`, the package
+layout and SHA-256. Only then prepare a draft (without publishing).
+Confirm **Pre-release**, review the changelog and backup instructions,
+and publish manually after explicit approval. Validate the diagnostic
+sensor, unchanged entity registry and Cloud PUSH/fallback separately on
+the installed beta under [the HA 2026.11 smoke checklist](./docs/ha-2026.11-smoke.md).
 
 ## Step 2 — Prepare a draft in GitHub Actions
 
@@ -102,7 +122,10 @@ and exits without modifying that binary.
 
 Check the GitHub release ZIP; test installation or Redownload from HACS /
 Home Assistant Marketplace, restart Home Assistant, confirm integration
-version and perform smoke tests on a real DKN Cloud device. Passing CI alone
+version and perform smoke tests on a real DKN Cloud device. For 0.6.0b1,
+confirm the new per-device Synchronization Mode diagnostic is visible and
+matches sanitized transport diagnostics, without treating a PUSH loss as
+physical WServer disconnection. Passing CI alone
 does not establish real-device functionality.
 
 ## Recovery and reruns
