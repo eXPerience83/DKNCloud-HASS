@@ -74,6 +74,7 @@ async def test_async_setup_entry_removes_orphan_pii_entities_only(
     assert registry.async_get(binary_sensor.entity_id) is not None
     assert added_entities == []
 
+
 async def test_sync_mode_sensors_are_per_device_readonly_and_user_disableable(
     hass: HomeAssistant,
     dkn_config_entry_factory: Callable[..., MockConfigEntry],
@@ -117,11 +118,15 @@ async def test_sync_mode_sensors_are_per_device_readonly_and_user_disableable(
 
     registry = er.async_get(hass)
     registered = registry.async_get_or_create(
-        "sensor", DOMAIN, modes["device_a"].unique_id,
-        suggested_object_id="device_a_sync_mode", config_entry=entry,
+        "sensor",
+        DOMAIN,
+        modes["device_a"].unique_id,
+        suggested_object_id="device_a_sync_mode",
+        config_entry=entry,
     )
     disabled = registry.async_update_entity(
-        registered.entity_id, disabled_by=er.RegistryEntryDisabler.USER,
+        registered.entity_id,
+        disabled_by=er.RegistryEntryDisabler.USER,
     )
     assert disabled.disabled_by == er.RegistryEntryDisabler.USER
     assert modes["device_a"].unique_id == "device_a_sync_mode"
@@ -140,6 +145,4 @@ async def test_sync_mode_sensor_not_created_without_sync_manager(
     entry.runtime_data = AirzoneRuntimeData(api=Mock(), coordinator=coordinator)
     added_entities: list[Any] = []
     await sensor.async_setup_entry(hass, entry, added_entities.extend)
-    assert not any(
-        isinstance(e, sensor.AirzoneSyncModeSensor) for e in added_entities
-    )
+    assert not any(isinstance(e, sensor.AirzoneSyncModeSensor) for e in added_entities)
