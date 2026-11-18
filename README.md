@@ -46,8 +46,9 @@ REST requests or indicate whether the physical WServer is online.
 
 No new configuration migration, entity renaming, HVAC command or
 Sleep / notification policy change is introduced relative to 0.6.0a1.
-The `0.6.0b1` release is **not published merely by merging its preparation
-PR**: select it explicitly as a prerelease only after it is published.
+The `v0.6.0b1` beta was published on 2026-11-17 as a GitHub prerelease,
+not as a stable release. Marketplace installation of this beta and physical
+device acceptance still require separate verification.
 Back up HA before upgrading, and verify the sensor, existing entities and
 normal operation after restarting. Real beta-installation acceptance is
 still pending [#191](https://github.com/eXPerience83/DKNCloud-HASS/issues/191).
@@ -96,7 +97,7 @@ The exact entities and available controls vary by device capabilities and config
 
 ### PUSH/REST synchronization diagnostic
 
-Starting with **0.6.0b1** (once published), go to **Settings → Devices & Services → DKN Cloud → Devices**, open a device, and show its **Diagnostic** entities to find **Synchronization Mode** (you can also search Entities for `sync_mode`). The sensor is enabled by default, read-only, and can be disabled in the entity registry.
+Starting with **0.6.0b1**, go to **Settings → Devices & Services → DKN Cloud → Devices**, open a device, and show its **Diagnostic** entities to find **Synchronization Mode** (you can also search Entities for `sync_mode`). The sensor is enabled by default, read-only, and can be disabled in the entity registry.
 
 - `push` — the cloud Pusher/INFO subscription is active.
 - `rest_fallback` — automatic REST GET fallback is being used because PUSH is inactive.
