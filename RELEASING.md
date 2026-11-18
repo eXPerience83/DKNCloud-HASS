@@ -150,9 +150,10 @@ Do not silently overwrite its published artifacts or roll back a tag.
 - [ ] ZIP validation, expected filename and SHA-256 are verified.
 - [ ] Draft notes and alpha/beta/RC or stable settings are reviewed.
 - [ ] Publish is performed manually after ZIP attachment.
-- [ ] Record HACS/Marketplace installation and hardware smoke as PASS, FAIL
-      or NOT TESTED. If acceptance is incomplete, link the remaining gates and
-      explicitly document those limits; do not claim hardware certification.
+- [ ] For stable releases, HACS/Marketplace installation and hardware smoke
+      tests **must pass**. For experimental prereleases, record each gate as
+      PASS, FAIL or NOT TESTED, link outstanding acceptance and explicitly
+      disclose its limits; do not claim hardware certification.
 
 ### Updater pull-request checks
 
