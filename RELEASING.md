@@ -151,8 +151,8 @@ Do not silently overwrite its published artifacts or roll back a tag.
 - [ ] Draft notes and alpha/beta/RC or stable settings are reviewed.
 - [ ] Publish is performed manually after ZIP attachment.
 - [ ] Record HACS/Marketplace installation and hardware smoke as PASS, FAIL
-      or NOT TESTED. Stable release requires PASS; prereleases must disclose
-      unverified acceptance gates.
+      or NOT TESTED. If acceptance is incomplete, link the remaining gates and
+      explicitly document those limits; do not claim hardware certification.
 
 ### Updater pull-request checks
 
