@@ -97,7 +97,7 @@ The exact entities and available controls vary by device capabilities and config
 
 ### PUSH/REST synchronization diagnostic
 
-Starting with **0.6.0b1**, go to **Settings → Devices & Services → DKN Cloud → Devices**, open a device, and show its **Diagnostic** entities to find **Synchronization Mode** (you can also search Entities for `sync_mode`). The sensor is enabled by default, read-only, and can be disabled in the entity registry.
+Starting with **0.6.0b1**, go to **Settings → Devices & Services → DKN Cloud for Home Assistant → Devices**, open a device, and show its **Diagnostic** entities to find **Synchronization Mode** (you can also search Entities for `sync_mode`). The sensor is enabled by default, read-only, and can be disabled in the entity registry.
 
 - `push` — the cloud Pusher/INFO subscription is active.
 - `rest_fallback` — automatic REST GET fallback is being used because PUSH is inactive.
