@@ -14,9 +14,9 @@ Allowed formats are `X.Y.Z` (stable), `X.Y.ZaN` (alpha), `X.Y.ZbN`
 (beta) and `X.Y.ZrcN` (release candidate). Alpha, beta and RC must be
 marked as **Pre-release**.
 
-The published stable `v0.4.8` and alphas `v0.5.0a4`, `v0.5.0a5`,
-`v0.5.0a6` and `v0.6.0a1` remain immutable. Never reuse their tags, edit
-published ZIP assets, or move tags.
+The published stable `v0.4.8`, alphas `v0.5.0a4`, `v0.5.0a5`,
+`v0.5.0a6`, `v0.6.0a1` and first beta `v0.6.0b1` remain immutable.
+Never reuse their tags, edit published ZIP assets, or move tags.
 
 ## Step 1 — Prepare the source
 
@@ -60,9 +60,11 @@ cutoffs and reject preparing a stable version while a scoped exception
 remains. Prereleases continue using the existing draft-first checks; approval
 and publication remain manual, with no changes to the published ZIPs.
 
-### First beta candidate: 0.6.0b1
+### First beta: 0.6.0b1 (published 2026-11-17)
 
-The beta is a **new prerelease**, not a rewrite of published `v0.6.0a1`.
+This section records the **historical preparation checklist** for the now
+published prerelease, not an instruction to rebuild or republish that tag.
+The beta was a **new prerelease**, not a rewrite of published `v0.6.0a1`.
 Compare the final beta source with the alpha tag, not with a laboratory
 branch: the intended new user-facing change is the per-device, read-only
 PUSH/REST Synchronization Mode diagnostic (#227/#228). Do not include the
@@ -71,13 +73,13 @@ validation. Retain HA 2026.11.0 / Python 3.14, the existing
 `hacs.json` ZIP contract and normal Sleep, request and WServer behavior.
 No `pyproject.toml` / `uv.lock` version bump is needed.
 
-After merging the reviewed beta PR, require the final main-branch checks.
-Run `dry_run=true` first; check `0.6.0b1`, `v0.6.0b1`, the package
-layout and SHA-256. Only then prepare a draft (without publishing).
-Confirm **Pre-release**, review the changelog and backup instructions,
-and publish manually after explicit approval. Validate the diagnostic
-sensor, unchanged entity registry and Cloud PUSH/fallback separately on
-the installed beta under [the HA 2026.11 smoke checklist](./docs/ha-2026.11-smoke.md).
+The beta preparation sequence required final main-branch checks after merge,
+then a `dry_run=true` rehearsal of `0.6.0b1`, `v0.6.0b1`, ZIP layout and
+SHA-256 before preparing a draft. The draft was reviewed as **Pre-release**
+and published manually after explicit approval. The published beta must not
+be republished or its ZIP replaced. Installed-beta validation of the diagnostic
+sensor, entity registry and Cloud PUSH/fallback remains a separate acceptance
+gate under [the HA 2026.11 smoke checklist](./docs/ha-2026.11-smoke.md).
 
 ## Step 2 — Prepare a draft in GitHub Actions
 
@@ -148,7 +150,9 @@ Do not silently overwrite its published artifacts or roll back a tag.
 - [ ] ZIP validation, expected filename and SHA-256 are verified.
 - [ ] Draft notes and alpha/beta/RC or stable settings are reviewed.
 - [ ] Publish is performed manually after ZIP attachment.
-- [ ] HACS/Marketplace installation and hardware smoke test pass.
+- [ ] Record HACS/Marketplace installation and hardware smoke as PASS, FAIL
+      or NOT TESTED. Stable release requires PASS; prereleases must disclose
+      unverified acceptance gates.
 
 ### Updater pull-request checks
 
