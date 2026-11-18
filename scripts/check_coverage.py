@@ -1,7 +1,8 @@
 """Read pytest-cov's JSON output and enforce evidence-based coverage floors.
 
-The supported minimum HA matches the locked test baseline. The daily canary
-independently probes the latest compatible stable HA/PHACC pair.
+The primary locked HA/official pytest baseline can advance independently of the
+hash-locked minimum HA 2026.11.0 test environment. The daily canary probes
+latest compatible stable HA and official pytest-homeassistant releases.
 """
 
 from __future__ import annotations
