@@ -1,6 +1,6 @@
 # Contributing
 
-- The integration targets Python 3.14+ and supports Home Assistant **2026.11.0 or newer**. The pinned test baseline is 2026.11.0. Use Python 3.14 for local development and CI parity.
+- The integration targets Python 3.14+ and supports Home Assistant **2026.11.0 or newer**. The primary locked test baseline is 2026.11.1; the independent hash-locked minimum remains 2026.11.0. Use Python 3.14 for local development and CI parity.
 - Format, lint, and sort imports with Ruff (line length 88, target-version `py314`). Use the exact version pinned in `pyproject.toml` and `uv.lock`.
 - The translation source of truth is `custom_components/airzoneclouddaikin/translations/en.json`. Keep every other locale file in
   sync with it.
