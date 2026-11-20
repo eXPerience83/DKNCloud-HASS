@@ -2253,6 +2253,8 @@ async def test_latest_power_survives_ambiguous_p1(
     hass, dummy_coordinator_factory, monkeypatch, initial, first_platform, last_platform
 ):
     """An uncertain P1 cannot make the user's opposite request look redundant."""
+    from homeassistant.helpers.service import entity_service_call
+
     from custom_components.airzoneclouddaikin.helpers import (
         acquire_device_lock,
         optimistic_set,
@@ -2262,6 +2264,7 @@ async def test_latest_power_survives_ambiguous_p1(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, power=str(initial)
     )
+    entity.entity_id = "climate.unit"
     switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
     switch.hass = hass
     monkeypatch.setattr(switch, "async_write_ha_state", Mock())
@@ -2298,12 +2301,14 @@ async def test_latest_power_survives_ambiguous_p1(
     api.send_event.side_effect = send
 
     async def on(call):
-        entity.async_set_context(call.context)
-        await entity.async_turn_on()
+        await entity_service_call(
+            hass, {entity.entity_id: entity}, "async_turn_on", call
+        )
 
     async def off(call):
-        entity.async_set_context(call.context)
-        await entity.async_turn_off()
+        await entity_service_call(
+            hass, {entity.entity_id: entity}, "async_turn_off", call
+        )
 
     hass.services.async_register("climate", "turn_on", on)
     hass.services.async_register("climate", "turn_off", off)
@@ -2591,22 +2596,26 @@ async def test_independent_climate_service_cannot_inherit_switch_reservation(
     )
 
     async def on(call):
-        if call.context is not origin:
+        if not delegated.is_set():
             delegated.set()
             await finish_delegated.wait()
         await entity_service_call(
             hass, {entity.entity_id: entity}, "async_turn_on", call
         )
 
+    listener_started = False
+
     async def listener(event):
-        if event.context is not origin and event.context.id == origin.id:
+        nonlocal listener_started
+        if not listener_started and event.context.id == origin.id:
+            listener_started = True
             await run_listener.wait()
             await hass.services.async_call(
                 "climate",
                 "turn_on",
                 {"entity_id": "climate.unit"},
                 blocking=True,
-                context=origin,
+                context=event.context,
             )
             listener_done.set()
 

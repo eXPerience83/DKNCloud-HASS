@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
@@ -24,6 +24,7 @@ from .const import (
 )
 from .device_state import power_is_on, preset_to_scenary, scenary_to_preset
 from .helpers import (
+    PowerDelegation,
     acquire_device_lock,
     active_entry_bucket,
     async_auto_exit_sleep_if_needed,
@@ -31,6 +32,7 @@ from .helpers import (
     bitmask_supports_p2,
     build_device_info,
     clamp_temperature,
+    delegated_power_intent,
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
@@ -744,6 +746,21 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
 
     # ---- Power / mode ----------------------------------------------------
+
+    async def async_request_call[T](self, coro: Coroutine[Any, Any, T]) -> T:
+        # HA runs this hook in the blocking service caller before scheduling
+        # the entity method. call_service listeners can inherit the pending
+        # reservation, but run this hook in a different caller task.
+        delegation = delegated_power_intent.get()
+        if delegation is None or delegation.caller is not asyncio.current_task():
+            return await super().async_request_call(coro)
+        token = delegated_power_intent.set(
+            PowerDelegation(delegation.intent, delegation.value, delegation.context)
+        )
+        try:
+            return await super().async_request_call(coro)
+        finally:
+            delegated_power_intent.reset(token)
 
     async def async_turn_on(self) -> None:
         intent = reserve_power_intent(

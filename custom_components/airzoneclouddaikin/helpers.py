@@ -277,10 +277,18 @@ class PowerIntent:
             raise CommandSuperseded
 
 
-# HA can schedule the entity method in another task. Require the invocation's
-# copied Context by identity so callers inheriting a ContextVar reserve afresh.
-delegated_power_intent: ContextVar[tuple[PowerIntent, int, Context] | None] = (
-    ContextVar("dkn_delegated_power_intent", default=None)
+@dataclass(frozen=True, slots=True)
+class PowerDelegation:
+    """A pending Switch reservation authorized by Climate's entity service."""
+
+    intent: PowerIntent
+    value: int
+    context: Context
+    caller: asyncio.Task | None = None
+
+
+delegated_power_intent: ContextVar[PowerDelegation | None] = ContextVar(
+    "dkn_delegated_power_intent", default=None
 )
 
 
@@ -296,12 +304,15 @@ def reserve_power_intent(
     """Record the request before waiting for a device lock or scene preparation."""
     if (
         (delegated := delegated_power_intent.get()) is not None
-        and delegated[1] == delegated_value
-        and delegated[2] is service_context
-        and delegated[0].entry_id == entry_id
-        and delegated[0].device_id == device_id
+        and delegated.caller is None
+        and delegated.value == delegated_value
+        and delegated.context is service_context
+        and delegated.intent.entry_id == entry_id
+        and delegated.intent.device_id == device_id
     ):
-        intent = delegated[0]
+        # The entity method consumes this authorization before it can yield.
+        delegated_power_intent.set(None)
+        intent = delegated.intent
         return (
             intent if intent.coordinator is coordinator and intent.is_active() else None
         )
