@@ -1393,6 +1393,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
 
     if unload_ok:
         bucket.pop("device_locks", None)
+        if uncertain_power := bucket.get("uncertain_power"):
+            uncertain_power.clear()
         notify_state.clear()
         domain_bucket = hass.data.get(DOMAIN, {})
         if domain_bucket.get(entry.entry_id) is bucket:

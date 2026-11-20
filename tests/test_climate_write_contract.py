@@ -2332,8 +2332,9 @@ async def test_latest_power_survives_ambiguous_p1(
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
 
 
+@pytest.mark.parametrize("replace_entry", [False, True])
 async def test_delayed_switch_delegation_keeps_original_intent_order(
-    hass, dummy_coordinator_factory, monkeypatch
+    hass, dummy_coordinator_factory, monkeypatch, replace_entry
 ):
     """Entering the delegated Climate handler late cannot reorder user intent."""
     from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
@@ -2354,10 +2355,18 @@ async def test_delayed_switch_delegation_keeps_original_intent_order(
     async with asyncio.timeout(3):
         old = asyncio.create_task(switch.async_turn_on())
         await entered.wait()
-        await entity.async_turn_off()
+        if replace_entry:
+            hass.data[DOMAIN].pop("climate-entry")
+            entity, successor_api = _climate(
+                hass, dummy_coordinator_factory, monkeypatch, power="0"
+            )
+        else:
+            await entity.async_turn_off()
         release.set()
         await old
     api.send_event.assert_not_awaited()
+    if replace_entry:
+        successor_api.send_event.assert_not_awaited()
 
 
 @pytest.mark.parametrize("lifecycle", ["unload", "failed_unload", "replacement"])
@@ -2376,7 +2385,8 @@ async def test_uncertain_p1_is_owned_by_its_original_entry(
     manager = Mock(close=AsyncMock())
     bucket.update(api=api, sync_manager=manager)
     entity.coordinator.api = api
-    new_marker = object()
+    old_marker, new_marker = object(), object()
+    bucket["uncertain_power"] = {"unit-1": old_marker}
     successor = {
         "coordinator": Mock(),
         "sync_manager": Mock(),
@@ -2424,11 +2434,14 @@ async def test_uncertain_p1_is_owned_by_its_original_entry(
     successor["sync_manager"].request_recovery.assert_not_called()
     assert successor["uncertain_power"] == {"unit-1": new_marker}
     if lifecycle == "failed_unload":
-        assert "unit-1" in bucket["uncertain_power"]
+        assert bucket["uncertain_power"]["unit-1"] is not old_marker
         manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     else:
-        assert not bucket.get("uncertain_power")
         manager.request_recovery.assert_not_called()
+        if lifecycle == "unload":
+            assert not bucket.get("uncertain_power")
+        else:
+            assert bucket["uncertain_power"] == {"unit-1": old_marker}
 
 
 @pytest.mark.parametrize("cancel_last", [False, True])
