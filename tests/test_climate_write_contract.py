@@ -2339,9 +2339,12 @@ async def test_delayed_switch_delegation_keeps_original_intent_order(
     hass, dummy_coordinator_factory, monkeypatch, replace_entry
 ):
     """Entering the delegated Climate handler late cannot reorder user intent."""
+    from homeassistant.helpers.service import entity_service_call
+
     from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
 
     entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    entity.entity_id = "climate.unit"
     switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
     switch.hass = hass
     monkeypatch.setattr(switch, "_resolve_climate_entity_id", lambda: "climate.unit")
@@ -2351,8 +2354,9 @@ async def test_delayed_switch_delegation_keeps_original_intent_order(
     async def on(call):
         entered.set()
         await release.wait()
-        entity.async_set_context(call.context)
-        await entity.async_turn_on()
+        await entity_service_call(
+            hass, {entity.entity_id: entity}, "async_turn_on", call
+        )
 
     hass.services.async_register("climate", "turn_on", on)
     async with asyncio.timeout(3):
@@ -2363,6 +2367,7 @@ async def test_delayed_switch_delegation_keeps_original_intent_order(
             entity, successor_api = _climate(
                 hass, dummy_coordinator_factory, monkeypatch, power="0"
             )
+            entity.entity_id = "climate.unit"
         else:
             await entity.async_turn_off()
         release.set()
@@ -2385,6 +2390,7 @@ async def test_uncertain_p1_is_owned_by_its_original_entry(
     entry = MockConfigEntry(domain=DOMAIN, entry_id=entity._entry_id)
     bucket = hass.data[DOMAIN][entry.entry_id]
     api = AirzoneAPI("synthetic", Mock())
+    monkeypatch.setattr(api, "_dispatch_traced", True)
     manager = Mock(close=AsyncMock())
     bucket.update(api=api, sync_manager=manager)
     entity.coordinator.api = api
@@ -2514,6 +2520,7 @@ async def test_newer_off_stops_wake_scene_before_it_dispatches(
         async_auto_exit_sleep_if_needed,
     )
     api = AirzoneAPI("synthetic", Mock())
+    monkeypatch.setattr(api, "_dispatch_traced", True)
     entity.coordinator.api = api
     entered, release, off_queued, home_queued = (asyncio.Event() for _ in range(4))
     sent = []
@@ -2567,13 +2574,15 @@ async def test_independent_climate_service_cannot_inherit_switch_reservation(
     """A call_service listener runs in its own task and must reserve its own ON."""
     from homeassistant.const import EVENT_CALL_SERVICE
     from homeassistant.core import Context
+    from homeassistant.helpers.service import entity_service_call
 
     from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
 
     entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    entity.entity_id = "climate.unit"
     switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
     switch.hass = hass
-    origin, other_call = Context(), Context()
+    origin = Context()
     switch.async_set_context(origin)
     monkeypatch.setattr(switch, "_resolve_climate_entity_id", lambda: "climate.unit")
     hass.states.async_set("climate.unit", "off")
@@ -2582,21 +2591,22 @@ async def test_independent_climate_service_cannot_inherit_switch_reservation(
     )
 
     async def on(call):
-        if call.context is origin:
+        if call.context is not origin:
             delegated.set()
             await finish_delegated.wait()
-        entity.async_set_context(call.context)
-        await entity.async_turn_on()
+        await entity_service_call(
+            hass, {entity.entity_id: entity}, "async_turn_on", call
+        )
 
     async def listener(event):
-        if event.context is origin:
+        if event.context is not origin and event.context.id == origin.id:
             await run_listener.wait()
             await hass.services.async_call(
                 "climate",
                 "turn_on",
                 {"entity_id": "climate.unit"},
                 blocking=True,
-                context=other_call,
+                context=origin,
             )
             listener_done.set()
 

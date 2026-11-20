@@ -607,8 +607,9 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - In PUSH mode, readbacks after uncertain writes and corroboration of a first
   Sleep OFF report require a device GET dispatched after the corresponding
   request for evidence. Quiet-channel watchdog reads can share an in-flight GET.
-  A GET still waiting on the entry budget, API cooldown or a connection can serve newer
-  requests once dispatched. Demands that arrive after dispatch can share one
+  A GET waiting on the entry budget, API cooldown or the runtime session's
+  connection can serve newer requests once dispatched. A transport without
+  writer tracing uses the conservative pre-request boundary. Demands that arrive after dispatch can share one
   later GET under the same entry budget. Each response is merged once and
   remains subject to PUSH field precedence. A GET dispatched before a strict
   demand can update the snapshot but cannot confirm that readback. Errors end

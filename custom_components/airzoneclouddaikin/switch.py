@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
+from copy import copy
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -197,9 +197,11 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         )
         if intent is None:
             return True
-        context = self._context or Context()
+        context = copy(self._context) if self._context is not None else Context()
+        if self._context is not None:
+            context.origin_event = self._context.origin_event
         delegation = delegated_power_intent.set(
-            (intent, int(service == "turn_on"), context, asyncio.current_task())
+            (intent, int(service == "turn_on"), context)
         )
         try:
             await self.hass.services.async_call(

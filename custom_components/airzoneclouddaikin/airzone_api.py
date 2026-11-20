@@ -105,15 +105,15 @@ async def prevent_device_put_replay(
     raise HomeAssistantError("Cloud device command outcome is unknown")
 
 
+async def _notify_dispatch(_session, context, _params):
+    if dispatch := context.trace_request_ctx:
+        dispatch()
+
+
 def request_dispatch_trace() -> TraceConfig:
     """Observe timed GETs and guarded writes at the entry's HTTP writer."""
     trace = TraceConfig()
-
-    async def headers_sent(_session, context, _params):
-        if dispatch := context.trace_request_ctx:
-            dispatch()
-
-    trace.on_request_headers_sent.append(headers_sent)
+    trace.on_request_headers_sent.append(_notify_dispatch)
     return trace
 
 
@@ -131,6 +131,10 @@ class AirzoneAPI:
         self._username = username
         self._password = password
         self._session = session
+        self._dispatch_traced = isinstance(session, ClientSession) and any(
+            _notify_dispatch in trace.on_request_headers_sent
+            for trace in session.trace_configs
+        )
         self._token: str | None = token
         self._cooldown_until: float = 0.0
         self._suspended = False
@@ -393,8 +397,11 @@ class AirzoneAPI:
                     on_start()
                 dispatched = True
 
+            # Restricted transports may not support trace metadata. Preserve
+            # the conservative GET start and never forward unsupported options.
+            trace_dispatch = self._dispatch_traced and (on_start or on_uncertain)
             try:
-                if is_device_write and on_start is not None:
+                if (is_device_write or not trace_dispatch) and on_start is not None:
                     on_start()
                 return await self._request(
                     method,
@@ -403,7 +410,7 @@ class AirzoneAPI:
                     json=json,
                     extra_headers=extra_headers,
                     **({"data": data} if data is not None else {}),
-                    **({"on_dispatch": dispatch} if on_start or on_uncertain else {}),
+                    **({"on_dispatch": dispatch} if trace_dispatch else {}),
                 )
             except ClientResponseError as cre:
                 status = cre.status or 0

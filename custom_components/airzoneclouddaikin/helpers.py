@@ -277,11 +277,11 @@ class PowerIntent:
             raise CommandSuperseded
 
 
-# An HA single-entity blocking service executes in the calling task. Event
-# listeners can inherit ContextVars, so require that task and service context.
-delegated_power_intent: ContextVar[
-    tuple[PowerIntent, int, Context, asyncio.Task | None] | None
-] = ContextVar("dkn_delegated_power_intent", default=None)
+# HA can schedule the entity method in another task. Require the invocation's
+# copied Context by identity so callers inheriting a ContextVar reserve afresh.
+delegated_power_intent: ContextVar[tuple[PowerIntent, int, Context] | None] = (
+    ContextVar("dkn_delegated_power_intent", default=None)
+)
 
 
 def reserve_power_intent(
@@ -298,7 +298,6 @@ def reserve_power_intent(
         (delegated := delegated_power_intent.get()) is not None
         and delegated[1] == delegated_value
         and delegated[2] is service_context
-        and delegated[3] is asyncio.current_task()
         and delegated[0].entry_id == entry_id
         and delegated[0].device_id == device_id
     ):

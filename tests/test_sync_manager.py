@@ -1012,12 +1012,7 @@ async def test_demand_during_api_cooldown_shares_the_get():
     api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
     api._now = lambda: now
     api._cooldown_until = 30.0
-
-    async def transport(_method, _path, *, on_dispatch, **_kwargs):
-        on_dispatch()
-        return [{"id": "a", "power": "0"}]
-
-    api._request = AsyncMock(side_effect=transport)
+    api._request = AsyncMock(return_value=[{"id": "a", "power": "0"}])
 
     async def wait_for_cooldown(delay):
         nonlocal now

@@ -1335,6 +1335,7 @@ async def test_power_retry_after_429_rechecks_intent_without_uncertainty(
     from custom_components.airzoneclouddaikin.airzone_api import CommandSuperseded
 
     api, _ = _make_api(monkeypatch, [])
+    monkeypatch.setattr(api, "_dispatch_traced", True)
     entered, release = asyncio.Event(), asyncio.Event()
     current = True
     received = []
