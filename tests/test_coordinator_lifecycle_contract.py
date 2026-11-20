@@ -257,3 +257,52 @@ async def test_unload_only_cancels_timers_and_removes_its_own_runtime(
     assert old["closing"]
     assert hass.data[DOMAIN][entry.entry_id] is successor
     successor["pending_refresh"].assert_not_called()
+
+
+@pytest.mark.parametrize("phase", ["installations", "devices"])
+async def test_retired_polling_refresh_cannot_continue_or_publish(
+    hass, dkn_config_entry_factory, phase
+) -> None:
+    """A REST readback may retire while awaiting either part of the snapshot."""
+    from unittest.mock import AsyncMock, Mock
+
+    entry = dkn_config_entry_factory()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fetch_installations():
+        if phase == "installations":
+            started.set()
+            await release.wait()
+        return [{"installation_id": "site"}]
+
+    async def fetch_devices(_site):
+        if phase == "devices":
+            started.set()
+            await release.wait()
+        return [{"id": "device", "scenary": "occupied", "power": "1"}]
+
+    api = Mock(
+        fetch_installations=AsyncMock(side_effect=fetch_installations),
+        fetch_devices=AsyncMock(side_effect=fetch_devices),
+    )
+    original = {"coordinator": object()}
+    successor = {"coordinator": object()}
+    hass.data[DOMAIN] = {entry.entry_id: original}
+    task = asyncio.create_task(integration._async_update_data(hass, entry, api))
+    try:
+        async with asyncio.timeout(5):
+            await started.wait()
+            hass.data[DOMAIN][entry.entry_id] = successor
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert hass.data[DOMAIN][entry.entry_id] is successor
+    assert set(successor) == {"coordinator"}
+    assert "last_data" not in original
+    api.fetch_installations.assert_awaited_once_with()
+    assert api.fetch_devices.await_count == (phase == "devices")

@@ -762,7 +762,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     def entry_active() -> bool:
         return active_entry_bucket(hass, entry.entry_id, coordinator) is bucket
 
-    async def update_data():
+    async def update_data() -> dict[str, dict[str, Any]]:
         if not entry_active():
             raise asyncio.CancelledError
         return await _async_update_data(hass, entry, api)
@@ -929,6 +929,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         )
 
     def _cancel_sleep_expiry_task() -> None:
+        if bucket.get("coordinator") is not coordinator:
+            return
         task: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
         if task is not None and not task.done():
             task.cancel()
@@ -1255,11 +1257,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         bucket["sync_maintenance_cancel"] = cancel_maintenance
 
         async def stop_sync(_event):
-            bucket["closing"] = True
             api.suspend(auth=False)
-            _cancel_sleep_expiry_task()
-            if task := bucket.get("sleep_expiry_task"):
-                await asyncio.gather(task, return_exceptions=True)
+            if bucket.get("coordinator") is coordinator:
+                bucket["closing"] = True
+                _cancel_sleep_expiry_task()
+                if task := bucket.get("sleep_expiry_task"):
+                    await asyncio.gather(task, return_exceptions=True)
             cancel_maintenance()
             await manager.close()
 
@@ -1277,10 +1280,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         if not entry_active():
             raise asyncio.CancelledError
     except Exception, asyncio.CancelledError:
-        bucket["closing"] = True
-        _cancel_sleep_expiry_task()
-        if task := bucket.get("sleep_expiry_task"):
-            await asyncio.gather(task, return_exceptions=True)
+        if bucket.get("coordinator") is coordinator:
+            bucket["closing"] = True
+            _cancel_sleep_expiry_task()
+            if task := bucket.get("sleep_expiry_task"):
+                await asyncio.gather(task, return_exceptions=True)
         if connector is not None:
             cancel_maintenance()
             cancel_stop()
