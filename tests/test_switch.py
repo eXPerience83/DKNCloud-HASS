@@ -420,7 +420,7 @@ async def test_ambiguous_switch_fallback_p1_requests_recovery_without_overlay(
         for call in entity.coordinator.api.send_event.await_args_list
     ]
     assert [(event["option"], event["value"]) for event in events] == [("P1", value)]
-    manager.request_recovery.assert_called_once_with("dev1")
+    manager.request_recovery.assert_called_once_with("dev1", require_fresh=True)
     assert entity.is_on is (initial_power == "1")
 
 
@@ -474,7 +474,7 @@ async def test_send_event_logs_and_reraises_on_failure(
 
     with pytest.raises(RuntimeError, match="P1 failed"):
         await entity._send_event("P1", 1)
-    manager.request_recovery.assert_called_once_with("dev1")
+    manager.request_recovery.assert_called_once_with("dev1", require_fresh=True)
 
 
 def test_backend_power_is_on_normalizes_values(

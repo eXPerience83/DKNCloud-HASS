@@ -6,14 +6,17 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from itertools import count
 from typing import Any
 
 from aiohttp import ClientResponseError
 
+type ReadStart = tuple[float, int]
+
 
 @dataclass
 class _Read:
-    started: float | None = None
+    started: ReadStart | None = None
     task: asyncio.Task | None = None
 
 
@@ -29,12 +32,23 @@ class RecoveryPool:
         self._fetch = fetch
         self._timed_fetch = timed_fetch
         self._clock = clock
+        self._order = count()
         self._pending: dict[str, _Read] = {}
         self._closed = False
 
-    async def get(self, installation: str, ready_at: float) -> Any:
-        """Share an eligible read, or wait for an older read before starting one."""
-        if ready_at > self._clock():
+    def stamp(self) -> ReadStart:
+        """Order demands and GET starts even when the monotonic clock ties."""
+        return self._clock(), next(self._order)
+
+    async def get(
+        self,
+        installation: str,
+        ready_at: float | None,
+        *,
+        latest_demand: Callable[[], ReadStart | None] | None = None,
+    ) -> Any:
+        """Share an eligible read, checking the latest demand after publication."""
+        if ready_at is not None and ready_at > self._clock():
             raise ValueError("Recovery requested before its readiness deadline")
         while not self._closed:
             pending = self._pending.get(installation)
@@ -47,7 +61,7 @@ class RecoveryPool:
                     await asyncio.sleep(0)
 
                     def started():
-                        record.started = self._clock()
+                        record.started = self.stamp()
 
                     if self._timed_fetch is not None:
                         return await self._timed_fetch(installation, started)
@@ -79,13 +93,25 @@ class RecoveryPool:
             except Exception as error:
                 if isinstance(error, ClientResponseError) and error.status == 401:
                     raise
-                if pending.started is not None and pending.started < ready_at:
+                # A background worker with pending demands must record
+                # backoff before attempting any more reads for this device.
+                if (
+                    latest_demand is None
+                    and ready_at is not None
+                    and pending.started is not None
+                    and pending.started[0] < ready_at
+                ):
                     continue
                 raise
             finally:
                 if task.done() and self._pending.get(installation) is pending:
                     self._pending.pop(installation)
-            if pending.started is not None and pending.started >= ready_at:
+            demand = latest_demand() if latest_demand is not None else None
+            if (
+                pending.started is not None
+                and (ready_at is None or pending.started[0] >= ready_at)
+                and (demand is None or pending.started >= demand)
+            ):
                 return result
         raise asyncio.CancelledError
 

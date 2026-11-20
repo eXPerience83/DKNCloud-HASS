@@ -159,7 +159,7 @@ async def test_climate_nonpower_ambiguous_p_write_requests_recovery(
 
     events = [call.args[0]["event"] for call in api.send_event.await_args_list]
     assert [event["option"] for event in events] == [option]
-    manager.request_recovery.assert_called_once_with("unit-1")
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     assert key not in hass.data[DOMAIN]["climate-entry"].get("optimistic", {}).get(
         "unit-1", {}
     )
@@ -330,7 +330,7 @@ async def test_ambiguous_ordinary_preset_requests_readback_without_claiming_succ
     api.put_device_fields.assert_awaited_once_with(
         "unit-1", {"device": {"scenary": expected_scenary}}
     )
-    manager.request_recovery.assert_called_once_with("unit-1")
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
     assert not bucket.get("sleep_exit_pending")
     assert entity.preset_mode == ("home" if initial_scenary == "occupied" else "away")
@@ -760,7 +760,7 @@ async def test_second_sleep_rearm_failure_preserves_home_and_requests_readback(
         await entity.async_set_preset_mode("sleep")
     assert api.put_device_fields.await_count == 2
     assert entity.preset_mode == "home"
-    manager.request_recovery.assert_called_once_with("unit-1")
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     assert (
         hass.data[DOMAIN]["climate-entry"]["sleep_exit_pending"]["unit-1"]
         == "unverified"
@@ -955,7 +955,7 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
         "unit-1", {"device": {"scenary": "occupied"}}, retry=False
     )
     assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
-    manager.request_recovery.assert_called_once_with("unit-1")
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     await async_auto_exit_sleep_if_needed(
         hass,
         entry_id="climate-entry",
@@ -998,7 +998,7 @@ async def test_ambiguous_explicit_home_away_blocks_old_sleep_cleanup(
         "unit-1", {"device": {"scenary": expected}}, retry=False
     )
     assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
-    manager.request_recovery.assert_called_once_with("unit-1")
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
 
     # Even if old Sleep OFF telemetry is still cached, the later automatic
     # cleanup must not overwrite the possibly applied manual Home/Away.
@@ -1305,7 +1305,7 @@ async def test_ambiguous_climate_p1_requests_readback_without_overlay(
 
     events = [call.args[0]["event"] for call in api.send_event.await_args_list]
     assert [(event["option"], event["value"]) for event in events] == [("P1", value)]
-    manager.request_recovery.assert_called_once_with("unit-1")
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     assert entity._overlay_value("power", initial_power) == initial_power
     entity.async_write_ha_state.assert_not_called()
     climate_module.schedule_post_write_refresh.assert_not_called()
@@ -1807,7 +1807,7 @@ async def test_partial_hvac_power_on_failure_requests_readback_without_replaying
     assert "mode" not in hass.data[DOMAIN]["climate-entry"]["optimistic"]["unit-1"]
     entity.async_write_ha_state.assert_called_once()
     if with_manager:
-        manager.request_recovery.assert_called_once_with("unit-1")
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
         climate_module.schedule_post_write_refresh.assert_not_called()
     else:
         climate_module.schedule_post_write_refresh.assert_called_once_with(
@@ -1841,7 +1841,7 @@ async def test_ambiguous_hvac_p2_only_failure_requests_readback(
     assert entity.hvac_mode == HVACMode.COOL
     entity.async_write_ha_state.assert_not_called()
     if with_manager:
-        manager.request_recovery.assert_called_once_with("unit-1")
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
         climate_module.schedule_post_write_refresh.assert_not_called()
     else:
         climate_module.schedule_post_write_refresh.assert_called_once_with(
@@ -2163,7 +2163,9 @@ async def test_partial_mode_command_stays_with_its_runtime(
         assert hass.data[DOMAIN][entry.entry_id] is bucket
         assert bucket["optimistic"]["unit-1"]["power"]["value"] == "1"
         entity.async_write_ha_state.assert_called_once()
-        old_manager.request_recovery.assert_called_once_with("unit-1")
+        old_manager.request_recovery.assert_called_once_with(
+            "unit-1", require_fresh=True
+        )
     else:
         entity.async_write_ha_state.assert_not_called()
         old_manager.request_recovery.assert_not_called()

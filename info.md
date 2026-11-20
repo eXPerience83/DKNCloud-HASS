@@ -594,6 +594,13 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - `/events` may return 423 when the device/machine is not ready.
 - Updates are asynchronous. HTTP success acknowledges backend receipt, not physical convergence; recovery snapshots may contain cached state.
 - Automatic synchronization uses a fixed nominal cadence with recovery and backoff. There is no user-selectable refresh interval.
+- In PUSH mode, readbacks after uncertain writes and corroboration of a first
+  Sleep OFF report require a device GET dispatched after the corresponding
+  request for evidence. Quiet-channel watchdog reads can share an in-flight GET.
+  A GET still waiting on the entry budget or API cooldown can serve newer
+  requests once dispatched. Demands that arrive after dispatch can share one
+  later GET under the same entry budget. Each response is merged once and
+  remains subject to PUSH field precedence.
 - Do **not** automatically replay an ambiguous scenary write (e.g., `sleep → occupied`): an accepted or timed-out response does not prove whether the backend applied it. Follow the per-device lock, session revision and read-back rules before considering another command.
 - For ordinary Home/Away and Sleep-entry scene PUTs, an ambiguous timeout or cancellation also requests an authoritative readback without optimistic success or replay. Preserve the special Sleep-exit pending fence only where the raw scene was Sleep; an explicitly unsent cooldown does not require readback.
 - Follow-up writes, optimistic state, publication and readback stay with the

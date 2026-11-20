@@ -277,7 +277,7 @@ def request_ambiguous_control_readback(
     if bucket is None or active_entry_bucket(hass, entry_id, coordinator) is not bucket:
         return
     if manager := bucket.get("sync_manager"):
-        manager.request_recovery(device_id)
+        manager.request_recovery(device_id, require_fresh=True)
     else:
         schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
 

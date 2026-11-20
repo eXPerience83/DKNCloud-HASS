@@ -316,6 +316,7 @@ class AirzoneAPI:
         data: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
         retry: bool = True,
+        on_start: Callable[[], None] | None = None,
     ) -> Any:
         """Authenticated request with bounded 429 retries and read-only 5xx/timeout retries.
 
@@ -345,6 +346,8 @@ class AirzoneAPI:
             if self._suspended or not self.request_allowed():
                 raise asyncio.CancelledError
             try:
+                if on_start is not None:
+                    on_start()
                 return await self._request(
                     method,
                     path,
@@ -534,7 +537,11 @@ class AirzoneAPI:
         return None
 
     async def fetch_devices(
-        self, installation_id: Any, *, retry: bool = True
+        self,
+        installation_id: Any,
+        *,
+        retry: bool = True,
+        on_start: Callable[[], None] | None = None,
     ) -> list[dict[str, Any]] | None:
         """GET /devices with backoff for 429/5xx (401 bubbles up)."""
         params = self._auth_params() | {
@@ -546,6 +553,7 @@ class AirzoneAPI:
             API_DEVICES,
             params=params,
             retry=retry,
+            **({"on_start": on_start} if on_start is not None else {}),
         )
         if isinstance(resp, dict) and "devices" in resp:
             devices = resp["devices"]
