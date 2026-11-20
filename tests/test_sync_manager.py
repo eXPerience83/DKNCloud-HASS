@@ -921,3 +921,273 @@ async def test_transport_mode_transitions_are_per_device_and_do_not_fake_receipt
     assert len(observations) == count  # no callbacks after clean shutdown
     assert not instance._resync_tasks
     assert not instance._tasks
+
+
+@pytest.mark.parametrize(
+    ("demands", "advance", "devices", "expected_reads"),
+    [
+        pytest.param("before", 0, ("a", "b"), 1, id="compatible"),
+        pytest.param("late", 2, ("a",), 2, id="late"),
+        pytest.param("late", 0, ("a",), 2, id="same-tick"),
+        pytest.param("late", 2, ("a", "a", "a"), 2, id="burst"),
+        pytest.param("late", 2, ("a", "b", "a"), 2, id="shared-installation"),
+        pytest.param("ordinary", 2, ("a", "a"), 1, id="watchdog"),
+    ],
+)
+async def test_command_readback_freshness(demands, advance, devices, expected_reads):
+    from custom_components.airzoneclouddaikin.const import DOMAIN
+    from custom_components.airzoneclouddaikin.helpers import (
+        request_ambiguous_control_readback,
+    )
+
+    now = 0.0
+    started, release = asyncio.Event(), asyncio.Event()
+    reads, sleeps = [], []
+
+    async def sleep(delay):
+        nonlocal now
+        sleeps.append(delay)
+        now += delay
+
+    async def fetch(installation):
+        reads.append((installation, now))
+        if len(reads) == 1:
+            started.set()
+            await release.wait()
+        return [{"id": "a", "power": "0"}, {"id": "b", "power": "0"}]
+
+    publish, request = Mock(), AsyncMock()
+    owner = SyncManager(
+        {d: {"id": d, "power": "1"} for d in ("a", "b")},
+        {"a": "shared", "b": "shared"},
+        request,
+        fetch,
+        publish,
+        Mock(),
+        lambda _: asyncio.Lock(),
+        connect=AsyncMock(),
+        clock=lambda: now,
+        sleep=sleep,
+    )
+    coordinator = Mock()
+    bucket = {"coordinator": coordinator, "sync_manager": owner}
+    hass = Mock(data={DOMAIN: {"entry": bucket}}, is_stopping=False)
+    try:
+        owner.request_recovery("a")
+        first_task = owner._quiet_tasks["a"]
+        if demands != "before":
+            await asyncio.wait_for(started.wait(), 2)
+        now += advance
+        for device in devices:
+            if demands == "ordinary":
+                owner.request_recovery(device)
+            else:
+                request_ambiguous_control_readback(
+                    hass, coordinator, entry_id="entry", device_id=device, bucket=bucket
+                )
+        assert owner._quiet_tasks["a"] is first_task
+        await asyncio.wait_for(started.wait(), 2)
+        if demands == "late":
+            # A push after GET 1 starts wins against GET 1's older OFF.
+            await owner.event("a", {"power": "1"}, owner.state.generation)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*owner._quiet_tasks.values()), 2)
+
+        assert reads == [("shared", 0.0)] + (
+            [("shared", advance + 10.0)] if expected_reads == 2 else []
+        )
+        assert sleeps == ([10.0] if expected_reads == 2 else [])
+        publications = [call.args[0]["a"]["power"] for call in publish.call_args_list]
+        assert publications == (["1", "1", "0"] if demands == "late" else ["0"])
+        request.assert_not_awaited()
+    finally:
+        await owner.close()
+
+
+async def test_demand_during_api_cooldown_shares_the_get():
+    """A GET waiting inside AirzoneAPI has yet to acquire its dispatch stamp."""
+    now = 10.0
+    cooldown, release = asyncio.Event(), asyncio.Event()
+    sleeps = []
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    api._now = lambda: now
+    api._cooldown_until = 30.0
+    api._request = AsyncMock(return_value=[{"id": "a", "power": "0"}])
+
+    async def wait_for_cooldown(delay):
+        nonlocal now
+        cooldown.set()
+        await release.wait()
+        now += delay
+
+    async def reserved_wait(delay):
+        nonlocal now
+        sleeps.append(delay)
+        now += delay
+
+    api._sleep = wait_for_cooldown
+
+    async def timed_fetch(installation, on_start):
+        return await api.fetch_devices(installation, retry=False, on_start=on_start)
+
+    owner = SyncManager(
+        {"a": {"id": "a"}},
+        {"a": "shared"},
+        AsyncMock(),
+        api.fetch_devices,
+        Mock(),
+        Mock(),
+        lambda _: asyncio.Lock(),
+        connect=AsyncMock(),
+        clock=lambda: now,
+        sleep=reserved_wait,
+        timed_fetch=timed_fetch,
+    )
+    try:
+        owner.request_recovery("a")
+        await asyncio.wait_for(cooldown.wait(), 2)
+        await owner.event("a", {"power": "1"}, owner.state.generation)
+        owner.request_recovery("a", require_fresh=True)
+        release.set()
+        await asyncio.wait_for(owner._quiet_tasks["a"], 2)
+        api._request.assert_awaited_once()
+        assert api._request.await_args.args[0] == "GET"
+        assert sleeps == []
+        assert owner.state.data["a"]["power"] == "0"
+        assert "power" in owner.touched["a"]
+    finally:
+        await owner.close()
+
+
+@pytest.mark.parametrize("status", [401, 429, 503])
+async def test_late_recovery_respects_auth_and_backoff(status, monkeypatch):
+    from aiohttp import ClientResponseError
+
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.sync_manager.random.uniform",
+        lambda *_: 1,
+    )
+    now = 0.0
+    started, release, waiting, advance = (asyncio.Event() for _ in range(4))
+    reads, sleeps = [], []
+
+    async def fetch(installation):
+        reads.append((installation, now))
+        if len(reads) == 1:
+            started.set()
+            await release.wait()
+            raise ClientResponseError(None, (), status=status)
+        return [{"id": "a"}]
+
+    async def sleep(delay):
+        nonlocal now
+        sleeps.append(delay)
+        waiting.set()
+        await advance.wait()
+        now += delay
+
+    reauth, publish = Mock(), Mock()
+    owner = SyncManager(
+        {"a": {"id": "a"}},
+        {"a": "shared"},
+        AsyncMock(),
+        fetch,
+        publish,
+        reauth,
+        lambda _: asyncio.Lock(),
+        connect=AsyncMock(),
+        clock=lambda: now,
+        sleep=sleep,
+    )
+    try:
+        owner.request_recovery("a")
+        worker = owner._quiet_tasks["a"]
+        await asyncio.wait_for(started.wait(), 2)
+        now = 1.0
+        owner.request_recovery("a", require_fresh=True)
+        release.set()
+        if status == 401:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(worker, 2)
+            reauth.assert_called_once()
+            owner.request_recovery("a", require_fresh=True)
+            assert owner._quiet_tasks["a"] is worker
+            assert sleeps == []
+        else:
+            await asyncio.wait_for(worker, 2)
+            reauth.assert_not_called()
+            assert owner._budget.diagnostics()["failures"] == 1
+            assert owner._recovery_due == {"a": 21.0}
+            owner.request_recovery("a", require_fresh=True)
+            await asyncio.wait_for(waiting.wait(), 2)
+            assert sleeps == [20.0]
+            assert reads == [("shared", 0.0)]
+            publish.assert_not_called()
+            advance.set()
+            await asyncio.wait_for(owner._quiet_tasks["a"], 2)
+            assert reads[-1] == ("shared", 21.0)
+            assert owner._recovery_due == {}
+        assert len(reads) == (1 if status == 401 else 2)
+        assert not owner._quiet_demands
+    finally:
+        await owner.close()
+
+
+async def test_close_cancels_fresh_followup_waiting_for_request_budget():
+    """A replacement runtime must not inherit the old entry's pending read."""
+    now = 0.0
+    started, release, waiting, cleaned = (asyncio.Event() for _ in range(4))
+    reads = []
+
+    async def fetch(installation):
+        reads.append(installation)
+        started.set()
+        await release.wait()
+        return [{"id": "a", "power": "0"}]
+
+    async def wait_for_budget(_delay):
+        waiting.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    def make_owner(publish):
+        return SyncManager(
+            {"a": {"id": "a", "power": "1"}},
+            {"a": "shared"},
+            AsyncMock(),
+            fetch,
+            publish,
+            Mock(),
+            lambda _: asyncio.Lock(),
+            connect=AsyncMock(),
+            clock=lambda: now,
+            sleep=wait_for_budget,
+        )
+
+    old_publish, new_publish = Mock(), Mock()
+    old, successor = make_owner(old_publish), make_owner(new_publish)
+    try:
+        old.request_recovery("a")
+        worker = old._quiet_tasks["a"]
+        await asyncio.wait_for(started.wait(), 2)
+        now = 5.0
+        old.request_recovery("a", require_fresh=True)
+        release.set()
+        await asyncio.wait_for(waiting.wait(), 2)
+        assert old._budget.diagnostics()["wait_remaining"] == 10.0
+        await old.close()
+        assert cleaned.is_set()
+        assert worker.cancelled()
+        assert not old._quiet_tasks
+        assert not old._quiet_demands
+        assert not old._pool._pending
+        assert not old._recovery_waiters
+        old_publish.assert_called_once()
+        new_publish.assert_not_called()
+        assert reads == ["shared"]
+        assert successor.state.data["a"]["power"] == "1"
+    finally:
+        await old.close()
+        await successor.close()

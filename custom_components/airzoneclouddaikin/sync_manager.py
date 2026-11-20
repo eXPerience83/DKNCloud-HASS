@@ -15,7 +15,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.util import dt as dt_util
 
 from .pusher_client import PusherProtocolError
-from .recovery_pool import RecoveryPool
+from .recovery_pool import ReadStart, RecoveryPool
 from .request_budget import RequestBudget
 from .sync_scheduler import FALLBACK_READ_DELAY, InformationScheduler
 from .sync_state import SyncState
@@ -47,6 +47,10 @@ class SyncManager:
         connect: Callable[[SyncManager], Awaitable[None]],
         clock: Callable[[], float] = time.monotonic,
         sleep=asyncio.sleep,
+        timed_fetch: Callable[
+            [str, Callable[[], None]], Awaitable[list[dict[str, Any]]]
+        ]
+        | None = None,
         discover=None,
         on_topology_change=None,
         on_mode_change: Callable[[], None] | None = None,
@@ -55,6 +59,7 @@ class SyncManager:
         self.state.snapshot(list(initial.values()), self.state.checkpoint())
         self._installations = dict(installations)
         self._request, self._fetch = request, fetch
+        self._timed_fetch = timed_fetch
         self._publish, self._reauth, self._locks = publish, reauth, locks
         self._connect, self._clock = connect, clock
         self._sleep = sleep
@@ -91,6 +96,7 @@ class SyncManager:
         # Socket ACK and channel authorization callbacks can overlap.
         self._subscription_locks = {device: asyncio.Lock() for device in initial}
         self._quiet_tasks: dict[str, asyncio.Task] = {}
+        self._quiet_demands: dict[str, ReadStart] = {}
         self._recovery_waiters: set[asyncio.Task] = set()
         self.schedulers = {
             device: InformationScheduler(
@@ -192,11 +198,14 @@ class SyncManager:
             return await send()
         return await self._budget.run(send)
 
-    async def _read(self, installation: str, on_start=None) -> list[dict[str, Any]]:
+    async def _read(
+        self, installation: str, on_start: Callable[[], ReadStart] | None = None
+    ) -> list[dict[str, Any]]:
         checkpoint = self.state.checkpoint()
+        started: ReadStart | None = None
 
         async def read():
-            nonlocal checkpoint
+            nonlocal checkpoint, started
             ready = max(
                 (
                     deadline
@@ -213,7 +222,18 @@ class SyncManager:
                 self._budget.mark_started()
                 checkpoint = self.state.checkpoint()
                 if on_start is not None:
-                    on_start()
+                    started = on_start()
+                    if self._timed_fetch is not None:
+                        generation = checkpoint[0]
+
+                        def dispatched():
+                            nonlocal checkpoint, started
+                            # Preserve the connection generation across API
+                            # cooldown, but compare fields at dispatch.
+                            checkpoint = generation, self.state.revision
+                            started = on_start()
+
+                        return await self._timed_fetch(installation, dispatched)
                 return await self._fetch(installation)
 
         devices = await self._budget.run(read)
@@ -239,7 +259,16 @@ class SyncManager:
         # evidence or acknowledge an optimistic write.
         applied_fields: dict[str, set[str]] = {}
         self.state.snapshot(devices, checkpoint, applied_fields=applied_fields)
-        self.touched = applied_fields
+        # Merge once even when the GET predates a strict demand. Its fields
+        # can update the displayed snapshot but cannot confirm that readback.
+        self.touched = {
+            device: keys
+            for device, keys in applied_fields.items()
+            if (
+                (demand := self._quiet_demands.get(device)) is None
+                or (started is not None and started >= demand)
+            )
+        }
         now = self._clock()
         for device in devices:
             key = str(device.get("id") or "")
@@ -253,18 +282,30 @@ class SyncManager:
         self._publish(deepcopy(self.state.data), True)
         return devices
 
-    async def recover(self, device: str, *, fallback=False) -> None:
+    async def recover(
+        self,
+        device: str,
+        *,
+        fallback=False,
+        latest_demand: Callable[[], ReadStart | None] | None = None,
+    ) -> None:
         """Own recovery waiters even when started by an explicit HA refresh."""
         task = asyncio.current_task()
         if task is not None:
             self._recovery_waiters.add(task)
         try:
-            await self._recover(device, fallback=fallback)
+            await self._recover(device, fallback=fallback, latest_demand=latest_demand)
         finally:
             if task is not None:
                 self._recovery_waiters.discard(task)
 
-    async def _recover(self, device: str, *, fallback=False) -> None:
+    async def _recover(
+        self,
+        device: str,
+        *,
+        fallback=False,
+        latest_demand: Callable[[], ReadStart | None] | None = None,
+    ) -> None:
         """Coalesce reads only when started after this caller is ready."""
         if self._stopped or self._auth_failed:
             raise asyncio.CancelledError
@@ -275,15 +316,19 @@ class SyncManager:
             raise asyncio.CancelledError
         try:
             while True:
+                ready_at = None
+                if latest_demand is None:
+                    now = self._clock()
+                    ready_at = (
+                        min(now, self._information_ready.get(device, now))
+                        if fallback
+                        else now
+                    )
                 try:
                     await self._pool.get(
                         self._installations[device],
-                        min(
-                            self._clock(),
-                            self._information_ready.get(device, self._clock()),
-                        )
-                        if fallback
-                        else self._clock(),
+                        ready_at,
+                        latest_demand=latest_demand,
                     )
                     break
                 except ObsoleteSnapshot:
@@ -477,22 +522,28 @@ class SyncManager:
                     continue
                 self.request_recovery(device)
 
-    def request_recovery(self, device: str) -> None:
-        """Coalesce independent quiet-channel and unconfirmed-write recovery."""
+    def request_recovery(self, device: str, *, require_fresh: bool = False) -> None:
+        """Queue readback, optionally requiring a GET started after this call."""
         if self._stopped or self._auth_failed or device not in self.schedulers:
             return
+        if require_fresh:
+            self._quiet_demands[device] = self._pool.stamp()
         existing = self._quiet_tasks.get(device)
         if existing is not None and not existing.done():
             return
 
         async def recover():
             try:
-                await self.recover(device)
+                await self.recover(
+                    device, latest_demand=lambda: self._quiet_demands.get(device)
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
                 # recover() records the device backoff and handles native reauth.
                 return
+            finally:
+                self._quiet_demands.pop(device, None)
 
         self._quiet_tasks[device] = asyncio.create_task(recover())
 
@@ -597,4 +648,5 @@ class SyncManager:
             self._tasks.clear()
             self._resync_tasks.clear()
             self._quiet_tasks.clear()
+            self._quiet_demands.clear()
             self._close_complete = True

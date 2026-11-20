@@ -155,7 +155,7 @@ async def test_number_ambiguous_put_requests_readback_without_optimistic_success
 
     assert requests == [{field: value}]
     assert entity.native_value == initial
-    manager.request_recovery.assert_called_once_with("dev1")
+    manager.request_recovery.assert_called_once_with("dev1", require_fresh=True)
 
 
 async def test_number_known_unsent_cooldown_does_not_request_readback(

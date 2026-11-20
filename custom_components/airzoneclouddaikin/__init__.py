@@ -559,7 +559,7 @@ def _derive_state(
                     tracking.consecutive_off_reports += 1
                     if tracking.consecutive_off_reports == 1:
                         if manager := bucket.get("sync_manager"):
-                            manager.request_recovery(dev_id)
+                            manager.request_recovery(dev_id, require_fresh=True)
         dev["sleep_off_confirmed"] = bool(
             active_sleep
             and tracking.observed_on
@@ -1152,8 +1152,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 coordinator.data = data
                 coordinator.async_update_listeners()
 
-        async def fetch_sync(installation):
-            return await api.fetch_devices(installation, retry=False)
+        async def fetch_sync(installation, on_start=None):
+            return await api.fetch_devices(installation, retry=False, on_start=on_start)
 
         async def discover_sync():
             async def request(operation):
@@ -1216,6 +1216,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             request_write_reauth,
             lambda device: acquire_device_lock(hass, entry.entry_id, device),
             connect=connector,
+            timed_fetch=fetch_sync,
             discover=discover_sync,
             on_topology_change=topology_changed,
             on_mode_change=sync_mode_changed,

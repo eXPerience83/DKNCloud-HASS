@@ -99,7 +99,7 @@ def test_ambiguous_control_readback_only_uses_live_entry(
     else:
         assert bucket["retired"] is runtime
     if entry_status == "active":
-        manager.request_recovery.assert_called_once_with("device")
+        manager.request_recovery.assert_called_once_with("device", require_fresh=True)
     else:
         manager.request_recovery.assert_not_called()
     coordinator.async_request_refresh.assert_not_called()
