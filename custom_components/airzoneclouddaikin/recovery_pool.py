@@ -60,8 +60,9 @@ class RecoveryPool:
                     # Let concurrent ready callers join before starting I/O.
                     await asyncio.sleep(0)
 
-                    def started():
+                    def started() -> ReadStart:
                         record.started = self.stamp()
+                        return record.started
 
                     if self._timed_fetch is not None:
                         return await self._timed_fetch(installation, started)

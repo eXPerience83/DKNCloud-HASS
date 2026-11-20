@@ -1012,7 +1012,7 @@ async def test_demand_during_api_cooldown_shares_the_get():
     api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
     api._now = lambda: now
     api._cooldown_until = 30.0
-    api._request = AsyncMock(return_value=[{"id": "a"}])
+    api._request = AsyncMock(return_value=[{"id": "a", "power": "0"}])
 
     async def wait_for_cooldown(delay):
         nonlocal now
@@ -1046,12 +1046,15 @@ async def test_demand_during_api_cooldown_shares_the_get():
     try:
         owner.request_recovery("a")
         await asyncio.wait_for(cooldown.wait(), 2)
+        await owner.event("a", {"power": "1"}, owner.state.generation)
         owner.request_recovery("a", require_fresh=True)
         release.set()
         await asyncio.wait_for(owner._quiet_tasks["a"], 2)
         api._request.assert_awaited_once()
         assert api._request.await_args.args[0] == "GET"
         assert sleeps == []
+        assert owner.state.data["a"]["power"] == "0"
+        assert "power" in owner.touched["a"]
     finally:
         await owner.close()
 

@@ -968,3 +968,72 @@ async def test_sleep_corroboration_requires_an_independent_later_get(
         api.async_set_scenary.assert_not_awaited()
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_get_predating_sleep_exit_readback_cannot_clear_pending_scene(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """Merge the old scene for display, but require newer evidence for the write."""
+    api = Mock()
+    initial = {**sample_device, "scenary": "sleep", "power": "1"}
+    occupied = {**initial, "scenary": "occupied"}
+    first_started, release_first, next_started, release_next = (
+        asyncio.Event() for _ in range(4)
+    )
+    calls = 0
+
+    async def fetch(_installation, *, retry=True, on_start=None):
+        nonlocal calls
+        calls += 1
+        if on_start is not None:
+            on_start()
+        if calls == 1:
+            return [initial]
+        if calls == 2:
+            first_started.set()
+            await release_first.wait()
+        else:
+            next_started.set()
+            await release_next.wait()
+        return [occupied]
+
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=fetch)
+    api.async_set_scenary = AsyncMock()
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    now = 40.0
+
+    async def sleep(delay):
+        nonlocal now
+        now += delay
+
+    manager._clock = manager._pool._clock = manager._budget._clock = lambda: now
+    manager._budget._sleep = sleep
+    try:
+        manager.request_recovery("dev1")
+        worker = manager._quiet_tasks["dev1"]
+        await asyncio.wait_for(first_started.wait(), 2)
+        pending = bucket.setdefault("sleep_exit_pending", {})
+        pending["dev1"] = "unverified"
+        manager.request_recovery("dev1", require_fresh=True)
+        release_first.set()
+        await asyncio.wait_for(next_started.wait(), 2)
+        assert manager.state.data["dev1"]["scenary"] == "occupied"
+        assert pending == {"dev1": "unverified"}
+
+        release_next.set()
+        await asyncio.wait_for(worker, 2)
+        assert pending == {}
+        assert calls == 3
+        api.async_set_scenary.assert_not_awaited()
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)

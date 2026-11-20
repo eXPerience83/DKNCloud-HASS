@@ -600,7 +600,10 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
   A GET still waiting on the entry budget or API cooldown can serve newer
   requests once dispatched. Demands that arrive after dispatch can share one
   later GET under the same entry budget. Each response is merged once and
-  remains subject to PUSH field precedence.
+  remains subject to PUSH field precedence. A GET dispatched before a strict
+  demand can update the snapshot but cannot confirm that readback. Errors end
+  the current worker and preserve the existing reauthentication and backoff
+  policies.
 - Do **not** automatically replay an ambiguous scenary write (e.g., `sleep → occupied`): an accepted or timed-out response does not prove whether the backend applied it. Follow the per-device lock, session revision and read-back rules before considering another command.
 - For ordinary Home/Away and Sleep-entry scene PUTs, an ambiguous timeout or cancellation also requests an authoritative readback without optimistic success or replay. Preserve the special Sleep-exit pending fence only where the raw scene was Sleep; an explicitly unsent cooldown does not require readback.
 - Follow-up writes, optimistic state, publication and readback stay with the

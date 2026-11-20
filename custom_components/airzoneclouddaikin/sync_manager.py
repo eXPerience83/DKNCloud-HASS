@@ -198,11 +198,14 @@ class SyncManager:
             return await send()
         return await self._budget.run(send)
 
-    async def _read(self, installation: str, on_start=None) -> list[dict[str, Any]]:
+    async def _read(
+        self, installation: str, on_start: Callable[[], ReadStart] | None = None
+    ) -> list[dict[str, Any]]:
         checkpoint = self.state.checkpoint()
+        started: ReadStart | None = None
 
         async def read():
-            nonlocal checkpoint
+            nonlocal checkpoint, started
             ready = max(
                 (
                     deadline
@@ -219,11 +222,18 @@ class SyncManager:
                 self._budget.mark_started()
                 checkpoint = self.state.checkpoint()
                 if on_start is not None:
-                    on_start()
+                    started = on_start()
                     if self._timed_fetch is not None:
-                        # Move the provisional start forward when the API
-                        # dispatches the GET after its own cooldown.
-                        return await self._timed_fetch(installation, on_start)
+                        generation = checkpoint[0]
+
+                        def dispatched():
+                            nonlocal checkpoint, started
+                            # Preserve the connection generation across API
+                            # cooldown, but compare fields at dispatch.
+                            checkpoint = generation, self.state.revision
+                            started = on_start()
+
+                        return await self._timed_fetch(installation, dispatched)
                 return await self._fetch(installation)
 
         devices = await self._budget.run(read)
@@ -249,7 +259,16 @@ class SyncManager:
         # evidence or acknowledge an optimistic write.
         applied_fields: dict[str, set[str]] = {}
         self.state.snapshot(devices, checkpoint, applied_fields=applied_fields)
-        self.touched = applied_fields
+        # Merge once even when the GET predates a strict demand. Its fields
+        # can update the displayed snapshot but cannot confirm that readback.
+        self.touched = {
+            device: keys
+            for device, keys in applied_fields.items()
+            if (
+                (demand := self._quiet_demands.get(device)) is None
+                or (started is not None and started >= demand)
+            )
+        }
         now = self._clock()
         for device in devices:
             key = str(device.get("id") or "")
