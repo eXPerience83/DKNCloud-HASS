@@ -395,7 +395,8 @@ the result is uncertain, cached power cannot suppress a newer explicit ON or
 OFF. Reads never send a control or replay the old P1. A definitive HTTP
 rejection, a local cooldown or cancellation before dispatch does not create
 uncertainty. The explicit, bounded 429 policy still applies to a current
-intent.
+intent. A valid 2xx acknowledges guarded P1 and P2 even if the response body
+is unusable.
 
 A later accepted P1 or a GET started after the uncertain result can resolve
 the uncertainty within the same entry. The GET must actually apply a valid
@@ -606,7 +607,7 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - In PUSH mode, readbacks after uncertain writes and corroboration of a first
   Sleep OFF report require a device GET dispatched after the corresponding
   request for evidence. Quiet-channel watchdog reads can share an in-flight GET.
-  A GET still waiting on the entry budget or API cooldown can serve newer
+  A GET still waiting on the entry budget, API cooldown or a connection can serve newer
   requests once dispatched. Demands that arrive after dispatch can share one
   later GET under the same entry budget. Each response is merged once and
   remains subject to PUSH field precedence. A GET dispatched before a strict

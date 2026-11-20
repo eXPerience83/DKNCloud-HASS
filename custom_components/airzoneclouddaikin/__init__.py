@@ -30,7 +30,7 @@ from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import AirzoneAPI, control_dispatch_trace, prevent_device_put_replay
+from .airzone_api import AirzoneAPI, prevent_device_put_replay, request_dispatch_trace
 from .const import (
     CONF_ENABLE_HEAT_COOL,
     CONF_SLEEP_CLEANUP_ENABLED,
@@ -746,7 +746,7 @@ def async_create_runtime_session(hass: HomeAssistant) -> ClientSession:
         hass,
         connector_owner=False,
         middlewares=(prevent_device_put_replay,),
-        trace_configs=[control_dispatch_trace()],
+        trace_configs=[request_dispatch_trace()],
     )
 
 

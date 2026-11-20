@@ -105,8 +105,8 @@ async def prevent_device_put_replay(
     raise HomeAssistantError("Cloud device command outcome is unknown")
 
 
-def control_dispatch_trace() -> TraceConfig:
-    """Observe guarded writes at the request writer on the entry's session."""
+def request_dispatch_trace() -> TraceConfig:
+    """Observe timed GETs and guarded writes at the entry's HTTP writer."""
     trace = TraceConfig()
 
     async def headers_sent(_session, context, _params):
@@ -252,6 +252,14 @@ class AirzoneAPI:
                 if device_put and 300 <= resp.status < 400:
                     raise ClientResponseError(resp.request_info, (), status=resp.status)
                 resp.raise_for_status()
+                if (
+                    on_dispatch is not None
+                    and method == "POST"
+                    and path == API_EVENTS
+                    and 200 <= resp.status < 300
+                ):
+                    # Guarded P1/P2 callers only need the backend's acknowledgement.
+                    return None
                 empty_body = resp.status == 204 or resp.content_length == 0
                 if resp.content_type == "application/json":
                     try:
@@ -265,8 +273,10 @@ class AirzoneAPI:
                     return ""
                 return await resp.text()
         except ClientResponseError as cre:
-            if on_dispatch is not None and isinstance(
-                cre.__cause__, HttpProcessingError
+            if (
+                on_dispatch is not None
+                and method != "GET"
+                and isinstance(cre.__cause__, HttpProcessingError)
             ):
                 # aiohttp reports parser failures as a synthetic HTTP status.
                 # An invalid response cannot establish that P1 was rejected.
@@ -383,9 +393,8 @@ class AirzoneAPI:
                     on_start()
                 dispatched = True
 
-            guarded_write = is_device_write and (on_start or on_uncertain)
             try:
-                if on_start is not None:
+                if is_device_write and on_start is not None:
                     on_start()
                 return await self._request(
                     method,
@@ -394,7 +403,7 @@ class AirzoneAPI:
                     json=json,
                     extra_headers=extra_headers,
                     **({"data": data} if data is not None else {}),
-                    **({"on_dispatch": dispatch} if guarded_write else {}),
+                    **({"on_dispatch": dispatch} if on_start or on_uncertain else {}),
                 )
             except ClientResponseError as cre:
                 status = cre.status or 0

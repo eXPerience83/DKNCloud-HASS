@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import ClientResponseError
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -277,10 +277,11 @@ class PowerIntent:
             raise CommandSuperseded
 
 
-# Preserve the reservation when HA schedules the blocking Climate service.
-delegated_power_intent: ContextVar[tuple[PowerIntent, int] | None] = ContextVar(
-    "dkn_delegated_power_intent", default=None
-)
+# An HA single-entity blocking service executes in the calling task. Event
+# listeners can inherit ContextVars, so require that task and service context.
+delegated_power_intent: ContextVar[
+    tuple[PowerIntent, int, Context, asyncio.Task | None] | None
+] = ContextVar("dkn_delegated_power_intent", default=None)
 
 
 def reserve_power_intent(
@@ -290,11 +291,14 @@ def reserve_power_intent(
     device_id: str,
     *,
     delegated_value: int | None = None,
+    service_context: Context | None = None,
 ) -> PowerIntent | None:
     """Record the request before waiting for a device lock or scene preparation."""
     if (
         (delegated := delegated_power_intent.get()) is not None
         and delegated[1] == delegated_value
+        and delegated[2] is service_context
+        and delegated[3] is asyncio.current_task()
         and delegated[0].entry_id == entry_id
         and delegated[0].device_id == device_id
     ):

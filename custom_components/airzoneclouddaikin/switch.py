@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import STATE_UNAVAILABLE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -196,14 +197,17 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         )
         if intent is None:
             return True
-        delegation = delegated_power_intent.set((intent, int(service == "turn_on")))
+        context = self._context or Context()
+        delegation = delegated_power_intent.set(
+            (intent, int(service == "turn_on"), context, asyncio.current_task())
+        )
         try:
             await self.hass.services.async_call(
                 "climate",
                 service,
                 {"entity_id": climate_eid},
                 blocking=True,
-                context=self._context,
+                context=context,
             )
             return True
         except (TimeoutError, ServiceNotFound, HomeAssistantError) as err:

@@ -400,7 +400,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     # Any scene write leaving Sleep (even while power is ON)
                     # must not retry after a response of unknown outcome.
                     await api.put_device_fields(
-                        self._device_id, {"device": {"scenary": scenary}}, retry=False
+                        self._device_id,
+                        {"device": {"scenary": scenary}},
+                        retry=False,
+                        **(
+                            {"on_start": check_dispatch}
+                            if is_current is not None
+                            else {}
+                        ),
                     )
                 else:
                     await api.put_device_fields(
@@ -745,6 +752,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self._entry_id,
             self._device_id,
             delegated_value=1,
+            service_context=self._context,
         )
         if intent is None:
             return
@@ -786,6 +794,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self._entry_id,
             self._device_id,
             delegated_value=0,
+            service_context=self._context,
         )
         if intent is None:
             return
@@ -925,8 +934,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except CommandSuperseded:
                 if powered_on and entry_active():
                     self.async_write_ha_state()
-                    schedule_post_write_refresh(
-                        self.hass, self.coordinator, entry_id=self._entry_id
+                    request_ambiguous_control_readback(
+                        self.hass,
+                        self.coordinator,
+                        entry_id=self._entry_id,
+                        device_id=self._device_id,
+                        bucket=bucket,
                     )
                 return
             except (Exception, asyncio.CancelledError) as error:

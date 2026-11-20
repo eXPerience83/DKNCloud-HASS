@@ -2297,10 +2297,12 @@ async def test_latest_power_survives_ambiguous_p1(
 
     api.send_event.side_effect = send
 
-    async def on(_call):
+    async def on(call):
+        entity.async_set_context(call.context)
         await entity.async_turn_on()
 
-    async def off(_call):
+    async def off(call):
+        entity.async_set_context(call.context)
         await entity.async_turn_off()
 
     hass.services.async_register("climate", "turn_on", on)
@@ -2346,9 +2348,10 @@ async def test_delayed_switch_delegation_keeps_original_intent_order(
     hass.states.async_set("climate.unit", "off")
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def on(_call):
+    async def on(call):
         entered.set()
         await release.wait()
+        entity.async_set_context(call.context)
         await entity.async_turn_on()
 
     hass.services.async_register("climate", "turn_on", on)
@@ -2488,7 +2491,7 @@ async def test_queued_intermediate_power_intent_never_dispatches(
     assert not bucket.get("uncertain_power")
 
 
-@pytest.mark.parametrize("scene", ["vacant", "sleep"])
+@pytest.mark.parametrize("scene", ["vacant", "sleep", "vacant_to_sleep"])
 async def test_newer_off_stops_wake_scene_before_it_dispatches(
     hass, dummy_coordinator_factory, monkeypatch, scene
 ):
@@ -2499,7 +2502,11 @@ async def test_newer_off_stops_wake_scene_before_it_dispatches(
     )
 
     entity, _ = _climate(
-        hass, dummy_coordinator_factory, monkeypatch, power="0", scenary=scene
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        power="0",
+        scenary="vacant" if scene == "vacant_to_sleep" else scene,
     )
     monkeypatch.setattr(
         climate_module,
@@ -2508,7 +2515,7 @@ async def test_newer_off_stops_wake_scene_before_it_dispatches(
     )
     api = AirzoneAPI("synthetic", Mock())
     entity.coordinator.api = api
-    entered, release, off_queued = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    entered, release, off_queued, home_queued = (asyncio.Event() for _ in range(4))
     sent = []
 
     async def transport(method, _path, *, on_dispatch=None, **_kwargs):
@@ -2526,13 +2533,19 @@ async def test_newer_off_stops_wake_scene_before_it_dispatches(
 
     async def signal_off():
         if lock.locked():
-            off_queued.set()
+            (off_queued if entered.is_set() else home_queued).set()
         return await acquire()
 
     monkeypatch.setattr(lock, "acquire", signal_off)
     monkeypatch.setattr(api, "_request", transport)
     async with asyncio.timeout(3):
-        on = asyncio.create_task(entity.async_turn_on())
+        if scene == "vacant_to_sleep":
+            async with lock:
+                on = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.HEAT))
+                await home_queued.wait()
+                entity.coordinator.data["unit-1"]["scenary"] = "sleep"
+        else:
+            on = asyncio.create_task(entity.async_turn_on())
         await entered.wait()
         off = asyncio.create_task(entity.async_turn_off())
         await off_queued.wait()
@@ -2546,3 +2559,104 @@ async def test_newer_off_stops_wake_scene_before_it_dispatches(
     assert not bucket.get("optimistic")
     entity.async_write_ha_state.assert_not_called()
     climate_module.schedule_post_write_refresh.assert_not_called()
+
+
+async def test_independent_climate_service_cannot_inherit_switch_reservation(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """A call_service listener runs in its own task and must reserve its own ON."""
+    from homeassistant.const import EVENT_CALL_SERVICE
+    from homeassistant.core import Context
+
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    origin, other_call = Context(), Context()
+    switch.async_set_context(origin)
+    monkeypatch.setattr(switch, "_resolve_climate_entity_id", lambda: "climate.unit")
+    hass.states.async_set("climate.unit", "off")
+    delegated, finish_delegated, run_listener, listener_done = (
+        asyncio.Event() for _ in range(4)
+    )
+
+    async def on(call):
+        if call.context is origin:
+            delegated.set()
+            await finish_delegated.wait()
+        entity.async_set_context(call.context)
+        await entity.async_turn_on()
+
+    async def listener(event):
+        if event.context is origin:
+            await run_listener.wait()
+            await hass.services.async_call(
+                "climate",
+                "turn_on",
+                {"entity_id": "climate.unit"},
+                blocking=True,
+                context=other_call,
+            )
+            listener_done.set()
+
+    hass.services.async_register("climate", "turn_on", on)
+    unsub = hass.bus.async_listen(EVENT_CALL_SERVICE, listener)
+    try:
+        async with asyncio.timeout(3):
+            old_on = asyncio.create_task(switch.async_turn_on())
+            await delegated.wait()
+            await entity.async_turn_off()
+            run_listener.set()
+            await listener_done.wait()
+            finish_delegated.set()
+            await old_on
+    finally:
+        unsub()
+        run_listener.set()
+        finish_delegated.set()
+    api.send_event.assert_awaited_once()
+    assert api.send_event.await_args.args[0]["event"]["value"] == 1
+
+
+async def test_superseded_p2_keeps_readback_if_newer_off_never_dispatches(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+):
+    """An accepted partial wake still needs its normal managed readback."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    manager = Mock()
+    hass.data[DOMAIN][entity._entry_id]["sync_manager"] = manager
+    started, release, queued = (asyncio.Event() for _ in range(3))
+    lock = acquire_device_lock(hass, entity._entry_id, "unit-1")
+    acquire = lock.acquire
+
+    async def signal_queued():
+        if lock.locked():
+            queued.set()
+        return await acquire()
+
+    async def send(payload, **_kwargs):
+        assert payload["event"]["option"] == "P1"
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(lock, "acquire", signal_queued)
+    api.send_event.side_effect = send
+    async with asyncio.timeout(3):
+        activation = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.HEAT))
+        await started.wait()
+        off = asyncio.create_task(entity.async_turn_off())
+        await queued.wait()
+        off.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await off
+        release.set()
+        await activation
+    api.send_event.assert_awaited_once()
+    entity.async_write_ha_state.assert_called_once()
+    assert entity._overlay_value("power", "0") == "1"
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
