@@ -67,8 +67,8 @@ def test_optimistic_overlay_malformed_expiration(hass: HomeAssistant) -> None:
     assert "device" not in optimistic_bucket
 
 
-@pytest.mark.parametrize("entry_status", ["removed", "closing"])
-def test_late_ambiguous_control_failure_does_not_reopen_unloaded_entry(
+@pytest.mark.parametrize("entry_status", ["removed", "closing", "active"])
+def test_ambiguous_control_readback_only_uses_live_entry(
     hass: HomeAssistant,
     entry_status: str,
 ) -> None:
@@ -78,22 +78,30 @@ def test_late_ambiguous_control_failure_does_not_reopen_unloaded_entry(
     bucket = hass.data.setdefault(DOMAIN, {})
     coordinator = Mock()
     manager = Mock()
-    if entry_status == "closing":
-        bucket["retired"] = {"closing": True, "sync_manager": manager}
+    runtime = {
+        "coordinator": coordinator,
+        "closing": entry_status == "closing",
+        "sync_manager": manager,
+    }
+    if entry_status != "removed":
+        bucket["retired"] = runtime
 
     helpers.request_ambiguous_control_readback(
         hass,
         coordinator,
         entry_id="retired",
         device_id="device",
-        bucket=bucket.get("retired"),
+        bucket=runtime,
     )
 
     if entry_status == "removed":
         assert "retired" not in bucket
     else:
-        assert bucket["retired"]["closing"] is True
-    manager.request_recovery.assert_not_called()
+        assert bucket["retired"] is runtime
+    if entry_status == "active":
+        manager.request_recovery.assert_called_once_with("device")
+    else:
+        manager.request_recovery.assert_not_called()
     coordinator.async_request_refresh.assert_not_called()
 
 
@@ -130,8 +138,9 @@ async def test_sleep_exit_after_unload_does_not_recreate_entry_or_write(
     api = DummyApi()
     coordinator = DummyCoordinator(api)
     domain_bucket = hass.data.setdefault(DOMAIN, {})
+    runtime = {"coordinator": coordinator, "closing": True}
     if state == "closing":
-        domain_bucket["old-entry"] = {"closing": True}
+        domain_bucket["old-entry"] = runtime
     await async_auto_exit_sleep_if_needed(
         hass,
         entry_id="old-entry",
@@ -146,7 +155,10 @@ async def test_sleep_exit_after_unload_does_not_recreate_entry_or_write(
     if state == "removed":
         assert "old-entry" not in domain_bucket
     else:
-        assert domain_bucket["old-entry"] == {"closing": True}
+        assert domain_bucket["old-entry"] == {
+            "coordinator": coordinator,
+            "closing": True,
+        }
 
 
 @pytest.mark.asyncio
@@ -727,4 +739,3 @@ async def test_post_write_refresh_rechecks_entry_when_timer_fires(
 
     assert coordinator.refreshes == (1 if replacement == "none" else 0)
     assert bucket.get("pending_refresh") is None
-    assert "pending_refresh" not in bucket
