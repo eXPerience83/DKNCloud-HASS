@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import traceback
+from contextlib import AsyncExitStack
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from aiohttp import ClientOSError, ClientResponseError, ClientSession, web
+from aiohttp import (
+    ClientConnectorError,
+    ClientOSError,
+    ClientPayloadError,
+    ClientResponseError,
+    ClientSession,
+    ClientTimeout,
+    ServerDisconnectedError,
+    web,
+)
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from multidict import CIMultiDict
@@ -1186,3 +1197,476 @@ async def test_entry_unload_detaches_runtime_session_and_cancels_pending_put(
         if not command.done():
             command.cancel()
         await asyncio.gather(command, return_exceptions=True)
+
+
+@pytest.mark.parametrize("traced", [True, False], ids=["writer", "plain"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "disconnect",
+        "malformed",
+        "cancel_sent",
+        "timeout",
+        401,
+        423,
+        429,
+        500,
+        502,
+        503,
+        504,
+    ],
+)
+async def test_power_uncertainty_tracks_real_dispatch(
+    hass, socket_enabled, aiohttp_server, monkeypatch, outcome, traced
+):
+    """Classify failures of a P1 actually received by the loopback server."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    arrived, release = asyncio.Event(), asyncio.Event()
+    received = []
+    payload = {"event": {"cgi": "modmaquina", "option": "P1", "value": 1}}
+
+    async def handler(request):
+        received.append(await request.json())
+        arrived.set()
+        if outcome in {"disconnect", "malformed"}:
+            if outcome == "malformed":
+                request.transport.write(b"HTTP/1.1 invalid status\r\n\r\n")
+            request.transport.close()
+            return web.Response()
+        if outcome in {"cancel_sent", "timeout"}:
+            await release.wait()
+            return web.Response()
+        headers = {"Retry-After": "60"} if outcome == 429 else None
+        return web.Response(status=outcome, headers=headers)
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    if outcome == "timeout":
+        monkeypatch.setattr(
+            "custom_components.airzoneclouddaikin.airzone_api.ClientTimeout",
+            lambda **_: ClientTimeout(sock_read=0.5),
+        )
+    async with AsyncExitStack() as stack:
+        session = (
+            async_create_runtime_session(hass)
+            if traced
+            else await stack.enter_async_context(ClientSession())
+        )
+        api = AirzoneAPI("synthetic@example.invalid", session, token="synthetic")
+        api.on_write_auth_failure = reauth = Mock()
+        uncertain = Mock()
+        task = asyncio.create_task(api.send_event(payload, on_uncertain=uncertain))
+        try:
+            async with asyncio.timeout(3):
+                await arrived.wait()
+                if outcome == "cancel_sent":
+                    task.cancel()
+                error = {
+                    "cancel_sent": asyncio.CancelledError,
+                    "disconnect": ServerDisconnectedError,
+                    "malformed": ClientPayloadError,
+                    "timeout": TimeoutError,
+                    401: ConfigEntryAuthFailed,
+                }.get(outcome, HomeAssistantError)
+                with pytest.raises(error):
+                    await task
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert not api._pending
+    assert received == [payload]
+    assert uncertain.call_count == int(outcome not in (401, 423, 429))
+    assert reauth.call_count == int(outcome == 401)
+    if outcome == 429:
+        assert api._cooldown_until > api._now() + 10
+
+
+@pytest.mark.parametrize(
+    "outcome", ["cancel_before_connection", "superseded_at_writer"]
+)
+async def test_power_intent_fences_writes_waiting_for_connection(
+    hass, socket_enabled, monkeypatch, outcome
+):
+    """No headers or ambiguity when the intent cannot reach the HTTP writer."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+    from custom_components.airzoneclouddaikin.airzone_api import CommandSuperseded
+
+    entered, release, peer_done = (asyncio.Event() for _ in range(3))
+    received = []
+    superseded = False
+
+    async def peer(reader, writer):
+        try:
+            received.append(await reader.read(1))
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            peer_done.set()
+
+    server = await asyncio.start_server(peer, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.BASE_URL",
+        f"http://127.0.0.1:{port}",
+    )
+    session = async_create_runtime_session(hass)
+    connect = session.connector.connect
+
+    async def delayed_connect(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await connect(*args, **kwargs)
+
+    monkeypatch.setattr(session.connector, "connect", delayed_connect)
+
+    def check():
+        if superseded:
+            raise CommandSuperseded
+
+    api = AirzoneAPI("synthetic@example.invalid", session, token="synthetic")
+    uncertain = Mock()
+    task = asyncio.create_task(
+        api.send_event(
+            {"event": {"option": "P1", "value": 1}},
+            on_start=check,
+            on_uncertain=uncertain,
+        )
+    )
+    try:
+        async with asyncio.timeout(3):
+            await entered.wait()
+            superseded = True
+            if outcome == "cancel_before_connection":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                release.set()
+                with pytest.raises(CommandSuperseded):
+                    await task
+                await peer_done.wait()
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
+    uncertain.assert_not_called()
+    assert received == ([] if outcome == "cancel_before_connection" else [b""])
+    assert not api._pending
+
+
+@pytest.mark.parametrize("cancel", [True, False])
+async def test_power_retry_after_429_rechecks_intent_without_uncertainty(
+    monkeypatch, cancel
+):
+    """The explicit 429 refusal permits bounded retry only for the live intent."""
+    from custom_components.airzoneclouddaikin.airzone_api import CommandSuperseded
+
+    api, _ = _make_api(monkeypatch, [])
+    monkeypatch.setattr(api, "_dispatch_traced", True)
+    entered, release = asyncio.Event(), asyncio.Event()
+    current = True
+    received = []
+    uncertain = Mock()
+
+    async def transport(*args, on_dispatch, **kwargs):
+        on_dispatch()
+        received.append(kwargs["json"])
+        raise _client_response_error(429, {"Retry-After": "1"})
+
+    async def cooldown(_delay):
+        entered.set()
+        await release.wait()
+
+    def check():
+        if not current:
+            raise CommandSuperseded
+
+    monkeypatch.setattr(api, "_request", transport)
+    monkeypatch.setattr(api, "_sleep", cooldown)
+    task = asyncio.create_task(
+        api.send_event(
+            {"event": {"option": "P1"}}, on_start=check, on_uncertain=uncertain
+        )
+    )
+    try:
+        async with asyncio.timeout(3):
+            await entered.wait()
+            current = False
+            if cancel:
+                task.cancel()
+            else:
+                # Finish the cooldown without any real-time delay.
+                monkeypatch.setattr(api, "_now", lambda: api._cooldown_until)
+                release.set()
+            with pytest.raises(asyncio.CancelledError if cancel else CommandSuperseded):
+                await task
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert len(received) == 1
+    uncertain.assert_not_called()
+    assert not api._pending
+
+
+async def test_timed_recovery_get_captures_freshness_at_writer(
+    hass, socket_enabled, aiohttp_server, monkeypatch
+):
+    """A GET queued for a connection has not yet captured its dispatch evidence."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    waiting, release = asyncio.Event(), asyncio.Event()
+    reads = []
+
+    async def handler(_request):
+        reads.append("GET")
+        return web.json_response([{"id": "unit", "power": "0"}])
+
+    await _serve_api(aiohttp_server, monkeypatch, "GET", API_DEVICES, handler)
+    session = async_create_runtime_session(hass)
+    connect = session.connector.connect
+
+    async def delayed_connect(*args, **kwargs):
+        waiting.set()
+        await release.wait()
+        return await connect(*args, **kwargs)
+
+    monkeypatch.setattr(session.connector, "connect", delayed_connect)
+    api = AirzoneAPI("synthetic@example.invalid", session)
+    dispatch = Mock()
+    task = asyncio.create_task(api.fetch_devices("site", on_start=dispatch))
+    try:
+        async with asyncio.timeout(3):
+            await waiting.wait()
+            dispatch.assert_not_called()
+            release.set()
+            assert await task == [{"id": "unit", "power": "0"}]
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    dispatch.assert_called_once()
+    assert reads == ["GET"]
+
+
+@pytest.mark.parametrize("status", [200, 201, 204])
+@pytest.mark.parametrize("option", ["P1", "P2", "P3", "P4", "P7", "P8"])
+@pytest.mark.parametrize("traced", [True, False], ids=["writer", "plain"])
+async def test_controls_accept_valid_2xx_without_decoding_response(
+    hass, socket_enabled, aiohttp_server, monkeypatch, status, option, traced
+):
+    """A documented 2xx acknowledges a supported control without decoding its body."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    received = []
+
+    async def handler(request):
+        received.append(await request.json())
+        if status == 204:
+            return web.Response(status=status)
+        return web.Response(
+            status=status, body=b"not JSON", content_type="application/json"
+        )
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    payload = {"event": {"cgi": "modmaquina", "option": option, "value": 1}}
+    uncertain = Mock()
+    async with AsyncExitStack() as stack:
+        session = (
+            async_create_runtime_session(hass)
+            if traced
+            else await stack.enter_async_context(ClientSession())
+        )
+        api = AirzoneAPI("synthetic@example.invalid", session)
+        if option == "P1":
+            await api.send_event(payload, on_uncertain=uncertain)
+        elif option == "P2":
+            await api.send_event(payload, on_start=lambda: None)
+        else:
+            await api.send_event(payload)
+    uncertain.assert_not_called()
+    assert received == [payload]
+
+
+async def test_untraced_information_response_is_still_decoded(
+    socket_enabled, aiohttp_server, monkeypatch
+):
+    """The read-like infomaquina POST retains its response body."""
+
+    async def handler(request):
+        assert (await request.json())["event"]["cgi"] == "infomaquina"
+        return web.json_response({"accepted": True}, status=201)
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    async with ClientSession() as session:
+        api = AirzoneAPI("synthetic@example.invalid", session)
+        assert await api.request_information("unit") == {"accepted": True}
+
+
+async def test_untraced_power_connection_refusal_is_known_unsent(
+    monkeypatch, socket_enabled
+):
+    """Bind without listening so nobody can accept this loopback connection."""
+    from custom_components.airzoneclouddaikin import airzone_api
+
+    uncertain = Mock()
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+        monkeypatch.setattr(airzone_api, "BASE_URL", f"http://127.0.0.1:{port}")
+        async with ClientSession() as session:
+            api = AirzoneAPI("synthetic@example.invalid", session)
+            with pytest.raises(ClientConnectorError):
+                await api.send_event(
+                    {"event": {"cgi": "modmaquina", "option": "P1", "value": 1}},
+                    on_uncertain=uncertain,
+                )
+    uncertain.assert_not_called()
+    assert not api._pending
+
+
+@pytest.mark.parametrize("stop", ["cooldown", "cancel_cooldown", "superseded"])
+async def test_untraced_power_stopped_before_transport(
+    socket_enabled, aiohttp_server, monkeypatch, stop
+):
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        CommandNotSentCooldown,
+        CommandSuperseded,
+    )
+
+    received = []
+    waiting = asyncio.Event()
+
+    async def handler(request):
+        received.append(await request.json())
+        return web.Response()
+
+    async def cooldown(_delay):
+        waiting.set()
+        await asyncio.Event().wait()
+
+    def check():
+        if stop == "superseded":
+            raise CommandSuperseded
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    uncertain = Mock()
+    async with ClientSession() as session:
+        api = AirzoneAPI("synthetic@example.invalid", session)
+        if stop != "superseded":
+            api._cooldown_until = api._now() + (60 if stop == "cooldown" else 5)
+        monkeypatch.setattr(api, "_sleep", cooldown)
+        task = asyncio.create_task(
+            api.send_event(
+                {"event": {"cgi": "modmaquina", "option": "P1", "value": 1}},
+                on_start=check,
+                on_uncertain=uncertain,
+            )
+        )
+        try:
+            async with asyncio.timeout(3):
+                if stop == "cancel_cooldown":
+                    await waiting.wait()
+                    task.cancel()
+                with pytest.raises(
+                    {
+                        "cooldown": CommandNotSentCooldown,
+                        "cancel_cooldown": asyncio.CancelledError,
+                        "superseded": CommandSuperseded,
+                    }[stop]
+                ):
+                    await task
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert received == []
+    uncertain.assert_not_called()
+    assert not api._pending
+
+
+@pytest.mark.parametrize("stop", ["connect_timeout", "cancel_in_transport"])
+async def test_untraced_power_distinguishes_reported_connection_timeout(
+    socket_enabled, aiohttp_server, monkeypatch, stop
+):
+    """An untraced cancellation lacks the phase evidence of a connect timeout."""
+    connecting = asyncio.Event()
+    uncertain = Mock()
+    received = []
+
+    async def handler(request):
+        received.append(await request.json())
+        return web.Response()
+
+    async def wait_for_connection(*_args, **_kwargs):
+        connecting.set()
+        await asyncio.Event().wait()
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    if stop == "connect_timeout":
+        monkeypatch.setattr(
+            "custom_components.airzoneclouddaikin.airzone_api.ClientTimeout",
+            lambda **_: ClientTimeout(connect=0.3),
+        )
+    async with ClientSession() as session:
+        monkeypatch.setattr(
+            session.connector, "_create_connection", wait_for_connection
+        )
+        api = AirzoneAPI("synthetic@example.invalid", session)
+        task = asyncio.create_task(
+            api.send_event(
+                {"event": {"cgi": "modmaquina", "option": "P1", "value": 1}},
+                on_uncertain=uncertain,
+            )
+        )
+        try:
+            async with asyncio.timeout(3):
+                await connecting.wait()
+                if stop == "cancel_in_transport":
+                    task.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await task
+                else:
+                    with pytest.raises(TimeoutError, match="Cloud request timed out"):
+                        await task
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert received == []
+    assert uncertain.call_count == int(stop == "cancel_in_transport")
+    assert not api._pending
+
+
+async def test_untraced_power_retains_bounded_retry_after_definitive_429(
+    socket_enabled, aiohttp_server, monkeypatch
+):
+    """A short explicit refusal still permits a bounded second HTTP attempt."""
+    clock = 0.0
+    delays = []
+    received = []
+
+    async def handler(request):
+        received.append(await request.json())
+        if len(received) == 1:
+            return web.Response(status=429, headers={"Retry-After": "2"})
+        return web.Response(status=204)
+
+    async def tick(delay):
+        nonlocal clock
+        delays.append(delay)
+        clock += delay
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    payload = {"event": {"cgi": "modmaquina", "option": "P1", "value": 1}}
+    uncertain = Mock()
+    async with ClientSession() as session:
+        api = AirzoneAPI("synthetic@example.invalid", session)
+        monkeypatch.setattr(api, "_now", lambda: clock)
+        monkeypatch.setattr(api, "_sleep", tick)
+        await api.send_event(payload, on_uncertain=uncertain)
+    assert received == [payload, payload]
+    assert delays == [2]
+    uncertain.assert_not_called()
+    assert not api._pending

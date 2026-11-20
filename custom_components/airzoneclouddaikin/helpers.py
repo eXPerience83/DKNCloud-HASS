@@ -21,16 +21,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import ClientResponseError
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import CommandNotSentCooldown
+from .airzone_api import CommandNotSentCooldown, CommandSuperseded
+from .commands import modmaquina_payload
 from .const import (
     DOMAIN,
     MANUFACTURER,
@@ -246,21 +249,122 @@ def acquire_device_lock(
     return lock
 
 
-def reserve_power_intent(
-    hass: HomeAssistant, entry_id: str, device_id: str
-) -> tuple[dict[str, int], int]:
-    """Record an explicit power request before it can wait for device I/O.
+@dataclass(frozen=True, slots=True)
+class PowerIntent:
+    """An entry-owned reservation in the existing per-device intent counter."""
 
-    A newer ON/OFF request supersedes an older one still preparing Sleep/Away
-    or waiting for the per-device lock. The lock protects the final decision
-    and P1 send together; the intent counter preserves request order across
-    preparation that must happen outside that lock.
-    """
-    bucket = _entry_bucket(hass, entry_id)
+    hass: HomeAssistant
+    coordinator: DataUpdateCoordinator[Any]
+    entry_id: str
+    device_id: str
+    bucket: dict[str, Any]
+    number: int
+
+    def is_active(self) -> bool:
+        return (
+            active_entry_bucket(self.hass, self.entry_id, self.coordinator)
+            is self.bucket
+        )
+
+    def is_current(self) -> bool:
+        return (
+            self.is_active()
+            and self.bucket["power_intents"].get(self.device_id) == self.number
+        )
+
+    def check_dispatch(self) -> None:
+        if not self.is_current():
+            raise CommandSuperseded
+
+
+@dataclass(frozen=True, slots=True)
+class PowerDelegation:
+    """A pending Switch reservation authorized by Climate's entity service."""
+
+    intent: PowerIntent
+    value: int
+    context: Context
+    caller: asyncio.Task | None = None
+
+
+delegated_power_intent: ContextVar[PowerDelegation | None] = ContextVar(
+    "dkn_delegated_power_intent", default=None
+)
+
+
+def reserve_power_intent(
+    hass: HomeAssistant,
+    coordinator: DataUpdateCoordinator[Any],
+    entry_id: str,
+    device_id: str,
+    *,
+    delegated_value: int | None = None,
+    service_context: Context | None = None,
+) -> PowerIntent | None:
+    """Record the request before waiting for a device lock or scene preparation."""
+    if (
+        (delegated := delegated_power_intent.get()) is not None
+        and delegated.caller is None
+        and delegated.value == delegated_value
+        and delegated.context is service_context
+        and delegated.intent.entry_id == entry_id
+        and delegated.intent.device_id == device_id
+    ):
+        # The entity method consumes this authorization before it can yield.
+        delegated_power_intent.set(None)
+        intent = delegated.intent
+        return (
+            intent if intent.coordinator is coordinator and intent.is_active() else None
+        )
+
+    bucket = active_entry_bucket(hass, entry_id, coordinator)
+    if bucket is None:
+        return None
     intents: dict[str, int] = bucket.setdefault("power_intents", {})
-    current = intents.get(device_id, 0) + 1
-    intents[device_id] = current
-    return intents, current
+    number = intents.get(device_id, 0) + 1
+    intents[device_id] = number
+    return PowerIntent(hass, coordinator, entry_id, device_id, bucket, number)
+
+
+def power_is_uncertain(bucket: dict[str, Any], device_id: str) -> bool:
+    """Return whether cached power must be ignored for control deduplication."""
+    return device_id in bucket.get("uncertain_power", {})
+
+
+async def async_send_power(intent: PowerIntent, value: int) -> bool:
+    """Send P1 under the device lock and record only this attempt's uncertainty."""
+    hass, coordinator = intent.hass, intent.coordinator
+    entry_id, device_id, bucket = intent.entry_id, intent.device_id, intent.bucket
+    api = getattr(coordinator, "api", None)
+    if api is None:
+        _LOGGER.error("API not attached to coordinator; cannot send power command")
+        return False
+
+    def mark_uncertain() -> None:
+        # A queued intent may supersede this one while the request is on the
+        # wire. Its decision must still account for this dispatched write.
+        if intent.is_active():
+            bucket.setdefault("uncertain_power", {})[device_id] = object()
+            optimistic_invalidate(hass, entry_id, device_id, "power")
+            request_ambiguous_control_readback(
+                hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
+            )
+
+    try:
+        intent.check_dispatch()
+        await api.send_event(
+            modmaquina_payload(device_id, "P1", value),
+            on_start=intent.check_dispatch,
+            on_uncertain=mark_uncertain,
+        )
+    except CommandSuperseded:
+        return False
+
+    if not intent.is_active():
+        return False
+    bucket.get("uncertain_power", {}).pop(device_id, None)
+    optimistic_set(hass, entry_id, device_id, "power", str(value))
+    return True
 
 
 def request_ambiguous_control_readback(
@@ -393,6 +497,7 @@ async def async_auto_exit_sleep_if_needed(
     allow_away_handling: bool,
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
     on_success: Callable[[], None] | None = None,
+    is_current: Callable[[], bool] | None = None,
 ) -> bool | None:
     """Distinguish a no-longer-due recheck from an attempted scene exit.
 
@@ -414,7 +519,9 @@ async def async_auto_exit_sleep_if_needed(
             await auto_exit_away(reason)
         return
     async with acquire_device_lock(hass, entry_id, device_id):
-        if active_entry_bucket(hass, entry_id, coordinator) is not bucket:
+        if active_entry_bucket(hass, entry_id, coordinator) is not bucket or (
+            is_current is not None and not is_current()
+        ):
             return
         current = (getattr(coordinator, "data", None) or {}).get(device_id, device)
         overlay = bucket.get("optimistic", {}).get(device_id, {}).get("scenary")
@@ -459,9 +566,24 @@ async def async_auto_exit_sleep_if_needed(
         deadlines.pop(device_id, None)
         pending[device_id] = "unverified"
         unsent = False
+
+        def check_dispatch() -> None:
+            if is_current is not None and not is_current():
+                raise CommandSuperseded
+
         try:
             # No retries: a transport failure may follow acceptance by the server.
-            await api.async_set_scenary(device_id, SCENARY_HOME, retry=False)
+            await api.async_set_scenary(
+                device_id,
+                SCENARY_HOME,
+                retry=False,
+                **({"on_start": check_dispatch} if is_current is not None else {}),
+            )
+        except CommandSuperseded:
+            if active_entry_bucket(hass, entry_id, coordinator) is bucket:
+                pending.pop(device_id, None)
+            unsent = True
+            return True
         except CommandNotSentCooldown as error:
             # No I/O occurred in this invocation; keep this session eligible.
             if active_entry_bucket(hass, entry_id, coordinator) is bucket:

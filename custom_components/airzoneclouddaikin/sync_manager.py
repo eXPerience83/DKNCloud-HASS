@@ -14,6 +14,7 @@ from aiohttp import ClientResponseError
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.util import dt as dt_util
 
+from .device_state import confirm_power_read
 from .pusher_client import PusherProtocolError
 from .recovery_pool import ReadStart, RecoveryPool
 from .request_budget import RequestBudget
@@ -54,12 +55,14 @@ class SyncManager:
         discover=None,
         on_topology_change=None,
         on_mode_change: Callable[[], None] | None = None,
+        uncertain_power: dict[str, object] | None = None,
     ) -> None:
         self.state = SyncState()
         self.state.snapshot(list(initial.values()), self.state.checkpoint())
         self._installations = dict(installations)
         self._request, self._fetch = request, fetch
         self._timed_fetch = timed_fetch
+        self._uncertain_power = uncertain_power if uncertain_power is not None else {}
         self._publish, self._reauth, self._locks = publish, reauth, locks
         self._connect, self._clock = connect, clock
         self._sleep = sleep
@@ -203,9 +206,10 @@ class SyncManager:
     ) -> list[dict[str, Any]]:
         checkpoint = self.state.checkpoint()
         started: ReadStart | None = None
+        uncertain_at_dispatch: dict[str, object] = {}
 
         async def read():
-            nonlocal checkpoint, started
+            nonlocal checkpoint, started, uncertain_at_dispatch
             ready = max(
                 (
                     deadline
@@ -227,13 +231,15 @@ class SyncManager:
                         generation = checkpoint[0]
 
                         def dispatched():
-                            nonlocal checkpoint, started
+                            nonlocal checkpoint, started, uncertain_at_dispatch
                             # Preserve the connection generation across API
                             # cooldown, but compare fields at dispatch.
                             checkpoint = generation, self.state.revision
                             started = on_start()
+                            uncertain_at_dispatch = self._uncertain_power.copy()
 
                         return await self._timed_fetch(installation, dispatched)
+                uncertain_at_dispatch = self._uncertain_power.copy()
                 return await self._fetch(installation)
 
         devices = await self._budget.run(read)
@@ -269,6 +275,12 @@ class SyncManager:
                 or (started is not None and started >= demand)
             )
         }
+        confirm_power_read(
+            self._uncertain_power,
+            uncertain_at_dispatch,
+            self.state.data,
+            {device for device, keys in self.touched.items() if "power" in keys},
+        )
         now = self._clock()
         for device in devices:
             key = str(device.get("id") or "")

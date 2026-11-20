@@ -37,17 +37,24 @@ from json import JSONDecodeError
 from typing import Any
 
 from aiohttp import (
+    ClientConnectionError,
     ClientConnectorError,
     ClientHandlerType,
+    ClientHttpProxyError,
     ClientOSError,
+    ClientPayloadError,
     ClientRequest,
     ClientResponse,
     ClientResponseError,
     ClientSession,
     ClientTimeout,
+    ConnectionTimeoutError,
     ServerDisconnectedError,
+    ServerFingerprintMismatch,
+    TraceConfig,
 )
 from aiohttp.client_reqrep import RequestInfo
+from aiohttp.http_exceptions import HttpProcessingError
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from multidict import CIMultiDict
 from yarl import URL
@@ -71,6 +78,10 @@ _MAX_RETRIES = 3
 _BASE_DELAY = 0.6
 _JITTER = 0.25
 _MAX_WRITE_COOLDOWN_WAIT = 10.0
+
+
+class CommandSuperseded(Exception):
+    """A newer control intent or an unloaded entry prevented dispatch."""
 
 
 class CommandNotSentCooldown(HomeAssistantError):
@@ -97,6 +108,18 @@ async def prevent_device_put_replay(
     raise HomeAssistantError("Cloud device command outcome is unknown")
 
 
+async def _notify_dispatch(_session, context, _params):
+    if dispatch := context.trace_request_ctx:
+        dispatch()
+
+
+def request_dispatch_trace() -> TraceConfig:
+    """Observe timed GETs and guarded writes at the entry's HTTP writer."""
+    trace = TraceConfig()
+    trace.on_request_headers_sent.append(_notify_dispatch)
+    return trace
+
+
 class AirzoneAPI:
     """Minimal API client for DKN Cloud."""
 
@@ -111,6 +134,10 @@ class AirzoneAPI:
         self._username = username
         self._password = password
         self._session = session
+        self._dispatch_traced = isinstance(session, ClientSession) and any(
+            _notify_dispatch in trace.on_request_headers_sent
+            for trace in session.trace_configs
+        )
         self._token: str | None = token
         self._cooldown_until: float = 0.0
         self._suspended = False
@@ -196,6 +223,8 @@ class AirzoneAPI:
         json: dict[str, Any] | None = None,
         data: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
+        on_dispatch: Callable[[], None] | None = None,
+        on_uncertain: Callable[[], None] | None = None,
     ) -> Any:
         """HTTP request helper (never logs full URLs with secrets)."""
         url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
@@ -207,16 +236,27 @@ class AirzoneAPI:
         spath = self._safe_path(path)
         device_put = method == "PUT" and path.startswith(f"{API_DEVICES}/")
 
+        event = (json or {}).get("event")
+        status_only_control = (
+            method == "POST"
+            and path == API_EVENTS
+            and isinstance(event, dict)
+            and event.get("cgi") == "modmaquina"
+            and event.get("option") in ("P1", "P2", "P3", "P4", "P7", "P8")
+        )
+        # Rejections here are known unsent. Untraced cancellation becomes
+        # indeterminate only inside the HTTP attempt.
+        if self._suspended or not self.request_allowed():
+            raise asyncio.CancelledError
+        if (
+            self.on_information_started
+            and isinstance(event, dict)
+            and event.get("cgi") == "infomaquina"
+        ):
+            self.on_information_started(str(event.get("device_id")))
+
         safe_error: Exception
         try:
-            if self._suspended or not self.request_allowed():
-                raise asyncio.CancelledError
-            if (
-                self.on_information_started
-                and isinstance(json, dict)
-                and (event := json.get("event", {})).get("cgi") == "infomaquina"
-            ):
-                self.on_information_started(str(event.get("device_id")))
             async with self._session.request(
                 method,
                 url,
@@ -226,10 +266,14 @@ class AirzoneAPI:
                 timeout=timeout,
                 **({"allow_redirects": False} if device_put else {}),
                 **({"data": data} if data is not None else {}),
+                **({"trace_request_ctx": on_dispatch} if on_dispatch else {}),
             ) as resp:
                 if device_put and 300 <= resp.status < 400:
                     raise ClientResponseError(resp.request_info, (), status=resp.status)
                 resp.raise_for_status()
+                if status_only_control and 200 <= resp.status < 300:
+                    # Control callers only need the backend's acknowledgement.
+                    return None
                 empty_body = resp.status == 204 or resp.content_length == 0
                 if resp.content_type == "application/json":
                     try:
@@ -243,36 +287,60 @@ class AirzoneAPI:
                     return ""
                 return await resp.text()
         except ClientResponseError as cre:
-            if cre.status == 401:
-                self.suspend()
-            _LOGGER.debug(
-                "HTTP %s %s failed with status %s",
-                method,
-                spath,
-                cre.status,
-            )
-            # aiohttp includes the full request URL (with user_email and
-            # user_token) in ClientResponseError.__str__. Never propagate it.
-            safe_url = URL(f"{BASE_URL.rstrip('/')}{spath}")
-            safe_request = RequestInfo(safe_url, method, CIMultiDict(), safe_url)
-            retry_after = cre.headers.get("Retry-After") if cre.headers else None
-            headers = {"Retry-After": retry_after} if retry_after else None
-            safe_error = ClientResponseError(
-                safe_request, history=(), status=cre.status, headers=headers
-            )
-        except ClientConnectorError:
+            malformed_reply = (
+                status_only_control or (on_dispatch is not None and method != "GET")
+            ) and isinstance(cre.__cause__, HttpProcessingError)
+            if on_uncertain is not None and (
+                malformed_reply
+                or (
+                    500 <= cre.status < 600
+                    and not isinstance(cre, ClientHttpProxyError)
+                )
+            ):
+                on_uncertain()
+            if malformed_reply:
+                # aiohttp reports parser failures as a synthetic HTTP status.
+                # An invalid response cannot establish that P1 was rejected.
+                safe_error = ClientPayloadError("Invalid cloud response")
+            else:
+                if cre.status == 401:
+                    self.suspend()
+                _LOGGER.debug(
+                    "HTTP %s %s failed with status %s",
+                    method,
+                    spath,
+                    cre.status,
+                )
+                # aiohttp includes the full request URL (with user_email and
+                # user_token) in ClientResponseError.__str__. Never propagate it.
+                safe_url = URL(f"{BASE_URL.rstrip('/')}{spath}")
+                safe_request = RequestInfo(safe_url, method, CIMultiDict(), safe_url)
+                retry_after = cre.headers.get("Retry-After") if cre.headers else None
+                headers = {"Retry-After": retry_after} if retry_after else None
+                safe_error = ClientResponseError(
+                    safe_request, history=(), status=cre.status, headers=headers
+                )
+        except ClientConnectorError, ServerFingerprintMismatch:
             _LOGGER.debug("HTTP %s %s connection error", method, spath)
             raise
         except ClientOSError as err:
+            if on_uncertain is not None:
+                on_uncertain()
             # aiohttp can embed the authenticated request URL in this exception
             # when sending a JSON body fails (including the device path).
             # Keep the transport error type/errno without its sensitive text.
             _LOGGER.debug("HTTP %s %s transport error", method, spath)
             error_number = err.errno if isinstance(err.errno, int) else 0
             safe_error = ClientOSError(error_number, "Cloud transport error")
-        except TimeoutError:
+        except TimeoutError as err:
+            if on_uncertain is not None and not isinstance(err, ConnectionTimeoutError):
+                on_uncertain()
             _LOGGER.debug("HTTP %s %s timed out", method, spath)
             safe_error = TimeoutError("Cloud request timed out")
+        except asyncio.CancelledError, ClientConnectionError, ClientPayloadError:
+            if on_uncertain is not None:
+                on_uncertain()
+            raise
 
         # Raise *outside* the except blocks so Python records no implicit
         # __context__. The original secret-bearing exception is not reachable
@@ -317,6 +385,7 @@ class AirzoneAPI:
         extra_headers: dict[str, str] | None = None,
         retry: bool = True,
         on_start: Callable[[], None] | None = None,
+        on_uncertain: Callable[[], None] | None = None,
     ) -> Any:
         """Authenticated request with bounded 429 retries and read-only 5xx/timeout retries.
 
@@ -328,6 +397,25 @@ class AirzoneAPI:
             and path == API_EVENTS
             and (json or {}).get("event", {}).get("cgi") != "infomaquina"
         )
+        dispatched = False
+
+        def dispatch() -> None:
+            nonlocal dispatched
+            if on_start is not None:
+                on_start()
+            dispatched = True
+
+        # Restricted transports may not support trace metadata. Preserve
+        # the conservative GET start and never forward unsupported options.
+        trace_dispatch = self._dispatch_traced and (on_start or on_uncertain)
+
+        def report_uncertain() -> None:
+            # A writer trace can prove that the attempt never reached it.
+            # Without it, transport ambiguity is reported without claiming
+            # a dispatch timestamp or that bytes were sent.
+            if on_uncertain is not None and (dispatched or not trace_dispatch):
+                on_uncertain()
+
         attempt = 0
         while True:
             if self._suspended or not self.request_allowed():
@@ -345,8 +433,10 @@ class AirzoneAPI:
 
             if self._suspended or not self.request_allowed():
                 raise asyncio.CancelledError
+            dispatched = False
+
             try:
-                if on_start is not None:
+                if (is_device_write or not trace_dispatch) and on_start is not None:
                     on_start()
                 return await self._request(
                     method,
@@ -355,6 +445,12 @@ class AirzoneAPI:
                     json=json,
                     extra_headers=extra_headers,
                     **({"data": data} if data is not None else {}),
+                    **({"on_dispatch": dispatch} if trace_dispatch else {}),
+                    **(
+                        {"on_uncertain": report_uncertain}
+                        if on_uncertain is not None
+                        else {}
+                    ),
                 )
             except ClientResponseError as cre:
                 status = cre.status or 0
@@ -438,10 +534,6 @@ class AirzoneAPI:
                 attempt += 1
                 await self._sleep(delay)
                 continue
-
-            except ClientConnectorError:
-                # Connection issues → propagate (HA will surface the error)
-                raise
 
     # --------------------------
     # Public API
@@ -566,7 +658,13 @@ class AirzoneAPI:
             return devices
         return None
 
-    async def send_event(self, payload: dict[str, Any]) -> Any:
+    async def send_event(
+        self,
+        payload: dict[str, Any],
+        *,
+        on_start: Callable[[], None] | None = None,
+        on_uncertain: Callable[[], None] | None = None,
+    ) -> Any:
         """POST to /events with JSON/XHR headers and no ambiguous 5xx replay."""
         params = self._auth_params()
         try:
@@ -576,6 +674,8 @@ class AirzoneAPI:
                 params=params,
                 json=payload,
                 extra_headers=HEADERS_EVENTS,
+                **({"on_start": on_start} if on_start is not None else {}),
+                **({"on_uncertain": on_uncertain} if on_uncertain is not None else {}),
             )
         except ClientResponseError as cre:
             if cre.status == 401:
@@ -596,7 +696,12 @@ class AirzoneAPI:
             ) from None
 
     async def put_device_fields(
-        self, device_id: str, payload: dict[str, Any], *, retry: bool = True
+        self,
+        device_id: str,
+        payload: dict[str, Any],
+        *,
+        retry: bool = True,
+        on_start: Callable[[], None] | None = None,
     ) -> Any:
         """PUT /devices/{id} with bounded 429 retry; never replay ambiguous 5xx.
 
@@ -608,7 +713,12 @@ class AirzoneAPI:
         path = f"{API_DEVICES}/{device_id}"
         try:
             return await self._authed_request_with_retries(
-                "PUT", path, params=params, json=payload, retry=retry
+                "PUT",
+                path,
+                params=params,
+                json=payload,
+                retry=retry,
+                **({"on_start": on_start} if on_start is not None else {}),
             )
         except ClientResponseError as cre:
             if cre.status == 401:
@@ -616,10 +726,18 @@ class AirzoneAPI:
             raise
 
     async def async_set_scenary(
-        self, device_id: str, scenary: str, *, retry: bool = True
+        self,
+        device_id: str,
+        scenary: str,
+        *,
+        retry: bool = True,
+        on_start: Callable[[], None] | None = None,
     ) -> Any:
         """Set device scenary using the canonical device fields endpoint."""
 
         return await self.put_device_fields(
-            device_id, {"device": {"scenary": scenary}}, retry=retry
+            device_id,
+            {"device": {"scenary": scenary}},
+            retry=retry,
+            **({"on_start": on_start} if on_start is not None else {}),
         )

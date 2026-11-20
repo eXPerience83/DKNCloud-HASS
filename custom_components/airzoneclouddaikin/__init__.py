@@ -30,7 +30,7 @@ from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import AirzoneAPI, prevent_device_put_replay
+from .airzone_api import AirzoneAPI, prevent_device_put_replay, request_dispatch_trace
 from .const import (
     CONF_ENABLE_HEAT_COOL,
     CONF_SLEEP_CLEANUP_ENABLED,
@@ -44,6 +44,7 @@ from .const import (
     SCENARY_VACANT,
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
+from .device_state import confirm_power_read
 from .helpers import (
     acquire_device_lock,
     active_entry_bucket,
@@ -316,7 +317,21 @@ async def _async_update_data(
                 if device_installation_map.get(stale_dev_id) == stale_inst:
                     device_installation_map.pop(stale_dev_id, None)
 
-        fetches = [api.fetch_devices(inst_id) for inst_id in installation_ids]
+        uncertain_power: dict[str, object] = domain_bucket.setdefault(
+            "uncertain_power", {}
+        )
+
+        async def fetch_devices(installation: str):
+            markers: dict[str, object] = {}
+
+            def dispatched() -> None:
+                nonlocal markers
+                markers = uncertain_power.copy()
+
+            devices = await api.fetch_devices(installation, on_start=dispatched)
+            return devices, markers
+
+        fetches = [fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
         check_owner()
         if any(
@@ -356,7 +371,7 @@ async def _async_update_data(
                 )
                 continue
 
-            devices = result
+            devices, markers = result
             # None indicates an invalid HTTP 200 device payload, not zero
             # devices. Handle it like an installation fetch failure so an
             # existing snapshot is retained and initial setup fails safely.
@@ -392,6 +407,10 @@ async def _async_update_data(
                 if device_installation_map.get(stale_dev_id) == inst_id:
                     device_installation_map.pop(stale_dev_id, None)
             last_devices_by_inst[inst_id] = inst_device_ids
+            if markers:
+                confirm_power_read(
+                    uncertain_power, markers, data, fresh_power_ids & inst_device_ids
+                )
 
         if auth_error:
             raise ConfigEntryAuthFailed("Authentication required (401)")
@@ -724,7 +743,10 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
 def async_create_runtime_session(hass: HomeAssistant) -> ClientSession:
     """Use entry-scoped middleware on HA's shared connector."""
     return async_create_clientsession(
-        hass, connector_owner=False, middlewares=(prevent_device_put_replay,)
+        hass,
+        connector_owner=False,
+        middlewares=(prevent_device_put_replay,),
+        trace_configs=[request_dispatch_trace()],
     )
 
 
@@ -1220,6 +1242,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             discover=discover_sync,
             on_topology_change=topology_changed,
             on_mode_change=sync_mode_changed,
+            uncertain_power=bucket.setdefault("uncertain_power", {}),
         )
         bucket["sync_manager"] = manager
 
@@ -1370,6 +1393,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
 
     if unload_ok:
         bucket.pop("device_locks", None)
+        if uncertain_power := bucket.get("uncertain_power"):
+            uncertain_power.clear()
         notify_state.clear()
         domain_bucket = hass.data.get(DOMAIN, {})
         if domain_bucket.get(entry.entry_id) is bucket:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from homeassistant.components.climate import ClimateEntity
@@ -15,7 +16,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
-from .airzone_api import CommandNotSentCooldown
+from .airzone_api import CommandNotSentCooldown, CommandSuperseded
 from .commands import modmaquina_payload
 from .const import (
     CONF_ENABLE_HEAT_COOL,
@@ -23,17 +24,21 @@ from .const import (
 )
 from .device_state import power_is_on, preset_to_scenary, scenary_to_preset
 from .helpers import (
+    PowerDelegation,
     acquire_device_lock,
     active_entry_bucket,
     async_auto_exit_sleep_if_needed,
+    async_send_power,
     bitmask_supports_p2,
     build_device_info,
     clamp_temperature,
+    delegated_power_intent,
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
     parse_float,
     parse_modes_bitmask,
+    power_is_uncertain,
     request_ambiguous_control_readback,
     reserve_power_intent,
     schedule_post_write_refresh,
@@ -259,6 +264,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Write a scene; an explicit rearm from raw Sleep/OFF uses Home first."""
+        await self._async_set_preset_mode(preset_mode)
+
+    async def _async_set_preset_mode(
+        self, preset_mode: str, *, is_current: Callable[[], bool] | None = None
+    ) -> None:
         if preset_mode not in (self.preset_modes or []):
             _LOGGER.debug(
                 "Invalid preset_mode %s (allowed %s)", preset_mode, self.preset_modes
@@ -298,8 +308,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         intents[self._device_id] = intent
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            if not entry_active() or intents.get(self._device_id) != intent:
-                # Only a newer queued request may supersede this one.
+            if (
+                not entry_active()
+                or intents.get(self._device_id) != intent
+                or (is_current is not None and not is_current())
+            ):
+                # Discard superseded preset requests and power preparations.
                 return
             current_revision = revisions.get(self._device_id, 0)
             previous_write = bucket.get("scene_preset_last_write", {}).get(
@@ -367,6 +381,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 self.async_write_ha_state()
                 fence_ambiguous_scene()
 
+            def check_dispatch() -> None:
+                if is_current is not None and not is_current():
+                    raise CommandSuperseded
+
             try:
                 if rearm:
                     # Repeating the unchanged backend 'sleep' scene does not
@@ -384,12 +402,27 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     # Any scene write leaving Sleep (even while power is ON)
                     # must not retry after a response of unknown outcome.
                     await api.put_device_fields(
-                        self._device_id, {"device": {"scenary": scenary}}, retry=False
+                        self._device_id,
+                        {"device": {"scenary": scenary}},
+                        retry=False,
+                        **(
+                            {"on_start": check_dispatch}
+                            if is_current is not None
+                            else {}
+                        ),
                     )
                 else:
                     await api.put_device_fields(
-                        self._device_id, {"device": {"scenary": scenary}}
+                        self._device_id,
+                        {"device": {"scenary": scenary}},
+                        **(
+                            {"on_start": check_dispatch}
+                            if is_current is not None
+                            else {}
+                        ),
                     )
+            except CommandSuperseded:
+                return
             except asyncio.CancelledError:
                 if cleared_stale_sleep:
                     preserve_partial_home()
@@ -446,14 +479,21 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     # ---- Auto-exit AWAY on active commands -------------------------------
 
-    async def _auto_exit_away_if_needed(self, reason: str) -> None:
-        try:
-            if self.preset_mode == "away":
-                await self.async_set_preset_mode("home")
-        except Exception as err:
-            _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
+    async def _auto_exit_away_if_needed(
+        self, reason: str, *, is_current: Callable[[], bool] | None = None
+    ) -> None:
+        if self.preset_mode == "away" and (is_current is None or is_current()):
+            try:
+                await self._async_set_preset_mode("home", is_current=is_current)
+            except Exception as err:
+                _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
 
-    async def _ensure_occupied_before_active_action(self, reason: str) -> None:
+    async def _ensure_occupied_before_active_action(
+        self, reason: str, *, is_current: Callable[[], bool] | None = None
+    ) -> None:
+        async def exit_away(reason: str) -> None:
+            await self._auto_exit_away_if_needed(reason, is_current=is_current)
+
         await async_auto_exit_sleep_if_needed(
             self.hass,
             entry_id=self._entry_id,
@@ -463,8 +503,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             reason=reason,
             is_device_on=self._device_power_on,
             allow_away_handling=True,
-            auto_exit_away=self._auto_exit_away_if_needed,
+            auto_exit_away=exit_away,
             on_success=self.async_write_ha_state,
+            **({"is_current": is_current} if is_current is not None else {}),
         )
 
     # ---- Temperature control --------------------------------------------
@@ -706,75 +747,92 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     # ---- Power / mode ----------------------------------------------------
 
-    async def async_turn_on(self) -> None:
-        bucket = self._active_entry_bucket()
-        if bucket is None:
-            return
-
-        def entry_active() -> bool:
-            return self._active_entry_bucket() is bucket
-
-        intents, intent = reserve_power_intent(
-            self.hass, self._entry_id, self._device_id
+    async def async_request_call[T](self, coro: Coroutine[Any, Any, T]) -> T:
+        # HA runs this hook in the blocking service caller before scheduling
+        # the entity method. call_service listeners can inherit the pending
+        # reservation, but run this hook in a different caller task.
+        delegation = delegated_power_intent.get()
+        if delegation is None or delegation.caller is not asyncio.current_task():
+            return await super().async_request_call(coro)
+        token = delegated_power_intent.set(
+            PowerDelegation(delegation.intent, delegation.value, delegation.context)
         )
+        try:
+            return await super().async_request_call(coro)
+        finally:
+            delegated_power_intent.reset(token)
+
+    async def async_turn_on(self) -> None:
+        intent = reserve_power_intent(
+            self.hass,
+            self.coordinator,
+            self._entry_id,
+            self._device_id,
+            delegated_value=1,
+            service_context=self._context,
+        )
+        if intent is None:
+            return
+        bucket = intent.bucket
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         prepared = False
         while True:
             async with lock:
-                if not entry_active() or intents.get(self._device_id) != intent:
+                if not intent.is_current():
                     return
                 current = str(
                     self._overlay_value("power", self._device.get("power")) or ""
                 )
-                if current.strip().lower() in {"1", "true", "on"}:
-                    # An explicit wake while Away should still request Home,
-                    # even when P1 is already ON. Keep preparation outside
-                    # this non-reentrant lock and avoid a duplicate P1.
+                if current.strip().lower() in {
+                    "1",
+                    "true",
+                    "on",
+                } and not power_is_uncertain(bucket, self._device_id):
+                    # Waking from Away still needs Home even when P1 is redundant.
                     if prepared or self.preset_mode != "away":
                         return
                 elif prepared:
-                    await self._send_p_event("P1", 1)
-                    if self._active_entry_bucket() is not bucket:
-                        return
-                    optimistic_set(
-                        self.hass, self._entry_id, self._device_id, "power", "1"
-                    )
-                    self.async_write_ha_state()
-                    schedule_post_write_refresh(
-                        self.hass, self.coordinator, entry_id=self._entry_id
-                    )
+                    if await async_send_power(intent, 1):
+                        self.async_write_ha_state()
+                        schedule_post_write_refresh(
+                            self.hass, self.coordinator, entry_id=self._entry_id
+                        )
                     return
-            # May take the same device lock for Sleep exit: never nest locks.
-            await self._ensure_occupied_before_active_action("turn_on")
-            if not entry_active():
-                return
+            # Sleep/Away preparation may take this same lock.
+            await self._ensure_occupied_before_active_action(
+                "turn_on", is_current=intent.is_current
+            )
             prepared = True
 
     async def async_turn_off(self) -> None:
-        bucket = self._active_entry_bucket()
-        if bucket is None:
-            return
-        intents, intent = reserve_power_intent(
-            self.hass, self._entry_id, self._device_id
+        intent = reserve_power_intent(
+            self.hass,
+            self.coordinator,
+            self._entry_id,
+            self._device_id,
+            delegated_value=0,
+            service_context=self._context,
         )
+        if intent is None:
+            return
+        bucket = intent.bucket
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            if (
-                self._active_entry_bucket() is not bucket
-                or intents.get(self._device_id) != intent
-            ):
+            if not intent.is_current():
                 return
             current = str(self._overlay_value("power", self._device.get("power")) or "")
-            if current.strip().lower() in {"0", "false", "off", ""}:
+            if current.strip().lower() in {
+                "0",
+                "false",
+                "off",
+                "",
+            } and not power_is_uncertain(bucket, self._device_id):
                 return
-            await self._send_p_event("P1", 0)
-            if self._active_entry_bucket() is not bucket:
-                return
-            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
-            self.async_write_ha_state()
-            schedule_post_write_refresh(
-                self.hass, self.coordinator, entry_id=self._entry_id
-            )
+            if await async_send_power(intent, 0):
+                self.async_write_ha_state()
+                schedule_post_write_refresh(
+                    self.hass, self.coordinator, entry_id=self._entry_id
+                )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         bucket = self._active_entry_bucket()
@@ -787,19 +845,19 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
 
         if hvac_mode == HVACMode.OFF:
-            intents, intent = reserve_power_intent(
-                self.hass, self._entry_id, self._device_id
+            intent = reserve_power_intent(
+                self.hass, self.coordinator, self._entry_id, self._device_id
             )
+            if intent is None:
+                return
             async with lock:
-                if not entry_active() or intents.get(self._device_id) != intent:
+                if not intent.is_current():
                     return
-                if self._device_power_on():
-                    await self._send_p_event("P1", 0)
-                    if self._active_entry_bucket() is not bucket:
-                        return
-                    optimistic_set(
-                        self.hass, self._entry_id, self._device_id, "power", "0"
-                    )
+                if (
+                    self._device_power_on()
+                    or power_is_uncertain(bucket, self._device_id)
+                ) and not await async_send_power(intent, 0):
+                    return
                 optimistic_invalidate(
                     self.hass, self._entry_id, self._device_id, "mode"
                 )
@@ -844,23 +902,29 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         # A mode selection may implicitly power on the unit. Fence this P1
         # against newer direct power commands before scene preparation awaits.
-        intents, intent = reserve_power_intent(
-            self.hass, self._entry_id, self._device_id
+        intent = reserve_power_intent(
+            self.hass, self.coordinator, self._entry_id, self._device_id
         )
-        await self._ensure_occupied_before_active_action("set_hvac_mode")
-        if not entry_active():
+        if intent is None:
             return
+        await self._ensure_occupied_before_active_action(
+            "set_hvac_mode", is_current=intent.is_current
+        )
 
         async with lock:
-            if not entry_active() or intents.get(self._device_id) != intent:
+            if not intent.is_current():
                 return
             # A deliberate FAN_ONLY selection normalizes the reported P2=8
             # alias to the selectable P2=3.
             normalize_fan_alias = (
                 hvac_mode == HVACMode.FAN_ONLY and self._backend_mode_code() == "8"
             )
+            needs_power = (
+                power_is_uncertain(bucket, self._device_id)
+                or not self._device_power_on()
+            )
             if (
-                self._device_power_on()
+                not needs_power
                 and self._hvac_from_device() == hvac_mode
                 and not normalize_fan_alias
             ):
@@ -870,20 +934,31 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 return
 
             powered_on = False
-            # Consult the latest optimistic power intent, not stale raw GET.
-            if not self._device_power_on():
-                await self._send_p_event("P1", 1)
-                if self._active_entry_bucket() is not bucket:
+            if needs_power:
+                powered_on = await async_send_power(intent, 1)
+                if not powered_on:
                     return
-                powered_on = True
-                optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
             # All paths above validated the mode before preparing power.
             selected_mode = (
                 fan_code if hvac_mode == HVACMode.FAN_ONLY else HVAC_TO_MODE[hvac_mode]
             )
             try:
-                await self._send_p_event("P2", selected_mode)
+                intent.check_dispatch()
+                await self._send_p_event(
+                    "P2", selected_mode, on_start=intent.check_dispatch
+                )
+            except CommandSuperseded:
+                if powered_on and entry_active():
+                    self.async_write_ha_state()
+                    request_ambiguous_control_readback(
+                        self.hass,
+                        self.coordinator,
+                        entry_id=self._entry_id,
+                        device_id=self._device_id,
+                        bucket=bucket,
+                    )
+                return
             except (Exception, asyncio.CancelledError) as error:
                 if entry_active():
                     if powered_on:
@@ -942,7 +1017,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     # ---- Write helpers ---------------------------------------------------
 
-    async def _send_p_event(self, option: str, value: Any) -> None:
+    async def _send_p_event(
+        self, option: str, value: Any, *, on_start: Callable[[], None] | None = None
+    ) -> None:
         """Send a P# command using the canonical 'modmaquina' payload.
 
         {"event":{"cgi":"modmaquina","device_id":<id>,"option":"P#","value":...}}
@@ -957,9 +1034,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         payload = modmaquina_payload(self._device_id, option, value)
         try:
-            await api.send_event(payload)
+            await api.send_event(
+                payload, **({"on_start": on_start} if on_start is not None else {})
+            )
+        except CommandSuperseded:
+            raise
         except asyncio.CancelledError:
-            if option in {"P1", "P3", "P4", "P7", "P8"}:
+            if option in {"P3", "P4", "P7", "P8"}:
                 request_ambiguous_control_readback(
                     self.hass,
                     self.coordinator,
@@ -969,7 +1050,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             raise
         except Exception as err:
-            if option in {"P1", "P3", "P4", "P7", "P8"} and not isinstance(
+            if option in {"P3", "P4", "P7", "P8"} and not isinstance(
                 err, CommandNotSentCooldown
             ):
                 request_ambiguous_control_readback(

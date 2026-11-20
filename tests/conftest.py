@@ -141,9 +141,9 @@ class FakeAirzoneAPI:
         self.token = token
         self.fetch_installations = AsyncMock(return_value=installations or [])
         self.fetch_devices = AsyncMock(
-            side_effect=lambda installation_id: (devices_by_installation or {}).get(
-                str(installation_id), []
-            )
+            side_effect=lambda installation_id, **_kwargs: (
+                devices_by_installation or {}
+            ).get(str(installation_id), [])
         )
         self.async_set_scenary = AsyncMock()
         self.put_device_fields = AsyncMock()
