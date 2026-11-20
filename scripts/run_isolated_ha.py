@@ -25,6 +25,7 @@ parser.add_argument(
     "--protected-case",
     choices=[
         "normal",
+        "setpoint_trial",
         "no_events",
         "invalid_event",
         "wrong_device",
@@ -146,6 +147,22 @@ with tempfile.TemporaryDirectory(prefix="dkn-ha-", dir=temporary_root) as tempor
                 and summary.get("storage_files") == 0
                 and summary.get("reason") == "duration"
                 and summary.get("session_closed")
+                else 1
+            )
+        if args.protected_case == "setpoint_trial":
+            # This branch uses a synthetic TLS backend, not DKN Cloud real.
+            sys.exit(
+                0
+                if result.returncode == 0
+                and not summary.get("error")
+                and summary.get("trial_passed") is True
+                and summary.get("backend_control_writes") == 2
+                and summary.get("pending_http_tasks") == 0
+                and summary.get("owned_tasks_closed")
+                and summary.get("session_closed")
+                and summary.get("server_closed")
+                and summary.get("storage_files") == 0
+                and summary.get("reason") == "trial_finished"
                 else 1
             )
         if args.protected_case in {

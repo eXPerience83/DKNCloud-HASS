@@ -49,9 +49,23 @@ class LabStopped(PermissionError):
 class LabSupervisor:
     """Own one experiment deadline, quotas, traffic spacing and fatal stop signal."""
 
-    def __init__(self, *, duration=300, state_limit=40, auth_limit=6, spacing=10):
-        if not (0 < duration <= 300 and 0 < state_limit <= 40 and 0 < auth_limit <= 6):
+    def __init__(
+        self,
+        *,
+        duration=300,
+        state_limit=40,
+        auth_limit=6,
+        spacing=10,
+        socket_limit=6,
+    ):
+        if not (
+            0 < duration <= 300
+            and 0 < state_limit <= 40
+            and 0 < auth_limit <= 6
+            and 0 < socket_limit <= 6
+        ):
             raise ValueError("Invalid experiment limits")
+        self.socket_limit = socket_limit
         self.deadline = time.monotonic() + duration
         self.limits = {"state": state_limit, "auth": auth_limit}
         self.counts = {"state": 0, "auth": 0}
@@ -75,17 +89,29 @@ class LabSupervisor:
         if time.monotonic() >= self.deadline:
             self.abort("duration")
 
-    async def admit(self, category):
-        async with self._lock:
-            self.check()
-            if category == "state":
-                await asyncio.sleep(max(0, self._next_state - time.monotonic()))
+    async def admit(self, category, *, window=None, operation=None):
+        # A blocked read never owns the budget lock. Recheck after spacing:
+        # pause may have happened while this request was already queued.
+        while True:
+            if window is not None:
+                await window.wait(operation)
+            async with self._lock:
                 self.check()
-            if self.counts[category] >= self.limits[category]:
-                self.abort("quota")
-            self.counts[category] += 1
-            if category == "state":
-                self._next_state = time.monotonic() + self.spacing
+                if window is not None and window.paused(operation):
+                    continue
+                if category == "state":
+                    await asyncio.sleep(max(0, self._next_state - time.monotonic()))
+                    self.check()
+                if window is not None and window.paused(operation):
+                    continue
+                if self.counts[category] >= self.limits[category]:
+                    self.abort("quota")
+                if window is not None and not window.acquire(operation):
+                    continue
+                self.counts[category] += 1
+                if category == "state":
+                    self._next_state = time.monotonic() + self.spacing
+                return window is not None
 
     def response(self, status):
         if status in {401, 429} or 300 <= status < 400:
@@ -107,38 +133,69 @@ class LabSupervisor:
     def socket(self):
         self.check()
         self._sockets += 1
-        if self._sockets > 6:
+        if self._sockets > self.socket_limit:
             self.abort("socket_quota")
 
 
 class GuardedContext:
     """Grant a transport lease only around a previously validated operation."""
 
-    def __init__(self, gateway, factory, category=None, websocket=False, path=None):
+    def __init__(
+        self,
+        gateway,
+        factory,
+        category=None,
+        websocket=False,
+        path=None,
+        operation=None,
+    ):
         self.gateway, self.factory = gateway, factory
         self.category, self.websocket = category, websocket
-        self.path = path
+        self.path, self.operation = path, operation
         self.context = None
+        self.read_lease = False
 
     async def __aenter__(self):
         owner = self.gateway.supervisor
+        window = self.gateway.read_window if self.operation in {"info", "get"} else None
         if self.category:
-            await owner.admit(self.category)
+            self.read_lease = await owner.admit(
+                self.category, window=window, operation=self.operation
+            )
         else:
             owner.socket()
         entered = False
         token = _NETWORK_LEASE.set(self.gateway)
         try:
             self.context = self.factory()
+            timeline = self.gateway.timeline
+            if timeline is not None and self.operation in {"info", "control", "get"}:
+                timeline.add(f"{self.operation}_admitted", source="transport")
             result = await self.context.__aenter__()
             entered = True
             if not self.websocket:
+                if self.operation == "control":
+                    if mark := getattr(
+                        self.gateway.protected.policy, "control_result", None
+                    ):
+                        mark(accepted=result.status < 300)
+                if timeline is not None and self.operation in {
+                    "info",
+                    "control",
+                    "get",
+                }:
+                    timeline.add(
+                        f"{self.operation}_result",
+                        source="transport",
+                        result="accepted" if result.status < 300 else "rejected",
+                        http_status=result.status,
+                    )
                 if result.status < 300:
                     key = (
                         "get_received"
-                        if self.path == "/devices"
+                        if self.operation == "get"
                         else "information_accepted"
-                        if self.path == "/events"
+                        if self.operation == "info"
                         else None
                     )
                     if key:
@@ -157,6 +214,34 @@ class GuardedContext:
                         value = None
                     if not isinstance(value, (dict, list)):
                         owner.abort("invalid_response")
+                    if self.operation == "get" and timeline is not None:
+                        rows = (
+                            value.get("devices") if isinstance(value, dict) else value
+                        )
+                        if isinstance(rows, list):
+                            for row in rows:
+                                if (
+                                    isinstance(row, dict)
+                                    and str(row.get("id"))
+                                    in self.gateway.protected.policy.devices
+                                ):
+                                    for field in (
+                                        "min_temp_unoccupied",
+                                        "scenary",
+                                        "cold_consign",
+                                        "heat_consign",
+                                    ):
+                                        if row.get(field) is not None:
+                                            timeline.add(
+                                                "get_received",
+                                                field=field,
+                                                value=row[field],
+                                                source="get",
+                                            )
+                    if observe := getattr(
+                        self.gateway.protected.policy, "observe", None
+                    ):
+                        observe(self.path, value)
                     if self.path == "/devices":
                         devices = (
                             value.get("devices") if isinstance(value, dict) else value
@@ -174,6 +259,15 @@ class GuardedContext:
                 else result
             )
         except BaseException as error:
+            if not entered and self.operation == "control":
+                if mark := getattr(
+                    self.gateway.protected.policy, "control_result", None
+                ):
+                    mark(accepted=False)
+                if self.gateway.timeline is not None:
+                    self.gateway.timeline.add(
+                        "control_result", source="transport", result="ambiguous"
+                    )
             if isinstance(error, PermissionError) and not isinstance(error, LabStopped):
                 owner.reason = "transport_security"
                 owner.stopped.set()
@@ -183,13 +277,29 @@ class GuardedContext:
             elif isinstance(error, ClientResponseError):
                 owner.response(error.status)
             if entered:
-                await self.context.__aexit__(None, None, None)
+                try:
+                    await self.context.__aexit__(None, None, None)
+                finally:
+                    if self.read_lease:
+                        window.leave(self.operation)
+                        self.read_lease = False
             raise
         finally:
             _NETWORK_LEASE.reset(token)
+            if not entered and self.read_lease:
+                window.leave(self.operation)
+                self.read_lease = False
 
     async def __aexit__(self, *args):
-        return await self.context.__aexit__(*args)
+        if self.operation == "control" and args and args[0] is not None:
+            if mark := getattr(self.gateway.protected.policy, "control_result", None):
+                mark(accepted=False)
+        try:
+            return await self.context.__aexit__(*args)
+        finally:
+            if self.read_lease:
+                self.gateway.read_window.leave(self.operation)
+                self.read_lease = False
 
 
 class GuardedSocket:
@@ -227,8 +337,12 @@ class GuardedSocket:
 class LaboratoryGateway:
     """The sole transport injected into every integration API and adapter."""
 
-    def __init__(self, protected, supervisor):
+    def __init__(self, protected, supervisor, *, timeline=None):
         self.protected, self.supervisor = protected, supervisor
+        self.timeline = timeline
+        from scripts.put_trial import ReadWindow
+
+        self.read_window = ReadWindow()
         self.observations = dict(
             websocket_established=0,
             get_received=0,
@@ -237,6 +351,10 @@ class LaboratoryGateway:
         )
 
     def request(self, method, url, **kwargs):
+        # Freeze the accepted P7/P8 payload before the first asynchronous
+        # budget wait, then validate again when delegation is actually made.
+        if freeze := getattr(self.protected.policy, "freeze_control_kwargs", None):
+            kwargs = freeze(method, url, kwargs)
         try:
             # Validate synchronously so no hidden task can swallow a policy failure.
             self.protected.validate_request(method, url, **kwargs)
@@ -264,11 +382,26 @@ class LaboratoryGateway:
         category = (
             "auth" if str(url).endswith(("/users/sign_in", "/pusher/auth")) else "state"
         )
+        path = URL(url).path
+        payload = kwargs.get("json")
+        event = payload.get("event") if type(payload) is dict else None
+        cgi = event.get("cgi") if type(event) is dict else None
+        operation = (
+            "info"
+            if method == "POST" and path == "/events" and cgi == "infomaquina"
+            else "control"
+            if (method == "POST" and path == "/events" and cgi == "modmaquina")
+            or method == "PUT"
+            else "get"
+            if method == "GET" and path == "/devices"
+            else None
+        )
         return GuardedContext(
             self,
             lambda: self.protected.request(method, url, **kwargs),
             category,
-            path=URL(url).path,
+            path=path,
+            operation=operation,
         )
 
     def ws_connect(self, url, **kwargs):

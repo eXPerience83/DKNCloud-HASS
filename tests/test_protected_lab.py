@@ -227,6 +227,7 @@ async def test_tls_pusher_subscription_and_cancel(tls_backend):
     "case",
     [
         "normal",
+        "setpoint_trial",
         "no_events",
         "invalid_event",
         "reconnect",

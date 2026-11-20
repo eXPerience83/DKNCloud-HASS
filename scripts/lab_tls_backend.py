@@ -92,6 +92,9 @@ class SyntheticBackend:
         self.emit_events = True
         self.event_kind = "normal"
         self.power = "1"
+        self.cold_consign = "24"
+        self.heat_consign = "20"
+        self.trial_controls = False
         self.sockets = []
         self.status = 200
         self.event_response = None
@@ -100,6 +103,29 @@ class SyntheticBackend:
         self.push_available = True
         self.wait = None
         self.wait_path = None
+        self.trial_put_field = None
+        self.trial_push_on_info = False
+        self.scenary = "occupied"
+        self.min_temp_unoccupied = 18
+        self.pending_put_patch = None
+        self.trial_stale_get = False
+        self.snapshot_minimum = self.min_temp_unoccupied
+        self.put_response_wait = None
+        self.info_status = 201
+
+    async def publish_put(self):
+        if self.pending_put_patch is not None:
+            for socket in self.sockets:
+                if not socket.closed:
+                    await socket.send_json(
+                        {
+                            "event": "device",
+                            "channel": "private-device",
+                            "data": self.pending_put_patch,
+                        }
+                    )
+            self.events += 1
+            self.pending_put_patch = None
 
     async def handle(self, request):
         self.calls += 1
@@ -160,7 +186,18 @@ class SyntheticBackend:
                                     "id": "other"
                                     if self.event_kind == "wrong_device"
                                     else "device",
-                                    "power": "0",
+                                    "power": self.power
+                                    if self.event_kind == "setpoint_trial"
+                                    else "0",
+                                    **(
+                                        {
+                                            "scenary": "occupied",
+                                            "mode": "1",
+                                            "cold_consign": self.cold_consign,
+                                        }
+                                        if self.event_kind == "setpoint_trial"
+                                        else {}
+                                    ),
                                 }
                             ),
                         }
@@ -178,14 +215,21 @@ class SyntheticBackend:
                         "id": "device",
                         "name": "Synthetic",
                         "mac": "02:00:00:00:00:01",
-                        "scenary": "occupied",
+                        "scenary": self.scenary,
+                        "min_temp_unoccupied": self.snapshot_minimum
+                        if self.trial_stale_get
+                        else self.min_temp_unoccupied,
                         "power": self.power,
                         "mode": "1",
                         "modes": "11111",
                         "local_temp": "22",
                         "sleep_time": 30,
-                        "cold_consign": "24",
-                        "heat_consign": "20",
+                        "cold_consign": self.cold_consign,
+                        "heat_consign": self.heat_consign,
+                        "min_limit_cold": "16.0",
+                        "max_limit_cold": "32.0",
+                        "min_limit_heat": "16.0",
+                        "max_limit_heat": "32.0",
                         "availables_speeds": "3",
                         "connection_date": "2024-01-01T00:00:00+00:00",
                     }
@@ -193,10 +237,73 @@ class SyntheticBackend:
             )
         if request.path == "/pusher/auth":
             return web.json_response({"auth": "synthetic-signature"})
+        if (
+            request.method == "PUT"
+            and request.path == "/devices/device"
+            and self.trial_put_field in {"scenary", "min_temp_unoccupied"}
+        ):
+            payload = await request.json()
+            self.controls += 1
+            field = self.trial_put_field
+            value = (
+                payload.get("device", {}).get("scenary")
+                if field == "scenary"
+                else payload.get(field)
+            )
+            expected = (
+                {"device": {"scenary": value}} if field == "scenary" else {field: value}
+            )
+            if payload != expected or (
+                value not in {"occupied", "vacant"}
+                if field == "scenary"
+                else type(value) is not int or not 12 <= value <= 22
+            ):
+                return web.json_response({}, status=405)
+            setattr(self, field, value)
+            self.pending_put_patch = {"id": "device", field: value}
+            if not self.trial_push_on_info:
+                await self.publish_put()
+            if self.put_response_wait is not None:
+                await self.put_response_wait.wait()
+            return web.Response(status=204)
         if request.path == "/events" and request.method == "POST":
             payload = await request.json()
-            if payload.get("event", {}).get("cgi") == "infomaquina":
+            event = payload.get("event", {})
+            if event.get("cgi") == "infomaquina":
+                if self.info_status != 201:
+                    return web.json_response({}, status=self.info_status)
+                self.snapshot_minimum = self.min_temp_unoccupied
+                if self.trial_push_on_info:
+                    await self.publish_put()
                 return self.event_response or web.json_response({}, status=201)
+            # Opt-in loopback fixture only: ordinary synthetic tests still
+            # reject every control. Never change real LAB authorization here.
+            if self.trial_controls:
+                self.controls += 1
+                if (
+                    set(payload) == {"event"}
+                    and set(event) == {"cgi", "device_id", "option", "value"}
+                    and event["cgi"] == "modmaquina"
+                    and event["device_id"] == "device"
+                    and event["option"] == "P7"
+                    and event["value"] in {"25.0", "24.0"}
+                ):
+                    self.cold_consign = event["value"]
+                    for socket in self.sockets:
+                        if not socket.closed:
+                            await socket.send_json(
+                                {
+                                    "event": "device",
+                                    "channel": "private-device",
+                                    "data": {
+                                        "id": "device",
+                                        "cold_consign": self.cold_consign,
+                                    },
+                                }
+                            )
+                    self.events += 1
+                    return web.json_response({}, status=201)
+                return web.json_response({}, status=405)
         self.controls += 1
         return web.json_response({}, status=405)
 

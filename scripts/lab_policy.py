@@ -160,8 +160,21 @@ class ProtectedSession:
         )
 
     def request(self, method, url, **kwargs):
+        # A bounded LAB policy consumes a durable on-wire slot only after
+        # supervisor budget waits. ReadOnlyPolicy keeps its existing behavior.
+        if freeze := getattr(self.policy, "freeze_control_kwargs", None):
+            kwargs = freeze(method, url, kwargs)
         self.validate_request(method, url, **kwargs)
-        self.policy.reserve(method, url)
+        if reserve := getattr(self.policy, "reserve_transport", None):
+            reserve(
+                method,
+                url,
+                params=kwargs.get("params"),
+                json=kwargs.get("json"),
+                data=kwargs.get("data"),
+            )
+        else:
+            self.policy.reserve(method, url)
         return self.session.request(method, url, allow_redirects=False, **kwargs)
 
     def validate_socket_options(self, url, **kwargs):

@@ -1,0 +1,504 @@
+{
+  "real": false,
+  "loaded": true,
+  "push_applied": true,
+  "entities": 31,
+  "experiment": "spontaneous",
+  "info_phase_push": true,
+  "info_phase_without_get": true,
+  "put_without_lab_reads": true,
+  "put_push_during_isolation": false,
+  "put_push_after_resume": true,
+  "put_push_received": true,
+  "restoration_snapshot_confirmed": true,
+  "put_field": "min_temp_unoccupied",
+  "put_payload": {
+    "min_temp_unoccupied": 19
+  },
+  "session_passed": true,
+  "needs_owner_intervention": false,
+  "trial_timeline": [
+    {
+      "kind": "get_admitted",
+      "elapsed_ms": 10047.38899,
+      "source": "transport"
+    },
+    {
+      "kind": "get_result",
+      "elapsed_ms": 10049.488245,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 200
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 10049.672733,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 10049.714742,
+      "field": "scenary",
+      "value": "occupied",
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 10049.722479,
+      "field": "cold_consign",
+      "value_c": 24,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 10049.741165,
+      "field": "heat_consign",
+      "value_c": 20,
+      "source": "get"
+    },
+    {
+      "kind": "info_admitted",
+      "elapsed_ms": 20047.887416,
+      "source": "transport"
+    },
+    {
+      "kind": "info_result",
+      "elapsed_ms": 20050.981791,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 201
+    },
+    {
+      "kind": "subscription_ack",
+      "elapsed_ms": 20055.388079,
+      "source": "pusher"
+    },
+    {
+      "kind": "pusher_received",
+      "elapsed_ms": 20055.464913,
+      "field": "cold_consign",
+      "value_c": 24,
+      "source": "pusher"
+    },
+    {
+      "kind": "pusher_received",
+      "elapsed_ms": 20055.480168,
+      "field": "scenary",
+      "value": "occupied",
+      "source": "pusher"
+    },
+    {
+      "kind": "coordinator_applied",
+      "elapsed_ms": 20055.575439,
+      "source": "pusher"
+    },
+    {
+      "kind": "get_admitted",
+      "elapsed_ms": 30051.899889,
+      "source": "transport"
+    },
+    {
+      "kind": "get_result",
+      "elapsed_ms": 30053.677615,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 200
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 30053.740076,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 30053.753076,
+      "field": "scenary",
+      "value": "occupied",
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 30053.754542,
+      "field": "cold_consign",
+      "value_c": 24,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 30053.757918,
+      "field": "heat_consign",
+      "value_c": 20,
+      "source": "get"
+    },
+    {
+      "kind": "get_applied",
+      "elapsed_ms": 30053.953729,
+      "source": "get"
+    },
+    {
+      "kind": "window_started",
+      "elapsed_ms": 30069.088538,
+      "source": "lab"
+    },
+    {
+      "kind": "control_invoked",
+      "elapsed_ms": 30069.122022,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "lab"
+    },
+    {
+      "kind": "control_admitted",
+      "elapsed_ms": 40065.113529,
+      "source": "transport"
+    },
+    {
+      "kind": "control_result",
+      "elapsed_ms": 40069.919287,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 204
+    },
+    {
+      "kind": "ha_optimistic",
+      "elapsed_ms": 40070.190115,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "ha"
+    },
+    {
+      "kind": "ha_published",
+      "elapsed_ms": 40070.433092,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "ha"
+    },
+    {
+      "kind": "ha_published",
+      "elapsed_ms": 70077.391429,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "ha"
+    },
+    {
+      "kind": "window_ended",
+      "elapsed_ms": 120079.250644,
+      "source": "lab"
+    },
+    {
+      "kind": "info_resumed",
+      "elapsed_ms": 120079.289282,
+      "source": "lab"
+    },
+    {
+      "kind": "info_admitted",
+      "elapsed_ms": 120079.69892,
+      "source": "transport"
+    },
+    {
+      "kind": "info_result",
+      "elapsed_ms": 120086.546556,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 201
+    },
+    {
+      "kind": "pusher_received",
+      "elapsed_ms": 120086.760172,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "pusher"
+    },
+    {
+      "kind": "ha_published",
+      "elapsed_ms": 120087.72139,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "ha"
+    },
+    {
+      "kind": "coordinator_applied",
+      "elapsed_ms": 120087.808711,
+      "source": "pusher"
+    },
+    {
+      "kind": "info_admitted",
+      "elapsed_ms": 130087.856898,
+      "source": "transport"
+    },
+    {
+      "kind": "info_result",
+      "elapsed_ms": 130090.091896,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 201
+    },
+    {
+      "kind": "get_resumed",
+      "elapsed_ms": 135103.281521,
+      "source": "lab"
+    },
+    {
+      "kind": "get_admitted",
+      "elapsed_ms": 140091.140295,
+      "source": "transport"
+    },
+    {
+      "kind": "get_result",
+      "elapsed_ms": 140096.066006,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 200
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 140096.219426,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 140096.249582,
+      "field": "scenary",
+      "value": "occupied",
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 140096.253593,
+      "field": "cold_consign",
+      "value_c": 24,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 140096.261505,
+      "field": "heat_consign",
+      "value_c": 20,
+      "source": "get"
+    },
+    {
+      "kind": "get_applied",
+      "elapsed_ms": 140096.741029,
+      "source": "get"
+    },
+    {
+      "kind": "info_admitted",
+      "elapsed_ms": 150098.064958,
+      "source": "transport"
+    },
+    {
+      "kind": "info_result",
+      "elapsed_ms": 150100.041677,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 201
+    },
+    {
+      "kind": "get_admitted",
+      "elapsed_ms": 160103.57568,
+      "source": "transport"
+    },
+    {
+      "kind": "get_result",
+      "elapsed_ms": 160104.387768,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 200
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 160104.446823,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 160104.45684,
+      "field": "scenary",
+      "value": "occupied",
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 160104.458353,
+      "field": "cold_consign",
+      "value_c": 24,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 160104.461198,
+      "field": "heat_consign",
+      "value_c": 20,
+      "source": "get"
+    },
+    {
+      "kind": "get_applied",
+      "elapsed_ms": 160104.628016,
+      "field": "min_temp_unoccupied",
+      "value_c": 19,
+      "source": "get"
+    },
+    {
+      "kind": "control_invoked",
+      "elapsed_ms": 160104.728612,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "lab"
+    },
+    {
+      "kind": "info_admitted",
+      "elapsed_ms": 170108.728187,
+      "source": "transport"
+    },
+    {
+      "kind": "info_result",
+      "elapsed_ms": 170111.10405,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 201
+    },
+    {
+      "kind": "control_admitted",
+      "elapsed_ms": 180115.625009,
+      "source": "transport"
+    },
+    {
+      "kind": "control_result",
+      "elapsed_ms": 180118.854213,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 204
+    },
+    {
+      "kind": "ha_optimistic",
+      "elapsed_ms": 180119.029055,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "ha"
+    },
+    {
+      "kind": "ha_published",
+      "elapsed_ms": 180119.240378,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "ha"
+    },
+    {
+      "kind": "info_admitted",
+      "elapsed_ms": 190118.854331,
+      "source": "transport"
+    },
+    {
+      "kind": "pusher_received",
+      "elapsed_ms": 190121.105631,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "pusher"
+    },
+    {
+      "kind": "coordinator_applied",
+      "elapsed_ms": 190121.966149,
+      "source": "pusher"
+    },
+    {
+      "kind": "info_result",
+      "elapsed_ms": 190122.045514,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 201
+    },
+    {
+      "kind": "get_admitted",
+      "elapsed_ms": 200120.086855,
+      "source": "transport"
+    },
+    {
+      "kind": "get_result",
+      "elapsed_ms": 200122.101994,
+      "source": "transport",
+      "result": "accepted",
+      "http_status": 200
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 200122.160596,
+      "field": "min_temp_unoccupied",
+      "value_c": 18,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 200122.170539,
+      "field": "scenary",
+      "value": "occupied",
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 200122.172049,
+      "field": "cold_consign",
+      "value_c": 24,
+      "source": "get"
+    },
+    {
+      "kind": "get_received",
+      "elapsed_ms": 200122.174991,
+      "field": "heat_consign",
+      "value_c": 20,
+      "source": "get"
+    },
+    {
+      "kind": "get_applied",
+      "elapsed_ms": 200122.342883,
+      "source": "get"
+    }
+  ],
+  "owned_tasks_closed": true,
+  "pending_http_tasks": 0,
+  "transports_open_when_checked": true,
+  "observations": {
+    "device_received": 3,
+    "device_changed_state": 2,
+    "entity_observed_push": 1,
+    "device_applied": 3,
+    "get_applied": 4,
+    "subscribed": true,
+    "last_device_age": 10.005259546916932,
+    "websocket_established": 1,
+    "get_received": 5,
+    "information_accepted": 6,
+    "blocked_control_attempts": 0
+  },
+  "pusher_result": "verified",
+  "safely_finished": true,
+  "reason": "put_finished",
+  "counts": {
+    "state": 14,
+    "auth": 2
+  },
+  "operations": {
+    "login": 1,
+    "discover": 1,
+    "get": 5,
+    "socket": 3,
+    "info": 6,
+    "authorize": 1
+  },
+  "cooldown_wait": false,
+  "backend_control_writes": 2,
+  "session_closed": true,
+  "server_closed": true,
+  "storage_files": 0,
+  "process_exit": 0,
+  "process_reaped": true,
+  "integration_byte_identical": true,
+  "temporary_configuration_removed": true
+}

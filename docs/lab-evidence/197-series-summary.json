@@ -1,0 +1,74 @@
+{
+  "tested_commit": "58c7a7dcf07d4f232ccbe22f70df1764f92aba91",
+  "total_put_attempts": 10,
+  "all_restored": true,
+  "all_sessions_closed": true,
+  "owner_reported_other_clients_quiet": true,
+  "trials": [
+    {
+      "trial": 1,
+      "protocol": "info-first",
+      "no_read_seconds_after_ack": 45.002811,
+      "get_value_without_post_put_info": null,
+      "first_pusher_seconds_after_put_admission": 55.75024,
+      "pusher_seconds_after_first_info": 10.678433,
+      "info_admissions_before_first_push": 2,
+      "pusher_seconds_after_last_preceding_info": 0.469387,
+      "first_pusher_precedes_first_get": true,
+      "restoration_confirmed": true,
+      "durable_put_attempts": 2
+    },
+    {
+      "trial": 2,
+      "protocol": "get-first",
+      "no_read_seconds_after_ack": 45.006443,
+      "get_value_without_post_put_info": 17,
+      "first_pusher_seconds_after_put_admission": 67.784584,
+      "pusher_seconds_after_first_info": 2.450002,
+      "info_admissions_before_first_push": 1,
+      "pusher_seconds_after_last_preceding_info": 2.450002,
+      "first_pusher_precedes_first_get": false,
+      "restoration_confirmed": true,
+      "durable_put_attempts": 2
+    },
+    {
+      "trial": 3,
+      "protocol": "spontaneous",
+      "no_read_seconds_after_ack": 80.011484,
+      "get_value_without_post_put_info": null,
+      "first_pusher_seconds_after_put_admission": 96.683588,
+      "pusher_seconds_after_first_info": 16.601316,
+      "info_admissions_before_first_push": 2,
+      "pusher_seconds_after_last_preceding_info": 6.398936,
+      "first_pusher_precedes_first_get": true,
+      "restoration_confirmed": true,
+      "durable_put_attempts": 2
+    },
+    {
+      "trial": 4,
+      "protocol": "get-first",
+      "no_read_seconds_after_ack": 45.004724,
+      "get_value_without_post_put_info": 17,
+      "first_pusher_seconds_after_put_admission": 68.56075,
+      "pusher_seconds_after_first_info": 3.233678,
+      "info_admissions_before_first_push": 1,
+      "pusher_seconds_after_last_preceding_info": 3.233678,
+      "first_pusher_precedes_first_get": false,
+      "restoration_confirmed": true,
+      "durable_put_attempts": 2
+    },
+    {
+      "trial": 5,
+      "protocol": "info-first",
+      "no_read_seconds_after_ack": 45.00603,
+      "get_value_without_post_put_info": null,
+      "first_pusher_seconds_after_put_admission": 47.154101,
+      "pusher_seconds_after_first_info": 2.079604,
+      "info_admissions_before_first_push": 1,
+      "pusher_seconds_after_last_preceding_info": 2.079604,
+      "first_pusher_precedes_first_get": true,
+      "restoration_confirmed": true,
+      "durable_put_attempts": 2
+    }
+  ]
+}
