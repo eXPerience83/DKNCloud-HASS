@@ -1,7 +1,8 @@
 """Shared state interpretations for DKN entities.
 
 Unknown backend power values are deliberately not treated as proof of OFF
-by the coordinator's sleep-expiry logic; this module only normalizes ON tests.
+by the coordinator's sleep-expiry logic. Power readback likewise requires an
+explicit valid value to resolve an uncertain write.
 """
 
 from __future__ import annotations
@@ -31,6 +32,20 @@ def power_is_on(value: Any) -> bool:
         return bool(int(value))
     except Exception:  # noqa: BLE001
         return False
+
+
+def confirm_power_read(
+    uncertain: dict[str, object],
+    at_dispatch: dict[str, object],
+    data: dict[str, dict[str, Any]],
+    fresh_power_ids: set[str],
+) -> None:
+    """Resolve only uncertainty that existed when a GET began."""
+    for device_id in fresh_power_ids & at_dispatch.keys():
+        if uncertain.get(device_id) is at_dispatch[device_id] and str(
+            data[device_id].get("power")
+        ).strip().lower() in {"0", "1", "false", "true", "off", "on"}:
+            del uncertain[device_id]
 
 
 def scenary_to_preset(scenary: str | None) -> str | None:

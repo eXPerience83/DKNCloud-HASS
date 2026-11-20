@@ -388,13 +388,22 @@ changed is discarded instead of sending an option for the previous mode;
 the FAN_ONLY P2=3/8 telemetry alias is rechecked for fan-channel routing.
 This is local ordering, not physical-state confirmation.
 
-**Ambiguous power-write safety:** A timed-out, cancelled or otherwise
-unconfirmed P1 write from Climate (including implicit HVAC power-on) or the
-direct Switch fallback schedules a readback through SyncManager, or the
-legacy refresh fallback when no manager exists. It never automatically
-replays P1 or claims a successful optimistic power change. Commands known
-to be unsent because of local cooldown do not request corrective readback;
-entry shutdown suppresses new recovery work.
+**Ambiguous power-write safety:** Climate and Switch share the entry's
+per-device lock and intent ordering. A dispatched P1 with an uncertain result
+invalidates the previous power overlay and requests a bounded readback. While
+the result is uncertain, cached power cannot suppress a newer explicit ON or
+OFF. Reads never send a control or replay the old P1. A definitive HTTP
+rejection, a local cooldown or cancellation before dispatch does not create
+uncertainty. The explicit, bounded 429 policy still applies to a current
+intent.
+
+A later accepted P1 or a GET started after the uncertain result can resolve
+the uncertainty within the same entry. The GET must actually apply a valid
+power value. Missing fields, cached coordinator data and GET fields superseded
+by PUSH are insufficient. PUSH retains its normal display precedence. A newer
+intent can stop older wake preparation or prevent its follow-up P2. An already
+accepted P1 still receives its local ON overlay and readback while the entry
+remains active.
 
 **Other ambiguous control writes:** The integration applies the same no-replay
 readback policy to Climate setpoint/fan events (P3/P4/P7/P8) and Number PUTs

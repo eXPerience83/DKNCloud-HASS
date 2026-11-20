@@ -38,6 +38,7 @@ from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
+    ClientError,
     ClientHandlerType,
     ClientOSError,
     ClientRequest,
@@ -46,6 +47,7 @@ from aiohttp import (
     ClientSession,
     ClientTimeout,
     ServerDisconnectedError,
+    TraceConfig,
 )
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -73,6 +75,10 @@ _JITTER = 0.25
 _MAX_WRITE_COOLDOWN_WAIT = 10.0
 
 
+class CommandSuperseded(Exception):
+    """A newer control intent or an unloaded entry prevented dispatch."""
+
+
 class CommandNotSentCooldown(HomeAssistantError):
     """A local cooldown rejected this invocation before any HTTP attempt."""
 
@@ -95,6 +101,18 @@ async def prevent_device_put_replay(
         pass
     # Raise outside the handler so the original URL-bearing error is not chained.
     raise HomeAssistantError("Cloud device command outcome is unknown")
+
+
+def control_dispatch_trace() -> TraceConfig:
+    """Observe guarded writes at the request writer on the entry's session."""
+    trace = TraceConfig()
+
+    async def headers_sent(_session, context, _params):
+        if dispatch := context.trace_request_ctx:
+            dispatch()
+
+    trace.on_request_headers_sent.append(headers_sent)
+    return trace
 
 
 class AirzoneAPI:
@@ -196,6 +214,7 @@ class AirzoneAPI:
         json: dict[str, Any] | None = None,
         data: dict[str, str] | None = None,
         extra_headers: dict[str, str] | None = None,
+        on_dispatch: Callable[[], None] | None = None,
     ) -> Any:
         """HTTP request helper (never logs full URLs with secrets)."""
         url = f"{BASE_URL.rstrip('/')}/{path.lstrip('/')}"
@@ -226,6 +245,7 @@ class AirzoneAPI:
                 timeout=timeout,
                 **({"allow_redirects": False} if device_put else {}),
                 **({"data": data} if data is not None else {}),
+                **({"trace_request_ctx": on_dispatch} if on_dispatch else {}),
             ) as resp:
                 if device_put and 300 <= resp.status < 400:
                     raise ClientResponseError(resp.request_info, (), status=resp.status)
@@ -317,6 +337,7 @@ class AirzoneAPI:
         extra_headers: dict[str, str] | None = None,
         retry: bool = True,
         on_start: Callable[[], None] | None = None,
+        on_uncertain: Callable[[], None] | None = None,
     ) -> Any:
         """Authenticated request with bounded 429 retries and read-only 5xx/timeout retries.
 
@@ -345,6 +366,15 @@ class AirzoneAPI:
 
             if self._suspended or not self.request_allowed():
                 raise asyncio.CancelledError
+            dispatched = False
+
+            def dispatch() -> None:
+                nonlocal dispatched
+                if on_start is not None:
+                    on_start()
+                dispatched = True
+
+            guarded_write = is_device_write and (on_start or on_uncertain)
             try:
                 if on_start is not None:
                     on_start()
@@ -355,6 +385,7 @@ class AirzoneAPI:
                     json=json,
                     extra_headers=extra_headers,
                     **({"data": data} if data is not None else {}),
+                    **({"on_dispatch": dispatch} if guarded_write else {}),
                 )
             except ClientResponseError as cre:
                 status = cre.status or 0
@@ -396,6 +427,8 @@ class AirzoneAPI:
                     # the unknown outcome to the caller instead of sending
                     # the same physical command twice.
                     if is_device_write and 500 <= status <= 599:
+                        if dispatched and on_uncertain is not None:
+                            on_uncertain()
                         raise
                     # 429 explicitly refuses the command: retain the existing
                     # bounded cooldown retry, never enqueue a delayed control.
@@ -424,6 +457,8 @@ class AirzoneAPI:
                 raise
 
             except TimeoutError:
+                if dispatched and on_uncertain is not None:
+                    on_uncertain()
                 # ONE gentle retry on timeout with short backoff
                 if is_device_write or not retry or attempt >= 1:
                     raise
@@ -440,7 +475,13 @@ class AirzoneAPI:
                 continue
 
             except ClientConnectorError:
-                # Connection issues → propagate (HA will surface the error)
+                # DNS/connect/TLS failed before any HTTP request.
+                raise
+            except asyncio.CancelledError, ClientError, JSONDecodeError:
+                # This handler wraps only the dispatched attempt. A cancellation
+                # during cooldown or after a definitive 429 bypasses it.
+                if dispatched and on_uncertain is not None:
+                    on_uncertain()
                 raise
 
     # --------------------------
@@ -566,7 +607,13 @@ class AirzoneAPI:
             return devices
         return None
 
-    async def send_event(self, payload: dict[str, Any]) -> Any:
+    async def send_event(
+        self,
+        payload: dict[str, Any],
+        *,
+        on_start: Callable[[], None] | None = None,
+        on_uncertain: Callable[[], None] | None = None,
+    ) -> Any:
         """POST to /events with JSON/XHR headers and no ambiguous 5xx replay."""
         params = self._auth_params()
         try:
@@ -576,6 +623,8 @@ class AirzoneAPI:
                 params=params,
                 json=payload,
                 extra_headers=HEADERS_EVENTS,
+                **({"on_start": on_start} if on_start is not None else {}),
+                **({"on_uncertain": on_uncertain} if on_uncertain is not None else {}),
             )
         except ClientResponseError as cre:
             if cre.status == 401:
@@ -596,7 +645,12 @@ class AirzoneAPI:
             ) from None
 
     async def put_device_fields(
-        self, device_id: str, payload: dict[str, Any], *, retry: bool = True
+        self,
+        device_id: str,
+        payload: dict[str, Any],
+        *,
+        retry: bool = True,
+        on_start: Callable[[], None] | None = None,
     ) -> Any:
         """PUT /devices/{id} with bounded 429 retry; never replay ambiguous 5xx.
 
@@ -608,7 +662,12 @@ class AirzoneAPI:
         path = f"{API_DEVICES}/{device_id}"
         try:
             return await self._authed_request_with_retries(
-                "PUT", path, params=params, json=payload, retry=retry
+                "PUT",
+                path,
+                params=params,
+                json=payload,
+                retry=retry,
+                **({"on_start": on_start} if on_start is not None else {}),
             )
         except ClientResponseError as cre:
             if cre.status == 401:
@@ -616,10 +675,18 @@ class AirzoneAPI:
             raise
 
     async def async_set_scenary(
-        self, device_id: str, scenary: str, *, retry: bool = True
+        self,
+        device_id: str,
+        scenary: str,
+        *,
+        retry: bool = True,
+        on_start: Callable[[], None] | None = None,
     ) -> Any:
         """Set device scenary using the canonical device fields endpoint."""
 
         return await self.put_device_fields(
-            device_id, {"device": {"scenary": scenary}}, retry=retry
+            device_id,
+            {"device": {"scenary": scenary}},
+            retry=retry,
+            **({"on_start": on_start} if on_start is not None else {}),
         )

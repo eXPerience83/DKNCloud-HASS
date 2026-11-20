@@ -87,7 +87,9 @@ async def test_reauth_restores_complete_ha_runtime_twice(
                 raise _unauthorized()
             return [{"installation_id": "installation-A"}]
 
-        async def fetch_devices(self, installation_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(
+            self, installation_id: str, **_kwargs
+        ) -> list[dict[str, Any]]:
             calls.append(("devices", self.username, self.token or ""))
             if self.token != cloud["token"]:
                 raise _unauthorized()
