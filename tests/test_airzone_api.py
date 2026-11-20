@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from aiohttp import (
     ClientOSError,
+    ClientPayloadError,
     ClientResponseError,
     ClientSession,
     ServerDisconnectedError,
@@ -1194,7 +1195,9 @@ async def test_entry_unload_detaches_runtime_session_and_cancels_pending_put(
         await asyncio.gather(command, return_exceptions=True)
 
 
-@pytest.mark.parametrize("outcome", ["disconnect", "cancel_sent", 401, 423, 503])
+@pytest.mark.parametrize(
+    "outcome", ["disconnect", "malformed", "cancel_sent", 401, 423, 503]
+)
 async def test_power_uncertainty_tracks_real_dispatch(
     hass, socket_enabled, aiohttp_server, monkeypatch, outcome
 ):
@@ -1208,7 +1211,9 @@ async def test_power_uncertainty_tracks_real_dispatch(
     async def handler(request):
         received.append(await request.json())
         arrived.set()
-        if outcome == "disconnect":
+        if outcome in {"disconnect", "malformed"}:
+            if outcome == "malformed":
+                request.transport.write(b"HTTP/1.1 invalid status\r\n\r\n")
             request.transport.close()
             return web.Response()
         if outcome == "cancel_sent":
@@ -1230,6 +1235,7 @@ async def test_power_uncertainty_tracks_real_dispatch(
             error = {
                 "cancel_sent": asyncio.CancelledError,
                 "disconnect": ServerDisconnectedError,
+                "malformed": ClientPayloadError,
                 401: ConfigEntryAuthFailed,
             }.get(outcome, HomeAssistantError)
             with pytest.raises(error):
@@ -1240,7 +1246,9 @@ async def test_power_uncertainty_tracks_real_dispatch(
         await asyncio.gather(task, return_exceptions=True)
     assert not api._pending
     assert received == [payload]
-    assert uncertain.call_count == int(outcome in ("disconnect", "cancel_sent", 503))
+    assert uncertain.call_count == int(
+        outcome in ("disconnect", "malformed", "cancel_sent", 503)
+    )
     assert reauth.call_count == int(outcome == 401)
 
 

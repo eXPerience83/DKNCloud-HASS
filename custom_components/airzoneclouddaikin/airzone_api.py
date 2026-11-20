@@ -41,6 +41,7 @@ from aiohttp import (
     ClientError,
     ClientHandlerType,
     ClientOSError,
+    ClientPayloadError,
     ClientRequest,
     ClientResponse,
     ClientResponseError,
@@ -50,6 +51,7 @@ from aiohttp import (
     TraceConfig,
 )
 from aiohttp.client_reqrep import RequestInfo
+from aiohttp.http_exceptions import HttpProcessingError
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from multidict import CIMultiDict
 from yarl import URL
@@ -263,23 +265,30 @@ class AirzoneAPI:
                     return ""
                 return await resp.text()
         except ClientResponseError as cre:
-            if cre.status == 401:
-                self.suspend()
-            _LOGGER.debug(
-                "HTTP %s %s failed with status %s",
-                method,
-                spath,
-                cre.status,
-            )
-            # aiohttp includes the full request URL (with user_email and
-            # user_token) in ClientResponseError.__str__. Never propagate it.
-            safe_url = URL(f"{BASE_URL.rstrip('/')}{spath}")
-            safe_request = RequestInfo(safe_url, method, CIMultiDict(), safe_url)
-            retry_after = cre.headers.get("Retry-After") if cre.headers else None
-            headers = {"Retry-After": retry_after} if retry_after else None
-            safe_error = ClientResponseError(
-                safe_request, history=(), status=cre.status, headers=headers
-            )
+            if on_dispatch is not None and isinstance(
+                cre.__cause__, HttpProcessingError
+            ):
+                # aiohttp reports parser failures as a synthetic HTTP status.
+                # An invalid response cannot establish that P1 was rejected.
+                safe_error = ClientPayloadError("Invalid cloud response")
+            else:
+                if cre.status == 401:
+                    self.suspend()
+                _LOGGER.debug(
+                    "HTTP %s %s failed with status %s",
+                    method,
+                    spath,
+                    cre.status,
+                )
+                # aiohttp includes the full request URL (with user_email and
+                # user_token) in ClientResponseError.__str__. Never propagate it.
+                safe_url = URL(f"{BASE_URL.rstrip('/')}{spath}")
+                safe_request = RequestInfo(safe_url, method, CIMultiDict(), safe_url)
+                retry_after = cre.headers.get("Retry-After") if cre.headers else None
+                headers = {"Retry-After": retry_after} if retry_after else None
+                safe_error = ClientResponseError(
+                    safe_request, history=(), status=cre.status, headers=headers
+                )
         except ClientConnectorError:
             _LOGGER.debug("HTTP %s %s connection error", method, spath)
             raise
