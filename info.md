@@ -596,8 +596,14 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - Automatic synchronization uses a fixed nominal cadence with recovery and backoff. There is no user-selectable refresh interval.
 - Do **not** automatically replay an ambiguous scenary write (e.g., `sleep → occupied`): an accepted or timed-out response does not prove whether the backend applied it. Follow the per-device lock, session revision and read-back rules before considering another command.
 - For ordinary Home/Away and Sleep-entry scene PUTs, an ambiguous timeout or cancellation also requests an authoritative readback without optimistic success or replay. Preserve the special Sleep-exit pending fence only where the raw scene was Sleep; an explicitly unsent cooldown does not require readback.
-- A PUT completing after config-entry unload must not restore optimistic state, schedule recovery for a new entry instance, or continue a two-step Sleep rearm. Active entries retain their existing readback, overlay and scene-fence behavior.
-- A queued Sleep-exit or wake preparation must not create a removed config-entry bucket, act on a replacement entry or emit a follow-on power/mode command after unload.
+- Follow-up writes, optimistic state, publication and readback stay with the
+  original runtime and coordinator, even when a replacement reuses the same
+  entry ID. Delayed refreshes recheck ownership when they run. A successful
+  unload cancels the pending post-write timer.
+- If a mode command's P1 succeeds and P2 fails, the active runtime retains the
+  ON overlay and requests readback. A failed platform unload leaves the
+  retained runtime eligible for these effects. The same ownership checks
+  apply to queued wake preparation and the second step of Sleep rearm.
 
 ---
 

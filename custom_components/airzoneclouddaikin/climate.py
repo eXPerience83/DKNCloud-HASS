@@ -24,6 +24,7 @@ from .const import (
 from .device_state import power_is_on, preset_to_scenary, scenary_to_preset
 from .helpers import (
     acquire_device_lock,
+    active_entry_bucket,
     async_auto_exit_sleep_if_needed,
     bitmask_supports_p2,
     build_device_info,
@@ -99,6 +100,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     # ---- Helpers ---------------------------------------------------------
 
+    def _active_entry_bucket(self) -> dict[str, Any] | None:
+        return active_entry_bucket(self.hass, self._entry_id, self.coordinator)
+
     @property
     def _device(self) -> dict[str, Any]:
         """Latest device snapshot (no I/O)."""
@@ -107,7 +111,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     def _overlay_value(self, key: str, backend_value: Any) -> Any:
         """Return the optimistic value for the given key if still valid."""
         return optimistic_get(
-            self.hass, self._entry_id, self._device_id, key, backend_value
+            self.hass,
+            self._entry_id,
+            self._device_id,
+            key,
+            backend_value,
+            coordinator=self.coordinator,
         )
 
     def _fan_speed_max(self) -> int:
@@ -275,19 +284,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             _LOGGER.error("API handle missing in coordinator; cannot set scenary")
             return
 
-        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        bucket = self._active_entry_bucket()
         if bucket is None:
             return
 
         def entry_active() -> bool:
-            return (
-                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
-                and not bucket.get("closing")
-                and not self.hass.is_stopping
-            )
+            return self._active_entry_bucket() is bucket
 
-        if not entry_active():
-            return
         revisions = bucket.setdefault("scene_revisions", {})
         revision = revisions.get(self._device_id, 0)
         intents = bucket.setdefault("scene_preset_intents", {})
@@ -326,16 +329,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             cleared_stale_sleep = False
 
             def request_readback() -> None:
-                # The awaited PUT may finish after the config entry was
-                # unloaded. Never resurrect its bucket or recovery timer.
-                if not entry_active():
-                    return
-                if manager := bucket.get("sync_manager"):
-                    manager.request_recovery(self._device_id)
-                else:
-                    schedule_post_write_refresh(
-                        self.hass, self.coordinator, entry_id=self._entry_id
-                    )
+                request_ambiguous_control_readback(
+                    self.hass,
+                    self.coordinator,
+                    entry_id=self._entry_id,
+                    device_id=self._device_id,
+                    bucket=bucket,
+                )
 
             def record_preset_write() -> None:
                 bucket.setdefault("scene_preset_last_write", {})[self._device_id] = (
@@ -534,6 +534,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         except TypeError, ValueError:
             return
 
+        bucket = self._active_entry_bucket()
+        if bucket is None:
+            return
+
         mode = self.hvac_mode
         if self._display_only_heat_cool_alias():
             _LOGGER.debug("Ignoring set_temperature for read-only DKN mode alias")
@@ -543,6 +547,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         await self._auto_exit_away_if_needed("set_temperature")
+        if self._active_entry_bucket() is not bucket:
+            return
 
         temp = clamp_temperature(
             requested,
@@ -557,10 +563,16 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         async with lock:
             # A concurrent P2 write may have changed the mode while this
             # request waited. Never route a stale COOL setpoint into HEAT.
-            if self.hvac_mode != mode or self._display_only_heat_cool_alias():
+            if (
+                self._active_entry_bucket() is not bucket
+                or self.hvac_mode != mode
+                or self._display_only_heat_cool_alias()
+            ):
                 return
             if mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
                 await self._send_p_event("P7", f"{temp_int}.0")
+                if self._active_entry_bucket() is not bucket:
+                    return
                 optimistic_set(
                     self.hass,
                     self._entry_id,
@@ -570,6 +582,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             else:
                 await self._send_p_event("P8", f"{temp_int}.0")
+                if self._active_entry_bucket() is not bucket:
+                    return
                 optimistic_set(
                     self.hass,
                     self._entry_id,
@@ -621,6 +635,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Accept normalized labels (low/medium/high) or numeric strings."""
+        bucket = self._active_entry_bucket()
+        if bucket is None:
+            return
+
         if self._display_only_heat_cool_alias():
             _LOGGER.debug("Ignoring set_fan_mode for read-only DKN mode alias")
             return
@@ -634,6 +652,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
 
         await self._auto_exit_away_if_needed("set_fan_mode")
+        if self._active_entry_bucket() is not bucket:
+            return
 
         # Map label to numeric when normalized
         value_to_send = (
@@ -660,7 +680,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
             if (
-                self.hvac_mode != mode
+                self._active_entry_bucket() is not bucket
+                or self.hvac_mode != mode
                 or self._display_only_heat_cool_alias()
                 or fan_mode not in (self.fan_modes or [])
             ):
@@ -672,6 +693,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 if option != active_option:
                     return
             await self._send_p_event(option, value_to_send)
+            if self._active_entry_bucket() is not bucket:
+                return
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, key, value_to_send
             )
@@ -684,16 +707,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Power / mode ----------------------------------------------------
 
     async def async_turn_on(self) -> None:
-        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-        if bucket is None or bucket.get("closing") or self.hass.is_stopping:
+        bucket = self._active_entry_bucket()
+        if bucket is None:
             return
 
         def entry_active() -> bool:
-            return (
-                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
-                and not bucket.get("closing")
-                and not self.hass.is_stopping
-            )
+            return self._active_entry_bucket() is bucket
 
         intents, intent = reserve_power_intent(
             self.hass, self._entry_id, self._device_id
@@ -715,6 +734,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                         return
                 elif prepared:
                     await self._send_p_event("P1", 1)
+                    if self._active_entry_bucket() is not bucket:
+                        return
                     optimistic_set(
                         self.hass, self._entry_id, self._device_id, "power", "1"
                     )
@@ -730,17 +751,25 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             prepared = True
 
     async def async_turn_off(self) -> None:
+        bucket = self._active_entry_bucket()
+        if bucket is None:
+            return
         intents, intent = reserve_power_intent(
             self.hass, self._entry_id, self._device_id
         )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            if intents.get(self._device_id) != intent:
+            if (
+                self._active_entry_bucket() is not bucket
+                or intents.get(self._device_id) != intent
+            ):
                 return
             current = str(self._overlay_value("power", self._device.get("power")) or "")
             if current.strip().lower() in {"0", "false", "off", ""}:
                 return
             await self._send_p_event("P1", 0)
+            if self._active_entry_bucket() is not bucket:
+                return
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
             self.async_write_ha_state()
             schedule_post_write_refresh(
@@ -748,16 +777,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
-        if bucket is None or bucket.get("closing") or self.hass.is_stopping:
+        bucket = self._active_entry_bucket()
+        if bucket is None:
             return
 
         def entry_active() -> bool:
-            return (
-                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
-                and not bucket.get("closing")
-                and not self.hass.is_stopping
-            )
+            return self._active_entry_bucket() is bucket
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
 
@@ -770,6 +795,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     return
                 if self._device_power_on():
                     await self._send_p_event("P1", 0)
+                    if self._active_entry_bucket() is not bucket:
+                        return
                     optimistic_set(
                         self.hass, self._entry_id, self._device_id, "power", "0"
                     )
@@ -846,54 +873,38 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             # Consult the latest optimistic power intent, not stale raw GET.
             if not self._device_power_on():
                 await self._send_p_event("P1", 1)
+                if self._active_entry_bucket() is not bucket:
+                    return
                 powered_on = True
                 optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
 
+            # All paths above validated the mode before preparing power.
+            selected_mode = (
+                fan_code if hvac_mode == HVACMode.FAN_ONLY else HVAC_TO_MODE[hvac_mode]
+            )
             try:
-                if hvac_mode == HVACMode.FAN_ONLY:
-                    await self._send_p_event("P2", fan_code)
-                    optimistic_set(
-                        self.hass, self._entry_id, self._device_id, "mode", fan_code
-                    )
-                    optimistic_set(
-                        self.hass, self._entry_id, self._device_id, "power", "1"
-                    )
-                else:
-                    mode_code = HVAC_TO_MODE.get(hvac_mode)
-                    if mode_code:
-                        await self._send_p_event("P2", mode_code)
-                        optimistic_set(
-                            self.hass,
-                            self._entry_id,
-                            self._device_id,
-                            "mode",
-                            mode_code,
-                        )
-                        optimistic_set(
-                            self.hass, self._entry_id, self._device_id, "power", "1"
-                        )
+                await self._send_p_event("P2", selected_mode)
             except (Exception, asyncio.CancelledError) as error:
-                if powered_on:
-                    # P1 was accepted; keep the ON overlay even when P2
-                    # failed before any authoritative mode readback.
-                    self.async_write_ha_state()
-                if powered_on or not isinstance(error, CommandNotSentCooldown):
-                    # An ambiguous P2 may have been accepted even when P1
-                    # was already ON. Never replay the write: request one
-                    # authoritative readback for either case.
-                    manager = (
-                        self.hass.data.get(DOMAIN, {})
-                        .get(self._entry_id, {})
-                        .get("sync_manager")
-                    )
-                    if manager is not None:
-                        manager.request_recovery(self._device_id)
-                    else:
-                        schedule_post_write_refresh(
-                            self.hass, self.coordinator, entry_id=self._entry_id
+                if entry_active():
+                    if powered_on:
+                        # P1 was accepted; keep its ON overlay when P2 fails.
+                        self.async_write_ha_state()
+                    if powered_on or not isinstance(error, CommandNotSentCooldown):
+                        request_ambiguous_control_readback(
+                            self.hass,
+                            self.coordinator,
+                            entry_id=self._entry_id,
+                            device_id=self._device_id,
+                            bucket=bucket,
                         )
                 raise
 
+            if not entry_active():
+                return
+            optimistic_set(
+                self.hass, self._entry_id, self._device_id, "mode", selected_mode
+            )
+            optimistic_set(self.hass, self._entry_id, self._device_id, "power", "1")
             self.async_write_ha_state()
             schedule_post_write_refresh(
                 self.hass, self.coordinator, entry_id=self._entry_id
@@ -936,6 +947,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         {"event":{"cgi":"modmaquina","device_id":<id>,"option":"P#","value":...}}
         """
+        bucket = self._active_entry_bucket()
+        if bucket is None:
+            return
         api = getattr(self.coordinator, "api", None)
         if api is None:
             _LOGGER.error("API handle missing in coordinator; cannot send_event")
@@ -951,6 +965,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     self.coordinator,
                     entry_id=self._entry_id,
                     device_id=self._device_id,
+                    bucket=bucket,
                 )
             raise
         except Exception as err:
@@ -962,6 +977,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     self.coordinator,
                     entry_id=self._entry_id,
                     device_id=self._device_id,
+                    bucket=bucket,
                 )
             _LOGGER.warning(
                 "Failed to send_event %s=%s: %s",
@@ -976,6 +992,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        if self._active_entry_bucket() is None:
+            return
         device = self._device
         name = device.get("name") or self._attr_name
         if name:

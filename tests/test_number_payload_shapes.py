@@ -58,6 +58,7 @@ def _make_entity(
 
     api = DummyAPI()
     coordinator = dummy_coordinator_factory({device_id: device_data}, api)
+    hass.data[DOMAIN][entry_id]["coordinator"] = coordinator
 
     entity = entity_cls(
         coordinator=coordinator,

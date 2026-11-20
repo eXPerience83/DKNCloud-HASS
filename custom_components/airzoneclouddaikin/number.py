@@ -19,6 +19,7 @@ from .airzone_api import AirzoneAPI, CommandNotSentCooldown
 from .const import DOMAIN
 from .helpers import (
     acquire_device_lock,
+    active_entry_bucket,
     build_device_info,
     clamp_number,
     optimistic_get,
@@ -141,7 +142,12 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
         """Expose backend readings without clamping or truncating fractional values."""
         backend = self._device.get(self._field_name)
         val = optimistic_get(
-            self.hass, self._entry_id, self._device_id, self._field_name, backend
+            self.hass,
+            self._entry_id,
+            self._device_id,
+            self._field_name,
+            backend,
+            coordinator=self.coordinator,
         )
         try:
             number = float(val) if val is not None else None
@@ -182,15 +188,14 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
 
         payload: dict[str, Any] = {self._field_name: ivalue}
 
-        bucket = self.hass.data.get(DOMAIN, {}).get(self._entry_id)
+        bucket = active_entry_bucket(self.hass, self._entry_id, self.coordinator)
         if bucket is None:
             return
 
         def entry_active() -> bool:
             return (
-                self.hass.data.get(DOMAIN, {}).get(self._entry_id) is bucket
-                and not bucket.get("closing")
-                and not self.hass.is_stopping
+                active_entry_bucket(self.hass, self._entry_id, self.coordinator)
+                is bucket
             )
 
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
@@ -205,12 +210,13 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             try:
                 await self._api.put_device_fields(self._device_id, payload)
             except (Exception, asyncio.CancelledError) as error:
-                if entry_active() and not isinstance(error, CommandNotSentCooldown):
+                if not isinstance(error, CommandNotSentCooldown):
                     request_ambiguous_control_readback(
                         self.hass,
                         self.coordinator,
                         entry_id=self._entry_id,
                         device_id=self._device_id,
+                        bucket=bucket,
                     )
                 raise
 

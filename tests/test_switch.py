@@ -30,6 +30,7 @@ def _make_switch(
     hass.data.setdefault(DOMAIN, {}).setdefault(entry_id, {})["optimistic"] = {}
 
     coordinator = dummy_coordinator_factory({device_id: device_snapshot})
+    hass.data[DOMAIN][entry_id]["coordinator"] = coordinator
     entity = AirzonePowerSwitch(coordinator, entry_id, device_id)
     entity.hass = hass
     entity.async_set_context(None)
