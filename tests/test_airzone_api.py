@@ -1075,3 +1075,114 @@ async def test_suspension_during_control_cooldown_prevents_send(monkeypatch, aut
         await task
     api._request.assert_not_awaited()
     assert not api._pending
+
+
+@pytest.mark.parametrize("retry", [False, True])
+async def test_device_put_is_not_replayed_after_lost_response(
+    hass, socket_enabled, aiohttp_server, monkeypatch, retry
+):
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    payload = {"device": {"scenary": "occupied"}}
+    received = []
+
+    async def handler(request):
+        received.append(await request.json())
+        if len(received) == 1:
+            request.transport.close()
+        return web.json_response({"accepted": True})
+
+    await _serve_api(aiohttp_server, monkeypatch, "PUT", f"{API_DEVICES}/dev1", handler)
+    api = AirzoneAPI(
+        "synthetic@example.invalid",
+        async_create_runtime_session(hass),
+        token="synthetic",
+    )
+    with pytest.raises(HomeAssistantError, match="outcome is unknown"):
+        await api.put_device_fields("dev1", payload, retry=retry)
+
+    assert received == [payload]
+
+
+async def test_device_put_rejects_redirect_without_following(
+    hass, socket_enabled, aiohttp_server, monkeypatch
+):
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    received = []
+
+    async def handler(request):
+        received.append(request.path)
+        await request.read()
+        if request.path.endswith("/dev1"):
+            raise web.HTTPTemporaryRedirect(f"{API_DEVICES}/other")
+        return web.json_response({})
+
+    await _serve_api(
+        aiohttp_server, monkeypatch, "PUT", f"{API_DEVICES}/{{device}}", handler
+    )
+    api = AirzoneAPI(
+        "synthetic@example.invalid",
+        async_create_runtime_session(hass),
+        token="synthetic",
+    )
+    with pytest.raises(ClientResponseError) as raised:
+        await api.put_device_fields("dev1", {"device": {"sleep_time": 30}})
+
+    assert raised.value.status == 307
+    assert received == [f"{API_DEVICES}/dev1"]
+
+
+async def test_entry_unload_detaches_runtime_session_and_cancels_pending_put(
+    hass, socket_enabled, aiohttp_server, monkeypatch, dkn_config_entry_factory
+):
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+    import custom_components.airzoneclouddaikin as integration
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    received = []
+
+    async def handler(request):
+        if request.path == API_INSTALLATION_RELATIONS:
+            return web.json_response([])
+        received.append(await request.json())
+        entered.set()
+        await release.wait()
+        return web.json_response({})
+
+    await _serve_api(aiohttp_server, monkeypatch, "*", "/{path:.*}", handler)
+    shared_session = async_get_clientsession(hass)
+    runtime_session = None
+    original_factory = integration.async_create_runtime_session
+
+    def capture_session(hass):
+        nonlocal runtime_session
+        runtime_session = original_factory(hass)
+        return runtime_session
+
+    monkeypatch.setattr(integration, "async_create_runtime_session", capture_session)
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert runtime_session is not shared_session
+    assert runtime_session.connector is shared_session.connector
+
+    payload = {"device": {"sleep_time": 30}}
+    api = entry.runtime_data.api
+    command = asyncio.create_task(api.put_device_fields("dev1", payload))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(command, 5)
+        assert runtime_session.closed
+        assert not shared_session.closed
+        assert not shared_session.connector.closed
+        assert not api._pending
+        assert received == [payload]
+    finally:
+        release.set()
+        if not command.done():
+            command.cancel()
+        await asyncio.gather(command, return_exceptions=True)

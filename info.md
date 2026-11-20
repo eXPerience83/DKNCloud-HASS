@@ -650,6 +650,10 @@ requires an explicit precedence contract; HTTP reception is not physical freshne
 Device-control transport timeouts and HTTP 5xx responses are never
 automatically replayed: acceptance may have preceded either failure. This
 applies to P1/P2 events and device-field PUTs, including scene changes.
+The entry-scoped REST session also intercepts ambiguous PUT disconnects
+before aiohttp can resend the body. Device-field PUTs reject HTTP redirects
+instead of sending that body again. Either failure uses the existing readback
+path.
 HTTP 429 remains a server-directed rejection with bounded retry and cooldown;
 long pauses still fail fast without scheduling a delayed command. Read-only
 calls with `retry=True` retain their bounded timeout and 5xx retries.

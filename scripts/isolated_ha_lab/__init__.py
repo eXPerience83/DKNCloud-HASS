@@ -126,7 +126,7 @@ async def async_setup(hass, config):
     port = server._server.sockets[0].getsockname()[1]
     session = ClientSession(trust_env=False)
     gateway = ReadOnlySession(session, f"http://127.0.0.1:{port}")
-    integration.async_get_clientsession = lambda _: gateway
+    integration.async_create_runtime_session = lambda _: gateway
 
     async def scenario(_):
         report = {}

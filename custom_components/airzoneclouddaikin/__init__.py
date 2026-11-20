@@ -18,19 +18,19 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from aiohttp import ClientResponseError
+from aiohttp import ClientResponseError, ClientSession
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_USERNAME, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import AirzoneAPI
+from .airzone_api import AirzoneAPI, prevent_device_put_replay
 from .const import (
     CONF_ENABLE_HEAT_COOL,
     CONF_SLEEP_CLEANUP_ENABLED,
@@ -706,6 +706,14 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
     return age <= _OFFLINE_STALE_SECONDS
 
 
+@callback
+def async_create_runtime_session(hass: HomeAssistant) -> ClientSession:
+    """Use entry-scoped middleware on HA's shared connector."""
+    return async_create_clientsession(
+        hass, connector_owner=False, middlewares=(prevent_device_put_replay,)
+    )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
     """Set up DKN Cloud for Home Assistant from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -715,7 +723,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     cfg = entry.data
     opts = entry.options
 
-    session = async_get_clientsession(hass)
     raw_username = cfg.get(CONF_USERNAME)
     username = raw_username.strip() if isinstance(raw_username, str) else ""
     if not username:
@@ -731,6 +738,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         raise ConfigEntryAuthFailed("Token required; reauth triggered")
 
     # Runtime API: token-only
+    session = async_create_runtime_session(hass)
     api = AirzoneAPI(username, session, password=None, token=token)
 
     # Commands do not run inside the coordinator's refresh task. Trigger
