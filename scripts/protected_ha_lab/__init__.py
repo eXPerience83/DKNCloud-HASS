@@ -139,9 +139,9 @@ async def async_setup(hass, config):
 
     Store.async_save = memory_save
     Store.async_delay_save = lambda *_, **__: None
-    original = integration.async_get_clientsession
+    original = integration.async_create_runtime_session
     original_flow = config_flow.async_get_clientsession
-    integration.async_get_clientsession = config_flow.async_get_clientsession = (
+    integration.async_create_runtime_session = config_flow.async_get_clientsession = (
         lambda _: gateway
     )
 
@@ -154,7 +154,7 @@ async def async_setup(hass, config):
         SyncManager._read = original_read
         SyncManager.subscription = original_subscription
         Store.async_save, Store.async_delay_save = original_save, original_delay
-        integration.async_get_clientsession = original
+        integration.async_create_runtime_session = original
         config_flow.async_get_clientsession = original_flow
 
     hass.data["lab_restore_guard"] = restore_guard

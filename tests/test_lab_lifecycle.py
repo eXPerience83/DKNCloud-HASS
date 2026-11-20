@@ -157,7 +157,9 @@ async def test_legacy_entry_constructor_failure_releases_real_lab(
 
     # Track restoration of the laboratory-only session replacement.
     monkeypatch.setattr(
-        integration, "async_get_clientsession", integration.async_get_clientsession
+        integration,
+        "async_create_runtime_session",
+        integration.async_create_runtime_session,
     )
 
     def fail_constructor(**_):

@@ -87,7 +87,9 @@ async def test_real_entry_loopback_and_control_barrier(
     server = await aiohttp_server(app)
     async with ClientSession() as session:
         gateway = ReadOnlySession(session, str(server.make_url("")).rstrip("/"))
-        monkeypatch.setattr(integration, "async_get_clientsession", lambda _: gateway)
+        monkeypatch.setattr(
+            integration, "async_create_runtime_session", lambda _: gateway
+        )
         monkeypatch.setattr(
             integration, "build_verified_adapter", push_adapter.build_verified_adapter
         )

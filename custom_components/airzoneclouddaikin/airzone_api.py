@@ -38,10 +38,14 @@ from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
+    ClientHandlerType,
     ClientOSError,
+    ClientRequest,
+    ClientResponse,
     ClientResponseError,
     ClientSession,
     ClientTimeout,
+    ServerDisconnectedError,
 )
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -75,6 +79,22 @@ class CommandNotSentCooldown(HomeAssistantError):
     def __init__(self, retry_at: float):
         super().__init__("Cloud rate limit active; device command was not sent")
         self.retry_at = retry_at
+
+
+async def prevent_device_put_replay(
+    request: ClientRequest, handler: ClientHandlerType
+) -> ClientResponse:
+    """Surface ambiguous PUT failures before aiohttp's internal retry loop."""
+    if request.method != "PUT":
+        return await handler(request)
+    try:
+        return await handler(request)
+    except ClientConnectorError, TimeoutError:
+        raise
+    except ClientOSError, ServerDisconnectedError:
+        pass
+    # Raise outside the handler so the original URL-bearing error is not chained.
+    raise HomeAssistantError("Cloud device command outcome is unknown")
 
 
 class AirzoneAPI:
@@ -185,6 +205,7 @@ class AirzoneAPI:
 
         timeout = ClientTimeout(total=REQUEST_TIMEOUT)
         spath = self._safe_path(path)
+        device_put = method == "PUT" and path.startswith(f"{API_DEVICES}/")
 
         safe_error: Exception
         try:
@@ -203,8 +224,11 @@ class AirzoneAPI:
                 json=json,
                 headers=headers,
                 timeout=timeout,
+                **({"allow_redirects": False} if device_put else {}),
                 **({"data": data} if data is not None else {}),
             ) as resp:
+                if device_put and 300 <= resp.status < 400:
+                    raise ClientResponseError(resp.request_info, (), status=resp.status)
                 resp.raise_for_status()
                 empty_body = resp.status == 204 or resp.content_length == 0
                 if resp.content_type == "application/json":
