@@ -2631,21 +2631,24 @@ async def test_independent_climate_service_cannot_inherit_switch_reservation(
 
     hass.services.async_register("climate", "turn_on", on)
     unsub = hass.bus.async_listen(EVENT_CALL_SERVICE, listener)
+    old_on = asyncio.create_task(switch.async_turn_on())
     try:
         async with asyncio.timeout(3):
-            old_on = asyncio.create_task(switch.async_turn_on())
             await delegated.wait()
             await entity.async_turn_off()
             run_listener.set()
             await listener_done.wait()
+            api.send_event.assert_awaited_once()
+            assert api.send_event.await_args.args[0]["event"]["value"] == 1
             finish_delegated.set()
             await old_on
     finally:
         unsub()
         run_listener.set()
         finish_delegated.set()
+        old_on.cancel()
+        await asyncio.gather(old_on, return_exceptions=True)
     api.send_event.assert_awaited_once()
-    assert api.send_event.await_args.args[0]["event"]["value"] == 1
 
 
 async def test_superseded_p2_keeps_readback_if_newer_off_never_dispatches(

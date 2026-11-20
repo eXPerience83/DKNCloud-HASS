@@ -237,12 +237,12 @@ class AirzoneAPI:
         device_put = method == "PUT" and path.startswith(f"{API_DEVICES}/")
 
         event = (json or {}).get("event")
-        power_or_mode = (
+        status_only_control = (
             method == "POST"
             and path == API_EVENTS
             and isinstance(event, dict)
             and event.get("cgi") == "modmaquina"
-            and event.get("option") in ("P1", "P2")
+            and event.get("option") in ("P1", "P2", "P3", "P4", "P7", "P8")
         )
         # Rejections here are known unsent. Untraced cancellation becomes
         # indeterminate only inside the HTTP attempt.
@@ -271,8 +271,8 @@ class AirzoneAPI:
                 if device_put and 300 <= resp.status < 400:
                     raise ClientResponseError(resp.request_info, (), status=resp.status)
                 resp.raise_for_status()
-                if power_or_mode and 200 <= resp.status < 300:
-                    # P1/P2 callers only need the backend's acknowledgement.
+                if status_only_control and 200 <= resp.status < 300:
+                    # Control callers only need the backend's acknowledgement.
                     return None
                 empty_body = resp.status == 204 or resp.content_length == 0
                 if resp.content_type == "application/json":
@@ -288,7 +288,7 @@ class AirzoneAPI:
                 return await resp.text()
         except ClientResponseError as cre:
             malformed_reply = (
-                power_or_mode or (on_dispatch is not None and method != "GET")
+                status_only_control or (on_dispatch is not None and method != "GET")
             ) and isinstance(cre.__cause__, HttpProcessingError)
             if on_uncertain is not None and (
                 malformed_reply

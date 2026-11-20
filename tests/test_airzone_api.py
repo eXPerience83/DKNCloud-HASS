@@ -1453,12 +1453,12 @@ async def test_timed_recovery_get_captures_freshness_at_writer(
 
 
 @pytest.mark.parametrize("status", [200, 201, 204])
-@pytest.mark.parametrize("option", ["P1", "P2"])
+@pytest.mark.parametrize("option", ["P1", "P2", "P3", "P4", "P7", "P8"])
 @pytest.mark.parametrize("traced", [True, False], ids=["writer", "plain"])
-async def test_power_accepts_valid_2xx_without_decoding_control_response(
+async def test_controls_accept_valid_2xx_without_decoding_response(
     hass, socket_enabled, aiohttp_server, monkeypatch, status, option, traced
 ):
-    """The documented 2xx acknowledges P1/P2 without parsing their unused body."""
+    """A documented 2xx acknowledges a supported control without decoding its body."""
     from custom_components.airzoneclouddaikin import async_create_runtime_session
 
     received = []
@@ -1483,8 +1483,10 @@ async def test_power_accepts_valid_2xx_without_decoding_control_response(
         api = AirzoneAPI("synthetic@example.invalid", session)
         if option == "P1":
             await api.send_event(payload, on_uncertain=uncertain)
-        else:
+        elif option == "P2":
             await api.send_event(payload, on_start=lambda: None)
+        else:
+            await api.send_event(payload)
     uncertain.assert_not_called()
     assert received == [payload]
 
