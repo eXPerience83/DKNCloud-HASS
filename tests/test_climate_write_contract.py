@@ -2319,13 +2319,20 @@ async def test_latest_power_survives_ambiguous_p1(
         target = entity if platform == "climate" else switch
         return target.async_turn_on() if value else target.async_turn_off()
 
-    async with asyncio.timeout(3):
-        first = asyncio.create_task(command(first_platform, 1 - initial))
-        await entered.wait()
-        last = asyncio.create_task(command(last_platform, initial))
-        await queued.wait()
+    tasks = []
+    try:
+        async with asyncio.timeout(3):
+            tasks.append(asyncio.create_task(command(first_platform, 1 - initial)))
+            await entered.wait()
+            tasks.append(asyncio.create_task(command(last_platform, initial)))
+            await queued.wait()
+            release.set()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
         release.set()
-        results = await asyncio.gather(first, last, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     assert isinstance(results[0], TimeoutError)
     assert results[1] is None
@@ -2409,11 +2416,14 @@ async def test_uncertain_p1_is_owned_by_its_original_entry(
     entered, release = asyncio.Event(), asyncio.Event()
     calls = []
 
-    async def transport(_method, _path, *, on_dispatch, json, **_kwargs):
+    async def transport(_method, _path, *, on_dispatch, on_uncertain, json, **_kwargs):
         on_dispatch()
         calls.append(json["event"]["value"])
         entered.set()
-        await release.wait()
+        try:
+            await release.wait()
+        finally:
+            on_uncertain()
         raise TimeoutError
 
     monkeypatch.setattr(api, "_request", transport)
@@ -2678,4 +2688,86 @@ async def test_superseded_p2_keeps_readback_if_newer_off_never_dispatches(
     api.send_event.assert_awaited_once()
     entity.async_write_ha_state.assert_called_once()
     assert entity._overlay_value("power", "0") == "1"
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+
+@pytest.mark.parametrize("initial", [0, 1])
+async def test_latest_power_survives_untraced_http_503(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    initial,
+):
+    """A real response from an untraced P1 cannot suppress the queued inverse."""
+    from aiohttp import ClientSession, web
+
+    from custom_components.airzoneclouddaikin import airzone_api
+    from custom_components.airzoneclouddaikin.helpers import (
+        acquire_device_lock,
+        optimistic_set,
+    )
+
+    entity, _ = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power=str(initial)
+    )
+    bucket = hass.data[DOMAIN][entity._entry_id]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    optimistic_set(hass, entity._entry_id, "unit-1", "power", str(initial))
+    received = []
+    arrived, release, queued = (asyncio.Event() for _ in range(3))
+
+    async def handler(request):
+        event = (await request.json())["event"]
+        assert event["option"] == "P1"
+        received.append(event["value"])
+        if len(received) == 1:
+            arrived.set()
+            await release.wait()
+            return web.Response(status=503)
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_post(airzone_api.API_EVENTS, handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    lock = acquire_device_lock(hass, entity._entry_id, "unit-1")
+    acquire = lock.acquire
+
+    async def signal_when_queued():
+        if lock.locked():
+            queued.set()
+        return await acquire()
+
+    monkeypatch.setattr(lock, "acquire", signal_when_queued)
+    keep = entity.async_turn_on if initial else entity.async_turn_off
+    invert = entity.async_turn_off if initial else entity.async_turn_on
+    async with ClientSession() as session:
+        api = entity.coordinator.api = airzone_api.AirzoneAPI(
+            "synthetic@example.invalid", session
+        )
+        tasks = []
+        try:
+            async with asyncio.timeout(3):
+                tasks.append(asyncio.create_task(invert()))
+                await arrived.wait()
+                tasks.append(asyncio.create_task(keep()))
+                await queued.wait()
+                release.set()
+                failed, latest = await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            release.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    assert isinstance(failed, HomeAssistantError)
+    assert latest is None
+    assert received == [1 - initial, initial]
+    assert entity._overlay_value("power", "?") == str(initial)
+    assert not bucket.get("uncertain_power")
+    assert not api._pending
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)

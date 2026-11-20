@@ -389,14 +389,19 @@ the FAN_ONLY P2=3/8 telemetry alias is rechecked for fan-channel routing.
 This is local ordering, not physical-state confirmation.
 
 **Ambiguous power-write safety:** Climate and Switch share the entry's
-per-device lock and intent ordering. A dispatched P1 with an uncertain result
-invalidates the previous power overlay and requests a bounded readback. While
+per-device lock and intent ordering. A P1 that may have reached the backend
+invalidates the previous power overlay and requests a bounded readback when
+its result is uncertain. While
 the result is uncertain, cached power cannot suppress a newer explicit ON or
 OFF. Reads never send a control or replay the old P1. A definitive HTTP
-rejection, a local cooldown or cancellation before dispatch does not create
-uncertainty. The explicit, bounded 429 policy still applies to a current
-intent. A valid 2xx acknowledges guarded P1 and P2 even if the response body
-is unusable.
+rejection, a local cooldown or a cancellation known to precede dispatch does
+not create uncertainty. The explicit, bounded 429 policy still applies to a current
+intent. A valid 2xx acknowledges P1 and P2 even if the response body is
+unusable. The entry session uses the HTTP writer to distinguish pre-dispatch
+cancellation from cancellation after dispatch. Without that trace, a
+cancellation or timeout inside the HTTP attempt can leave the outcome unknown.
+A connector error or a timeout reported specifically during connection
+acquisition remains known unsent. Information responses still use their bodies.
 
 A later accepted P1 or a GET started after the uncertain result can resolve
 the uncertainty within the same entry. The GET must actually apply a valid
