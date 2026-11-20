@@ -214,3 +214,46 @@ async def test_legacy_entry_without_username_does_not_invent_identity(
     assert await integration.async_migrate_entry(hass, entry)
     assert entry.version == 3
     assert entry.unique_id == "legacy-unique"
+
+
+async def test_unload_only_cancels_timers_and_removes_its_own_runtime(
+    hass, dkn_config_entry_factory, monkeypatch
+) -> None:
+    """A successor may appear while the old manager is finishing shutdown."""
+    from unittest.mock import AsyncMock, Mock
+
+    entry = dkn_config_entry_factory()
+    closing = asyncio.Event()
+    finish_close = asyncio.Event()
+
+    async def close():
+        closing.set()
+        await finish_close.wait()
+
+    old = {
+        "coordinator": object(),
+        "sync_manager": Mock(close=close),
+        "pending_refresh": Mock(),
+    }
+    successor = {"coordinator": object(), "pending_refresh": Mock()}
+    timer = old["pending_refresh"]
+    hass.data[DOMAIN] = {entry.entry_id: old}
+    monkeypatch.setattr(
+        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
+    )
+
+    task = asyncio.create_task(integration.async_unload_entry(hass, entry))
+    try:
+        async with asyncio.timeout(5):
+            await closing.wait()
+            hass.data[DOMAIN][entry.entry_id] = successor
+            finish_close.set()
+            assert await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    timer.assert_called_once_with()
+    assert old["closing"]
+    assert hass.data[DOMAIN][entry.entry_id] is successor
+    successor["pending_refresh"].assert_not_called()

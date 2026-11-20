@@ -82,7 +82,11 @@ def test_late_ambiguous_control_failure_does_not_reopen_unloaded_entry(
         bucket["retired"] = {"closing": True, "sync_manager": manager}
 
     helpers.request_ambiguous_control_readback(
-        hass, coordinator, entry_id="retired", device_id="device"
+        hass,
+        coordinator,
+        entry_id="retired",
+        device_id="device",
+        bucket=bucket.get("retired"),
     )
 
     if entry_status == "removed":
@@ -167,7 +171,7 @@ async def test_auto_exit_sleep_when_expired(
     entry_id = "entry-1"
     device = {"scenary": "sleep", "sleep_expired": True}
     # Production creates the entry bucket during setup; the helper must not.
-    hass.data.setdefault(DOMAIN, {})[entry_id] = {}
+    hass.data.setdefault(DOMAIN, {})[entry_id] = {"coordinator": coordinator}
 
     await async_auto_exit_sleep_if_needed(
         hass,
@@ -209,6 +213,7 @@ async def test_auto_exit_sleep_skips_active_session(
     device_id = "device-2"
     entry_id = "entry-2"
     device = {"scenary": "sleep", "sleep_expired": False}
+    hass.data.setdefault(DOMAIN, {})[entry_id] = {"coordinator": coordinator}
 
     await async_auto_exit_sleep_if_needed(
         hass,
@@ -333,6 +338,7 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     )
     hass.data.setdefault(DOMAIN, {})["entry"] = {
         "sleep_tracking": {"device": tracking},
+        "coordinator": coordinator,
     }
 
     # A new manual Sleep resets tracking before a coordinator refresh.
@@ -366,6 +372,7 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
     api.async_set_scenary = AsyncMock(side_effect=TimeoutError)
     coordinator = DummyCoordinator(api)
     coordinator.data = {"device": device}
+    hass.data.setdefault(DOMAIN, {})["entry"] = {"coordinator": coordinator}
     lock = helpers.acquire_device_lock(hass, "entry", "device")
     await lock.acquire()
     lock_reached = asyncio.Event()
@@ -677,7 +684,7 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
         side_effect=ClientResponseError(None, (), status=422)
     )
     coordinator = DummyCoordinator(api)
-    hass.data.setdefault(DOMAIN, {})["entry"] = {}
+    hass.data.setdefault(DOMAIN, {})["entry"] = {"coordinator": coordinator}
     for _ in range(2):
         await async_auto_exit_sleep_if_needed(
             hass,
@@ -693,3 +700,31 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
     api.async_set_scenary.assert_awaited_once()
     if cancel := hass.data[DOMAIN]["entry"].get("pending_refresh"):
         cancel()
+
+
+@pytest.mark.parametrize("replacement", ["removed", "bucket", "coordinator", "none"])
+async def test_post_write_refresh_rechecks_entry_when_timer_fires(
+    hass, monkeypatch, replacement
+) -> None:
+    """A queued timer must only refresh the runtime that scheduled it."""
+    from unittest.mock import Mock
+
+    coordinator = DummyCoordinator(DummyApi())
+    bucket = {"coordinator": coordinator}
+    hass.data[DOMAIN] = {"entry": bucket}
+    timer = Mock(return_value=Mock())
+    monkeypatch.setattr(helpers, "async_call_later", timer)
+    helpers.schedule_post_write_refresh(hass, coordinator, entry_id="entry")
+
+    if replacement == "removed":
+        hass.data[DOMAIN].pop("entry")
+    elif replacement == "bucket":
+        hass.data[DOMAIN]["entry"] = {"coordinator": coordinator}
+    elif replacement == "coordinator":
+        bucket["coordinator"] = DummyCoordinator(DummyApi())
+    await timer.call_args.args[2](None)
+    await hass.async_block_till_done()
+
+    assert coordinator.refreshes == (1 if replacement == "none" else 0)
+    assert bucket.get("pending_refresh") is None
+    assert "pending_refresh" not in bucket

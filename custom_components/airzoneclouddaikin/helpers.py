@@ -51,6 +51,21 @@ def _entry_bucket(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
     return domain_bucket.setdefault(entry_id, {})
 
 
+def active_entry_bucket(
+    hass: HomeAssistant, entry_id: str, coordinator: DataUpdateCoordinator[Any]
+) -> dict[str, Any] | None:
+    """Return the live runtime owned by this coordinator, without creating it."""
+    bucket = hass.data.get(DOMAIN, {}).get(entry_id)
+    if (
+        bucket is not None
+        and bucket.get("coordinator") is coordinator
+        and not bucket.get("closing")
+        and not hass.is_stopping
+    ):
+        return bucket
+    return None
+
+
 def _optimistic_bucket(hass: HomeAssistant, entry_id: str) -> OptimisticEntry:
     bucket = _entry_bucket(hass, entry_id)
     optimistic: OptimisticEntry = bucket.setdefault("optimistic", {})  # type: ignore[assignment]
@@ -127,11 +142,19 @@ def optimistic_get(
     device_id: str,
     key: str,
     backend_value: Any,
+    *,
+    coordinator: DataUpdateCoordinator[Any] | None = None,
 ) -> Any:
     """Return the overlay value if still valid, otherwise the backend value."""
 
-    optimistic = _optimistic_bucket(hass, entry_id)
-    device_overlay = optimistic.get(device_id)
+    bucket = (
+        active_entry_bucket(hass, entry_id, coordinator)
+        if coordinator is not None
+        else hass.data.get(DOMAIN, {}).get(entry_id)
+    )
+    if bucket is None:
+        return backend_value
+    device_overlay = bucket.get("optimistic", {}).get(device_id)
     if not device_overlay:
         return backend_value
 
@@ -141,7 +164,7 @@ def optimistic_get(
 
     expires = overlay.get("expires")
     if not isinstance(expires, (int, float)) or hass.loop.time() >= float(expires):
-        if manager := _entry_bucket(hass, entry_id).get("sync_manager"):
+        if manager := bucket.get("sync_manager"):
             manager.request_recovery(device_id)
         optimistic_invalidate(hass, entry_id, device_id, key)
         return backend_value
@@ -173,48 +196,41 @@ def schedule_post_write_refresh(
 ) -> Callable[[], None] | None:
     """Request a coordinator refresh after a short delay (coalesced per entry)."""
 
-    bucket = _entry_bucket(hass, entry_id)
-    if bucket.get("sync_manager") is not None:
+    bucket = active_entry_bucket(hass, entry_id, coordinator)
+    if bucket is None or bucket.get("sync_manager") is not None:
         # Existing device cycles observe accepted writes; never create a second GET.
         return None
-    cancel_handles: list[Callable[[], None]] = bucket.setdefault("cancel_handles", [])
+    cancel_post_write_refresh(bucket)
 
-    pending: Callable[[], None] | None = bucket.get("pending_refresh")
-    if callable(pending):
-        try:
-            pending()
-        except Exception:  # noqa: BLE001
-            pass
-        finally:
-            try:
-                cancel_handles.remove(pending)
-            except ValueError:
-                pass
-            bucket["pending_refresh"] = None
+    async def refresh_if_active() -> None:
+        if active_entry_bucket(hass, entry_id, coordinator) is bucket:
+            await coordinator.async_request_refresh()
 
     if delay <= 0:
-        hass.async_create_task(coordinator.async_request_refresh())
+        hass.async_create_task(refresh_if_active())
         return None
 
     async def _refresh(_now: Any) -> None:
-        try:
-            # NOTE: If this task is cancelled (e.g. during HA shutdown),
-            # asyncio.CancelledError will propagate, but the cleanup in the
-            # finally block below will still run.
-            hass.async_create_task(coordinator.async_request_refresh())
-        finally:
-            if bucket.get("pending_refresh") is cancel:
-                bucket["pending_refresh"] = None
-            try:
-                cancel_handles.remove(cancel)
-            except ValueError:
-                pass
+        if bucket.get("pending_refresh") is not cancel:
+            return
+        bucket.pop("pending_refresh")
+        await refresh_if_active()
 
     cancel = async_call_later(hass, delay, _refresh)
     bucket["pending_refresh"] = cancel
-    if cancel not in cancel_handles:
-        cancel_handles.append(cancel)
     return cancel
+
+
+def cancel_post_write_refresh(bucket: dict[str, Any]) -> None:
+    """Clear and cancel the entry's pending post-write timer."""
+    pending = bucket.pop("pending_refresh", None)
+    if callable(pending):
+        try:
+            pending()
+        except Exception as error:  # noqa: BLE001
+            _LOGGER.debug(
+                "Could not cancel post-write refresh (%s)", type(error).__name__
+            )
 
 
 def acquire_device_lock(
@@ -253,12 +269,12 @@ def request_ambiguous_control_readback(
     *,
     entry_id: str,
     device_id: str,
+    bucket: dict[str, Any] | None,
 ) -> None:
     """Read back an uncertain command, never replay the possibly accepted write."""
     # An in-flight write may fail after successful HA unload. Never create
     # a fresh entry bucket or schedule a task for a removed config entry.
-    bucket = hass.data.get(DOMAIN, {}).get(entry_id)
-    if not bucket or bucket.get("closing") or hass.is_stopping:
+    if bucket is None or active_entry_bucket(hass, entry_id, coordinator) is not bucket:
         return
     if manager := bucket.get("sync_manager"):
         manager.request_recovery(device_id)
@@ -385,8 +401,8 @@ async def async_auto_exit_sleep_if_needed(
     send, and None for other handled outcomes.
     Never replay an ambiguous scene write."""
     # Never recreate an unloaded entry during a queued Sleep/wake recheck.
-    bucket = hass.data.get(DOMAIN, {}).get(entry_id)
-    if bucket is None or bucket.get("closing") or hass.is_stopping:
+    bucket = active_entry_bucket(hass, entry_id, coordinator)
+    if bucket is None:
         return
     revision = bucket.get("scene_revisions", {}).get(device_id, 0)
     # Snapshot the manual intent before this cleanup can wait or send.
@@ -398,14 +414,13 @@ async def async_auto_exit_sleep_if_needed(
             await auto_exit_away(reason)
         return
     async with acquire_device_lock(hass, entry_id, device_id):
+        if active_entry_bucket(hass, entry_id, coordinator) is not bucket:
+            return
         current = (getattr(coordinator, "data", None) or {}).get(device_id, device)
         overlay = bucket.get("optimistic", {}).get(device_id, {}).get("scenary")
         pending = bucket.setdefault("sleep_exit_pending", {})
         if (
-            hass.data.get(DOMAIN, {}).get(entry_id) is not bucket
-            or bucket.get("closing")
-            or hass.is_stopping
-            or bucket.get("scene_revisions", {}).get(device_id, 0) != revision
+            bucket.get("scene_revisions", {}).get(device_id, 0) != revision
             or (overlay and overlay.get("value") != SCENARY_SLEEP)
             or str(current.get("scenary") or "").lower() != SCENARY_SLEEP
             or device_id in pending
@@ -449,25 +464,25 @@ async def async_auto_exit_sleep_if_needed(
             await api.async_set_scenary(device_id, SCENARY_HOME, retry=False)
         except CommandNotSentCooldown as error:
             # No I/O occurred in this invocation; keep this session eligible.
-            pending.pop(device_id, None)
-            deadlines[device_id] = error.retry_at
+            if active_entry_bucket(hass, entry_id, coordinator) is bucket:
+                pending.pop(device_id, None)
+                deadlines[device_id] = error.retry_at
             unsent = True
             return False
         except asyncio.CancelledError:
             raise
         except ClientResponseError as error:
-            if 400 <= error.status < 500:
+            if (
+                400 <= error.status < 500
+                and active_entry_bucket(hass, entry_id, coordinator) is bucket
+            ):
                 pending[device_id] = "rejected"
             _LOGGER.warning("Sleep exit not confirmed (HTTP %s)", error.status)
         except Exception as error:  # noqa: BLE001
             _LOGGER.warning("Sleep exit remains unverified (%s)", type(error).__name__)
         else:
             # The PUT can complete after unload; its state belongs to the old entry.
-            if (
-                hass.data.get(DOMAIN, {}).get(entry_id) is not bucket
-                or bucket.get("closing")
-                or hass.is_stopping
-            ):
+            if active_entry_bucket(hass, entry_id, coordinator) is not bucket:
                 return
             pending[device_id] = "accepted"
             optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
@@ -481,16 +496,14 @@ async def async_auto_exit_sleep_if_needed(
             if on_success:
                 on_success()
         finally:
-            if (
-                not unsent
-                and hass.data.get(DOMAIN, {}).get(entry_id) is bucket
-                and not bucket.get("closing")
-                and not hass.is_stopping
-            ):
-                if manager := bucket.get("sync_manager"):
-                    manager.request_recovery(device_id)
-                else:
-                    schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
+            if not unsent:
+                request_ambiguous_control_readback(
+                    hass,
+                    coordinator,
+                    entry_id=entry_id,
+                    device_id=device_id,
+                    bucket=bucket,
+                )
 
 
 def parse_float(value: Any, *, precision: int | None = None) -> float | None:

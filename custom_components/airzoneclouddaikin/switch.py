@@ -21,6 +21,7 @@ from .const import DOMAIN
 from .device_state import power_is_on
 from .helpers import (
     acquire_device_lock,
+    active_entry_bucket,
     async_auto_exit_sleep_if_needed,
     build_device_info,
     optimistic_get,
@@ -69,6 +70,9 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         await super().async_added_to_hass()
         self._climate_entity_id = self._resolve_climate_entity_id()
 
+    def _active_entry_bucket(self) -> dict[str, Any] | None:
+        return active_entry_bucket(self.hass, self._entry_id, self.coordinator)
+
     @property
     def _device(self) -> dict[str, Any]:
         """Return the current device snapshot from the coordinator."""
@@ -82,6 +86,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             self._device_id,
             "power",
             self._device.get("power"),
+            coordinator=self.coordinator,
         )
 
     def _backend_power_is_on(self) -> bool:
@@ -116,6 +121,9 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     async def _send_event(self, option: str, value: Any) -> None:
         """Send a command to the device using the events endpoint."""
+        bucket = self._active_entry_bucket()
+        if bucket is None:
+            return
         api = getattr(self.coordinator, "api", None)
         if api is None:
             _LOGGER.error("API not attached to coordinator; cannot send command.")
@@ -131,6 +139,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     self.coordinator,
                     entry_id=self._entry_id,
                     device_id=self._device_id,
+                    bucket=bucket,
                 )
             raise
         except Exception as err:  # noqa: BLE001
@@ -140,6 +149,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     self.coordinator,
                     entry_id=self._entry_id,
                     device_id=self._device_id,
+                    bucket=bucket,
                 )
             _LOGGER.warning(
                 "Device control event %s failed (%s)", option, type(err).__name__
@@ -151,6 +161,8 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
     # -----------------------------
     def _handle_coordinator_update(self) -> None:
         """Called by the coordinator when data is refreshed."""
+        if self._active_entry_bucket() is None:
+            return
         dev = self._device
         base_name = dev.get("name") or "Airzone Device"
         self._attr_name = f"{base_name} Power"
@@ -243,12 +255,17 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the device delegating to the climate entity when possible."""
-        if await self._async_delegate_climate_power("turn_on"):
+        bucket = self._active_entry_bucket()
+        if bucket is None or await self._async_delegate_climate_power("turn_on"):
             return
-        await self._fallback_turn_on()
+        if self._active_entry_bucket() is bucket:
+            await self._fallback_turn_on()
 
     async def _fallback_turn_on(self) -> None:
         """Direct P1 fallback when the climate entity is unavailable."""
+        bucket = self._active_entry_bucket()
+        if bucket is None:
+            return
         intents, intent = reserve_power_intent(
             self.hass, self._entry_id, self._device_id
         )
@@ -256,7 +273,10 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         prepared = False
         while True:
             async with lock:
-                if intents.get(self._device_id) != intent:
+                if (
+                    self._active_entry_bucket() is not bucket
+                    or intents.get(self._device_id) != intent
+                ):
                     return
                 current = str(self._overlay_power() or "").strip().lower()
                 if current in {"1", "true", "on"}:
@@ -266,6 +286,8 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                     return
                 if prepared:
                     await self._send_event("P1", 1)
+                    if self._active_entry_bucket() is not bucket:
+                        return
                     optimistic_set(
                         self.hass, self._entry_id, self._device_id, "power", "1"
                     )
@@ -280,18 +302,26 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the device delegating to the climate entity when possible."""
-        if await self._async_delegate_climate_power("turn_off"):
+        bucket = self._active_entry_bucket()
+        if bucket is None or await self._async_delegate_climate_power("turn_off"):
             return
-        await self._fallback_turn_off()
+        if self._active_entry_bucket() is bucket:
+            await self._fallback_turn_off()
 
     async def _fallback_turn_off(self) -> None:
         """Direct P1 fallback when the climate entity is unavailable."""
+        bucket = self._active_entry_bucket()
+        if bucket is None:
+            return
         intents, intent = reserve_power_intent(
             self.hass, self._entry_id, self._device_id
         )
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
-            if intents.get(self._device_id) != intent:
+            if (
+                self._active_entry_bucket() is not bucket
+                or intents.get(self._device_id) != intent
+            ):
                 return
             current = str(self._overlay_power() or "").strip().lower()
             if current in {"0", "false", "off", ""}:
@@ -299,6 +329,8 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                 return
             # If _send_event raises, no optimistic overlay is applied.
             await self._send_event("P1", 0)
+            if self._active_entry_bucket() is not bucket:
+                return
             optimistic_set(self.hass, self._entry_id, self._device_id, "power", "0")
             self.async_write_ha_state()
             schedule_post_write_refresh(

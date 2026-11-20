@@ -28,6 +28,7 @@ def _make_climate(
     )
 
     coordinator = dummy_coordinator_factory({device_id: device_snapshot})
+    hass.data[DOMAIN][entry_id]["coordinator"] = coordinator
     entity = AirzoneClimate(coordinator, entry_id, device_id)
     entity.hass = hass
     return entity

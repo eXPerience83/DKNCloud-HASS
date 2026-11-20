@@ -53,10 +53,16 @@ def _climate(
         "heat_cool_opt_in"
     ] = heat_cool_opt_in
     coordinator = dummy_coordinator_factory({"unit-1": dev}, api=api)
+    hass.data[DOMAIN]["climate-entry"]["coordinator"] = coordinator
     entity = AirzoneClimate(coordinator, "climate-entry", "unit-1")
     entity.hass = hass
     monkeypatch.setattr(entity, "async_write_ha_state", Mock())
-    monkeypatch.setattr(climate_module, "schedule_post_write_refresh", Mock())
+    refresh = Mock()
+    monkeypatch.setattr(climate_module, "schedule_post_write_refresh", refresh)
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
+        refresh,
+    )
     monkeypatch.setattr(climate_module, "async_auto_exit_sleep_if_needed", AsyncMock())
     return entity, api
 
@@ -2091,3 +2097,127 @@ async def test_already_in_mode_three_does_not_repeat_p2_write(
     )
     await entity.async_set_hvac_mode(HVACMode.FAN_ONLY)
     api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize("lifecycle", ["unload", "failed_unload", "replacement"])
+async def test_partial_mode_command_stays_with_its_runtime(
+    hass, dummy_coordinator_factory, monkeypatch, lifecycle
+) -> None:
+    """Cancel real API work on unload or fail P2 after the runtime changes."""
+    from pytest_homeassistant.common import MockConfigEntry
+
+    from custom_components.airzoneclouddaikin import async_unload_entry
+    from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
+
+    entity, _ = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    entry = MockConfigEntry(domain=DOMAIN, entry_id=entity._entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    api = AirzoneAPI("test", Mock(), token="synthetic")
+    old_manager = Mock(close=AsyncMock())
+    bucket.update(api=api, coordinator=entity.coordinator, sync_manager=old_manager)
+    entity.coordinator.api = api
+    successor = {"coordinator": Mock(), "sync_manager": Mock()}
+    blocked = asyncio.Event()
+    release = asyncio.Event()
+    commands = []
+
+    async def transport(*args, **kwargs):
+        command = kwargs["json"]["event"]
+        commands.append((command["option"], command["value"]))
+        if command["option"] == "P2":
+            blocked.set()
+            await release.wait()
+            raise TimeoutError("Synthetic P2 result unknown")
+
+    monkeypatch.setattr(api, "_authed_request_impl", transport)
+    monkeypatch.setattr(
+        hass.config_entries,
+        "async_unload_platforms",
+        AsyncMock(return_value=lifecycle == "unload"),
+    )
+    task = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.HEAT))
+    try:
+        async with asyncio.timeout(5):
+            await blocked.wait()
+            if lifecycle == "replacement":
+                hass.data[DOMAIN][entry.entry_id] = successor
+            else:
+                assert (await async_unload_entry(hass, entry)) is (
+                    lifecycle == "unload"
+                )
+            release.set()
+            with pytest.raises(
+                asyncio.CancelledError if lifecycle == "unload" else TimeoutError
+            ):
+                await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    assert commands == [("P1", 1), ("P2", "2")]
+    assert not api._pending
+    climate_module.schedule_post_write_refresh.assert_not_called()
+    successor["sync_manager"].request_recovery.assert_not_called()
+    assert set(successor) == {"coordinator", "sync_manager"}
+    if lifecycle == "failed_unload":
+        assert hass.data[DOMAIN][entry.entry_id] is bucket
+        assert bucket["optimistic"]["unit-1"]["power"]["value"] == "1"
+        entity.async_write_ha_state.assert_called_once()
+        old_manager.request_recovery.assert_called_once_with("unit-1")
+    else:
+        entity.async_write_ha_state.assert_not_called()
+        old_manager.request_recovery.assert_not_called()
+        if lifecycle == "unload":
+            assert entry.entry_id not in hass.data[DOMAIN]
+
+
+@pytest.mark.parametrize("command", ["climate_p1", "climate_p2", "switch"])
+async def test_late_accepted_command_cannot_write_into_successor(
+    hass, dummy_coordinator_factory, monkeypatch, command
+) -> None:
+    """A successful late response cannot send another command or publish."""
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    climate, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        power="1" if command == "climate_p2" else "0",
+    )
+    bucket = hass.data[DOMAIN][climate._entry_id]
+    bucket["coordinator"] = climate.coordinator
+    successor = {"coordinator": Mock(), "sync_manager": Mock()}
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def transport(payload):
+        started.set()
+        await release.wait()
+
+    api.send_event.side_effect = transport
+    if command == "switch":
+        entity = AirzonePowerSwitch(climate.coordinator, climate._entry_id, "unit-1")
+        entity.hass = hass
+        monkeypatch.setattr(entity, "async_write_ha_state", Mock())
+        operation = entity.async_turn_on()
+    else:
+        entity = climate
+        operation = entity.async_set_hvac_mode(HVACMode.HEAT)
+    task = asyncio.create_task(operation)
+    try:
+        async with asyncio.timeout(5):
+            await started.wait()
+            hass.data[DOMAIN][climate._entry_id] = successor
+            release.set()
+            await task
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    api.send_event.assert_awaited_once()
+    assert api.send_event.await_args.args[0]["event"]["option"] == (
+        "P2" if command == "climate_p2" else "P1"
+    )
+    entity.async_write_ha_state.assert_not_called()
+    assert set(successor) == {"coordinator", "sync_manager"}
+    successor["sync_manager"].request_recovery.assert_not_called()

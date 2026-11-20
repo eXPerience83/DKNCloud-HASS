@@ -46,7 +46,9 @@ from .const import (
 )
 from .helpers import (
     acquire_device_lock,
+    active_entry_bucket,
     async_auto_exit_sleep_if_needed,
+    cancel_post_write_refresh,
     confirm_optimistic,
     device_supports_heat_cool,
     expire_optimistic,
@@ -261,13 +263,23 @@ async def _async_update_data(
 
     - On 401, raise ConfigEntryAuthFailed so Home Assistant handles reauth.
     """
-    try:
-        domain_bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+    domain_bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+    coordinator = domain_bucket.get("coordinator")
 
+    def check_owner() -> None:
+        if (
+            coordinator is not None
+            and active_entry_bucket(hass, entry.entry_id, coordinator)
+            is not domain_bucket
+        ):
+            raise asyncio.CancelledError
+
+    try:
         data: dict[str, dict[str, Any]] = {}
         fresh_power_ids: set[str] = set()
         fresh_scenary_ids: set[str] = set()
         relations = await api.fetch_installations()
+        check_owner()
         # Malformed installation responses are transient failures, not an
         # authoritative empty account: preserve the last good device snapshot.
         if relations is None:
@@ -306,6 +318,7 @@ async def _async_update_data(
 
         fetches = [api.fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
+        check_owner()
         if any(
             isinstance(result, ClientResponseError) and result.status == 401
             for result in fetch_results
@@ -419,6 +432,7 @@ async def _async_update_data(
     except UpdateFailed, ConfigEntryAuthFailed:
         raise
     except ClientResponseError as cre:
+        check_owner()
         status = cre.status
         if cre.status == 401:
             raise ConfigEntryAuthFailed("Authentication required (401)") from None
@@ -745,22 +759,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     # native reauth directly if a write returns 401 (HA de-duplicates flows).
     auth_requested = False
 
+    def entry_active() -> bool:
+        return active_entry_bucket(hass, entry.entry_id, coordinator) is bucket
+
+    async def update_data():
+        if not entry_active():
+            raise asyncio.CancelledError
+        return await _async_update_data(hass, entry, api)
+
     def request_write_reauth() -> None:
         nonlocal auth_requested
+        if not entry_active():
+            return
         api.suspend()
         if manager := bucket.get("sync_manager"):
             manager._auth_failed = True
             manager._notify_mode_changes()
-        if (
-            not auth_requested
-            and not hass.is_stopping
-            and entry.state in {ConfigEntryState.LOADED, ConfigEntryState.FAILED_UNLOAD}
-        ):
+        if not auth_requested and entry.state in {
+            ConfigEntryState.LOADED,
+            ConfigEntryState.FAILED_UNLOAD,
+        }:
             auth_requested = True
             entry.async_start_reauth_if_available(hass)
 
     api.request_allowed = lambda: (
-        not bucket.get("closing", False)
+        entry_active()
         and not getattr(bucket.get("sync_manager"), "_auth_failed", False)
     )
     api.on_write_auth_failure = request_write_reauth
@@ -775,14 +798,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         _LOGGER,
         name="airzone_data",
         config_entry=entry,
-        update_method=lambda: _async_update_data(hass, entry, api),
+        update_method=update_data,
         update_interval=None
         if connector is not None
         else timedelta(seconds=scan_interval),
     )
     coordinator.api = api
-
+    bucket["coordinator"] = coordinator
     await coordinator.async_config_entry_first_refresh()
+    if not entry_active():
+        raise asyncio.CancelledError
 
     data_snapshot = coordinator.data or {}
     supports_heat_cool: bool | None
@@ -796,11 +821,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         except Exception:  # noqa: BLE001
             supports_heat_cool = None
 
-    bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
+    notify_strings = await _async_prepare_notify_strings(hass)
+    if not entry_active():
+        raise asyncio.CancelledError
     bucket["api"] = api
-    bucket["coordinator"] = coordinator
     bucket["scan_interval"] = scan_interval
-    bucket["notify_strings"] = await _async_prepare_notify_strings(hass)
+    bucket["notify_strings"] = notify_strings
     bucket["heat_cool_supported"] = supports_heat_cool
     heat_cool_opt_in = bool(
         opts.get(CONF_ENABLE_HEAT_COOL, False) and supports_heat_cool is not False
@@ -817,11 +843,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         )
 
     async def _async_handle_sleep_expiry() -> None:
-        if not entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True):
+        if not entry_active() or not entry.options.get(
+            CONF_SLEEP_CLEANUP_ENABLED, True
+        ):
             return
         sleep_expiry_lock = bucket.setdefault("sleep_expiry_lock", asyncio.Lock())
         async with sleep_expiry_lock:
-            if bucket.get("closing"):
+            if not entry_active():
                 return
             data = coordinator.data or {}
             sleep_tracking: dict[str, SleepTracking] = bucket.get("sleep_tracking", {})
@@ -845,10 +873,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     )
                     continue
 
-                if (
-                    bucket.get("closing")
-                    or hass.is_stopping
-                    or getattr(bucket.get("sync_manager"), "_auth_failed", False)
+                if not entry_active() or getattr(
+                    bucket.get("sync_manager"), "_auth_failed", False
                 ):
                     return
                 session_revision = tracking.session_revision
@@ -862,6 +888,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     is_device_on=lambda: True,
                     allow_away_handling=False,
                 )
+                if not entry_active():
+                    return
                 if result is None and tracking.session_revision == session_revision:
                     # True means the locked recheck found expiry no longer due;
                     # False means cooldown deferred before any write was sent.
@@ -870,10 +898,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     def _on_sleep_candidate() -> None:
         if not entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True):
             return
-        if (
-            bucket.get("closing")
-            or hass.is_stopping
-            or getattr(bucket.get("sync_manager"), "_auth_failed", False)
+        if not entry_active() or getattr(
+            bucket.get("sync_manager"), "_auth_failed", False
         ):
             return
         existing: asyncio.Task[None] | None = bucket.get("sleep_expiry_task")
@@ -913,6 +939,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     notify_state: dict[str, dict[str, Any]] = bucket.setdefault("notify_state", {})
 
     def _on_coordinator_update() -> None:
+        if not entry_active():
+            return
         now = dt_util.utcnow()
         raw_data = coordinator.data
         data = raw_data or {}
@@ -1032,6 +1060,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                         ONLINE_BANNER_TTL_SEC,
                         lambda _now, _nid=nid_online: (
                             persistent_notification.async_dismiss(hass, _nid)
+                            if entry_active()
+                            else None
                         ),
                     )
                     if callable(cancel):
@@ -1082,6 +1112,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     if connector is not None:
 
         def publish_sync(data, remote):
+            if not entry_active():
+                return
             fresh_power_ids = (
                 {device for device, keys in manager.touched.items() if "power" in keys}
                 if remote
@@ -1165,7 +1197,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
         @callback
         def topology_changed():
-            hass.config_entries.async_schedule_reload(entry.entry_id)
+            if entry_active():
+                hass.config_entries.async_schedule_reload(entry.entry_id)
+
+        @callback
+        def sync_mode_changed():
+            if entry_active():
+                coordinator.async_update_listeners()
 
         manager = SyncManager(
             coordinator.data or {},
@@ -1178,7 +1216,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             connect=connector,
             discover=discover_sync,
             on_topology_change=topology_changed,
-            on_mode_change=coordinator.async_update_listeners,
+            on_mode_change=sync_mode_changed,
         )
         bucket["sync_manager"] = manager
 
@@ -1194,13 +1232,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             # once. Deriving the same touched fields again here would count
             # one OFF as two independent observations, authorizing unsafe
             # Sleep cleanup. Return the already derived publication instead.
+            if not entry_active():
+                raise asyncio.CancelledError
             data = await manager.refresh()
+            if not entry_active():
+                raise asyncio.CancelledError
             return deepcopy(bucket.get("last_data") or data)
 
         coordinator.update_method = refresh_sync
 
         @callback
         def maintain(_now):
+            if not entry_active():
+                return
             expire_optimistic(hass, entry.entry_id)
             manager.maintenance()
 
@@ -1230,6 +1274,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        if not entry_active():
+            raise asyncio.CancelledError
     except Exception, asyncio.CancelledError:
         bucket["closing"] = True
         _cancel_sleep_expiry_task()
@@ -1261,6 +1307,7 @@ async def _update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> bool:
     """Unload a config entry."""
     bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    coordinator = bucket.get("coordinator")
     manager = bucket.get("sync_manager")
     try:
         unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
@@ -1277,8 +1324,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
             entry.entry_id,
         )
 
+    # Tear down the captured runtime. A replacement may have appeared while
+    # platform unload or manager shutdown awaited its own tasks.
+    if bucket.get("coordinator") is not coordinator:
+        return unload_ok
     if unload_ok:
         bucket["closing"] = True
+        cancel_post_write_refresh(bucket)
         if api := bucket.get("api"):
             api.suspend(auth=False)
         if task := bucket.get("sleep_expiry_task"):
@@ -1291,37 +1343,31 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
             cancel()
         await manager.close()
 
-    domain_bucket = hass.data.get(DOMAIN)
-    if domain_bucket is not None and entry.entry_id in domain_bucket:
-        bucket = domain_bucket[entry.entry_id]
-        cancel_sleep_expiry = bucket.get("sleep_expiry_task")
-        if cancel_sleep_expiry is not None and not cancel_sleep_expiry.done():
-            cancel_sleep_expiry.cancel()
-        notify_state = bucket.get("notify_state", {})
-        for dev_id, st in notify_state.items():
-            cancel = st.get("online_cancel")
-            if callable(cancel):
-                try:
-                    cancel()
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.debug(
-                        "Cancel handle failed during unload for config entry %s: %s",
-                        entry.entry_id,
-                        err,
-                    )
-            st["online_cancel"] = None
-            if unload_ok:
-                offline_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
-                persistent_notification.async_dismiss(hass, offline_nid)
-                persistent_notification.async_dismiss(hass, f"{offline_nid}:online")
+    if bucket.get("coordinator") is not coordinator:
+        return unload_ok
+    notify_state = bucket.get("notify_state", {})
+    for dev_id, st in notify_state.items():
+        cancel = st.get("online_cancel")
+        if callable(cancel):
+            try:
+                cancel()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Cancel handle failed during unload for config entry %s: %s",
+                    entry.entry_id,
+                    err,
+                )
+        st["online_cancel"] = None
+        if unload_ok and hass.data.get(DOMAIN, {}).get(entry.entry_id) is bucket:
+            offline_nid = f"{PN_KEY_PREFIX}{entry.entry_id}:{dev_id}"
+            persistent_notification.async_dismiss(hass, offline_nid)
+            persistent_notification.async_dismiss(hass, f"{offline_nid}:online")
 
-        # Preserve the lock map if platform unload failed: active entities
-        # may still be issuing commands against the retained entry bucket.
-        bucket.pop("pending_refresh", None)
-
-        if unload_ok:
-            bucket.pop("device_locks", None)
-            notify_state.clear()
+    if unload_ok:
+        bucket.pop("device_locks", None)
+        notify_state.clear()
+        domain_bucket = hass.data.get(DOMAIN, {})
+        if domain_bucket.get(entry.entry_id) is bucket:
             domain_bucket.pop(entry.entry_id, None)
             if not domain_bucket:
                 _NOTIFY_FMT_FALLBACK_LOGGED.clear()

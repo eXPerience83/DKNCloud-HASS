@@ -1051,9 +1051,10 @@ async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
     entry = dkn_config_entry_factory()
     entry.add_to_hass(hass)
     cancel = Mock()
+    pending_refresh = Mock()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "notify_state": {"device": {"online_cancel": cancel}},
-        "pending_refresh": object(),
+        "pending_refresh": pending_refresh,
         "device_locks": {"device": asyncio.Lock()},
     }
     original_lock = hass.data[DOMAIN][entry.entry_id]["device_locks"]["device"]
@@ -1071,7 +1072,8 @@ async def test_unload_platform_failure_retains_entry_bucket_and_cleans_timers(
     bucket = hass.data[DOMAIN][entry.entry_id]
     cancel.assert_called_once_with()
     assert bucket["notify_state"]["device"]["online_cancel"] is None
-    assert "pending_refresh" not in bucket
+    assert bucket["pending_refresh"] is pending_refresh
+    pending_refresh.assert_not_called()
     assert bucket["device_locks"]["device"] is original_lock
     assert original_lock.locked()
     original_lock.release()
