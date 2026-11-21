@@ -123,3 +123,82 @@ def test_grant_is_scoped_and_single_use(tmp_path, monkeypatch):
     lock.rmdir()
     with pytest.raises(FileExistsError):
         authorize(grant, directory, tmp_path, SCENARIOS[0], 780, ("unit", "site"))
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+async def test_schedule_through_loopback_tls(scenario, socket_enabled, tmp_path):
+    from aiohttp import web
+
+    from scripts.lab_tls_backend import SyntheticBackend
+    from scripts.protected_lab import LabSupervisor, create_gateway
+
+    plan = make_plan(scenario)
+    state = {
+        "id": "unit",
+        "online": True,
+        "mode": "3",
+        "cold_speed": 1,
+        "scenary": "occupied",
+        "power": plan.required_start_power,
+        "sleep_time": 30,
+    }
+    writes = []
+
+    class SleepBackend(SyntheticBackend):
+        async def handle(self, request):
+            if request.path == "/devices":
+                return web.json_response([state])
+            if request.method == "PUT":
+                body = await request.json()
+                writes.append(body)
+                state.update(body.get("device", body))
+                return web.json_response({})
+            if request.path == "/events":
+                event = (await request.json())["event"]
+                writes.append(event["option"])
+                state["power"] = event["value"]
+                return web.Response(status=204)
+            return await super().handle(request)
+
+    second = 0
+
+    async def wait(until):
+        nonlocal second
+        second = until
+
+    backend = await SleepBackend(tmp_path).start()
+    try:
+        supervisor = LabSupervisor(spacing=0, auth_limit=1, state_limit=30)
+        policy = SleepPolicy(
+            "unit", "site", plan.required_start_power, supervisor.deadline
+        )
+        gateway = await create_gateway(
+            policy, supervisor, connector=backend.connector()
+        )
+
+        async def request(label, method, path, *, params, body, structured):
+            async with gateway.request(
+                method, BASE + path, params=params, json=body
+            ) as response:
+                assert 200 <= response.status < 300
+                return await response.json() if structured else None
+
+        async with gateway.protected.session:
+            with gateway.enforce():
+                await measure(
+                    plan,
+                    request,
+                    supervisor.check,
+                    wait,
+                    lambda *a, **kw: None,
+                    "fixture",
+                    "fixture",
+                    "unit",
+                    "site",
+                    now=lambda: second,
+                )
+        assert gateway.protected.session.closed
+        assert writes == [SLEEP_TIME_PUT, SLEEP_PUT, "P1"]
+        assert second == plan.observation_seconds
+    finally:
+        await backend.close()

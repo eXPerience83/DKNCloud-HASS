@@ -44,7 +44,7 @@ POWER_ON = {
     "event": {
         "cgi": "modmaquina",
         "option": "P1",
-        "value": 1,
+        "value": "1",
         "device_id": "<APPROVED_DEVICE>",
     }
 }
@@ -52,7 +52,7 @@ POWER_OFF = {
     "event": {
         "cgi": "modmaquina",
         "option": "P1",
-        "value": 0,
+        "value": "0",
         "device_id": "<APPROVED_DEVICE>",
     }
 }
