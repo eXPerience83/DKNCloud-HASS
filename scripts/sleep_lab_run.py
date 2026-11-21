@@ -286,7 +286,10 @@ async def run(plan, journal, email, password, device, site):
             return
         heartbeat = time.monotonic()
         if command != b"ok":
-            log("physical", power=command.decode("ascii"))
+            try:
+                log("physical", power=command.decode("ascii"))
+            except OSError:
+                stop()
 
     def check():
         supervisor.check()
@@ -346,14 +349,13 @@ def main():
     parser.add_argument("--digest", action="store_true")
     parser.add_argument("--scenario", choices=SCENARIOS)
     parser.add_argument("--grant", type=Path)
-    parser.add_argument("--session-dir", type=Path)
     args = parser.parse_args()
     if args.digest:
         print(source_digest(ROOT))
         return 0
-    if not (args.scenario and args.grant and args.session_dir and sys.stdin.isatty()):
+    if not (args.scenario and args.grant and sys.stdin.isatty()):
         parser.error(
-            "Live execution requires a scenario, private grant, session directory and operator TTY"
+            "Live execution requires a scenario, private grant and operator TTY"
         )
     plan = make_plan(args.scenario)
     try:
@@ -367,7 +369,7 @@ def main():
             raise LabStopped("Operator declined")
         folder, lock = authorize(
             args.grant,
-            args.session_dir,
+            ROOT / "secrets/sleep-sessions",
             ROOT,
             plan.name,
             plan.hard_deadline_seconds,

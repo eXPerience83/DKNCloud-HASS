@@ -72,12 +72,12 @@ After approval, the owner creates a private JSON grant (0600) outside tracked
 paths. Supply exactly `approved` (true), `scenario`, `source_digest`,
 `device_id`, `installation_id`, `nonce` (64 lowercase random hex characters)
 and `expires_at` (timezone-aware ISO timestamp). Expiry must cover the full
-session and be at most 30 minutes away. Use the same owner-only, persistent
-session directory (0700) for every launch. The grant is consumed before login.
+session and be at most 30 minutes away. Create the fixed owner-only, persistent
+`secrets/sleep-sessions` directory (0700) before the first launch. The grant is consumed before login.
 An active lock left after a crash requires physical verification and owner
 clearance before removal. Never delete a consumed claim to retry.
 
-    .venv/bin/python -m scripts.sleep_lab_run --scenario off_sleep_then_on --grant "$grant_path" --session-dir "$session_dir"
+    .venv/bin/python -m scripts.sleep_lab_run --scenario off_sleep_then_on --grant "$grant_path"
 
 For B use `on_sleep_then_off` and a new grant. Launch in the supervising
 operator’s foreground terminal after isolating HA and all other writers.
