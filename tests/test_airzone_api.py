@@ -1144,6 +1144,45 @@ async def test_device_put_rejects_redirect_without_following(
     assert received == [f"{API_DEVICES}/dev1"]
 
 
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+async def test_power_post_never_follows_cloud_redirect(
+    hass, socket_enabled, aiohttp_server, monkeypatch, status
+):
+    """Do not redirect or replay a side-effecting P1 POST, even on 307/308."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    received = []
+
+    async def handler(request):
+        received.append((request.method, request.path))
+        await request.read()
+        if request.path == API_EVENTS:
+            return web.Response(
+                status=status, headers={"Location": "/replayed"}
+            )
+        return web.json_response({"unexpected": True})
+
+    await _serve_api(aiohttp_server, monkeypatch, "*", "/{path:.*}", handler)
+    api = AirzoneAPI(
+        "synthetic@example.invalid",
+        async_create_runtime_session(hass),
+        token="synthetic",
+    )
+    event = {
+        "event": {
+            "cgi": "modmaquina",
+            "option": "P1",
+            "value": "1",
+            "device_id": "synthetic",
+        }
+    }
+    with pytest.raises(HomeAssistantError):
+        await api.send_event(event)
+
+    assert received == [("POST", API_EVENTS)]
+
+
 async def test_entry_unload_detaches_runtime_session_and_cancels_pending_put(
     hass, socket_enabled, aiohttp_server, monkeypatch, dkn_config_entry_factory
 ):
