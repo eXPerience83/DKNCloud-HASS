@@ -2,7 +2,9 @@
 
 There is deliberately no network access, credential loading, or control API.
 Real execution requires a separately reviewed LAB runner and an expiring grant.
-"""\n\nfrom __future__ import annotations
+"""
+
+from __future__ import annotations
 
 import argparse
 import json
