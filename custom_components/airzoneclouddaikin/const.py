@@ -59,6 +59,8 @@ POST_WRITE_REFRESH_DELAY_SEC: float = 1.0
 
 # Uniform five-minute margin (Pusher and GET) for local Sleep monitoring
 SLEEP_TIMEOUT_GRACE_MINUTES = 5
+# Scene-only cleanup needs a separate short settling period after expiry.
+SLEEP_CLEANUP_SETTLE_SECONDS = 30
 
 # -------------------- UX: Persistent notifications (PR A) -----------------
 # Debounce to avoid flapping (seconds the device must remain offline
