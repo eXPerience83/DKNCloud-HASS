@@ -133,7 +133,8 @@ def make_plan(name: ScenarioName) -> Plan:
             required_start_scene="occupied",
             required_mode="fan_only (P2=3)",
             required_fan_speed=1,
-            steps=common + (
+            steps=common
+            + (
                 Step(
                     120,
                     "manual_power_off",

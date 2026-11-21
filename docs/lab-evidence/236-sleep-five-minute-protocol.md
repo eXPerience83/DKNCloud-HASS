@@ -1,8 +1,8 @@
-# Supervised DKN Sleep 5-minute experiments (offline preparation)
+# Supervised DKN Sleep 5-minute experiments (supervised protocol)
 
-**Issue:** #236. **Status:** OFFLINE PLANNER ONLY. No credentials are loaded and no HTTP requests or physical controls can be sent. Do not interpret this preparation as authorization for a live experiment.
+Issue #236. Live execution requires the owner’s explicit approval of the reviewed source and a fresh private grant for one trial.
 
-## Why a separate LAB is necessary
+## Existing LAB boundary
 
 The existing protected LAB explicitly blocks device control writes and terminates at 285/300 seconds. Trial A requires observation for at least 600 seconds after Sleep selection (plus orderly close). The expired, source-scoped grants from draft PR #223 are not reusable; #223 and #234 remain untouched. **Do not relax their limits or enable real destinations globally.**
 
@@ -14,7 +14,7 @@ The backend is known to leave raw scenary=sleep after a timed OFF. Two prior rea
 - Confirm raw scenary=occupied; select and physically validate FAN_ONLY (P2=3) with fan speed 1 **before** the timed session. If unsupported or unconfirmed, stop. Do not change P2/P3/P4 during the measurement.
 - Ensure that Home Assistant automations, its Sleep cleanup, mobile app clients and other controllers cannot issue competing commands. Any untracked write makes the outcome inconclusive.
 - Confirm sleep_time=5 is accepted and read back as 5 minutes; the ordinary UI's range is larger, so do not assume every model accepts five minutes.
-- Capture sanitized raw GET/PUSH fields and separately recorded physical state. Do not infer backend action solely from an HA optimistic overlay.
+- Capture allowlisted REST fields and separately recorded physical state. This protocol opens no PUSH channel. Do not infer backend action solely from an HA optimistic overlay.
 
 ## Trial A: Sleep while OFF, ON at t=240 seconds
 
@@ -52,23 +52,93 @@ Classify: **B1** raw backend occupied without any external scene write; **B2** r
 
 Proposed hard ceiling: 570 seconds including supervised close, subject to separate approval.
 
-## Safety and evidence for a future real runner
+## NAS launch after review
 
-The live runner is **NOT implemented in this PR**. Before one could be used, it must be independently reviewed and require a new human-approved, short-lived, **source- and device-bound grant for each trial**. Reuse the existing protected LAB's deny-by-default design, no uncontrolled network paths, exact operation allowlists, redirect prohibition, quotas, deadlines, cancellation/cleanup tests and read/write event separation; implement trial-specific limits without weakening the normal LAB.
+Use the checkout and pinned virtual environment in the existing Remote Dev
+container. The existing Git-ignored `secrets/dkn.env` must be a regular file owned
+by the operator with mode 0600. The runner reads the existing
+`AIRZONE_USERNAME` and `AIRZONE_PASSWORD` directly into process memory, and
+requires `AIRZONE_DEVICE_ID` and `AIRZONE_INSTALLATION_ID` in the same file.
+If scope is absent, the owner must configure it locally before approval. There
+is no real discovery run for obtaining scope. No shell sourcing, credential
+arguments, credential copies, or subprocess environment variables are needed.
 
-Allowed during each measured phase: one sleep_time=5 PUT, one Sleep scene PUT, one approved P1 (ON for A, OFF for B), bounded raw GET/PUSH observations. Mode/fan setup and safe restoration require separately approved scopes. **Never automatically retry an ambiguous control write**. Stop on 401/429/5xx, unknown dispatch outcome, unsupported firmware, wrong initial state, loss of observer, unexpected scene/mode, competing writes, quota/deadline, or security gate failure.
+Preview the plans and obtain the reviewed source digest offline.
 
-After the observation closes, the operator confirms physical OFF and scene occupied, using an independently approved cleanup if necessary. An uncertain cleanup is never automatically replayed; record cleanup_unverified until physically corroborated.
+    .venv/bin/python -m scripts.sleep_lab_plan --scenario both
+    .venv/bin/python -m scripts.sleep_lab_run --digest
 
-Store only redacted timestamps, HTTP statuses and raw non-sensitive state fields. Distinguish dispatch vs acknowledgment, GET request vs receipt and physical vs PUSH vs REST observations.
+After approval, the owner creates a private JSON grant (0600) outside tracked
+paths. Supply exactly `approved` (true), `scenario`, `source_digest`,
+`device_id`, `installation_id`, `nonce` (64 lowercase random hex characters)
+and `expires_at` (timezone-aware ISO timestamp). Expiry must cover the full
+session and be at most 30 minutes away. Use the same owner-only, persistent
+session directory (0700) for every launch. The grant is consumed before login.
+An active lock left after a crash requires physical verification and owner
+clearance before removal. Never delete a consumed claim to retry.
 
-## Offline preview and validation
+    .venv/bin/python -m scripts.sleep_lab_run --scenario off_sleep_then_on --grant "$grant_path" --session-dir "$session_dir"
 
-Run from the repository root:
+For B use `on_sleep_then_off` and a new grant. Launch in the supervising
+operator’s foreground terminal after isolating HA and all other writers.
+Confirm the physical baseline and exclusivity by typing the scenario name.
+Enter `ok`, `on`, or `off` at least every 30 seconds. Use `on` or `off`
+when you physically observe a transition and at the end of the observation.
+The runner cancels at 45 seconds without input or on EOF. Enter `stop` or
+press Ctrl-C to end the session. SIGTERM also requests cancellation.
 
-    python -m scripts.sleep_lab_plan --scenario both
-    python -m pytest -q tests/test_sleep_lab_plan.py
+## Operation budget and evidence
 
-The runner has no network imports, does not read credentials, and rejects any attempt to pass --real. A live run remains **blocked** until a separate guarded implementation, CI/security review and explicit device/command authorization.
+The shared LAB gateway enforces a single TLS session with no HTTP redirects,
+proxy environment, WebSocket, or alternate transport. The Sleep policy admits
+only these operations on the DKN hostname.
 
-**Decision gate:** collect evidence and revisit #234's Sleep policy only afterward. Keep #191/#121 release and physical acceptance separate.
+| Requests | Operation |
+|---|---|
+| 1 login | POST /users/sign_in |
+| 1 discovery read | GET /installation_relations. Require exactly the approved installation. |
+| A 22 / B 15 device reads | GET /devices with the approved installation ID. Require exactly the approved device. |
+| 1 write | PUT /devices/{approved device} with `{"sleep_time":5}`, then confirm by GET. |
+| 1 write | PUT /devices/{approved device} with `{"device":{"scenary":"sleep"}}` at t0. |
+| 1 write | POST /events with `cgi=modmaquina`, `option=P1`, the approved device, and string `value="1"` for A or `"0"` for B. |
+
+The ceiling is one auth and 30 state requests in either trial, with three
+ordered writes and at least 10 seconds between state requests. Preflight
+steps run sequentially before t0. A lasts through t=600 with a 780-second
+hard ceiling from session start. B lasts through t=390 with a 570-second
+ceiling. Poll every 30 seconds after t0, omitting the poll in the P1 slot.
+Readback follows HTTP acceptance and the normal spacing rule. Timing and
+power-off classification must allow for polling and HTTP latency.
+
+The private JSONL journal records operation attempts before submission, HTTP
+status when available, monotonic offsets, allowlisted REST values and separate
+physical entries. Map session offsets to t0 using the t0 record. The journal
+excludes identifiers, URLs, tokens, credentials and raw payloads. There is
+no PUSH evidence in this run. An attempt without a definitive outcome is
+ambiguous and must never be replayed automatically.
+
+Any HTTP failure, malformed required response, scope or baseline mismatch,
+observer loss, cancellation or deadline ends the session. An unexpected
+physical observation or suspected external writer requires the operator to
+stop and mark the trial inconclusive. Treat a successful power HTTP response
+as acknowledgment only. If neither physical observation nor readback shows
+the intended transition, treat the evidence as inconclusive.
+
+## Physical stop and restore
+
+On failure or at the end of observation, verify physically and turn the unit
+OFF using its local control if needed. After the journal closes, restore
+`occupied` using separately approved manual control, confirm OFF and
+`occupied`, then restore HA and other clients. A command already in flight
+may still land after cancellation. Watch for delayed changes and record
+unverified cleanup separately. Cleanup is outside the measured session and
+its commands are excluded from the runner.
+
+## Offline validation
+
+    .venv/bin/python -m pytest -q tests/test_sleep_lab_plan.py tests/test_sleep_lab_run.py tests/test_lab_policy.py tests/test_protected_lab.py
+
+The synthetic timeline tests exercise both schedules and stop paths without the
+NAS file or real network. The existing gateway tests cover the shared
+transport. Real operation remains pending owner approval. The result will
+inform #234.
