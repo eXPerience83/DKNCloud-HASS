@@ -1180,6 +1180,40 @@ async def test_power_post_never_follows_cloud_redirect(
     assert received == [("POST", API_EVENTS)]
 
 
+
+@pytest.mark.parametrize("status", [300, 304, 307])
+async def test_p1_post_rejects_unacknowledged_final_status_without_location(
+    hass, socket_enabled, aiohttp_server, monkeypatch, status
+):
+    """Only 2xx may acknowledge modmaquina; Location is not required."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    calls = []
+
+    async def handler(request):
+        calls.append(request.path)
+        await request.read()
+        return web.Response(status=status)
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    api = AirzoneAPI(
+        "synthetic@example.invalid",
+        async_create_runtime_session(hass),
+        token="synthetic",
+    )
+    event = {
+        "event": {
+            "cgi": "modmaquina",
+            "device_id": "synthetic",
+            "option": "P1",
+            "value": "1",
+        }
+    }
+    with pytest.raises(HomeAssistantError):
+        await api.send_event(event)
+    assert calls == [API_EVENTS]
+
+
 async def test_entry_unload_detaches_runtime_session_and_cancels_pending_put(
     hass, socket_enabled, aiohttp_server, monkeypatch, dkn_config_entry_factory
 ):

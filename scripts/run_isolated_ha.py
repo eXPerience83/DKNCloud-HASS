@@ -170,7 +170,7 @@ with tempfile.TemporaryDirectory(prefix="dkn-ha-", dir=temporary_root) as tempor
             if not summary.get("tls_fallback") or not summary.get("tls_reconnected"):
                 sys.exit(1)
         expected = {
-            "sleep": "forbidden_operation",
+            "sleep": "duration",
             "duration": "duration",
             "authorization": "duration",
             "get": "duration",

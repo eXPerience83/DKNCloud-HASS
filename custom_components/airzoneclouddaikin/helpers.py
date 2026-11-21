@@ -42,8 +42,8 @@ from .const import (
     POST_WRITE_REFRESH_DELAY_SEC,
     SCENARY_HOME,
     SCENARY_SLEEP,
-    SLEEP_CLEANUP_SETTLE_SECONDS,
     SCENARY_VACANT,
+    SLEEP_CLEANUP_SETTLE_SECONDS,
 )
 
 OptimisticEntry = dict[str, dict[str, dict[str, Any]]]
@@ -670,7 +670,7 @@ async def async_auto_exit_sleep_if_needed(
                 device_id,
                 SCENARY_HOME,
                 retry=False,
-                **({"on_start": check_dispatch} if is_current is not None else {}),
+                on_start=check_dispatch,
             )
         except CommandSuperseded:
             if active_entry_bucket(hass, entry_id, coordinator) is bucket:

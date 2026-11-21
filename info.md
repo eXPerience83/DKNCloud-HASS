@@ -92,42 +92,47 @@ stopping.
 Migration logs do not include normalized account email addresses; persisted
 config-entry identifiers remain unchanged.
 
-### Sleep session cleanup and one-shot re-arm (draft #190)
+### Sleep timer, scene cleanup and explicit re-arm (#197 / #234)
 
-The backend can leave raw `scenary=sleep` after a natural OFF. Two supervised
-real five-minute Sleep cycles independently confirmed that guarded cleanup to
-`occupied` allowed the following Sleep timer to run and end normally, with
-no intervening manual Home command. The owner's final physical OFF observation
-corroborated the cloud/HA state.
+The A/C/revised-B supervised experiments support a timer starting when
+`scenary=sleep` is selected. An intermediate physical, remote or HA OFF
+does not cancel that timer; a later ON before expiry may continue the
+original countdown. At expiry the unit may turn OFF while retaining raw
+Sleep. These observations are not a universal firmware guarantee.
 
-Automatic cleanup is **enabled by default** and can be disabled by the
-`sleep_cleanup_enabled` option. A session-consistent ON followed by two
-independent applied OFF reports authorizes one serialized, non-retried
-`occupied` write. The first OFF requests bounded readback. No elapsed-time
-condition authorizes an automatic scene or power write.
+Sleep selection is **independent of P1**: neither activation, an early OFF,
+a later ON nor compatible mode/fan/setpoint edits force a scene change.
+Repeated Sleep while the timer is still valid is idempotent.
 
-If automatic cleanup is disabled and the backend remains in raw Sleep while
-reported OFF, an **explicit** new Sleep selection uses `occupied → sleep`
-to rearm the one-shot scene. Both commands have automatic retries disabled.
-An ambiguous or failed second command cannot be assumed to have restarted the
-timer; recovery readback is requested. Explicit Home and HA wake commands can
-also exit raw Sleep. Setpoint, fan and supported mode changes during active
-Sleep preserve the scene.
+Optional auto-cleanup is enabled by default. Only the original estimated
+deadline **plus 30 seconds of settling**, followed by **two distinct, fresh,
+independent OFF observations received after that threshold**, can authorize
+one serialized `scenary=occupied` PUT (no P1). This also works if Sleep
+started and stayed OFF. Repeated PUSH payloads, one reused GET, maintenance
+and retained snapshots never count as two. An ON after expiry prevents
+automatic cleanup until the device later reports corroborated OFF.
+The separate five-minute grace is for read-only `sleep_overdue`, not
+permission to change scene or power.
 
-The old `sleep_timeout_enabled` local effective-Home display was retired.
-The shared five-minute margin is used **only** for the read-only ON-overdue
-diagnostic. A reliable local session start and two fresh ON reports after the
-deadline are required, and no power/scene action follows from the diagnostic.
-Diagnostics exports include only aggregated anomaly counts, current count,
-and the last detection timestamp, **without device IDs**; these counters are
-kept since the current HA integration startup, not across HA restarts.
-A timer edit or unknown session start invalidates the deadline inference.
-Remote reports can be stale even when retrieved through a later GET.
+Automatic rearm is forbidden while a timer may still be active. After verified
+completion with raw Sleep retained, a **new explicit** Sleep request may
+transition `occupied → confirm by readback → sleep`, with non-retried
+PUTs; ambiguous scene writes remain pending until readback. Explicit
+Home/Away may cancel any time. An HA ON from a Sleep with unknown expiry
+preserves the scene.
 
-Manual early OFF and an ON that persists beyond the deadline were not
-provoked on real equipment; both have synthetic coverage. Live corrective
-actions on an overdue-ON anomaly are intentionally deferred until observed
-physical evidence supports a safe policy.
+Home Assistant stores only the minimum accepted Sleep session metadata in its
+per-entry local Store. A restored session must be contrasted against newly
+received backend scene/duration and uses conservative cleanup timing; a
+first-seen remote Sleep has a startup-based upper-bound estimate, not a
+proven backend start. The two diagnostic sensors show estimated remaining
+minutes and expected end (timestamp, with provenance), updating locally
+without extra INFO/GET or minute-by-minute storage writes. Reaching zero
+is not evidence that power turned OFF.
+
+`sleep_timeout_enabled`'s former effective-Home display has been removed.
+Telemetry and backend control acknowledgements remain asynchronous.
+The post-natural-OFF rearm physical experiment F has **not** been performed.
 
 ### Automatic synchronization policy (not a backend contract)
 
@@ -345,24 +350,20 @@ curl -sS --compressed \
 
 ### Sleep exit coordination (not a backend contract)
 
-Automatic confirmed-OFF cleanup and active-control preparation serialize scene
-exits with manual writes. They recheck current state and scene revisions after
-acquiring the lock. Automatic Home writes are never replayed after ambiguous
-results; readback requests are budgeted. HTTP acceptance alone does not prove
-physical application. The older optional expired-Home UI view is not authority
-for an automatic scene write.
-Pending exit state is runtime-local. Restarted HA does not know when an already
-active physical Sleep timer began; do not raise a deadline anomaly from that
-assumption. The shared monitoring margin is **five minutes** for both INFO/Pusher
-and GET paths; an ON beyond that deadline requests one recovery and requires two
-post-deadline fresh ON reports before being shown as a *reported* diagnostic,
-without sending an OFF or Home command. Automatic Sleep exit uses no API retry;
-other manual commands follow the shared API policy: bounded short 429 retries,
-never automatic replay after an ambiguous timeout or HTTP 5xx.
+Climate, Switch and the coordinator use the same per-device write locks,
+entry lifetime fences and latest-intent revisions. A Sleep OFF report before
+the original deadline **never** triggers occupied cleanup. Only independently
+verified post-expiry OFF observations allow a scene-only Home request, with
+no automatic replay of an ambiguous command and no implicit P1.
+Any accepted scene PUT remains unverified until a fresh readback establishes
+the backend scene.
 
-A non-Sleep backend observation retires a pending exit marker. A new explicit
-Sleep selection re-arms local tracking; an older discarded cleanup must not
-disarm that new selection. This does not establish physical timing.
+Restored and remote-only sessions keep a conservative deadline because another
+application may have rearmed Sleep during an HA outage. The read-only ON-overdue
+diagnostic uses a separate five-minute grace and two fresh ON observations.
+The local estimated-time sensors do not request extra backend reads or write
+the Store each minute. An explicit Home/Away can cancel immediately; a
+repeated active Sleep cannot restart the timer.
 
 ## 3) Event Model (Px options) — Consolidated Table
 
@@ -642,12 +643,12 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 ### Sleep session behavior and cleanup (integration behavior)
 
 Observed backend behavior (see the supervised A/C/revised-B experiments in
-\`docs/lab-evidence/236-sleep-live-results.md\` and the approved policy in
-\`docs/decisions/197-sleep-backend-evidence-and-policy.md\`):
+`docs/lab-evidence/236-sleep-live-results.md` and the approved policy in
+`docs/decisions/197-sleep-backend-evidence-and-policy.md`):
 - The Sleep countdown is consistent with starting at the **accepted Sleep scene selection**,
   not at P1 ON. An OFF before the expected deadline did not necessarily cancel it; later
   P1 ON before expiry continued the original countdown in revised B.
-- The unit may turn OFF at timer expiry while retaining raw \`scenary="sleep"\`.
+- The unit may turn OFF at timer expiry while retaining raw `scenary="sleep"`.
   PUSH and GET are asynchronous observations, not exact physical transition times.
   Neither INFO causality nor a post-natural-OFF rearm has been established.
 - These are observations of one supervised device, not a universal firmware guarantee.
@@ -656,7 +657,7 @@ Home Assistant policy:
 - Selecting Sleep never sends P1 implicitly. OFF/ON, mode, compatible fan and setpoint
   edits during a running or uncertain Sleep session preserve its scene and original deadline.
   Re-selecting Sleep during that session is idempotent.
-- Optional automatic cleanup (\`sleep_cleanup_enabled\`, enabled by default) is **scene-only**:
+- Optional automatic cleanup (`sleep_cleanup_enabled`, enabled by default) is **scene-only**:
   after the original estimated expiry **plus 30 seconds of settling**, require two
   independent newly applied OFF observations, both received after that threshold,
   with the same current Sleep session, unchanged duration and no competing intent.
@@ -664,9 +665,9 @@ Home Assistant policy:
   twice, cached maintenance and stale snapshots do not. Sleep started while OFF
   and never turned ON follows the same rule.
 - An OFF before expiry never authorizes an automatic occupied PUT. If power remains
-  ON after expiry, do not force P1 OFF or Home; report the read-only \`sleep_overdue\`
+  ON after expiry, do not force P1 OFF or Home; report the read-only `sleep_overdue`
   anomaly only after its separate **five-minute** grace and fresh corroborated ON.
-- On eligible cleanup send **one non-retried \`scenary=occupied\` PUT**, no P1, and
+- On eligible cleanup send **one non-retried `scenary=occupied` PUT**, no P1, and
   require independent scene readback; HTTP 2xx is acceptance, not backend convergence.
   Manual Home/Away may cancel Sleep immediately.
 - Two read-only diagnostic sensors expose estimated remaining minutes and expected

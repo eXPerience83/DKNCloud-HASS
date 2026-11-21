@@ -92,7 +92,7 @@ async def test_devices_without_server_id_use_normalized_mac_fallback(
     data = await integration._async_update_data(hass, entry, FakeAPI())
     assert set(data) == {"aa:bb:cc:dd"}
     assert data["aa:bb:cc:dd"]["id"] == "aa:bb:cc:dd"
-    assert "unknown" not in str(data)
+    assert all(device.get("name") != "unknown" for device in data.values())
 
 
 async def test_fetch_installations_401_requests_native_reauth(

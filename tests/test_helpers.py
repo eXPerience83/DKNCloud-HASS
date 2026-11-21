@@ -112,9 +112,11 @@ class DummyApi:
         self.calls: list[tuple[str, str]] = []
 
     async def async_set_scenary(
-        self, device_id: str, scenary: str, *, retry=True
+        self, device_id: str, scenary: str, *, retry=True, on_start=None
     ) -> None:
-        """Record a scenary write."""
+        """Record a scenary write after its dispatch fence."""
+        if on_start is not None:
+            on_start()
         self.calls.append((device_id, scenary))
 
 
@@ -453,9 +455,11 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
         # Old GET scene plus unrelated partial push must not replay HOME.
         device["local_temp"] = "23"
         await exit_sleep()
-        api.async_set_scenary.assert_awaited_once_with(
-            "device", "occupied", retry=False
-        )
+        api.async_set_scenary.assert_awaited_once()
+        args, kwargs = api.async_set_scenary.await_args
+        assert args == ("device", "occupied")
+        assert kwargs["retry"] is False
+        assert callable(kwargs["on_start"])
         assert (
             hass.data[DOMAIN]["entry"]["sleep_exit_pending"]["device"] == "unverified"
         )
@@ -589,7 +593,7 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
 
     from custom_components.airzoneclouddaikin import _derive_state
 
-    entry = SimpleNamespace(entry_id="known", options={})
+    entry = SimpleNamespace(entry_id="known", options={"sleep_cleanup_enabled": False})
     manager = Mock()
     hass.data.setdefault(DOMAIN, {})["known"] = {"sync_manager": manager}
     home = {"device": {"scenary": "occupied", "power": "1", "sleep_time": 30}}

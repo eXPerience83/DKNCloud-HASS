@@ -125,14 +125,14 @@ The revised B real trial demonstrated that a physical OFF followed by remote ON 
 
 ## 6. Review/implementation gate
 
-This is **the intended behavior**, not a claim that the current PR #234 implements it. Current code in `__init__._derive_state` and `helpers.async_auto_exit_sleep_if_needed(reason="expiry")` explicitly requires `tracking.observed_on`, and `climate.async_turn_on` / `switch._fallback_set_power` may prepare occupied from OFF Sleep. Those paths need work; do not merge #234 based only on this document.
+The branch for PR #234 now contains an implementation of the approved policy, including the independent expiry deadline, OFF-only path and preserved Sleep on an intermediate ON. This documentation does **not** certify that implementation: the current/minimum HA tests, protected LAB smoke, CodeRabbit and an independent cross-module review must pass for the exact final SHA. Do not merge #234 based only on this document.
 
 The actual physical evidence is preserved in its original lab report on draft #237. Trial F remains **deferred**, no permission for an additional real command is implied. When the code implementation is ready, re-run HA current/minimum, protected LAB smoke, CI and CodeRabbit, then conduct independent whole-series audit of #231–#234 before final closeout of #197.
 
 
 ## 7. Follow-up: time-remaining diagnostics and restart recovery (2026-11-21)
 
-This is a **design refinement** following the owner's request, superseded for re-selection by the owner's later decision to **preserve the active Sleep countdown**. Sensor/storage details are proposed engineering choices, not yet implemented or proven backend behavior.
+This section records the approved engineering design after the owner chose to **preserve the active Sleep countdown**. Timer diagnostic and HA Store code is now implemented on PR #234 but remains unaccepted until regression tests and final code review pass. Neither the sensors nor persisted estimates are proven backend timer fields.
 
 ### 7A. Read-only timer diagnostics
 

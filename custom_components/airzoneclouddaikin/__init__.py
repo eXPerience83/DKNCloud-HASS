@@ -530,6 +530,12 @@ def _derive_state(
             bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
+        power_overlay = bucket.get("optimistic", {}).get(dev_id, {}).get("power")
+        optimistic_power_on = bool(
+            isinstance(power_overlay, dict)
+            and power_overlay.get("expires", 0) > hass.loop.time()
+            and str(power_overlay.get("value")).lower() in {"1", "true", "on"}
+        )
         previously_persisted = (
             tracking.confidence in {"local_ack", "restored"}
             and tracking.sleep_started_at_utc is not None
@@ -665,6 +671,7 @@ def _derive_state(
                     and evidence != tracking.last_off_evidence
                     and dev_id not in bucket.get("uncertain_power", {})
                     and dev_id not in bucket.get("sleep_exit_pending", {})
+                    and not optimistic_power_on
                 ):
                     power_revision = bucket.get("power_intents", {}).get(dev_id, 0)
                     if (
@@ -695,6 +702,7 @@ def _derive_state(
             and cleanup_due is not None
             and now >= cleanup_due
             and _backend_power_is_off(dev)
+            and not optimistic_power_on
             and tracking.expiry_power_revision
             == bucket.get("power_intents", {}).get(dev_id, 0)
         )
@@ -710,7 +718,8 @@ def _derive_state(
             else None
         )
         if (
-            cleanup_due is not None
+            entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True)
+            and cleanup_due is not None
             and now >= cleanup_due
             and not tracking.expiry_probe_requested
         ):
@@ -915,15 +924,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             for device_id, rec in records.items():
                 if not isinstance(device_id, str) or not isinstance(rec, dict):
                     continue
-                started = dt_util.parse_datetime(str(rec.get("started_utc", "")))
+                try:
+                    started = dt_util.parse_datetime(
+                        str(rec.get("started_utc", ""))
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    continue
                 minutes = rec.get("duration_minutes")
                 generation = rec.get("generation")
                 if (
                     started is None
                     or started.tzinfo is None
-                    or not isinstance(minutes, int)
+                    or type(minutes) is not int
                     or not 0 < minutes <= 1440
-                    or not isinstance(generation, int)
+                    or type(generation) is not int
                     or generation < 1
                     or started > dt_util.utcnow()
                 ):
@@ -955,7 +969,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             }
             return {"entry_id": entry.entry_id, "sessions": records}
 
-        sleep_store.async_delay_save(snapshot, 1)
+        try:
+            sleep_store.async_delay_save(snapshot, 1)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Unable to queue Sleep metadata (%s)", type(err).__name__
+            )
 
     bucket["save_sleep_sessions"] = save_sleep_sessions
     cfg = entry.data

@@ -675,7 +675,10 @@ async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
         release.set()
 
     await asyncio.wait_for(task, timeout=3)
-    api.async_set_scenary.assert_awaited_once_with("unit-1", "occupied", retry=False)
+    api.async_set_scenary.assert_awaited_once()
+    assert api.async_set_scenary.await_args.args == ("unit-1", "occupied")
+    assert api.async_set_scenary.await_args.kwargs["retry"] is False
+    assert callable(api.async_set_scenary.await_args.kwargs["on_start"])
     assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
     manager.request_recovery.assert_not_called()
     entity.async_write_ha_state.assert_not_called()
@@ -776,7 +779,11 @@ async def test_second_sleep_rearm_failure_preserves_home_and_requests_readback(
         hass.data[DOMAIN]["climate-entry"]["sleep_exit_pending"]["unit-1"]
         == "unverified"
     )
-    assert hass.data[DOMAIN]["climate-entry"].get("sleep_tracking") is None
+    # Failed second PUT cannot certify a new session. The original record
+    # remains pending fresh backend scene confirmation.
+    record = hass.data[DOMAIN]["climate-entry"]["sleep_tracking"]["unit-1"]
+    assert record.expiry_verified
+    assert record.session_revision == 0
 
 
 async def test_later_queued_preset_runs_after_earlier_write_commits(
@@ -823,12 +830,7 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
     entity.coordinator.data["unit-1"].update(
         sleep_off_confirmed=True,
     )
-    # The automatic cleanup now requires session-owned ON/OFF evidence
-    # inside the device lock; a bare coordinator flag is intentionally unsafe.
-    from homeassistant.util import dt as dt_util
-
-    from custom_components.airzoneclouddaikin import SleepTracking
-
+    # A bare coordinator flag is unsafe; use a verified expiry fixture.
     _arm_current_sleep_off_evidence(hass)
     _confirm_rearm_home_readback(entity)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -854,19 +856,18 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
     await asyncio.wait_for(entered.wait(), timeout=2)
     manual_sleep = asyncio.create_task(entity.async_set_preset_mode("sleep"))
     await asyncio.sleep(0)
-    try:
-        assert not manual_sleep.done()
-    finally:
-        release.set()
+    # Repeating the same raw Sleep while cleanup awaits a response is
+    # idempotent; it must not queue a new timer or bypass scene readback.
+    assert manual_sleep.done()
+    release.set()
     await asyncio.wait_for(asyncio.gather(cleanup, manual_sleep), timeout=3)
 
-    api.async_set_scenary.assert_awaited_once_with("unit-1", "occupied", retry=False)
-    # With cached raw Sleep, a manual rearm still uses occupied → sleep.
-    assert [
-        call.args[1]["device"]["scenary"]
-        for call in api.put_device_fields.await_args_list
-    ] == ["sleep"]
-    assert entity.preset_mode == "sleep"
+    api.async_set_scenary.assert_awaited_once()
+    assert api.async_set_scenary.await_args.args == ("unit-1", "occupied")
+    assert api.async_set_scenary.await_args.kwargs["retry"] is False
+    assert callable(api.async_set_scenary.await_args.kwargs["on_start"])
+    api.put_device_fields.assert_not_awaited()
+    assert entity.preset_mode == "home"
     # The automatic Home path schedules a one-second coordinator refresh
     # without a live SyncManager. The official HA harness requires this
     # fixture-owned timer to be cancelled at test teardown.
@@ -2545,7 +2546,32 @@ async def test_queued_intermediate_power_intent_never_dispatches(
     assert not bucket.get("uncertain_power")
 
 
-@pytest.mark.parametrize("scene", ["vacant", "sleep", "vacant_to_sleep"])
+async def test_newer_off_supersedes_queued_on_during_active_sleep(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """New OFF supersedes a queued P1 ON; no occupied scene is sent."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch,
+        power="0", scenary="sleep",
+    )
+    lock = acquire_device_lock(hass, entity._entry_id, "unit-1")
+    await lock.acquire()
+    try:
+        on = asyncio.create_task(entity.async_turn_on())
+        await asyncio.sleep(0)
+        off = asyncio.create_task(entity.async_turn_off())
+        await asyncio.sleep(0)
+    finally:
+        lock.release()
+    await asyncio.wait_for(asyncio.gather(on, off), 3)
+    api.put_device_fields.assert_not_awaited()
+    api.send_event.assert_not_awaited()
+    assert entity._device["scenary"] == "sleep"
+
+
+@pytest.mark.parametrize("scene", ["vacant", "vacant_to_sleep"])
 async def test_newer_off_stops_wake_scene_before_it_dispatches(
     hass, dummy_coordinator_factory, monkeypatch, scene
 ):

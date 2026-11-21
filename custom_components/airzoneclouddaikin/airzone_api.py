@@ -274,7 +274,7 @@ class AirzoneAPI:
                 **({"data": data} if data is not None else {}),
                 **({"trace_request_ctx": on_dispatch} if on_dispatch else {}),
             ) as resp:
-                if mutating_request and 300 <= resp.status < 400:
+                if mutating_request and not 200 <= resp.status < 300:
                     raise ClientResponseError(resp.request_info, (), status=resp.status)
                 resp.raise_for_status()
                 if status_only_control and 200 <= resp.status < 300:
