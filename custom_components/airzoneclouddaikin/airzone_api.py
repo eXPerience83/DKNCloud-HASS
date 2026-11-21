@@ -237,11 +237,11 @@ class AirzoneAPI:
         event = (json or {}).get("event")
         # Only the effectful cloud commands need a redirect fence. Keep
         # authentication and read-only INFO requests on their existing path.
-        mutating_request = (
-            (method == "PUT" and path.startswith(f"{API_DEVICES}/"))
-            or (method == "POST" and path == API_EVENTS
-                and isinstance(event, dict)
-                and event.get("cgi") == "modmaquina")
+        mutating_request = (method == "PUT" and path.startswith(f"{API_DEVICES}/")) or (
+            method == "POST"
+            and path == API_EVENTS
+            and isinstance(event, dict)
+            and event.get("cgi") == "modmaquina"
         )
         status_only_control = (
             method == "POST"
