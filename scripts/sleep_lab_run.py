@@ -9,43 +9,40 @@ import signal
 import stat
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
-from aiohttp import ClientTimeout
+from aiohttp import ClientOSError, ClientTimeout, ServerDisconnectedError
 
+from custom_components.airzoneclouddaikin import _is_online
 from scripts.lab_policy import ReadOnlyPolicy
 from scripts.protected_lab import LabStopped, LabSupervisor, create_gateway
-from scripts.sleep_lab_grant import authorize, source_digest
-from scripts.sleep_lab_plan import SLEEP_PUT, SLEEP_TIME_PUT, make_plan
+from scripts.sleep_lab_grant import authorize, private_json, source_digest
+from scripts.sleep_lab_plan import SCENARIOS, SLEEP_PUT, SLEEP_TIME_PUT, make_plan
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "https://dkn.airzonecloud.com"
-SCENARIOS = ("off_sleep_then_on", "on_sleep_then_off")
+
+
+def power_payload(step, device):
+    return {"event": step.payload["event"] | {"device_id": device}}
 
 
 class SleepPolicy(ReadOnlyPolicy):
     """Exact REST scope, with the existing transport and no WebSockets."""
 
-    def __init__(self, device, site, power, deadline):
+    def __init__(self, device, site, plan, deadline):
         super().__init__({device}, {site}, "", enabled=True)
         self.deadline = deadline
         self.device, self.site = device, site
         self.writes = [
             ("PUT", f"/devices/{device}", SLEEP_TIME_PUT),
             ("PUT", f"/devices/{device}", SLEEP_PUT),
-            (
-                "POST",
-                "/events",
-                {
-                    "event": {
-                        "cgi": "modmaquina",
-                        "option": "P1",
-                        "value": str(1 - power),
-                        "device_id": device,
-                    }
-                },
-            ),
         ]
+        if plan.intervention.control:
+            self.writes.append(
+                ("POST", "/events", power_payload(plan.intervention, device))
+            )
         self.written = 0
         self.login = 0
         self.discovery = 0
@@ -80,6 +77,7 @@ class SleepPolicy(ReadOnlyPolicy):
         if (
             self.written < len(self.writes)
             and (method, path, json) == self.writes[self.written]
+            and ("sleep_time" not in json or type(json["sleep_time"]) is int)
         ):
             return
         raise PermissionError("Operation denied")
@@ -100,6 +98,7 @@ def scoped_row(value, wrapper, identity, expected):
         not isinstance(rows, list)
         or len(rows) != 1
         or not isinstance(rows[0], dict)
+        or type(rows[0].get(identity)) not in {str, int}
         or str(rows[0].get(identity)) != expected
     ):
         raise LabStopped("Scope mismatch")
@@ -107,7 +106,17 @@ def scoped_row(value, wrapper, identity, expected):
 
 
 async def measure(
-    plan, request, check, wait, log, email, password, device, site, now=time.monotonic
+    plan,
+    request,
+    check,
+    wait,
+    log,
+    email,
+    password,
+    device,
+    site,
+    now=time.monotonic,
+    panel_off=None,
 ):
     """Execute the fixed timeline with injectable timing and transport for tests."""
 
@@ -145,20 +154,24 @@ async def measure(
             key: str(row.get(key))
             for key in ("power", "mode", "cold_speed", "scenary", "sleep_time")
         }
+        online = (
+            _is_online(row, datetime.now(UTC))
+            if row.get("connection_date")
+            else (str(row.get("online")).lower() in {"true", "1"})
+        )
         if (
             state["power"] not in {"0", "1"}
-            or state["mode"] not in {"3", "8"}
-            or state["cold_speed"] != "1"
+            or state["mode"] != plan.required_mode
+            or state["cold_speed"] != str(plan.required_fan_speed)
             or state["scenary"] not in {"occupied", "sleep"}
-            or not state["sleep_time"].isascii()
-            or not state["sleep_time"].isdigit()
-            or str(row.get("online")).lower() not in {"true", "1"}
+            or not re.fullmatch(r"[0-9]{1,4}", state["sleep_time"])
+            or not online
         ):
             raise LabStopped("Unexpected device state")
         log(
             "rest",
-            **{key: state[key] for key in state if key != "sleep_time"},
-            duration_five=state["sleep_time"] == "5",
+            **state,
+            online=online,
         )
         return state
 
@@ -173,33 +186,33 @@ async def measure(
             raise LabStopped("Precondition failed")
 
     path = f"/devices/{device}"
-    require(await read(), "occupied", duration=False)
+    require(await read(), plan.required_start_scene, duration=False)
     await call(
         "duration", "PUT", path, params=formatted, body=SLEEP_TIME_PUT, structured=False
     )
-    require(await read(), "occupied")
+    require(await read(), plan.required_start_scene)
     await call("scene", "PUT", path, params=formatted, body=SLEEP_PUT, structured=False)
     start = now()
     log("t0")
     require(await read(), "sleep")
-    offset = 240 if power == "0" else 120
+    intervention = plan.intervention
+    offset = intervention.at_second
     # Keep polling across both candidate expiry windows. Leave spacing before P1.
     for second in range(30, plan.observation_seconds + 1, 30):
         await wait(start + second)
         if second == offset:
+            if not intervention.control:
+                if panel_off is None:
+                    raise LabStopped("Panel confirmation unavailable")
+                await panel_off()
+                await read()
+                continue
             await call(
                 "power",
                 "POST",
                 "/events",
                 params=auth,
-                body={
-                    "event": {
-                        "cgi": "modmaquina",
-                        "device_id": device,
-                        "option": "P1",
-                        "value": str(1 - int(power)),
-                    }
-                },
+                body=power_payload(intervention, device),
                 structured=False,
                 due=start + second,
             )
@@ -207,14 +220,14 @@ async def measure(
         state = await read()
         if second < offset:
             require(state, "sleep")
-        elif state["sleep_time"] != "5" or (power == "1" and state["power"] != "0"):
+        elif state["sleep_time"] != "5":
             raise LabStopped("Unexpected observation")
     if plan.observation_seconds % 30:
         raise LabStopped("Invalid observation schedule")
-    log("observation_closed")
+    log("observation_closed", classification="pending_physical_correlation")
 
 
-def local_input():
+def local_input(*, require_scope=True):
     path = ROOT / "secrets/dkn.env"
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd) as stream:
@@ -234,32 +247,53 @@ def local_input():
         values = {}
         for line in stream:
             key, _, value = line.strip().partition("=")
-            if key in keys:
-                if key in values or not value:
+            if key in keys and (require_scope or key in keys[:2]):
+                if key in values or (not value and key in keys[:2]):
                     raise PermissionError("Invalid local configuration")
                 values[key] = value
-        email, password, device, site = (values[key] for key in keys)
-        if not all(re.fullmatch(r"[A-Za-z0-9_-]+", value) for value in (device, site)):
-            raise PermissionError("Invalid local scope")
-        return email, password, device, site
+        email, password = (values[key] for key in keys[:2])
+    if not require_scope:
+        return email, password
+    scope_file = ROOT / "secrets/sleep-scope.json"
+    if scope_file.exists():
+        scope = private_json(scope_file)
+        device, site = scope["device_id"], scope["installation_id"]
+    else:
+        device, site = (values[key] for key in keys[2:])
+    if not all(
+        type(value) is str and re.fullmatch(r"[A-Za-z0-9_-]+", value)
+        for value in (device, site)
+    ):
+        raise PermissionError("Invalid local scope")
+    return email, password, device, site
+
+
+class AmbiguousDelivery(RuntimeError):
+    """A request may have reached the backend."""
+
+
+async def fail_on_disconnect(request, handler):
+    """Stop aiohttp's retry loop at the public middleware boundary."""
+    try:
+        return await handler(request)
+    except ClientOSError, ServerDisconnectedError:
+        pass
+    raise AmbiguousDelivery("HTTP delivery unconfirmed")
 
 
 async def run(plan, journal, email, password, device, site):
     loop = asyncio.get_running_loop()
-    supervisor = LabSupervisor(auth_limit=1, state_limit=30)
-    # Only this owned session uses the trial ceiling. Shared LAB defaults stay intact.
-    supervisor.deadline = time.monotonic() + plan.hard_deadline_seconds
-    policy = SleepPolicy(device, site, plan.required_start_power, supervisor.deadline)
-    gateway = await create_gateway(policy, supervisor)
-    gateway.protected.session._retry_connection = False
     started = time.monotonic()
     heartbeat = started
+    panel_confirmation = asyncio.Event()
+    panel_requested = False
 
     def log(event, **fields):
         journal.write(
             json.dumps(
                 {
                     "seconds": round(time.monotonic() - started, 3),
+                    "utc": datetime.now(UTC).isoformat(),
                     "event": event,
                     **fields,
                 }
@@ -269,10 +303,37 @@ async def run(plan, journal, email, password, device, site):
         journal.flush()
         os.fsync(journal.fileno())
 
+    operation = None
+
+    class SleepSupervisor(LabSupervisor):
+        def response(self, status):
+            log(
+                "http", operation=operation, status=status, accepted=200 <= status < 300
+            )
+            super().response(status)
+
+    supervisor = SleepSupervisor(
+        auth_limit=1, state_limit=6 + plan.observation_seconds // 30
+    )
+    # Only this owned session uses the trial ceiling.
+    supervisor.deadline = started + plan.hard_deadline_seconds
+    policy = SleepPolicy(device, site, plan, supervisor.deadline)
+
+    async def headers_sent(_session, _context, _headers):
+        log("http_sent", operation=operation)
+
+    gateway = await create_gateway(
+        policy,
+        supervisor,
+        middlewares=(fail_on_disconnect,),
+        on_headers_sent=headers_sent,
+    )
     task = asyncio.current_task()
 
     def stop():
-        task.cancel()
+        if not task.cancelling():
+            loop.remove_reader(sys.stdin.fileno())
+            task.cancel()
 
     def operator():
         nonlocal heartbeat
@@ -280,6 +341,25 @@ async def run(plan, journal, email, password, device, site):
             command = os.read(sys.stdin.fileno(), 4096).strip()
         except OSError:
             stop()
+            return
+        if (
+            command == b"panel-off"
+            and panel_requested
+            and not panel_confirmation.is_set()
+        ):
+            try:
+                log("panel", action="power_off", physical_power="off")
+            except OSError:
+                stop()
+                return
+            heartbeat = time.monotonic()
+            panel_confirmation.set()
+            return
+        if command == b"interference":
+            try:
+                log("interference")
+            finally:
+                stop()
             return
         if command not in {b"ok", b"on", b"off"}:
             stop()
@@ -306,6 +386,8 @@ async def run(plan, journal, email, password, device, site):
                 return
 
     async def request(label, method, path, *, params, body, structured):
+        nonlocal operation
+        operation = label
         log("attempt", operation=label)
         async with gateway.request(
             method,
@@ -315,10 +397,20 @@ async def run(plan, journal, email, password, device, site):
             headers={"x-requested-with": "XMLHttpRequest"},
             timeout=ClientTimeout(total=6),
         ) as response:
-            log("http", operation=label, status=response.status)
             if not 200 <= response.status < 300:
                 raise LabStopped("HTTP failure")
             return await response.json() if structured else None
+
+    async def panel_off():
+        nonlocal panel_requested
+        log("panel_requested", action="power_off")
+        print("Turn OFF at the physical panel now, then enter panel-off.", flush=True)
+        panel_requested = True
+        try:
+            async with asyncio.timeout(15):
+                await panel_confirmation.wait()
+        finally:
+            panel_requested = False
 
     async def wait(until):
         await asyncio.sleep(max(0, until - time.monotonic()))
@@ -331,10 +423,19 @@ async def run(plan, journal, email, password, device, site):
             with gateway.enforce():
                 async with asyncio.timeout_at(loop.time() + plan.hard_deadline_seconds):
                     await measure(
-                        plan, request, check, wait, log, email, password, device, site
+                        plan,
+                        request,
+                        check,
+                        wait,
+                        log,
+                        email,
+                        password,
+                        device,
+                        site,
+                        panel_off=panel_off,
                     )
         except (Exception, asyncio.CancelledError) as error:
-            log("stopped", kind=type(error).__name__)
+            log("stopped", kind=type(error).__name__, classification="inconclusive")
             raise LabStopped("Session stopped") from None
         finally:
             watcher.cancel()

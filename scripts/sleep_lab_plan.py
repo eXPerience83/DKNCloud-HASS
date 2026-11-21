@@ -11,7 +11,10 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-ScenarioName = Literal["off_sleep_then_on", "on_sleep_then_off"]
+ScenarioName = Literal[
+    "off_sleep_then_on", "on_sleep_then_panel_off", "on_sleep_then_off"
+]
+SCENARIOS = ("off_sleep_then_on", "on_sleep_then_panel_off", "on_sleep_then_off")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +36,10 @@ class Plan:
     required_mode: str
     required_fan_speed: int
     steps: tuple[Step, ...]
+
+    @property
+    def intervention(self) -> Step:
+        return next(step for step in self.steps if step.at_second > 0)
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -60,7 +67,7 @@ POWER_OFF = {
 
 def make_plan(name: ScenarioName) -> Plan:
     """Return an immutable, no-I/O schedule relative to the Sleep acknowledgement."""
-    if name not in ("off_sleep_then_on", "on_sleep_then_off"):
+    if name not in SCENARIOS:
         raise ValueError("Unknown experiment")
 
     common = (
@@ -96,7 +103,7 @@ def make_plan(name: ScenarioName) -> Plan:
             hard_deadline_seconds=780,
             required_start_power=0,
             required_start_scene="occupied",
-            required_mode="fan_only (P2=3)",
+            required_mode="3",
             required_fan_speed=1,
             steps=common
             + (
@@ -131,11 +138,13 @@ def make_plan(name: ScenarioName) -> Plan:
             hard_deadline_seconds=570,
             required_start_power=1,
             required_start_scene="occupied",
-            required_mode="fan_only (P2=3)",
+            required_mode="3",
             required_fan_speed=1,
             steps=common
             + (
-                Step(
+                Step(120, "panel_off", "Owner turns OFF at the panel and confirms.")
+                if name == "on_sleep_then_panel_off"
+                else Step(
                     120,
                     "manual_power_off",
                     "Send P1=0 once; do NOT send occupied. Observe raw backend scene.",
@@ -163,7 +172,7 @@ def _validate(plan: Plan) -> None:
     times = [s.at_second for s in plan.steps]
     assert times == sorted(times), "Steps must remain ordered"
     assert sum(s.action == "select_sleep" for s in plan.steps) == 1
-    assert sum(s.action in ("power_on", "manual_power_off") for s in plan.steps) == 1
+    assert plan.intervention.action in {"panel_off", "power_on", "manual_power_off"}
     assert plan.hard_deadline_seconds > plan.observation_seconds
     assert plan.required_start_scene == "occupied"
     assert plan.required_fan_speed == 1
@@ -176,8 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--scenario",
-        choices=["off_sleep_then_on", "on_sleep_then_off", "both"],
-        default="both",
+        choices=[*SCENARIOS, "all", "both"],
+        default="all",
     )
     parser.add_argument(
         "--real",
@@ -192,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
     selected = (
         ("off_sleep_then_on", "on_sleep_then_off")
         if args.scenario == "both"
+        else SCENARIOS
+        if args.scenario == "all"
         else (args.scenario,)
     )
     print(

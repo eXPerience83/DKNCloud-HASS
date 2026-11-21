@@ -11,10 +11,13 @@ from scripts.sleep_lab_run import BASE, SCENARIOS, SleepPolicy, measure
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS)
-@pytest.mark.parametrize("failure", [None, "http", "network", "ambiguous", "observer"])
+@pytest.mark.parametrize(
+    "failure", [None, "http", "network", "ambiguous", "observer", "mode_alias"]
+)
 async def test_measure(scenario, failure):
     plan = make_plan(scenario)
-    offset = 240 if plan.required_start_power == 0 else 120
+    offset = plan.intervention.at_second
+    remote = plan.intervention.control
     second = 0
     state = {
         "id": "unit",
@@ -26,9 +29,7 @@ async def test_measure(scenario, failure):
         "sleep_time": 30,
     }
     calls, events = [], []
-    policy = SleepPolicy(
-        "unit", "site", plan.required_start_power, time.monotonic() + 60
-    )
+    policy = SleepPolicy("unit", "site", plan, time.monotonic() + 60)
 
     async def wait(until):
         nonlocal second
@@ -51,6 +52,8 @@ async def test_measure(scenario, failure):
         if label == "installation":
             return [{"installation_id": "site"}]
         if label == "snapshot":
+            if failure == "mode_alias" and second == 30:
+                state["mode"] = "8"
             return [] if failure == "ambiguous" and second == 30 else [state.copy()]
         if label == "duration":
             state.update(SLEEP_TIME_PUT)
@@ -65,22 +68,35 @@ async def test_measure(scenario, failure):
             if offset == 120:
                 state["scenary"] = "occupied"
 
+    async def panel_off():
+        state["power"] = "0"
+        log("panel", action="power_off")
+        if failure == "network":
+            raise OSError
+
     args = (plan, request, check, wait, log, "fixture", "fixture", "unit", "site")
     if failure:
         with pytest.raises((PermissionError, OSError)):
-            await measure(*args, now=lambda: second)
-        assert sum(label == "power" for _, label in calls) == (failure == "network")
+            await measure(*args, now=lambda: second, panel_off=panel_off)
+        assert sum(label == "power" for _, label in calls) == (
+            failure == "network" and remote
+        )
         assert all(event != "observation_closed" for _, event, _ in events)
     else:
-        await measure(*args, now=lambda: second)
-        assert [item for item in calls if item[1] == "power"] == [(offset, "power")]
+        await measure(*args, now=lambda: second, panel_off=panel_off)
+        assert [item for item in calls if item[1] == "power"] == (
+            [(offset, "power")] if remote else []
+        )
+        assert [second for second, event, _ in events if event == "panel"] == (
+            [] if remote else [offset]
+        )
         assert events[-1][:2] == (plan.observation_seconds, "observation_closed")
-        assert policy.written == 3
+        assert policy.written == 2 + remote
         assert policy.counts["state"] == (26 if offset == 240 else 19)
 
 
 def test_policy_denies_out_of_scope_operations():
-    policy = SleepPolicy("unit", "site", 0, time.monotonic() + 60)
+    policy = SleepPolicy("unit", "site", make_plan(SCENARIOS[0]), time.monotonic() + 60)
     auth = {"user_email": "fixture", "user_token": "fixture", "format": "json"}
     for method, url, params, body in [
         ("GET", BASE + "/devices", auth, None),
@@ -122,6 +138,13 @@ def test_grant_is_scoped_and_single_use(tmp_path, monkeypatch):
     _, lock = authorize(grant, directory, tmp_path, SCENARIOS[0], 780, ("unit", "site"))
     lock.rmdir()
     with pytest.raises(FileExistsError):
+        authorize(grant, directory, tmp_path, SCENARIOS[0], 780, ("unit", "site"))
+    expired = grants.private_json(grant) | {
+        "expires_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        "nonce": "b" * 64,
+    }
+    write_private(grant, expired)
+    with pytest.raises(PermissionError, match="Invalid Sleep authorization"):
         authorize(grant, directory, tmp_path, SCENARIOS[0], 780, ("unit", "site"))
 
 
@@ -166,12 +189,13 @@ async def test_schedule_through_loopback_tls(scenario, socket_enabled, tmp_path)
         nonlocal second
         second = until
 
+    async def panel_off():
+        state["power"] = "0"
+
     backend = await SleepBackend(tmp_path).start()
     try:
         supervisor = LabSupervisor(spacing=0, auth_limit=1, state_limit=30)
-        policy = SleepPolicy(
-            "unit", "site", plan.required_start_power, supervisor.deadline
-        )
+        policy = SleepPolicy("unit", "site", plan, supervisor.deadline)
         gateway = await create_gateway(
             policy, supervisor, connector=backend.connector()
         )
@@ -196,9 +220,208 @@ async def test_schedule_through_loopback_tls(scenario, socket_enabled, tmp_path)
                     "unit",
                     "site",
                     now=lambda: second,
+                    panel_off=panel_off,
                 )
         assert gateway.protected.session.closed
-        assert writes == [SLEEP_TIME_PUT, SLEEP_PUT, "P1"]
+        assert writes == [SLEEP_TIME_PUT, SLEEP_PUT] + (
+            ["P1"] if plan.intervention.control else []
+        )
         assert second == plan.observation_seconds
+    finally:
+        await backend.close()
+
+
+@pytest.mark.parametrize("scenario", SCENARIOS)
+def test_exact_event_boundary(scenario):
+    from scripts.sleep_lab_run import power_payload
+
+    plan = make_plan(scenario)
+    policy = SleepPolicy("unit", "site", plan, time.monotonic() + 60)
+    url = BASE + "/events"
+    auth = {"user_email": "fixture", "user_token": "fixture"}
+    policy.reserve("PUT", BASE + "/devices/unit")
+    policy.reserve("PUT", BASE + "/devices/unit")
+    canonical = power_payload(make_plan(SCENARIOS[-1]).intervention, "unit")
+    if plan.intervention.control:
+        canonical = power_payload(plan.intervention, "unit")
+        policy.validate("POST", url, params=auth, json=canonical)
+    else:
+        with pytest.raises(PermissionError):
+            policy.validate("POST", url, params=auth, json=canonical)
+    event = canonical["event"]
+    for change in (
+        {"option": "P2"},
+        {"device_id": "other"},
+        {"cgi": "infomaquina"},
+        {"value": "0" if event["value"] == "1" else "1"},
+        {"extra": "forbidden"},
+    ):
+        with pytest.raises(PermissionError):
+            policy.validate("POST", url, params=auth, json={"event": event | change})
+    if plan.intervention.control:
+        policy.reserve("POST", url)
+    with pytest.raises(PermissionError):
+        policy.validate("POST", url, params=auth, json=canonical)
+
+
+@pytest.mark.parametrize("rows", [[{"id": "other"}], [{"id": "unit"}, {"id": "other"}]])
+def test_measurement_rejects_ambiguous_or_wrong_scope(rows):
+    from scripts.sleep_lab_run import scoped_row
+
+    with pytest.raises(PermissionError):
+        scoped_row(rows, "devices", "id", "unit")
+    with pytest.raises(PermissionError):
+        scoped_row(
+            [{"installation_id": "site"}, {"installation_id": "other"}],
+            "installation_relations",
+            "installation_id",
+            "site",
+        )
+
+
+@pytest.mark.parametrize(
+    "trigger", ["eof", "sigterm", "heartbeat", "deadline", "panel", "interference"]
+)
+async def test_run_supervision_and_session_cleanup(trigger, monkeypatch, tmp_path):
+    import asyncio
+    import json
+    import os
+    import signal
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from scripts import sleep_lab_run as runner
+
+    clock = SimpleNamespace(monotonic=lambda: 0)
+    monkeypatch.setattr(runner, "time", clock)
+    loop = asyncio.get_running_loop()
+    sigterm = {}
+    monkeypatch.setattr(
+        loop, "add_signal_handler", lambda sig, cb: sigterm.update({sig: cb})
+    )
+    monkeypatch.setattr(loop, "remove_signal_handler", sigterm.pop)
+    entered = asyncio.Event()
+    read_fd, write_fd = os.pipe()
+    stream = os.fdopen(read_fd)
+    monkeypatch.setattr(runner, "sys", SimpleNamespace(stdin=stream))
+
+    class Session:
+        closed = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            self.closed = True
+
+    session = Session()
+
+    async def gateway(*args, **kwargs):
+        return SimpleNamespace(
+            enforce=nullcontext,
+            protected=SimpleNamespace(session=session),
+        )
+
+    async def measure(*args, panel_off, **kwargs):
+        entered.set()
+        if trigger == "panel":
+            await panel_off()
+        else:
+            await asyncio.Future()
+
+    monkeypatch.setattr(runner, "create_gateway", gateway)
+    monkeypatch.setattr(runner, "measure", measure)
+    path = tmp_path / "evidence.jsonl"
+    with stream, path.open("w") as journal:
+        task = asyncio.create_task(
+            runner.run(
+                make_plan(SCENARIOS[1]),
+                journal,
+                "private-email",
+                "private-password",
+                "unit",
+                "site",
+            )
+        )
+        try:
+            async with asyncio.timeout(2):
+                await entered.wait()
+                if trigger == "eof":
+                    os.close(write_fd)
+                    write_fd = None
+                elif trigger == "sigterm":
+                    sigterm[signal.SIGTERM]()
+                elif trigger in {"heartbeat", "deadline"}:
+                    clock.monotonic = lambda: 46 if trigger == "heartbeat" else 571
+                elif trigger == "interference":
+                    os.write(write_fd, b"interference\n")
+                else:
+                    os.write(write_fd, b"panel-off\n")
+                if trigger == "panel":
+                    await task
+                else:
+                    with pytest.raises(runner.LabStopped):
+                        await task
+        finally:
+            if write_fd is not None:
+                os.close(write_fd)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    assert session.closed
+    assert not sigterm
+    assert records[-1]["event"] == "restoration_required"
+    assert all("private-" not in str(record) for record in records)
+    if trigger == "panel":
+        assert [r["event"] for r in records] == [
+            "panel_requested",
+            "panel",
+            "restoration_required",
+        ]
+    else:
+        assert records[-2]["classification"] == "inconclusive"
+
+
+@pytest.mark.parametrize("failure", [401, 429, 500, "redirect", "disconnect"])
+async def test_http_stop_and_no_replay(failure, socket_enabled, tmp_path):
+    from aiohttp import web
+
+    from scripts.lab_tls_backend import SyntheticBackend
+    from scripts.protected_lab import LabStopped, LabSupervisor, create_gateway
+    from scripts.sleep_lab_run import AmbiguousDelivery, fail_on_disconnect
+
+    attempts = []
+
+    class FailingBackend(SyntheticBackend):
+        async def handle(self, request):
+            attempts.append(request.method)
+            if failure == "disconnect":
+                request.transport.abort()
+                return web.Response()
+            if failure == "redirect":
+                raise web.HTTPFound(BASE + "/events")
+            return web.Response(status=failure)
+
+    backend = await FailingBackend(tmp_path).start()
+    try:
+        supervisor = LabSupervisor(spacing=0)
+        policy = SleepPolicy(
+            "unit", "site", make_plan(SCENARIOS[0]), supervisor.deadline
+        )
+        gateway = await create_gateway(
+            policy,
+            supervisor,
+            connector=backend.connector(),
+            middlewares=(fail_on_disconnect,),
+        )
+        params = {"user_email": "fixture", "user_token": "fixture", "format": "json"}
+        async with gateway.protected.session:
+            with gateway.enforce(), pytest.raises((LabStopped, AmbiguousDelivery)):
+                async with gateway.request(
+                    "PUT", BASE + "/devices/unit", params=params, json=SLEEP_TIME_PUT
+                ) as response:
+                    if response.status >= 400:
+                        raise LabStopped("HTTP failure")
+        assert attempts == ["PUT"]
+        assert policy.written == 1
+        assert gateway.protected.session.closed
     finally:
         await backend.close()

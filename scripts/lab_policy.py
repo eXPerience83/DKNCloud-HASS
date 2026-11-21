@@ -192,7 +192,9 @@ class ProtectedSession:
         )
 
 
-async def create_protected_session(policy, *, connector=None):
+async def create_protected_session(
+    policy, *, connector=None, middlewares=(), on_headers_sent=None
+):
     """Own a session whose HTTP and WebSocket handshakes reject redirects."""
 
     async def deny_redirect(*_):
@@ -200,7 +202,14 @@ async def create_protected_session(policy, *, connector=None):
 
     trace = TraceConfig()
     trace.on_request_redirect.append(deny_redirect)
-    session = ClientSession(trace_configs=[trace], trust_env=False, connector=connector)
+    if on_headers_sent is not None:
+        trace.on_request_headers_sent.append(on_headers_sent)
+    session = ClientSession(
+        trace_configs=[trace],
+        trust_env=False,
+        connector=connector,
+        middlewares=middlewares,
+    )
     return ProtectedSession(session, policy, redirect_guard=True)
 
 

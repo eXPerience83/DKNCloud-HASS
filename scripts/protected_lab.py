@@ -346,11 +346,18 @@ class LaboratoryGateway:
             loop.create_connection, loop.sock_connect = connect, sock_connect
 
 
-async def create_gateway(policy, supervisor, *, connector=None):
+async def create_gateway(
+    policy, supervisor, *, connector=None, middlewares=(), on_headers_sent=None
+):
     """Create owned TLS transport; custom connectors are synthetic-test only."""
     if not policy.enabled:
         raise LabStopped("Laboratory disabled")
-    protected = await create_protected_session(policy, connector=connector)
+    protected = await create_protected_session(
+        policy,
+        connector=connector,
+        middlewares=middlewares,
+        on_headers_sent=on_headers_sent,
+    )
     return LaboratoryGateway(protected, supervisor)
 
 
