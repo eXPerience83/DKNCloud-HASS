@@ -1144,7 +1144,6 @@ async def test_device_put_rejects_redirect_without_following(
     assert received == [f"{API_DEVICES}/dev1"]
 
 
-
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
 async def test_power_post_never_follows_cloud_redirect(
     hass, socket_enabled, aiohttp_server, monkeypatch, status
