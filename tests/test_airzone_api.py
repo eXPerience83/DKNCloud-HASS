@@ -1158,9 +1158,7 @@ async def test_power_post_never_follows_cloud_redirect(
         received.append((request.method, request.path))
         await request.read()
         if request.path == API_EVENTS:
-            return web.Response(
-                status=status, headers={"Location": "/replayed"}
-            )
+            return web.Response(status=status, headers={"Location": "/replayed"})
         return web.json_response({"unexpected": True})
 
     await _serve_api(aiohttp_server, monkeypatch, "*", "/{path:.*}", handler)
