@@ -275,7 +275,9 @@ class AirzoneAPI:
                 **({"trace_request_ctx": on_dispatch} if on_dispatch else {}),
             ) as resp:
                 if mutating_request and not 200 <= resp.status < 300:
-                    raise ClientResponseError(resp.request_info, (), status=resp.status)
+                    raise ClientResponseError(
+                        resp.request_info, (), status=resp.status, headers=resp.headers
+                    )
                 resp.raise_for_status()
                 if status_only_control and 200 <= resp.status < 300:
                     # Control callers only need the backend's acknowledgement.

@@ -907,11 +907,12 @@ def _arm_current_sleep_off_evidence(hass) -> None:
 
 def _confirm_rearm_home_readback(entity) -> None:
     """Mock an independent occupied GET after the first rearm PUT."""
+
     async def refresh():
         entity.coordinator.data["unit-1"]["scenary"] = "occupied"
-        entity.hass.data[DOMAIN]["climate-entry"].get(
-            "sleep_exit_pending", {}
-        ).pop("unit-1", None)
+        entity.hass.data[DOMAIN]["climate-entry"].get("sleep_exit_pending", {}).pop(
+            "unit-1", None
+        )
 
     entity.coordinator.async_request_refresh = AsyncMock(side_effect=refresh)
 
@@ -2553,8 +2554,11 @@ async def test_newer_off_supersedes_queued_on_during_active_sleep(
     from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
 
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch,
-        power="0", scenary="sleep",
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        power="0",
+        scenary="sleep",
     )
     lock = acquire_device_lock(hass, entity._entry_id, "unit-1")
     await lock.acquire()
@@ -2833,3 +2837,71 @@ async def test_latest_power_survives_untraced_http_503(
     assert not bucket.get("uncertain_power")
     assert not api._pending
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+async def test_accepted_p1_survives_caller_cancellation(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """Cancellation after P1 dispatch cannot discard its accepted overlay."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="0", scenary="occupied"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+
+    async def accepted_p1(_payload, *, on_start=None, **_kwargs):
+        assert callable(on_start)
+        on_start()
+        entered.set()
+        await release.wait()
+        completed.set()
+
+    api.send_event.side_effect = accepted_p1
+    activation = asyncio.create_task(entity.async_turn_on())
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    activation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await activation
+    assert entity._overlay_value("power", "0") != "1"
+    release.set()
+    await asyncio.wait_for(completed.wait(), timeout=2)
+
+    async with asyncio.timeout(2):
+        while entity._overlay_value("power", "0") != "1":
+            await asyncio.sleep(0)
+    assert "unit-1" not in bucket.get("uncertain_power", {})
+    manager.request_recovery.assert_any_call("unit-1", require_fresh=True)
+    api.send_event.assert_awaited_once()
+
+
+async def test_cancel_before_p1_dispatch_never_claims_acceptance(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """Cancellation before dispatch must not create an optimistic P1."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="0", scenary="occupied"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = Mock()
+    bucket["sync_manager"] = manager
+    entered = asyncio.Event()
+
+    async def blocked_before_dispatch(_payload, *, on_start=None, **_kwargs):
+        assert callable(on_start)
+        entered.set()
+        await asyncio.Event().wait()
+
+    api.send_event.side_effect = blocked_before_dispatch
+    activation = asyncio.create_task(entity.async_turn_on())
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    activation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await activation
+    await asyncio.sleep(0)
+    assert entity._overlay_value("power", "0") != "1"
+    assert not bucket.get("uncertain_power")
+    manager.request_recovery.assert_not_called()
+

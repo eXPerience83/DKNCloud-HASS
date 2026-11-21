@@ -925,10 +925,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 if not isinstance(device_id, str) or not isinstance(rec, dict):
                     continue
                 try:
-                    started = dt_util.parse_datetime(
-                        str(rec.get("started_utc", ""))
-                    )
-                except (TypeError, ValueError, OverflowError):
+                    started = dt_util.parse_datetime(str(rec.get("started_utc", "")))
+                except TypeError, ValueError, OverflowError:
                     continue
                 minutes = rec.get("duration_minutes")
                 generation = rec.get("generation")
@@ -972,9 +970,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         try:
             sleep_store.async_delay_save(snapshot, 1)
         except Exception as err:  # noqa: BLE001
-            _LOGGER.warning(
-                "Unable to queue Sleep metadata (%s)", type(err).__name__
-            )
+            _LOGGER.warning("Unable to queue Sleep metadata (%s)", type(err).__name__)
 
     bucket["save_sleep_sessions"] = save_sleep_sessions
     cfg = entry.data
@@ -1106,9 +1102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     continue
 
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if raw_scenary != SCENARY_SLEEP or not dev.get(
-                    "sleep_expiry_verified"
-                ):
+                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_expiry_verified"):
                     # Only a session-consistent OFF authorizes cleanup.
                     continue
 
@@ -1164,9 +1158,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             ):
                 continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if raw_scenary == SCENARY_SLEEP and dev.get(
-                "sleep_expiry_verified"
-            ):
+            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_expiry_verified"):
                 has_candidate = True
                 break
         if not has_candidate:

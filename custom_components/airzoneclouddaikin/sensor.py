@@ -392,7 +392,9 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         if self._attribute in {"sleep_remaining_estimated", "sleep_estimated_end"}:
-            return {"estimate_source": self._device.get("sleep_estimate_source", "unknown")}
+            return {
+                "estimate_source": self._device.get("sleep_estimate_source", "unknown")
+            }
         return None
 
     @property

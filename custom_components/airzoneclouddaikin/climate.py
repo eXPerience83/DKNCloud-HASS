@@ -342,9 +342,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 # A write outside this preset command path changed the scene
                 # after the request was queued; do not overwrite it.
                 return
-            if (
-                preset_mode == "sleep"
-                and self._device_id in bucket.get("sleep_exit_pending", {})
+            if preset_mode == "sleep" and self._device_id in bucket.get(
+                "sleep_exit_pending", {}
             ):
                 # A previous Home PUT may have been accepted but not read back.
                 # Never let the next Sleep selection skip the occupied barrier.
@@ -440,7 +439,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                             (self.coordinator.data or {})
                             .get(self._device_id, {})
                             .get("scenary", "")
-                        ).strip().lower()
+                        )
+                        .strip()
+                        .lower()
                         == "occupied"
                     )
                     if not verified or intents.get(self._device_id) != intent:

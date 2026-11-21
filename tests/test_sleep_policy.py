@@ -37,14 +37,20 @@ def _new_session(hass: HomeAssistant, initial_power: str):
         }
     }
     _derive_state(
-        hass, entry, data, fresh_power_ids={"device"},
+        hass,
+        entry,
+        data,
+        fresh_power_ids={"device"},
         fresh_scenary_ids={"device"},
     )
     coordinator.data = data
     optimistic_set(hass, entry.entry_id, "device", "scenary", "sleep")
     data["device"]["scenary"] = "sleep"
     _derive_state(
-        hass, entry, data, fresh_power_ids={"device"},
+        hass,
+        entry,
+        data,
+        fresh_power_ids={"device"},
         fresh_scenary_ids={"device"},
     )
     tracking = bucket["sleep_tracking"]["device"]
@@ -57,7 +63,9 @@ def _new_session(hass: HomeAssistant, initial_power: str):
 def _observe(hass, entry, data, power, evidence):
     data["device"]["power"] = power
     _derive_state(
-        hass, entry, data,
+        hass,
+        entry,
+        data,
         fresh_power_ids={"device"},
         fresh_scenary_ids={"device"},
         power_evidence_ids={"device": evidence},
@@ -99,16 +107,24 @@ async def test_original_timer_survives_intermediate_power_changes(
     assert tracking.expiry_verified
 
     await async_auto_exit_sleep_if_needed(
-        hass, entry_id=entry.entry_id, device_id="device",
-        device=data["device"], coordinator=coordinator,
-        reason="expiry", is_device_on=lambda: False,
+        hass,
+        entry_id=entry.entry_id,
+        device_id="device",
+        device=data["device"],
+        coordinator=coordinator,
+        reason="expiry",
+        is_device_on=lambda: False,
         allow_away_handling=False,
     )
-    coordinator.api.async_set_scenary.assert_awaited_once_with(
-        "device", "occupied", retry=False
-    )
+    coordinator.api.async_set_scenary.assert_awaited_once()
+    args, kwargs = coordinator.api.async_set_scenary.await_args
+    assert args == ("device", "occupied")
+    assert kwargs["retry"] is False
+    assert callable(kwargs["on_start"])
     coordinator.api.send_event.assert_not_awaited()
-    assert hass.data[DOMAIN][entry.entry_id]["sleep_exit_pending"]["device"] == "accepted"
+    assert (
+        hass.data[DOMAIN][entry.entry_id]["sleep_exit_pending"]["device"] == "accepted"
+    )
 
 
 async def test_duplicate_push_and_cached_state_never_confirm_expiry(hass, freezer):
@@ -117,9 +133,7 @@ async def test_duplicate_push_and_cached_state_never_confirm_expiry(hass, freeze
 
     assert not _observe(hass, entry, data, "0", "push:same")
     assert not _observe(hass, entry, data, "0", "push:same")
-    _derive_state(
-        hass, entry, data, fresh_power_ids=set(), fresh_scenary_ids=set()
-    )
+    _derive_state(hass, entry, data, fresh_power_ids=set(), fresh_scenary_ids=set())
     assert tracking.expiry_off_reports == 1
     assert not data["device"]["sleep_expiry_verified"]
     assert _observe(hass, entry, data, "0", "get:new-request")
@@ -127,17 +141,20 @@ async def test_duplicate_push_and_cached_state_never_confirm_expiry(hass, freeze
 
 async def test_unknown_start_uses_fresh_observation_upper_bound(hass, freezer):
     entry = SimpleNamespace(entry_id="unknown-sleep", options={})
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "sync_manager": Mock()
-    }
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"sync_manager": Mock()}
     data = {
         "device": {
-            "id": "device", "scenary": "sleep", "power": "0",
+            "id": "device",
+            "scenary": "sleep",
+            "power": "0",
             "sleep_time": 5,
         }
     }
     _derive_state(
-        hass, entry, data, fresh_power_ids={"device"},
+        hass,
+        entry,
+        data,
+        fresh_power_ids={"device"},
         fresh_scenary_ids={"device"},
     )
     tracking = hass.data[DOMAIN][entry.entry_id]["sleep_tracking"]["device"]
@@ -193,22 +210,37 @@ async def test_sensor_estimates_are_local_not_physical_confirmation(
 
     from custom_components.airzoneclouddaikin.sensor import AirzoneSensor
 
-    coordinator = dummy_coordinator_factory({
-        "device": {
-            "id": "device", "scenary": "sleep", "power": "1",
-            "sleep_remaining_estimated": 0,
-            "sleep_estimated_end": "2026-11-21T19:00:00+00:00",
-            "sleep_estimate_source": "startup_upper_bound",
+    coordinator = dummy_coordinator_factory(
+        {
+            "device": {
+                "id": "device",
+                "scenary": "sleep",
+                "power": "1",
+                "sleep_remaining_estimated": 0,
+                "sleep_estimated_end": "2026-11-21T19:00:00+00:00",
+                "sleep_estimate_source": "startup_upper_bound",
+            }
         }
-    })
+    )
     remaining = AirzoneSensor(
-        coordinator, "device", "sleep_remaining_estimated",
-        "Sleep Time Remaining (Estimated)", "mdi:timer-sand", True,
-        None, "measurement",
+        coordinator,
+        "device",
+        "sleep_remaining_estimated",
+        "Sleep Time Remaining (Estimated)",
+        "mdi:timer-sand",
+        True,
+        None,
+        "measurement",
     )
     end = AirzoneSensor(
-        coordinator, "device", "sleep_estimated_end",
-        "Sleep Expected End", "mdi:clock-end", True, "timestamp", None,
+        coordinator,
+        "device",
+        "sleep_estimated_end",
+        "Sleep Expected End",
+        "mdi:clock-end",
+        True,
+        "timestamp",
+        None,
     )
     assert remaining.native_value == 0
     assert remaining.native_unit_of_measurement == UnitOfTime.MINUTES

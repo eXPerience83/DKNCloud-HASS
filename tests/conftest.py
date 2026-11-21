@@ -248,7 +248,7 @@ def protected_launcher(tmp_path, socket_enabled):
         assert summary.get("error") != "cleanup_failed"
         assert summary["backend_control_writes"] == 0
         if case == "sleep":
-            assert summary["observations"]["blocked_control_attempts"] >= 1
+            assert summary["observations"]["blocked_control_attempts"] == 0
         assert summary["session_closed"] and summary["server_closed"]
         assert summary["storage_files"] == 0
         if case in {"no_events", "invalid_event", "wrong_device"}:

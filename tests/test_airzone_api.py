@@ -1180,7 +1180,6 @@ async def test_power_post_never_follows_cloud_redirect(
     assert received == [("POST", API_EVENTS)]
 
 
-
 @pytest.mark.parametrize("status", [300, 304, 307])
 async def test_p1_post_rejects_unacknowledged_final_status_without_location(
     hass, socket_enabled, aiohttp_server, monkeypatch, status

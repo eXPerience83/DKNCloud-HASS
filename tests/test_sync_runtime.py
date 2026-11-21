@@ -376,7 +376,10 @@ async def test_inflight_get_discarded_power_cannot_confirm_pushed_off(
         assert tracking.expiry_off_reports == 1
         api.async_set_scenary.assert_not_awaited()
         integration._derive_state(
-            hass, entry, coordinator.data, fresh_power_ids={"dev1"},
+            hass,
+            entry,
+            coordinator.data,
+            fresh_power_ids={"dev1"},
             fresh_scenary_ids=set(),
             power_evidence_ids={"dev1": "get:distinct-after-push"},
         )
@@ -631,8 +634,11 @@ async def test_current_sleep_off_needs_on_then_two_fresh_off_reports(
     _arm_synthetic_expired_timer(bucket)
     for token in ("get:after-deadline-1", "get:after-deadline-2"):
         integration._derive_state(
-            hass, entry, entry.runtime_data.coordinator.data,
-            fresh_power_ids={"dev1"}, fresh_scenary_ids=set(),
+            hass,
+            entry,
+            entry.runtime_data.coordinator.data,
+            fresh_power_ids={"dev1"},
+            fresh_scenary_ids=set(),
             power_evidence_ids={"dev1": token},
         )
     entry.runtime_data.coordinator.async_update_listeners()
@@ -1094,3 +1100,77 @@ async def test_get_predating_sleep_exit_readback_cannot_clear_pending_scene(
         api.async_set_scenary.assert_not_awaited()
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+@pytest.mark.parametrize("reboot_case", ["valid", "corrupt", "duration_changed"])
+async def test_sleep_store_reboot_validates_scene_duration_and_corrupt_record(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device, reboot_case
+):
+    """HA Store survives reload but no OFF acknowledgement survives the restart."""
+    from copy import deepcopy
+
+    class MemoryStore:
+        saved = {}
+
+        def __init__(self, _hass, _version, key):
+            self.key = key
+
+        async def async_load(self):
+            return deepcopy(self.saved.get(self.key))
+
+        def async_delay_save(self, data_callback, _delay):
+            self.saved[self.key] = deepcopy(data_callback())
+
+    monkeypatch.setattr(integration, "Store", MemoryStore)
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api.async_set_scenary = AsyncMock()
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    integration.optimistic_set(hass, entry.entry_id, "dev1", "scenary", "sleep")
+    key = f"{DOMAIN}_sleep_{entry.entry_id}"
+    saved = MemoryStore.saved[key]
+    assert saved["entry_id"] == entry.entry_id
+    assert set(saved["sessions"]["dev1"]) == {
+        "started_utc", "duration_minutes", "generation"
+    }
+    assert saved["sessions"]["dev1"]["duration_minutes"] == 30
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+    if reboot_case == "corrupt":
+        MemoryStore.saved[key]["sessions"]["dev1"]["started_utc"] = "not-a-date"
+    backend = {
+        **sample_device,
+        "scenary": "sleep",
+        "sleep_time": 60 if reboot_case == "duration_changed" else 30,
+    }
+    api.fetch_devices = AsyncMock(return_value=[backend])
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    record = bucket["sleep_tracking"]["dev1"]
+    result = entry.runtime_data.coordinator.data["dev1"]
+
+    assert record.expiry_off_reports == 0
+    assert not record.expiry_verified
+    assert not result["sleep_expiry_verified"]
+    if reboot_case == "valid":
+        assert record.confidence == "restored"
+        assert record.start_known
+        assert record.cleanup_started_at_utc is not None
+        assert result["sleep_estimated_end"] is not None
+        assert result["sleep_estimate_source"] == "restored"
+    elif reboot_case == "corrupt":
+        assert record.confidence == "startup_upper_bound"
+        assert not record.start_known
+    else:
+        assert record.duration_invalidated
+        assert result["sleep_estimated_end"] is None
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+

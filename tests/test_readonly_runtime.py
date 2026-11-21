@@ -147,8 +147,10 @@ async def test_real_entry_loopback_and_control_barrier(
         tracking.expiry_verified = True
         tracking.expiry_power_revision = 0
         coordinator.data["dev1"].update(
-            scenary="sleep", power="0",
-            sleep_off_confirmed=True, sleep_expiry_verified=True,
+            scenary="sleep",
+            power="0",
+            sleep_off_confirmed=True,
+            sleep_expiry_verified=True,
         )
         coordinator.async_update_listeners()
         await until(lambda: gateway.blocked > 4)

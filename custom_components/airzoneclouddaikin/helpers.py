@@ -132,10 +132,7 @@ def optimistic_set(
                 tracking.observed_on = False
                 tracking.consecutive_off_reports = 0
                 tracking.start_known = True
-                raw_minutes = (
-                    _entry_bucket(hass, entry_id)
-                    .get("coordinator", None)
-                )
+                raw_minutes = _entry_bucket(hass, entry_id).get("coordinator", None)
                 current_device = (
                     (getattr(raw_minutes, "data", None) or {}).get(device_id, {})
                     if raw_minutes is not None
@@ -143,7 +140,7 @@ def optimistic_set(
                 )
                 try:
                     minutes = int(current_device.get("sleep_time"))
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     minutes = 0
                 tracking.expected_minutes = minutes if minutes > 0 else None
                 if save := _entry_bucket(hass, entry_id).get("save_sleep_sessions"):
@@ -395,7 +392,10 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
             bucket.get("uncertain_power", {}).pop(device_id, None)
             optimistic_set(hass, entry_id, device_id, "power", str(value))
             request_ambiguous_control_readback(
-                hass, coordinator, entry_id=entry_id, device_id=device_id,
+                hass,
+                coordinator,
+                entry_id=entry_id,
+                device_id=device_id,
                 bucket=bucket,
             )
         else:
@@ -594,8 +594,7 @@ async def async_auto_exit_sleep_if_needed(
             bucket.get("scene_revisions", {}).get(device_id, 0) != revision
             or (
                 reason == "expiry"
-                and bucket.get("power_intents", {}).get(device_id, 0)
-                != power_revision
+                and bucket.get("power_intents", {}).get(device_id, 0) != power_revision
             )
             or (overlay and overlay.get("value") != SCENARY_SLEEP)
             or str(current.get("scenary") or "").lower() != SCENARY_SLEEP
@@ -632,8 +631,7 @@ async def async_auto_exit_sleep_if_needed(
                 and tracking.expiry_verified
                 and tracking.expiry_off_reports >= 2
                 and tracking.expiry_power_revision == power_revision
-                and str(current.get("power")).strip().lower()
-                in {"0", "false", "off"}
+                and str(current.get("power")).strip().lower() in {"0", "false", "off"}
                 and device_id not in bucket.get("uncertain_power", {})
             ):
                 return True
@@ -656,8 +654,7 @@ async def async_auto_exit_sleep_if_needed(
             if (
                 active_entry_bucket(hass, entry_id, coordinator) is not bucket
                 or bucket.get("scene_revisions", {}).get(device_id, 0) != revision
-                or bucket.get("power_intents", {}).get(device_id, 0)
-                != power_revision
+                or bucket.get("power_intents", {}).get(device_id, 0) != power_revision
                 or bucket.get("scene_preset_intents", {}).get(device_id, 0)
                 != cleanup_intent
                 or (is_current is not None and not is_current())
