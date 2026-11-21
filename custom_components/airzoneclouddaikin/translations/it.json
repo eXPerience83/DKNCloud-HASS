@@ -36,7 +36,7 @@
     "step": {
       "init": {
         "title": "Opzioni",
-        "description": "La modalità HEAT_COOL sperimentale è facoltativa e richiede un dispositivo compatibile. La pulizia automatica di Sleep è attiva per impostazione predefinita: dopo la conferma dello spegnimento, ripristina Home senza accendere il dispositivo. Disattivala per conservare lo scenario del backend.",
+        "description": "La modalità HEAT_COOL sperimentale è facoltativa e richiede un dispositivo compatibile. La pulizia automatica di Sleep ripristina Home solo dopo la scadenza del timer originale, un intervallo di sicurezza e due nuove osservazioni OFF indipendenti. Uno spegnimento e riavvio intermedi non annullano Sleep. Disattivala per conservare lo scenario del backend.",
         "data": {
           "expose_pii_identifiers": "Esporre identificatori PII (avanzato)",
           "enable_heat_cool_mode": "Abilita modalità sperimentale HEAT_COOL (richiede installazione compatibile; utilizza instradamento P7/P3)",
@@ -84,6 +84,12 @@
           "auth_required": "Nuova autenticazione richiesta",
           "stopped": "Arrestato"
         }
+      },
+      "sleep_remaining_estimated": {
+        "name": "Tempo Sleep rimanente (stimato)"
+      },
+      "sleep_estimated_end": {
+        "name": "Fine Sleep prevista"
       }
     }
   }

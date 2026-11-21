@@ -475,6 +475,7 @@ async def test_unload_after_first_rearm_put_prevents_second_put(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
+    _arm_current_sleep_off_evidence(hass)
     entered, release = asyncio.Event(), asyncio.Event()
 
     async def held_first_put(
@@ -514,6 +515,8 @@ async def test_late_second_rearm_failure_does_not_restore_unloaded_entry(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
+    _arm_current_sleep_off_evidence(hass)
+    _confirm_rearm_home_readback(entity)
     manager = Mock()
     bucket["sync_manager"] = manager
     entered, release = asyncio.Event(), asyncio.Event()
@@ -728,9 +731,15 @@ async def test_expired_sleep_rearms_via_occupied_then_sleep(
     tracking = SleepTracking(
         last_scenary="sleep",
         sleep_started_at_utc=old_start,
+        cleanup_started_at_utc=old_start,
+        expected_minutes=5,
+        expiry_off_reports=2,
+        expiry_power_revision=0,
+        expiry_verified=True,
         force_exit_requested=True,
     )
     hass.data[DOMAIN]["climate-entry"]["sleep_tracking"] = {"unit-1": tracking}
+    _confirm_rearm_home_readback(entity)
     await entity.async_set_preset_mode("sleep")
     assert [
         (call.args, call.kwargs) for call in api.put_device_fields.await_args_list
@@ -753,6 +762,8 @@ async def test_second_sleep_rearm_failure_preserves_home_and_requests_readback(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
+    _arm_current_sleep_off_evidence(hass)
+    _confirm_rearm_home_readback(entity)
     manager = Mock()
     hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
     api.put_device_fields.side_effect = [None, TimeoutError("ambiguous")]
@@ -818,14 +829,8 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
 
     from custom_components.airzoneclouddaikin import SleepTracking
 
-    hass.data[DOMAIN]["climate-entry"]["sleep_tracking"] = {
-        "unit-1": SleepTracking(
-            last_scenary="sleep",
-            sleep_started_at_utc=dt_util.utcnow(),
-            observed_on=True,
-            consecutive_off_reports=2,
-        )
-    }
+    _arm_current_sleep_off_evidence(hass)
+    _confirm_rearm_home_readback(entity)
     entered, release = asyncio.Event(), asyncio.Event()
     api.async_set_scenary = AsyncMock()
 
@@ -860,7 +865,7 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
     assert [
         call.args[1]["device"]["scenary"]
         for call in api.put_device_fields.await_args_list
-    ] == ["occupied", "sleep"]
+    ] == ["sleep"]
     assert entity.preset_mode == "sleep"
     # The automatic Home path schedules a one-second coordinator refresh
     # without a live SyncManager. The official HA harness requires this
@@ -870,19 +875,44 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
 
 
 def _arm_current_sleep_off_evidence(hass) -> None:
-    """Make a cleanup eligible so these tests exercise the intent/pending fence."""
+    """Give expiry tests synthetic post-deadline OFF evidence."""
+    from datetime import timedelta
+
     from homeassistant.util import dt as dt_util
 
     from custom_components.airzoneclouddaikin import SleepTracking
 
-    hass.data[DOMAIN]["climate-entry"]["sleep_tracking"] = {
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    coordinator = bucket["coordinator"]
+    coordinator.data["unit-1"].update(
+        sleep_time=5,
+        sleep_expiry_verified=True,
+        sleep_off_confirmed=True,
+    )
+    started = dt_util.utcnow() - timedelta(minutes=6)
+    bucket["sleep_tracking"] = {
         "unit-1": SleepTracking(
             last_scenary="sleep",
-            sleep_started_at_utc=dt_util.utcnow(),
-            observed_on=True,
-            consecutive_off_reports=2,
+            sleep_started_at_utc=started,
+            cleanup_started_at_utc=started,
+            start_known=True,
+            expected_minutes=5,
+            expiry_verified=True,
+            expiry_off_reports=2,
+            expiry_power_revision=0,
         )
     }
+
+
+def _confirm_rearm_home_readback(entity) -> None:
+    """Mock an independent occupied GET after the first rearm PUT."""
+    async def refresh():
+        entity.coordinator.data["unit-1"]["scenary"] = "occupied"
+        entity.hass.data[DOMAIN]["climate-entry"].get(
+            "sleep_exit_pending", {}
+        ).pop("unit-1", None)
+
+    entity.coordinator.async_request_refresh = AsyncMock(side_effect=refresh)
 
 
 async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
@@ -902,6 +932,7 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     )
     api.async_set_scenary = AsyncMock()
     _arm_current_sleep_off_evidence(hass)
+    _confirm_rearm_home_readback(entity)
     lock = acquire_device_lock(hass, "climate-entry", "unit-1")
     await lock.acquire()
     try:
@@ -1147,6 +1178,7 @@ async def test_known_unsent_first_step_does_not_mark_ambiguous(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
+    _arm_current_sleep_off_evidence(hass)
     manager = Mock()
     bucket["sync_manager"] = manager
     api.put_device_fields.side_effect = CommandNotSentCooldown(hass.loop.time() + 300)
@@ -1170,6 +1202,7 @@ async def test_expired_sleep_rearm_does_not_override_newer_queued_manual_scene(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
+    _arm_current_sleep_off_evidence(hass)
     lock = acquire_device_lock(hass, "climate-entry", "unit-1")
     await lock.acquire()
     try:

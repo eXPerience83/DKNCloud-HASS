@@ -89,6 +89,10 @@ class SyncManager:
         self._last_errors = {}
         self.channel_errors = {}
         self.touched: dict[str, set[str]] = {}
+        # A single applied GET or one distinct PUSH payload is one observation.
+        # The derivation layer may not count a cached maintenance publication.
+        self.last_power_evidence: str | None = None
+        self._get_evidence_sequence = 0
         self._last_received = dict.fromkeys(initial, clock())
         self._last_event: dict[str, float] = {}
         self._last_get: dict[str, float] = dict.fromkeys(initial, clock())
@@ -275,6 +279,8 @@ class SyncManager:
                 or (started is not None and started >= demand)
             )
         }
+        self._get_evidence_sequence += 1
+        self.last_power_evidence = f"get:{self._get_evidence_sequence}"
         confirm_power_read(
             self._uncertain_power,
             uncertain_at_dispatch,
@@ -383,6 +389,15 @@ class SyncManager:
             return
         self.state.event(device, patch, generation)
         self.touched = {device: {k for k, v in patch.items() if v is not None}}
+        if "power" in self.touched[device]:
+            # Replayed identical PUSH payloads do not become two independent
+            # corroborations, even if the socket delivered them twice.
+            fingerprint = (
+                (key, repr(patch[key]))
+                for key in ("power", "update_date", "scenary", "connection_date")
+                if key in patch and patch[key] is not None
+            )
+            self.last_power_evidence = f"push:{tuple(fingerprint)!r}"
         self._last_event[device] = self._last_received[device] = self._clock()
         self._publish(deepcopy(self.state.data), True)
 

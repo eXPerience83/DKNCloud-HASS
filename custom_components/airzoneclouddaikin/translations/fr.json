@@ -36,7 +36,7 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Le mode HEAT_COOL expérimental est facultatif et nécessite un appareil compatible. Le nettoyage automatique de Sleep est activé par défaut : après confirmation de l'arrêt d'une session, il rétablit Home sans allumer l'appareil. Désactivez-le pour préserver le scénario du serveur.",
+        "description": "Le mode HEAT_COOL expérimental est facultatif et nécessite un appareil compatible. Le nettoyage automatique de Sleep ne rétablit Home qu'après la fin du délai d'origine, une période de sécurité et deux nouvelles observations OFF indépendantes. Un arrêt et redémarrage intermédiaires ne désactivent pas Sleep. Désactivez cette option pour conserver la scène du serveur.",
         "data": {
           "expose_pii_identifiers": "Exposer les identifiants PII (avancé)",
           "enable_heat_cool_mode": "Activer le mode HEAT_COOL expérimental (requiert une installation compatible ; utilise le routage P7/P3)",
@@ -84,6 +84,12 @@
           "auth_required": "Réauthentification requise",
           "stopped": "Arrêté"
         }
+      },
+      "sleep_remaining_estimated": {
+        "name": "Temps restant Sleep (estimé)"
+      },
+      "sleep_estimated_end": {
+        "name": "Fin estimée de Sleep"
       }
     }
   }

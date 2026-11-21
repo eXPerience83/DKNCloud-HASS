@@ -169,4 +169,8 @@ This is a **design refinement** following the owner's request, superseded for re
 - Unknown startup-bound session must not clean early even if panel/remote ON→OFF occurs; two post-bound-and-settling independent OFF samples and no newer ON allow one scene-only occupied. A panel OFF before the bound is never in itself a cancellation; an HA ON from OFF with unknown timer must not send occupied, since it might cancel an active backend timer.
 - Source-specific OFF evidence requirements from §2C continue to hold across restarts: two distinct observations not merely one cached snapshot repeated.
 
-**Implementation gate:** no runtime code is changed by this document. Keep #234 unmerged pending implementation, test coverage, CodeRabbit and review. Test F is not authorized and is not required for these HA choices.
+**Implementation gate:** this approved policy governs the implementation and
+regression coverage on PR #234. Keep #234 unmerged until CI, review comments,
+and the full Climate/Switch/Coordinator/SyncManager/Store audit are verified.
+The unattended tests are synthetic; they do not extend the observed physical
+evidence. Test F remains unauthorized.

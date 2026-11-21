@@ -36,7 +36,7 @@
     "step": {
       "init": {
         "title": "Optionen",
-        "description": "Der experimentelle HEAT_COOL-Modus ist optional und erfordert ein kompatibles Gerät. Die automatische Sleep-Bereinigung ist standardmäßig aktiviert: Nach bestätigtem Ausschalten einer Sitzung wird Home wiederhergestellt, ohne das Gerät einzuschalten. Bei Deaktivierung bleibt die Backend-Szene unverändert.",
+        "description": "Der experimentelle HEAT_COOL-Modus ist optional und erfordert ein kompatibles Gerät. Die automatische Sleep-Bereinigung erfolgt erst nach Ablauf des ursprünglichen Timers, einer Sicherheitsfrist und zwei unabhängigen neuen OFF-Meldungen. Zwischenzeitliches AUS/EIN bricht Sleep nicht ab. Deaktivieren bewahrt die Backend-Szene.",
         "data": {
           "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)",
           "enable_heat_cool_mode": "Experimentellen HEAT_COOL-Modus aktivieren (erfordert kompatible Installation; nutzt P7/P3-Routing)",
@@ -84,6 +84,12 @@
           "auth_required": "Erneute Anmeldung erforderlich",
           "stopped": "Gestoppt"
         }
+      },
+      "sleep_remaining_estimated": {
+        "name": "Verbleibende Sleep-Zeit (geschätzt)"
+      },
+      "sleep_estimated_end": {
+        "name": "Voraussichtliches Sleep-Ende"
       }
     }
   }

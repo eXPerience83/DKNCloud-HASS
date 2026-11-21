@@ -51,7 +51,7 @@ _TEMP_FLOAT_ATTRS = {
     "min_temp_unoccupied",
     "max_temp_unoccupied",
 }
-_TIMESTAMP_ATTRS = {"update_date", "connection_date"}
+_TIMESTAMP_ATTRS = {"update_date", "connection_date", "sleep_estimated_end"}
 
 # PII attributes (must never be diagnostic and never logged)
 PII_ATTRS = {
@@ -106,6 +106,22 @@ DIAG_SENSORS: list[tuple[str, str, str, bool, str | None, str | None]] = [
     ("progs_enabled", "Programs Enabled", "mdi:calendar-check", True, None, None),
     ("power", "Power State (Raw)", "mdi:power", True, None, None),
     ("preset_mode", "Preset Mode", "mdi:home-switch", True, None, None),
+    (
+        "sleep_remaining_estimated",
+        "Sleep Time Remaining (Estimated)",
+        "mdi:timer-sand",
+        True,
+        None,
+        "measurement",
+    ),
+    (
+        "sleep_estimated_end",
+        "Sleep Expected End",
+        "mdi:clock-end",
+        True,
+        "timestamp",
+        None,
+    ),
     ("units", "Units", "mdi:ruler", False, None, None),
     (
         "min_temp_unoccupied",
@@ -324,6 +340,9 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         self._device_id = device_id
         self._attribute = attribute
         self._attr_name = friendly
+        if attribute in {"sleep_remaining_estimated", "sleep_estimated_end"}:
+            self._attr_translation_key = attribute
+            self._attr_name = None
         self._attr_icon = icon
         self._attr_unique_id = f"{device_id}_{attribute}"
         self._is_pii: bool = attribute in PII_ATTRS
@@ -338,7 +357,7 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         # Units
         if attribute in _TEMP_FLOAT_ATTRS:
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        elif attribute == "sleep_time":
+        elif attribute in {"sleep_time", "sleep_remaining_estimated"}:
             self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
         else:
             self._attr_native_unit_of_measurement = None
@@ -369,6 +388,12 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
     @property
     def available(self) -> bool:
         return bool(self._device)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self._attribute in {"sleep_remaining_estimated", "sleep_estimated_end"}:
+            return {"estimate_source": self._device.get("sleep_estimate_source", "unknown")}
+        return None
 
     @property
     def native_value(self) -> Any:

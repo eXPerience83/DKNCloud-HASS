@@ -26,6 +26,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -42,6 +43,7 @@ from .const import (
     SCENARY_HOME,
     SCENARY_SLEEP,
     SCENARY_VACANT,
+    SLEEP_CLEANUP_SETTLE_SECONDS,
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
 from .device_state import confirm_power_read
@@ -103,11 +105,20 @@ class SleepTracking:
     last_confirmed_on_utc: datetime | None = None
     overdue_probe_requested: bool = False
     overdue_recorded: bool = False
+    # An external or restored timer uses the first post-startup observation as
+    # the *earliest safe cleanup bound*, not as proof of its original start.
+    cleanup_started_at_utc: datetime | None = None
+    confidence: str = "unknown"
+    duration_invalidated: bool = False
+    expiry_off_reports: int = 0
+    last_off_evidence: str | None = None
+    expiry_probe_requested: bool = False
+    expiry_verified: bool = False
+    expiry_power_revision: int | None = None
 
 
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
-    """Update sleep tracking state for the provided scenary."""
-
+    """Track a newly observed scene without inventing a backend Sleep t0."""
     now = dt_util.utcnow()
 
     if scenary == SCENARY_SLEEP:
@@ -115,26 +126,40 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.sleep_started_at_utc is None
             or tracking.last_scenary != SCENARY_SLEEP
         ):
-            tracking.start_known = tracking.last_scenary in {
-                SCENARY_HOME,
-                SCENARY_VACANT,
-            }
             tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
+            tracking.cleanup_started_at_utc = now
+            tracking.start_known = False
+            tracking.confidence = "startup_upper_bound"
             tracking.force_exit_requested = False
             tracking.observed_on = False
             tracking.consecutive_off_reports = 0
             tracking.expected_minutes = None
+            tracking.duration_invalidated = False
+            tracking.expiry_off_reports = 0
+            tracking.last_off_evidence = None
+            tracking.expiry_probe_requested = False
+            tracking.expiry_verified = False
+            tracking.expiry_power_revision = None
             tracking.overdue_on_reports = 0
             tracking.last_confirmed_on_utc = None
             tracking.overdue_probe_requested = False
             tracking.overdue_recorded = False
     else:
         tracking.sleep_started_at_utc = None
+        tracking.cleanup_started_at_utc = None
+        tracking.start_known = False
+        tracking.confidence = "unknown"
+        tracking.force_exit_requested = False
         tracking.observed_on = False
         tracking.consecutive_off_reports = 0
-        tracking.start_known = False
         tracking.expected_minutes = None
+        tracking.duration_invalidated = False
+        tracking.expiry_off_reports = 0
+        tracking.last_off_evidence = None
+        tracking.expiry_probe_requested = False
+        tracking.expiry_verified = False
+        tracking.expiry_power_revision = None
         tracking.overdue_on_reports = 0
         tracking.last_confirmed_on_utc = None
         tracking.overdue_probe_requested = False
@@ -470,16 +495,28 @@ def _derive_state(
     *,
     fresh_power_ids: set[str] | None = None,
     fresh_scenary_ids: set[str] | None = None,
+    power_evidence_ids: dict[str, str] | None = None,
 ):
-    """Recompute local scene state for snapshots, push and maintenance ticks."""
+    """Recompute local scene state without treating maintenance as new evidence."""
     bucket = hass.data[DOMAIN][entry.entry_id]
     sleep_tracking = bucket.setdefault("sleep_tracking", {})
     now = dt_util.utcnow()
     tracked_ids = set(sleep_tracking)
     active_ids = set(data)
+    persist_changed = False
+    if fresh_power_ids and power_evidence_ids is None:
+        # An independent completed GET is one observation, even when fields
+        # have the same values. Maintenance and cached fallbacks do not qualify.
+        bucket["sleep_get_observation"] = bucket.get("sleep_get_observation", 0) + 1
+        power_evidence_ids = {
+            dev_id: f"get:{bucket['sleep_get_observation']}"
+            for dev_id in fresh_power_ids
+        }
     if not had_non_auth_install_errors:
         for stale_id in tracked_ids - active_ids:
-            sleep_tracking.pop(stale_id, None)
+            old_tracking = sleep_tracking.pop(stale_id, None)
+            if old_tracking and old_tracking.confidence in {"local_ack", "restored"}:
+                persist_changed = True
     for dev_id, dev in data.items():
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
         if (
@@ -493,6 +530,17 @@ def _derive_state(
             bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
+        previously_persisted = (
+            tracking.confidence in {"local_ack", "restored"}
+            and tracking.sleep_started_at_utc is not None
+            and not tracking.duration_invalidated
+        )
+        previous_record = (
+            tracking.last_scenary,
+            tracking.sleep_started_at_utc,
+            tracking.expected_minutes,
+            tracking.duration_invalidated,
+        )
         overlay = bucket.get("optimistic", {}).get(dev_id, {}).get("scenary")
         overlay_value = None
         if overlay is not None:
@@ -508,9 +556,19 @@ def _derive_state(
             # erase a new, still-pending manual Sleep/scene selection.
             _update_sleep_tracking_for_device(tracking, raw_scenary)
 
-        # OFF must belong to this session. The first newly received OFF
-        # triggers a bounded readback; a second OFF report confirms the
-        # transition without trusting retained startup/maintenance values.
+        # Preserve an HA-owned clock after restart, but use a newly observed
+        # upper bound for cleanup: another app could rearm Sleep while HA was off.
+        if (
+            tracking.confidence == "restored"
+            and tracking.cleanup_started_at_utc is None
+            and fresh_scenary_ids is not None
+            and dev_id in fresh_scenary_ids
+            and raw_scenary == SCENARY_SLEEP
+        ):
+            tracking.cleanup_started_at_utc = now
+
+        # OFF before the deadline is not a cancellation. Only distinct, newly
+        # applied observations *after* deadline plus settling can end Sleep.
         active_sleep = (
             tracking.last_scenary == SCENARY_SLEEP
             and tracking.sleep_started_at_utc is not None
@@ -523,17 +581,36 @@ def _derive_state(
                 # A changed timer may or may not reschedule the physical unit.
                 # Do not infer an overdue physical timer from such a session.
                 tracking.start_known = False
+                tracking.duration_invalidated = True
+                tracking.expiry_verified = False
+                tracking.expiry_power_revision = None
+                tracking.expiry_off_reports = 0
                 tracking.overdue_on_reports = 0
 
-        due = (
-            tracking.sleep_started_at_utc
-            + timedelta(minutes=tracking.expected_minutes + SLEEP_TIMEOUT_GRACE_MINUTES)
-            if (
-                active_sleep
-                and tracking.start_known
-                and tracking.expected_minutes is not None
-                and tracking.expected_minutes > 0
+        valid_timer = (
+            active_sleep
+            and not tracking.duration_invalidated
+            and tracking.expected_minutes is not None
+            and tracking.expected_minutes > 0
+        )
+        estimated_end = (
+            tracking.sleep_started_at_utc + timedelta(minutes=tracking.expected_minutes)
+            if valid_timer and tracking.sleep_started_at_utc is not None
+            else None
+        )
+        cleanup_due = (
+            tracking.cleanup_started_at_utc
+            + timedelta(
+                minutes=tracking.expected_minutes,
+                seconds=SLEEP_CLEANUP_SETTLE_SECONDS,
             )
+            if valid_timer and tracking.cleanup_started_at_utc is not None
+            else None
+        )
+        due = (
+            tracking.cleanup_started_at_utc
+            + timedelta(minutes=tracking.expected_minutes + SLEEP_TIMEOUT_GRACE_MINUTES)
+            if valid_timer and tracking.cleanup_started_at_utc is not None
             else None
         )
         # A fresh, conflicting scene report cannot corroborate power for
@@ -564,6 +641,10 @@ def _derive_state(
                     tracking.overdue_on_reports = 0
                 tracking.observed_on = True
                 tracking.consecutive_off_reports = 0
+                tracking.expiry_off_reports = 0
+                tracking.expiry_verified = False
+                tracking.expiry_power_revision = None
+                tracking.last_off_evidence = None
                 tracking.last_confirmed_on_utc = now
                 if due is not None and now >= due:
                     tracking.overdue_on_reports = min(
@@ -576,7 +657,29 @@ def _derive_state(
                 tracking.last_confirmed_on_utc = None
                 if tracking.observed_on and tracking.consecutive_off_reports < 2:
                     tracking.consecutive_off_reports += 1
-                    if tracking.consecutive_off_reports == 1:
+                evidence = (power_evidence_ids or {}).get(dev_id)
+                if (
+                    cleanup_due is not None
+                    and now >= cleanup_due
+                    and evidence is not None
+                    and evidence != tracking.last_off_evidence
+                    and dev_id not in bucket.get("uncertain_power", {})
+                    and dev_id not in bucket.get("sleep_exit_pending", {})
+                ):
+                    power_revision = bucket.get("power_intents", {}).get(dev_id, 0)
+                    if (
+                        tracking.expiry_off_reports > 0
+                        and tracking.expiry_power_revision != power_revision
+                    ):
+                        # A later HA power request invalidated an older OFF.
+                        tracking.expiry_off_reports = 0
+                    tracking.expiry_power_revision = power_revision
+                    tracking.last_off_evidence = evidence
+                    tracking.expiry_off_reports = min(
+                        2, tracking.expiry_off_reports + 1
+                    )
+                    tracking.expiry_verified = tracking.expiry_off_reports >= 2
+                    if tracking.expiry_off_reports == 1:
                         if manager := bucket.get("sync_manager"):
                             manager.request_recovery(dev_id, require_fresh=True)
         dev["sleep_off_confirmed"] = bool(
@@ -586,6 +689,34 @@ def _derive_state(
             and _backend_power_is_off(dev)
         )
         dev["sleep_start_known"] = bool(active_sleep and tracking.start_known)
+        dev["sleep_expiry_verified"] = bool(
+            active_sleep
+            and tracking.expiry_verified
+            and cleanup_due is not None
+            and now >= cleanup_due
+            and _backend_power_is_off(dev)
+            and tracking.expiry_power_revision
+            == bucket.get("power_intents", {}).get(dev_id, 0)
+        )
+        dev["sleep_estimated_end"] = (
+            estimated_end.isoformat() if estimated_end is not None else None
+        )
+        dev["sleep_estimate_source"] = (
+            tracking.confidence if estimated_end is not None else "unknown"
+        )
+        dev["sleep_remaining_estimated"] = (
+            max(0, int((estimated_end - now).total_seconds() + 59) // 60)
+            if estimated_end is not None
+            else None
+        )
+        if (
+            cleanup_due is not None
+            and now >= cleanup_due
+            and not tracking.expiry_probe_requested
+        ):
+            tracking.expiry_probe_requested = True
+            if manager := bucket.get("sync_manager"):
+                manager.request_recovery(dev_id, require_fresh=True)
 
         if due is not None and now >= due and not tracking.overdue_probe_requested:
             tracking.overdue_probe_requested = True
@@ -604,6 +735,17 @@ def _derive_state(
             and not _backend_power_is_off(dev)
         )
 
+        current_record = (
+            tracking.last_scenary,
+            tracking.sleep_started_at_utc,
+            tracking.expected_minutes,
+            tracking.duration_invalidated,
+        )
+        if previously_persisted and previous_record != current_record:
+            persist_changed = True
+        if tracking.confidence == "local_ack" and previous_record != current_record:
+            persist_changed = True
+
         if dev["sleep_overdue"] and not tracking.overdue_recorded:
             # Record only one sanitized anomaly per session for later diagnostics.
             tracking.overdue_recorded = True
@@ -611,6 +753,8 @@ def _derive_state(
                 bucket.get("sleep_overdue_sessions", 0) + 1
             )
             bucket["sleep_last_overdue_utc"] = now.isoformat()
+    if persist_changed and (save := bucket.get("save_sleep_sessions")):
+        save()
 
 
 async def _async_prepare_notify_strings(
@@ -756,6 +900,64 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     bucket: dict[str, Any] = hass.data[DOMAIN].setdefault(entry.entry_id, {})
     bucket.setdefault("sleep_tracking", {})
     bucket["closing"] = False
+
+    # Entry-scoped storage holds only HA-acknowledged Sleep session metadata.
+    # Restarts do not restore old OFF confirmations or claim an external t0.
+    sleep_store = Store(hass, 1, f"{DOMAIN}_sleep_{entry.entry_id}")
+    try:
+        stored = await sleep_store.async_load()
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning("Unable to load Sleep metadata (%s)", type(err).__name__)
+        stored = None
+    if isinstance(stored, dict) and stored.get("entry_id") == entry.entry_id:
+        records = stored.get("sessions")
+        if isinstance(records, dict):
+            for device_id, rec in records.items():
+                if not isinstance(device_id, str) or not isinstance(rec, dict):
+                    continue
+                started = dt_util.parse_datetime(str(rec.get("started_utc", "")))
+                minutes = rec.get("duration_minutes")
+                generation = rec.get("generation")
+                if (
+                    started is None
+                    or started.tzinfo is None
+                    or not isinstance(minutes, int)
+                    or not 0 < minutes <= 1440
+                    or not isinstance(generation, int)
+                    or generation < 1
+                    or started > dt_util.utcnow()
+                ):
+                    continue
+                bucket["sleep_tracking"][device_id] = SleepTracking(
+                    last_scenary=SCENARY_SLEEP,
+                    sleep_started_at_utc=dt_util.as_utc(started),
+                    expected_minutes=minutes,
+                    session_revision=generation,
+                    start_known=True,
+                    confidence="restored",
+                )
+
+    def save_sleep_sessions() -> None:
+        def snapshot() -> dict[str, Any]:
+            records = {
+                device_id: {
+                    "started_utc": tracking.sleep_started_at_utc.isoformat(),
+                    "duration_minutes": tracking.expected_minutes,
+                    "generation": tracking.session_revision,
+                }
+                for device_id, tracking in bucket.get("sleep_tracking", {}).items()
+                if tracking.last_scenary == SCENARY_SLEEP
+                and tracking.sleep_started_at_utc is not None
+                and tracking.confidence in {"local_ack", "restored"}
+                and tracking.expected_minutes is not None
+                and tracking.expected_minutes > 0
+                and not tracking.duration_invalidated
+            }
+            return {"entry_id": entry.entry_id, "sessions": records}
+
+        sleep_store.async_delay_save(snapshot, 1)
+
+    bucket["save_sleep_sessions"] = save_sleep_sessions
     cfg = entry.data
     opts = entry.options
 
@@ -885,7 +1087,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     continue
 
                 raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_off_confirmed"):
+                if raw_scenary != SCENARY_SLEEP or not dev.get(
+                    "sleep_expiry_verified"
+                ):
                     # Only a session-consistent OFF authorizes cleanup.
                     continue
 
@@ -941,7 +1145,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             ):
                 continue
             raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_off_confirmed"):
+            if raw_scenary == SCENARY_SLEEP and dev.get(
+                "sleep_expiry_verified"
+            ):
                 has_candidate = True
                 break
         if not has_candidate:
@@ -1158,6 +1364,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 data,
                 fresh_power_ids=fresh_power_ids,
                 fresh_scenary_ids=fresh_scenary_ids,
+                power_evidence_ids={
+                    dev_id: manager.last_power_evidence
+                    for dev_id in fresh_power_ids
+                    if manager.last_power_evidence is not None
+                },
             )
             bucket["last_data"] = data
             if remote:

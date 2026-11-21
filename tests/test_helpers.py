@@ -130,6 +130,41 @@ class DummyCoordinator:
         self.refreshes += 1
 
 
+def _eligible_sleep(hass, entry_id, coordinator, device_id="device"):
+    """Synthetic verified expiry: two distinct post-deadline OFF observations."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    started = dt_util.utcnow() - timedelta(minutes=6)
+    device = {
+        "id": device_id,
+        "scenary": "sleep",
+        "power": "0",
+        "sleep_expiry_verified": True,
+        "sleep_time": 5,
+    }
+    coordinator.data = {device_id: device}
+    hass.data.setdefault(DOMAIN, {})[entry_id] = {
+        "coordinator": coordinator,
+        "sleep_tracking": {
+            device_id: SleepTracking(
+                last_scenary="sleep",
+                sleep_started_at_utc=started,
+                cleanup_started_at_utc=started,
+                start_known=True,
+                expected_minutes=5,
+                expiry_off_reports=2,
+                expiry_verified=True,
+                expiry_power_revision=0,
+            )
+        },
+    }
+    return device
+
+
 @pytest.mark.parametrize("state", ["removed", "closing"])
 async def test_sleep_exit_after_unload_does_not_recreate_entry_or_write(
     hass: HomeAssistant, state: str
@@ -181,9 +216,7 @@ async def test_auto_exit_sleep_when_expired(
     coordinator = DummyCoordinator(api)
     device_id = "device-1"
     entry_id = "entry-1"
-    device = {"scenary": "sleep", "sleep_expired": True}
-    # Production creates the entry bucket during setup; the helper must not.
-    hass.data.setdefault(DOMAIN, {})[entry_id] = {"coordinator": coordinator}
+    device = _eligible_sleep(hass, entry_id, coordinator, device_id)
 
     await async_auto_exit_sleep_if_needed(
         hass,
@@ -191,7 +224,7 @@ async def test_auto_exit_sleep_when_expired(
         device_id=device_id,
         device=device,
         coordinator=coordinator,
-        reason="test",
+        reason="expiry",
         is_device_on=lambda: False,
         allow_away_handling=False,
     )
@@ -379,12 +412,10 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
     import asyncio
     from unittest.mock import AsyncMock
 
-    device = {"scenary": "sleep", "sleep_expired": True}
     api = DummyApi()
     api.async_set_scenary = AsyncMock(side_effect=TimeoutError)
     coordinator = DummyCoordinator(api)
-    coordinator.data = {"device": device}
-    hass.data.setdefault(DOMAIN, {})["entry"] = {"coordinator": coordinator}
+    device = _eligible_sleep(hass, "entry", coordinator)
     lock = helpers.acquire_device_lock(hass, "entry", "device")
     await lock.acquire()
     lock_reached = asyncio.Event()
@@ -404,7 +435,7 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
             device_id="device",
             device=device,
             coordinator=coordinator,
-            reason="test",
+            reason="expiry",
             is_device_on=lambda: False,
             allow_away_handling=False,
         )
@@ -582,7 +613,7 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
 
     freezer.tick(timedelta(seconds=2))
     _derive_state(hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set())
-    manager.request_recovery.assert_called_once_with("device")
+    manager.request_recovery.assert_any_call("device")
     assert sleep["device"]["sleep_overdue"] is False
 
     # Two new power reports after +5, not repeated local maintenance data.
@@ -696,15 +727,15 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
         side_effect=ClientResponseError(None, (), status=422)
     )
     coordinator = DummyCoordinator(api)
-    hass.data.setdefault(DOMAIN, {})["entry"] = {"coordinator": coordinator}
+    device = _eligible_sleep(hass, "entry", coordinator)
     for _ in range(2):
         await async_auto_exit_sleep_if_needed(
             hass,
             entry_id="entry",
             device_id="device",
-            device={"scenary": "sleep", "sleep_expired": True},
+            device=device,
             coordinator=coordinator,
-            reason="test",
+            reason="expiry",
             is_device_on=lambda: False,
             allow_away_handling=False,
         )

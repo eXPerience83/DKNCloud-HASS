@@ -641,14 +641,43 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 
 ### Sleep session behavior and cleanup (integration behavior)
 
-Observed behavior:
-- After `sleep_time` elapses, devices typically power off but may keep reporting `scenary="sleep"` until explicitly changed.
+Observed backend behavior (see the supervised A/C/revised-B experiments in
+\`docs/lab-evidence/236-sleep-live-results.md\` and the approved policy in
+\`docs/decisions/197-sleep-backend-evidence-and-policy.md\`):
+- The Sleep countdown is consistent with starting at the **accepted Sleep scene selection**,
+  not at P1 ON. An OFF before the expected deadline did not necessarily cancel it; later
+  P1 ON before expiry continued the original countdown in revised B.
+- The unit may turn OFF at timer expiry while retaining raw \`scenary="sleep"\`.
+  PUSH and GET are asynchronous observations, not exact physical transition times.
+  Neither INFO causality nor a post-natural-OFF rearm has been established.
+- These are observations of one supervised device, not a universal firmware guarantee.
 
-Integration policy (draft #190, two real natural Sleep cycles validated):
-- Auto-exit Sleep (sleep → occupied) before HA-driven wake commands.
-- When a current Sleep session has established an ON observation and two explicit OFF reports, request a single serialized `occupied` cleanup without waiting for timer expiry; verify backend readback before declaring convergence.
-- Automatic cleanup is enabled by default and may be disabled with `sleep_cleanup_enabled`. The legacy timer-based Home display was removed. A stale or previous-session OFF never independently authorizes cleanup.
-- If a session with sufficiently known start still reports ON after `sleep_time + 5 minutes`, request bounded recovery and expose a read-only `sleep_overdue` diagnostic only after repeated newly received ON; do not switch power or scene based on this diagnostic. Count the anomaly once per session in ID-free integration diagnostics for the current HA runtime.
+Home Assistant policy:
+- Selecting Sleep never sends P1 implicitly. OFF/ON, mode, compatible fan and setpoint
+  edits during a running or uncertain Sleep session preserve its scene and original deadline.
+  Re-selecting Sleep during that session is idempotent.
+- Optional automatic cleanup (\`sleep_cleanup_enabled\`, enabled by default) is **scene-only**:
+  after the original estimated expiry **plus 30 seconds of settling**, require two
+  independent newly applied OFF observations, both received after that threshold,
+  with the same current Sleep session, unchanged duration and no competing intent.
+  PUSH+PUSH, GET+GET or PUSH+GET may qualify; duplicated PUSH, one GET delivered
+  twice, cached maintenance and stale snapshots do not. Sleep started while OFF
+  and never turned ON follows the same rule.
+- An OFF before expiry never authorizes an automatic occupied PUT. If power remains
+  ON after expiry, do not force P1 OFF or Home; report the read-only \`sleep_overdue\`
+  anomaly only after its separate **five-minute** grace and fresh corroborated ON.
+- On eligible cleanup send **one non-retried \`scenary=occupied\` PUT**, no P1, and
+  require independent scene readback; HTTP 2xx is acceptance, not backend convergence.
+  Manual Home/Away may cancel Sleep immediately.
+- Two read-only diagnostic sensors expose estimated remaining minutes and expected
+  end as a timestamp. Zero minutes does **not** prove OFF. The local HA Store retains
+  accepted Sleep starts and durations per entry; a restored or first-seen remote
+  session uses conservative timing for cleanup because HA cannot prove whether
+  another application secretly rearmed Sleep while HA was disconnected.
+  Timer display ticks locally without additional cloud requests or per-minute
+  persistence writes.
+- Do not follow HTTP redirections for scene PUT or P1/P2/P3/P4/P7/P8 control POST.
+  Mutating commands with ambiguous transport outcome are never blindly replayed.
 
 ---
 

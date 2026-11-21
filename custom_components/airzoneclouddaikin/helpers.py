@@ -23,6 +23,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from aiohttp import ClientResponseError
@@ -41,6 +42,7 @@ from .const import (
     POST_WRITE_REFRESH_DELAY_SEC,
     SCENARY_HOME,
     SCENARY_SLEEP,
+    SLEEP_CLEANUP_SETTLE_SECONDS,
     SCENARY_VACANT,
 )
 
@@ -118,12 +120,34 @@ def optimistic_set(
                 # A new explicit command starts a local observation, not a physical clock.
                 tracking.session_revision += 1
                 tracking.sleep_started_at_utc = dt_util.utcnow()
+                tracking.cleanup_started_at_utc = tracking.sleep_started_at_utc
+                tracking.confidence = "local_ack"
+                tracking.duration_invalidated = False
+                tracking.expiry_off_reports = 0
+                tracking.last_off_evidence = None
+                tracking.expiry_probe_requested = False
+                tracking.expiry_verified = False
                 tracking.last_scenary = SCENARY_SLEEP
                 tracking.force_exit_requested = False
                 tracking.observed_on = False
                 tracking.consecutive_off_reports = 0
                 tracking.start_known = True
-                tracking.expected_minutes = None
+                raw_minutes = (
+                    _entry_bucket(hass, entry_id)
+                    .get("coordinator", None)
+                )
+                current_device = (
+                    (getattr(raw_minutes, "data", None) or {}).get(device_id, {})
+                    if raw_minutes is not None
+                    else {}
+                )
+                try:
+                    minutes = int(current_device.get("sleep_time"))
+                except (ValueError, TypeError):
+                    minutes = 0
+                tracking.expected_minutes = minutes if minutes > 0 else None
+                if save := _entry_bucket(hass, entry_id).get("save_sleep_sessions"):
+                    save()
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
                 tracking.overdue_probe_requested = False
@@ -350,13 +374,52 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
                 hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
             )
 
+    dispatched = False
+
+    def check_dispatch() -> None:
+        nonlocal dispatched
+        intent.check_dispatch()
+        dispatched = True
+
+    def finish_after_cancel(command: asyncio.Task[Any]) -> None:
+        if not intent.is_active():
+            return
+        try:
+            command.result()
+        except asyncio.CancelledError, Exception:
+            mark_uncertain()
+            return
+        if intent.is_current():
+            # Accepted P1 still matters after the caller goes away. Reconcile
+            # through the existing overlay plus bounded readback, not replay.
+            bucket.get("uncertain_power", {}).pop(device_id, None)
+            optimistic_set(hass, entry_id, device_id, "power", str(value))
+            request_ambiguous_control_readback(
+                hass, coordinator, entry_id=entry_id, device_id=device_id,
+                bucket=bucket,
+            )
+        else:
+            # A newer intent won locally; the late P1 still needs readback.
+            mark_uncertain()
+
     try:
         intent.check_dispatch()
-        await api.send_event(
-            modmaquina_payload(device_id, "P1", value),
-            on_start=intent.check_dispatch,
-            on_uncertain=mark_uncertain,
+        command = asyncio.create_task(
+            api.send_event(
+                modmaquina_payload(device_id, "P1", value),
+                on_start=check_dispatch,
+                on_uncertain=mark_uncertain,
+            )
         )
+        try:
+            await asyncio.shield(command)
+        except asyncio.CancelledError:
+            if not dispatched:
+                command.cancel()
+            else:
+                mark_uncertain()
+                command.add_done_callback(finish_after_cancel)
+            raise
     except CommandSuperseded:
         return False
 
@@ -510,6 +573,7 @@ async def async_auto_exit_sleep_if_needed(
     if bucket is None:
         return
     revision = bucket.get("scene_revisions", {}).get(device_id, 0)
+    power_revision = bucket.get("power_intents", {}).get(device_id, 0)
     # Snapshot the manual intent before this cleanup can wait or send.
     # A later preset request must not be discarded by our optimistic Home.
     cleanup_intent = bucket.get("scene_preset_intents", {}).get(device_id, 0)
@@ -528,6 +592,11 @@ async def async_auto_exit_sleep_if_needed(
         pending = bucket.setdefault("sleep_exit_pending", {})
         if (
             bucket.get("scene_revisions", {}).get(device_id, 0) != revision
+            or (
+                reason == "expiry"
+                and bucket.get("power_intents", {}).get(device_id, 0)
+                != power_revision
+            )
             or (overlay and overlay.get("value") != SCENARY_SLEEP)
             or str(current.get("scenary") or "").lower() != SCENARY_SLEEP
             or device_id in pending
@@ -537,25 +606,41 @@ async def async_auto_exit_sleep_if_needed(
             # A manual request arrived while cleanup waited for the lock.
             # It takes precedence and must not be marked handled.
             return True
+        tracking = bucket.get("sleep_tracking", {}).get(device_id)
         if reason == "expiry":
-            # Validate session-owned telemetry after acquiring the device
-            # lock: a new Sleep selection resets tracking before the
-            # coordinator can refresh its old sleep_off_confirmed flag.
-            tracking = bucket.get("sleep_tracking", {}).get(device_id)
-            if not (
-                current.get("sleep_off_confirmed") is True
-                and tracking is not None
+            # Keep the original backend countdown across all intermediate OFFs.
+            # Both independent OFF observations must be AFTER expiry + settle.
+            valid_deadline = (
+                tracking is not None
                 and tracking.last_scenary == SCENARY_SLEEP
-                and tracking.sleep_started_at_utc is not None
-                and tracking.observed_on
-                and tracking.consecutive_off_reports >= 2
+                and tracking.cleanup_started_at_utc is not None
+                and tracking.expected_minutes is not None
+                and tracking.expected_minutes > 0
+                and not tracking.duration_invalidated
+                and dt_util.utcnow()
+                >= (
+                    tracking.cleanup_started_at_utc
+                    + timedelta(
+                        minutes=tracking.expected_minutes,
+                        seconds=SLEEP_CLEANUP_SETTLE_SECONDS,
+                    )
+                )
+            )
+            if not (
+                valid_deadline
+                and current.get("sleep_expiry_verified") is True
+                and tracking.expiry_verified
+                and tracking.expiry_off_reports >= 2
+                and tracking.expiry_power_revision == power_revision
+                and str(current.get("power")).strip().lower()
+                in {"0", "false", "off"}
+                and device_id not in bucket.get("uncertain_power", {})
             ):
-                # Neither elapsed time nor a previous session's OFF may
-                # authorize an automatic scene write.
                 return True
-        elif is_device_on():
-            # Explicit wake preparation may exit an OFF Sleep session,
-            # but ordinary active controls must preserve the scene.
+        else:
+            # Only the explicit expiry workflow may exit Sleep automatically.
+            # ON, mode, fan and setpoint edits preserve the original timer,
+            # even if power happens to be OFF before the deadline.
             return True
         api = getattr(coordinator, "api", None)
         if api is None:
@@ -568,7 +653,15 @@ async def async_auto_exit_sleep_if_needed(
         unsent = False
 
         def check_dispatch() -> None:
-            if is_current is not None and not is_current():
+            if (
+                active_entry_bucket(hass, entry_id, coordinator) is not bucket
+                or bucket.get("scene_revisions", {}).get(device_id, 0) != revision
+                or bucket.get("power_intents", {}).get(device_id, 0)
+                != power_revision
+                or bucket.get("scene_preset_intents", {}).get(device_id, 0)
+                != cleanup_intent
+                or (is_current is not None and not is_current())
+            ):
                 raise CommandSuperseded
 
         try:
