@@ -256,11 +256,15 @@ async def test_schedule_through_loopback_tls(
         )
 
         async def request(label, method, path, *, params, body, structured):
+            nonlocal second
             async with gateway.request(
                 method, BASE + path, params=params, json=body
             ) as response:
                 assert 200 <= response.status < 300
-                return await response.json() if structured else None
+                value = await response.json() if structured else None
+                if rewake and label == "snapshot" and second == 60:
+                    second += 4  # GET receipt is later than physical confirmation.
+                return value
 
         async with gateway.protected.session:
             with gateway.enforce(), failure:
@@ -538,7 +542,7 @@ def test_campaign_runs_in_order_and_requires_restoration(tmp_path, fail_at):
         assert receipt.is_file()
 
 
-@pytest.mark.parametrize("receipt", ["missing", "wrong", "valid"])
+@pytest.mark.parametrize("receipt", ["missing", "wrong", "declined", "valid"])
 def test_panel_trial_needs_prior_campaign_and_review(tmp_path, monkeypatch, receipt):
     from types import SimpleNamespace
 
@@ -553,7 +557,8 @@ def test_panel_trial_needs_prior_campaign_and_review(tmp_path, monkeypatch, rece
     }
     if receipt != "missing":
         write_private(
-            sessions / "automatic-restored.json", scope if receipt == "valid" else {}
+            sessions / "automatic-restored.json",
+            scope if receipt in {"declined", "valid"} else {},
         )
     calls = []
     monkeypatch.setattr(runner, "ROOT", tmp_path)
@@ -570,9 +575,13 @@ def test_panel_trial_needs_prior_campaign_and_review(tmp_path, monkeypatch, rece
             stderr=None,
         ),
     )
-    monkeypatch.setattr("builtins.input", lambda _: "reviewed")
+    monkeypatch.setattr(
+        "builtins.input", lambda _: "decline" if receipt == "declined" else "reviewed"
+    )
     monkeypatch.setattr(runner, "execute_trial", lambda *args: calls.append(args[0]))
-    assert runner.main() == (0 if receipt == "valid" else 1)
+    assert runner.main(["--scenario", "on_sleep_then_panel_off", "--grant", "B"]) == (
+        0 if receipt == "valid" else 1
+    )
     assert calls == (["on_sleep_then_panel_off"] if receipt == "valid" else [])
 
 

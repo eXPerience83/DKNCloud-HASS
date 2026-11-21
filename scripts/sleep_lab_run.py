@@ -577,14 +577,14 @@ def execute_sequence(grants, execute, receipt, approval):
     write_private(receipt, approval)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--digest", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--scenario", choices=SCENARIOS)
     mode.add_argument("--automatic", nargs=3, metavar=("A", "C", "F"), type=Path)
     parser.add_argument("--grant", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.digest:
         print(source_digest(ROOT))
         return 0
