@@ -234,7 +234,9 @@ class AirzoneAPI:
 
         timeout = ClientTimeout(total=REQUEST_TIMEOUT)
         spath = self._safe_path(path)
-        device_put = method == "PUT" and path.startswith(f"{API_DEVICES}/")
+        # Never follow a redirect for a mutating request: aiohttp may replay
+        # a POST body on 307/308 or change it into a GET on 301/302/303.
+        mutating_request = method in {"POST", "PUT", "PATCH", "DELETE"}
 
         event = (json or {}).get("event")
         status_only_control = (
@@ -264,11 +266,11 @@ class AirzoneAPI:
                 json=json,
                 headers=headers,
                 timeout=timeout,
-                **({"allow_redirects": False} if device_put else {}),
+                **({"allow_redirects": False} if mutating_request else {}),
                 **({"data": data} if data is not None else {}),
                 **({"trace_request_ctx": on_dispatch} if on_dispatch else {}),
             ) as resp:
-                if device_put and 300 <= resp.status < 400:
+                if mutating_request and 300 <= resp.status < 400:
                     raise ClientResponseError(resp.request_info, (), status=resp.status)
                 resp.raise_for_status()
                 if status_only_control and 200 <= resp.status < 300:
