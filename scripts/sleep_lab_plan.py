@@ -2,8 +2,7 @@
 
 There is deliberately no network access, credential loading, or control API.
 Real execution requires a separately reviewed LAB runner and an expiring grant.
-"""
-from __future__ import annotations
+"""\n\nfrom __future__ import annotations
 
 import argparse
 import json
@@ -39,8 +38,22 @@ class Plan:
 
 SLEEP_PUT = {"device": {"scenary": "sleep"}}
 SLEEP_TIME_PUT = {"sleep_time": 5}
-POWER_ON = {"event": {"cgi": "modmaquina", "option": "P1", "value": 1, "device_id": "<APPROVED_DEVICE>"}}
-POWER_OFF = {"event": {"cgi": "modmaquina", "option": "P1", "value": 0, "device_id": "<APPROVED_DEVICE>"}}
+POWER_ON = {
+    "event": {
+        "cgi": "modmaquina",
+        "option": "P1",
+        "value": 1,
+        "device_id": "<APPROVED_DEVICE>",
+    }
+}
+POWER_OFF = {
+    "event": {
+        "cgi": "modmaquina",
+        "option": "P1",
+        "value": 0,
+        "device_id": "<APPROVED_DEVICE>",
+    }
+}
 
 
 def make_plan(name: ScenarioName) -> Plan:
@@ -49,10 +62,30 @@ def make_plan(name: ScenarioName) -> Plan:
         raise ValueError("Unknown experiment")
 
     common = (
-        Step(-90, "preflight", "Confirm approved device, no competing HA/app automations, P2=3 and low fan speed 1, with physically observed power and scene."),
-        Step(-60, "configure_duration", "PUT sleep_time=5, then read back; if rejected or not confirmed, STOP", True, SLEEP_TIME_PUT),
-        Step(-15, "baseline", "Verify fresh GET, physical power, raw occupied scene, FAN_ONLY P2=3 and low fan. If inconsistent, STOP."),
-        Step(0, "select_sleep", "PUT scenary=sleep once; use the HTTP acknowledgement as t0; read back without changing power.", True, SLEEP_PUT),
+        Step(
+            -90,
+            "preflight",
+            "Confirm approved device, no competing HA/app automations, P2=3 and low fan speed 1, with physically observed power and scene.",
+        ),
+        Step(
+            -60,
+            "configure_duration",
+            "PUT sleep_time=5, then read back; if rejected or not confirmed, STOP",
+            True,
+            SLEEP_TIME_PUT,
+        ),
+        Step(
+            -15,
+            "baseline",
+            "Verify fresh GET, physical power, raw occupied scene, FAN_ONLY P2=3 and low fan. If inconsistent, STOP.",
+        ),
+        Step(
+            0,
+            "select_sleep",
+            "PUT scenary=sleep once; use the HTTP acknowledgement as t0; read back without changing power.",
+            True,
+            SLEEP_PUT,
+        ),
     )
     if name == "off_sleep_then_on":
         plan = Plan(
@@ -63,11 +96,30 @@ def make_plan(name: ScenarioName) -> Plan:
             required_start_scene="occupied",
             required_mode="fan_only (P2=3)",
             required_fan_speed=1,
-            steps=common + (
-                Step(240, "power_on", "Send P1=1 once; do NOT send occupied. Observe and record acceptance.", True, POWER_ON),
-                Step(300, "observe_t5", "Check for physical OFF around five minutes after Sleep selection."),
-                Step(540, "observe_t9", "Check for physical OFF around five minutes after ON."),
-                Step(600, "end_observation", "Close evidence and classify; supervised restoration is separate from inference."),
+            steps=common
+            + (
+                Step(
+                    240,
+                    "power_on",
+                    "Send P1=1 once; do NOT send occupied. Observe and record acceptance.",
+                    True,
+                    POWER_ON,
+                ),
+                Step(
+                    300,
+                    "observe_t5",
+                    "Check for physical OFF around five minutes after Sleep selection.",
+                ),
+                Step(
+                    540,
+                    "observe_t9",
+                    "Check for physical OFF around five minutes after ON.",
+                ),
+                Step(
+                    600,
+                    "end_observation",
+                    "Close evidence and classify; supervised restoration is separate from inference.",
+                ),
             ),
         )
     else:
@@ -80,10 +132,24 @@ def make_plan(name: ScenarioName) -> Plan:
             required_mode="fan_only (P2=3)",
             required_fan_speed=1,
             steps=common + (
-                Step(120, "manual_power_off", "Send P1=0 once; do NOT send occupied. Observe raw backend scene.", True, POWER_OFF),
-                Step(150, "observe_off", "Verify physical OFF and raw scene; check for competing writers."),
+                Step(
+                    120,
+                    "manual_power_off",
+                    "Send P1=0 once; do NOT send occupied. Observe raw backend scene.",
+                    True,
+                    POWER_OFF,
+                ),
+                Step(
+                    150,
+                    "observe_off",
+                    "Verify physical OFF and raw scene; check for competing writers.",
+                ),
                 Step(300, "observe_t5", "Check raw scene at nominal Sleep deadline."),
-                Step(390, "end_observation", "Close evidence and classify; supervised restoration is separate from inference."),
+                Step(
+                    390,
+                    "end_observation",
+                    "Close evidence and classify; supervised restoration is separate from inference.",
+                ),
             ),
         )
     _validate(plan)
