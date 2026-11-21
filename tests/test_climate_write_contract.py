@@ -2838,6 +2838,7 @@ async def test_latest_power_survives_untraced_http_503(
     assert not api._pending
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
 
+
 async def test_accepted_p1_survives_caller_cancellation(
     hass, dummy_coordinator_factory, monkeypatch
 ):
@@ -2904,4 +2905,3 @@ async def test_cancel_before_p1_dispatch_never_claims_acceptance(
     assert entity._overlay_value("power", "0") != "1"
     assert not bucket.get("uncertain_power")
     manager.request_recovery.assert_not_called()
-

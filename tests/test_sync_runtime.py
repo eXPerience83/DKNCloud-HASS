@@ -1101,6 +1101,7 @@ async def test_get_predating_sleep_exit_readback_cannot_clear_pending_scene(
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
 
+
 @pytest.mark.parametrize("reboot_case", ["valid", "corrupt", "duration_changed"])
 async def test_sleep_store_reboot_validates_scene_duration_and_corrupt_record(
     hass, monkeypatch, dkn_config_entry_factory, sample_device, reboot_case
@@ -1138,7 +1139,9 @@ async def test_sleep_store_reboot_validates_scene_duration_and_corrupt_record(
     saved = MemoryStore.saved[key]
     assert saved["entry_id"] == entry.entry_id
     assert set(saved["sessions"]["dev1"]) == {
-        "started_utc", "duration_minutes", "generation"
+        "started_utc",
+        "duration_minutes",
+        "generation",
     }
     assert saved["sessions"]["dev1"]["duration_minutes"] == 30
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -1173,4 +1176,3 @@ async def test_sleep_store_reboot_validates_scene_duration_and_corrupt_record(
         assert result["sleep_estimated_end"] is None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
-
