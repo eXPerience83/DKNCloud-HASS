@@ -8,7 +8,7 @@
 
 ### Original real experiments
 
-[Real supervised NAS Sleep report, commit \`2e91d01\`](https://github.com/eXPerience83/DKNCloud-HASS/blob/2e91d01/docs/lab-evidence/236-sleep-live-results.md) is the source of truth. A single physically supervised unit used FAN_ONLY P2=3, low fan, a verified five-minute Sleep value, one private Pusher subscription, INFO every 10 seconds, scoped GET, and separate physical observations. Every session had separate authorization. All experiments **omitted occupied writes during the measurement** and restored OFF, occupied and 30 minutes after closing. The initial aborted duration-only attempt was **not** a Sleep trial.
+[Real supervised NAS Sleep report, commit `2e91d01`](https://github.com/eXPerience83/DKNCloud-HASS/blob/2e91d01/docs/lab-evidence/236-sleep-live-results.md) is the source of truth. A single physically supervised unit used FAN_ONLY P2=3, low fan, a verified five-minute Sleep value, one private Pusher subscription, INFO every 10 seconds, scoped GET, and separate physical observations. Every session had separate authorization. All experiments **omitted occupied writes during the measurement** and restored OFF, occupied and 30 minutes after closing. The initial aborted duration-only attempt was **not** a Sleep trial.
 
 | Experiment | Commands / action | Backend and physical evidence | Inference |
 |---|---|---|---|
@@ -26,7 +26,7 @@ The owner's sanitized HA history cross-check is in [issue #236](https://github.c
 - B revised: Sleep 21:27:58.897; physical-panel-related HA OFF 21:28:49.282; HA ON 21:32:04.966; HA OFF 21:33:08.769 (~310 s after scene).
 - Home and 30-minute restoration appeared **later, after the measurement**, not as spontaneous backend transitions.
 
-HA \`last_changed\` is not physical switching time nor proof of which transport delivered a change. The NAS trial report supplies the separate PUSH/GET/physical provenance.
+HA `last_changed` is not physical switching time nor proof of which transport delivered a change. The NAS trial report supplies the separate PUSH/GET/physical provenance.
 
 ### Prior evidence (do not repeat)
 
@@ -36,15 +36,15 @@ HA \`last_changed\` is not physical switching time nor proof of which transport 
 
 ## 2. Selected integration behavior
 
-**Rule:** Sleep is a backend-controlled countdown initiated by a **new accepted selection** of \`scenary=sleep\`. HA must not implement another shutdown timer, schedule P1 OFF by wall clock or silently rearm Sleep on power toggles. The backend may retain raw \`scenary=sleep\` even after the timer or a manual OFF. When enabled, HA restores scene to \`occupied\` **without changing power** under the guarded cases below.
+**Rule:** Sleep is a backend-controlled countdown initiated by a **new accepted selection** of `scenary=sleep`. HA must not implement another shutdown timer, schedule P1 OFF by wall clock or silently rearm Sleep on power toggles. The backend may retain raw `scenary=sleep` even after the timer or a manual OFF. When enabled, HA restores scene to `occupied` **without changing power** under the guarded cases below.
 
 ### 2A. Selecting Sleep
 
 - When OFF + occupied: a user's Sleep selection writes Sleep; **no P1 ON**, and OFF observations belonging to the initial OFF state are **not** mistaken for a newly completed ON→OFF transition.
 - When ON + occupied: select Sleep; retain ON.
-- Keep the server-accepted Sleep selection timestamp, expected \`sleep_time\`, scene revision and original ownership for the current session. A local command acknowledged by the backend and an externally discovered scene are **not equally precise timing evidence**. Do not mark the timer start as known merely because HA first saw Sleep in a delayed PUSH/GET after startup.
+- Keep the server-accepted Sleep selection timestamp, expected `sleep_time`, scene revision and original ownership for the current session. A local command acknowledged by the backend and an externally discovered scene are **not equally precise timing evidence**. Do not mark the timer start as known merely because HA first saw Sleep in a delayed PUSH/GET after startup.
 - Mode/fan/setpoint edits during active Sleep preserve its scene. Changing Sleep duration during a running session invalidates calendar-based expiry inference; do not assume the backend rescheduled it.
-- A new *explicit* rearm after an expired or canceled session that still reports raw Sleep uses serialized \`occupied → sleep\`, with verified ordering and no automatic ambiguous retry. No automatic rearm due to P1 ON.
+- A new *explicit* rearm after an expired or canceled session that still reports raw Sleep uses serialized `occupied → sleep`, with verified ordering and no automatic ambiguous retry. No automatic rearm due to P1 ON.
 
 ### 2B. ON while Sleep is still active
 
@@ -60,22 +60,22 @@ HA \`last_changed\` is not physical switching time nor proof of which transport 
 - A successful HTTP P1 OFF ACK does not itself prove physical OFF. A failed/ambiguous P1 response does not justify assuming OFF or issuing automatic replay.
 - Confirm OFF from **two independent newly applied power observations** after the current session's ON, from PUSH **or** GET, or a mix. **Do not require one from each transport.** Two distinct backend GET transactions may count; two independent PUSH deliveries may count. A duplicate event, replay of the same payload, retained state on a maintenance tick, stale pre-write GET or the same in-flight GET surfaced through multiple paths counts **once** at most.
 - First real OFF report requests bounded recovery. Confirm second observation is distinct, current, not overturned by newer ON and associated with the same session. Respect the existing minimum spacing/budget/backoff; never force excessive polling.
-- After confirmed OFF, send at most one non-retried scene PUT \`occupied\`, keep P1 OFF, and request scene readback. Ensure a later ON explicit intent that arrives before cleanup does not get sent under the expired/canceled Sleep scene. If unable to safely complete the scene transition, surface uncertainty rather than silently pretending cleanup succeeded.
+- After confirmed OFF, send at most one non-retried scene PUT `occupied`, keep P1 OFF, and request scene readback. Ensure a later ON explicit intent that arrives before cleanup does not get sent under the expired/canceled Sleep scene. If unable to safely complete the scene transition, surface uncertainty rather than silently pretending cleanup succeeded.
 
 ### 2D. Sleep started OFF and never observed ON — **new required path**
 
-**This path MUST be supported even though the current code requires \`observed_on=True\`.** The clock can run without the device being ON (supported by real trial A). The lack of ON is not a reason to leave raw Sleep indefinitely.
+**This path MUST be supported even though the current code requires `observed_on=True`.** The clock can run without the device being ON (supported by real trial A). The lack of ON is not a reason to leave raw Sleep indefinitely.
 
 - **Never clean immediately** from baseline OFF or from two OFF observations before the known timer deadline: doing so would cancel a valid Sleep selected while OFF.
-- For a **locally acknowledged Sleep selection with known clock and verified unchanged duration**, let \`T = accepted Sleep time + sleep_time minutes\`. After \`T\` **plus a small conservative settling window (proposed 30 seconds; implementation should test this as a policy constant, not conflate it with the existing five-minute read-only ON-overdue margin)**, request bounded fresh observation.
+- For a **locally acknowledged Sleep selection with known clock and verified unchanged duration**, let `T = accepted Sleep time + sleep_time minutes`. After `T` **plus a small conservative settling window (proposed 30 seconds; implementation should test this as a policy constant, not conflate it with the existing five-minute read-only ON-overdue margin)**, request bounded fresh observation.
 - Require two independent **post-deadline** OFF reports (PUSH and/or GET, as in 2C), the same current Sleep session and raw scene Sleep, no newer ON or scene selection, and a valid active entry. The 30 s window and corroboration make this a deliberately conservative **HA cleanup policy**, not physical proof that the backend has consumed its timer while always OFF.
-- After confirmation send only \`scenary=occupied\`, no P1 OFF or ON; one attempt, no ambiguous replay, verify scene via readback. A second GET may be scheduled by the existing budgeted recovery if no fresh reports arrive. If they do not arrive, leave Sleep pending instead of creating false evidence.
+- After confirmation send only `scenary=occupied`, no P1 OFF or ON; one attempt, no ambiguous replay, verify scene via readback. A second GET may be scheduled by the existing budgeted recovery if no fresh reports arrive. If they do not arrive, leave Sleep pending instead of creating false evidence.
 - If timer start is unknown, duration changed, backend unavailable or state uncertain, **do not perform automatic time-based cleanup**. Keep reported Sleep; manual Home is still allowed. An explicit HA ON from an OFF unit may instead perform the conservative occupied-before-ON behavior in 2B.
 - If any distinct fresh ON appears before cleanup, invalidate the OFF-only candidate. If ON arrives after the expected deadline and remains ON, retain Sleep and surface only the existing read-only overdue anomaly after its own confirmation; do not auto-P1 OFF.
 
 ### 2E. Option and manual control
 
-- Keep \`sleep_cleanup_enabled\`, **default ON**. Enabled = automatically write occupied only on eligible confirmed OFF or known elapsed OFF-only session. Disabled = **no automatic occupied write**; expose raw Sleep faithfully and allow manual Home, Away or explicit Sleep rearm.
+- Keep `sleep_cleanup_enabled`, **default ON**. Enabled = automatically write occupied only on eligible confirmed OFF or known elapsed OFF-only session. Disabled = **no automatic occupied write**; expose raw Sleep faithfully and allow manual Home, Away or explicit Sleep rearm.
 - Label/description may be clarified to **"Restablecer Home al apagarse o finalizar Sleep"**, without changing the persisted option key.
 - Manual Home/Away always outranks delayed cleanup. Never mark Home as verified just because HTTP returned 2xx.
 - An explicit HA OFF when already OFF is normally P1-idempotent; it need not manufacture a new ON→OFF transition for the OFF-only case. The user's intentional choice of Home is a separate scene command.
@@ -85,19 +85,19 @@ HA \`last_changed\` is not physical switching time nor proof of which transport 
 - **No automatic P1 replay**, no automatic retry of ambiguous scene PUT, no 3xx success/redirect replay, no loss of already accepted P1 after caller cancellation. These are the other currently open #234 CodeRabbit findings and must be implemented/audited independently within #234.
 - Serialize per device using existing entry ownership, scene revision, preset intent, power-intent generation, locks and pending readback. Do not add a competing global command queue or a second timer that turns power off.
 - Do not assume two samples are independent merely because they arrived on different transports; require separate eligible source observations. Do not require PUSH specifically: OFF **PUSH or GET** is sufficient if independently corroborated.
-- Refuse stale writes after unload/reload, when a newer Sleep/occupied/away/ON request supersedes, or when a scene exit is unverified. An accepted HTTP scene PUT is \`pending\` until fresh scene evidence confirms actual occupied.
+- Refuse stale writes after unload/reload, when a newer Sleep/occupied/away/ON request supersedes, or when a scene exit is unverified. An accepted HTTP scene PUT is `pending` until fresh scene evidence confirms actual occupied.
 - An ambiguity should keep the correct pending state, request bounded readback and never silently continue to P1 ON as though the scene had changed. No repeated physical commands after unknown dispatch.
-- Avoid using the ordinary ON-overdue diagnostic's \`SLEEP_TIMEOUT_GRACE_MINUTES=5\` to delay OFF-only cleanup: the diagnostic is read-only and serves a different purpose.
+- Avoid using the ordinary ON-overdue diagnostic's `SLEEP_TIMEOUT_GRACE_MINUTES=5` to delay OFF-only cleanup: the diagnostic is read-only and serves a different purpose.
 - After HA restart, persisted Power/scene telemetry alone cannot reconstruct an accurate t0 for a pre-existing Sleep session; do not invent deadlines.
 
 ## 4. Required changes for #234 (documentation now; code later)
 
-1. **Sleep session derivation** in \`__init__.py\`: retain a reliable ACK-based local start for the no-ON path. Distinguish ON→OFF corroboration from expiry-while-always-OFF. Do not let merely first-seen external Sleep create a "known" exact deadline. Gate later repeated OFF observations and post-deadline recovery correctly.
-2. **Candidate scheduler and guard** in \`__init__.py\` and \`helpers.async_auto_exit_sleep_if_needed()\`: accept either of the two guarded cleanup reasons; remove the unconditional \`tracking.observed_on\` requirement from the **OFF-only expired** reason only. Preserve 2 independent OFF evidence. Extend pending/retry tracking without dropping newer manual scene requests.
+1. **Sleep session derivation** in `__init__.py`: retain a reliable ACK-based local start for the no-ON path. Distinguish ON→OFF corroboration from expiry-while-always-OFF. Do not let merely first-seen external Sleep create a "known" exact deadline. Gate later repeated OFF observations and post-deadline recovery correctly.
+2. **Candidate scheduler and guard** in `__init__.py` and `helpers.async_auto_exit_sleep_if_needed()`: accept either of the two guarded cleanup reasons; remove the unconditional `tracking.observed_on` requirement from the **OFF-only expired** reason only. Preserve 2 independent OFF evidence. Extend pending/retry tracking without dropping newer manual scene requests.
 3. **Climate/Switch ON**: distinguish active Sleep selected while OFF (retain scene) from expired/canceled Sleep (occupied before ON). Share that policy across native Climate, direct Switch and delegated Switch→Climate; do not send redundant P1 when ON is reliably confirmed.
 4. **Power OFF**: keep idempotent and distinguish ACK, uncertainty and confirmed physical/backend state. When ON→OFF confirmed, schedule scene-only cleanup, including physical-panel OFF. No automatic P1 off on timer deadline.
 5. **Readback, retries and no-replay**: handle 3xx, 2xx cancellation, accepted vs not-dispatched and ambiguous scene writes, along with unload and newer intents. Avoid forcing a GET if a valid distinct PUSH corroboration already supplies evidence, subject to existing strict recovery budget/field precedence.
-6. **Options and documentation**: preserve \`sleep_cleanup_enabled\` and its default; update \`info.md\`, translations and tests **when implementation lands**, so documentation reflects actual runtime rather than only this target design.
+6. **Options and documentation**: preserve `sleep_cleanup_enabled` and its default; update `info.md`, translations and tests **when implementation lands**, so documentation reflects actual runtime rather than only this target design.
 
 ## 5. Regression matrix before merging #234
 
@@ -116,6 +116,6 @@ HA \`last_changed\` is not physical switching time nor proof of which transport 
 
 ## 6. Review/implementation gate
 
-This is **the intended behavior**, not a claim that the current PR #234 implements it. Current code in \`__init__._derive_state\` and \`helpers.async_auto_exit_sleep_if_needed(reason="expiry")\` explicitly requires \`tracking.observed_on\`, and \`climate.async_turn_on\` / \`switch._fallback_set_power\` may prepare occupied from OFF Sleep. Those paths need work; do not merge #234 based only on this document.
+This is **the intended behavior**, not a claim that the current PR #234 implements it. Current code in `__init__._derive_state` and `helpers.async_auto_exit_sleep_if_needed(reason="expiry")` explicitly requires `tracking.observed_on`, and `climate.async_turn_on` / `switch._fallback_set_power` may prepare occupied from OFF Sleep. Those paths need work; do not merge #234 based only on this document.
 
 The actual physical evidence is preserved in its original lab report on draft #237. Trial F remains **deferred**, no permission for an additional real command is implied. When the code implementation is ready, re-run HA current/minimum, protected LAB smoke, CI and CodeRabbit, then conduct independent whole-series audit of #231–#234 before final closeout of #197.
