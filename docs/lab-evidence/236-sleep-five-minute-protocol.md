@@ -1,7 +1,7 @@
-# Supervised DKN Sleep five-minute experiments
+# Supervised DKN Sleep experiments
 
 Issue #236. The authenticated discovery below used only login and GET.
-A, B and C each require a new operator-approved grant and physical supervision.
+A, C and F automate commands in that order. B follows in a separate invocation after review. Each trial requires a fresh grant and physical supervision.
 
 ## Discovery on the NAS
 
@@ -48,14 +48,14 @@ Prepare the device manually outside the trial. Confirm physical baseline,
 P2=8 uses a different fan channel and stops the trial. Arrange reliable local
 OFF and exclude other writers. The LAB writes `{"sleep_time":5}` once and
 requires a fresh scoped GET returning exactly five before selecting Sleep.
-No alternative duration is substituted. The five-minute write is part of
-the independently approved trial and occurs before t0.
+No alternative duration is substituted. The duration write is part of each independently approved trial and occurs before t0. F uses one minute and stops unless that exact value is returned.
 
-| Trial and scenario | Starting power | t0 | Intervention | Last observation | Hard ceiling |
-|---|---|---|---|---|---|
-| A `off_sleep_then_on` | OFF | PUT nested `scenary=sleep` | t=240 s, one P1 ON | t=600 s | 780 s |
-| B `on_sleep_then_panel_off` | ON | PUT nested `scenary=sleep` | t=120 s, physical panel OFF | t=390 s | 570 s |
-| C `on_sleep_then_off` | ON | PUT nested `scenary=sleep` | t=120 s, one P1 OFF | t=390 s | 570 s |
+| Trial and scenario | Starting power | Duration | Intervention | Last observation | Hard ceiling |
+|---|---|---:|---|---|---:|
+| A `off_sleep_then_on` | OFF | 5 min | t=240 s, one P1 ON | t=600 s | 780 s |
+| C `on_sleep_then_off` | ON | 5 min | t=120 s, one P1 OFF | t=390 s | 570 s |
+| F `one_minute_sleep_rewake` | ON | 1 min | One P1 ON, 20 s after physical OFF confirmation | 90 s after physical ON confirmation | 360 s |
+| B `on_sleep_then_panel_off` | ON | 5 min | t=120 s, physical panel OFF | t=390 s | 570 s |
 
 t0 is the scene HTTP acknowledgment. Confirm fresh GET has the original
 power and raw `sleep` before intervening. A requires physical ON corroboration,
@@ -67,19 +67,32 @@ OFF separately after the P1 command. Compare the first GET showing
 `occupied` and the last GET showing `sleep` against the recorded physical
 transition. A reported scene does not establish the fate of any internal timer.
 
-| Authorized request | A | B | C |
-|---|---:|---:|---:|
-| POST `/users/sign_in` | 1 | 1 | 1 |
-| GET `/installation_relations` | 1 | 1 | 1 |
-| GET `/devices` with approved installation | 22 | 16 | 15 |
-| PUT `/devices/{approved device}` with `{"sleep_time":5}` | 1 | 1 | 1 |
-| PUT same device with `{"device":{"scenary":"sleep"}}` | 1 | 1 | 1 |
-| POST `/events`, `modmaquina`, `P1`, approved device | 1, string `"1"` | 0 | 1, string `"0"` |
-| Total state requests | 26 | 19 | 19 |
+In F, enter `off` as soon as the first natural physical OFF is visible.
+The LAB records that terminal receipt as the time origin and corroborates
+OFF with a GET that also records the reported scene. If the confirmation is
+missing at t=120, or GET does not corroborate OFF, stop without P1. Send a
+single P1 ON 20 seconds after the terminal receipt. A late command slot
+stops the trial. Enter `on` when the equipment physically restarts, within
+20 seconds of the HTTP acknowledgment. Observe through 90 seconds after
+that physical confirmation and use `off` again if it stops. No `occupied`
+is sent by the LAB even if GET reports a spontaneous scene change. A second
+OFF near 60 seconds is compatible with rearming only after corroboration
+and exclusion of external writers. Remaining ON is compatible with a
+one-shot or cancelled timer. Missing physical proof or delivery is inconclusive.
+
+| Authorized request | A | C | F | B |
+|---|---:|---:|---:|---:|
+| POST `/users/sign_in` | 1 | 1 | 1 | 1 |
+| GET `/installation_relations` | 1 | 1 | 1 | 1 |
+| GET `/devices` with approved installation | 22 | 15 | 13 | 16 |
+| PUT `/devices/{approved device}` with `sleep_time` | 1 (5 min) | 1 (5 min) | 1 (1 min) | 1 (5 min) |
+| PUT same device with `{"device":{"scenary":"sleep"}}` | 1 | 1 | 1 | 1 |
+| POST `/events`, `modmaquina`, `P1`, approved device | 1, string `"1"` | 1, string `"0"` | 1, string `"1"` | 0 |
+| Total state requests | 26 | 19 | 17 | 19 |
 
 The HTTPS origin is fixed. The transport blocks redirects, proxy environment
 and alternate sessions. There is at least 10 seconds between state requests.
-Polling is every 30 seconds, with the remote P1 slot reserved for the command.
+A, C and B poll every 30 seconds, reserving remote P1 slots. F uses a GET at the physical OFF confirmation and 10-second GET intervals after physical restart.
 The middleware surfaces delivery failures before aiohttp can retry. No
 `occupied`, info event, mode or fan write is in the measurement allowlist.
 Passive Pusher requires an extra TLS socket and subscription authorization;
@@ -92,19 +105,32 @@ Use the existing virtual environment and an operator foreground terminal.
 
     .venv/bin/python -m scripts.sleep_lab_plan --scenario all
     .venv/bin/python -m scripts.sleep_lab_run --digest
-    .venv/bin/python -m scripts.sleep_lab_run --scenario off_sleep_then_on --grant "$grant_path"
+    .venv/bin/python -m scripts.sleep_lab_run --automatic "$grant_a" "$grant_c" "$grant_f"
+
+For B, after reviewing the three completed sessions, use its separate grant.
+
+    .venv/bin/python -m scripts.sleep_lab_run --scenario on_sleep_then_panel_off --grant "$grant_b"
 
 After review, supply a separate owner-only JSON grant (0600) for each trial.
 The exact fields are `approved` (true), `scenario`, `source_digest`,
 `device_id`, `installation_id`, `nonce` (64 random lowercase hex characters)
 and `expires_at` (timezone-aware ISO timestamp). Copy only the private scope
 values locally from `secrets/sleep-scope.json` when creating the grant.
-Expiration must cover the hard ceiling and be within 30 minutes. Create
+Each grant must still cover its own hard ceiling when its session starts and expire within 30 minutes. The automatic sequence never renews or reuses grants. Create
 `secrets/sleep-sessions` (0700) once. The runner durably consumes the grant
-before login. If a crash leaves an active lock, verify physical safety before
-clearing the lock. Keep consumed claims.
+before login. A private campaign lock prevents another launch during preparation
+or restoration. Each session closes its network before asking the owner to
+corroborate the outcome and verify the restored state. If the outcome or
+restoration is uncertain, stop. If an abort leaves an active lock, the owner
+must verify OFF and raw occupied independently before clearing it. Only clear
+a campaign lock after confirming its process has exited. Keep consumed claims.
 
-Confirm the physical baseline and isolation by typing the scenario name.
+After A, C and F have all completed and been restored, the runner writes a
+private completion receipt for the current source and target. B requires
+that receipt and the owner's interactive `reviewed` confirmation. B is
+never part of `--automatic`.
+
+Prepare mode, speed and initial power separately under their own authorization. Confirm the physical baseline and isolation by typing the scenario name.
 Send `ok`, `on` or `off` every 30 seconds. Use the physical observation
 keys on transitions and at the end. The runner stops after 45 seconds without
 supervision, on EOF, `stop`, Ctrl-C, SIGTERM, scope errors, HTTP failures or
@@ -113,8 +139,7 @@ The runner stops and records that provenance.
 
 After the observation closes or aborts, use the physical OFF control as
 needed, wait for delayed changes, then restore `occupied` with separately
-authorized manual control. Confirm physical OFF and raw `occupied` before
-re-enabling other clients. Record `cleanup_unverified` if either is uncertain.
+authorized manual control. Confirm physical OFF and raw `occupied` before typing `restored` or re-enabling other clients. The confirmation is an operator attestation based on that separate verification. Record `cleanup_unverified` if either is uncertain.
 An in-flight request can land after cancellation. Never replay an ambiguous
 request automatically.
 
@@ -149,8 +174,7 @@ Report timing as intervals where sampling or observer latency matters.
   Observe through t=600 s to cover the original and possible restarted
   deadlines. No LAB P1 or scene restoration during observation.
 
-D/E are planning designs only. Each needs a separate allowlist, approval,
-budget and synthetic validation if selected after A/B/C.
+D/E are planning designs only. Each needs a separate allowlist, approval, budget and synthetic validation if selected after the four trials.
 
 ## Offline checks
 

@@ -17,8 +17,13 @@ from aiohttp import ClientOSError, ClientTimeout, ServerDisconnectedError
 from custom_components.airzoneclouddaikin import _is_online
 from scripts.lab_policy import ReadOnlyPolicy
 from scripts.protected_lab import LabStopped, LabSupervisor, create_gateway
-from scripts.sleep_lab_grant import authorize, private_json, source_digest
-from scripts.sleep_lab_plan import SCENARIOS, SLEEP_PUT, SLEEP_TIME_PUT, make_plan
+from scripts.sleep_lab_grant import (
+    authorize,
+    private_json,
+    source_digest,
+    write_private,
+)
+from scripts.sleep_lab_plan import AUTOMATIC_SCENARIOS, SCENARIOS, SLEEP_PUT, make_plan
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "https://dkn.airzonecloud.com"
@@ -36,7 +41,7 @@ class SleepPolicy(ReadOnlyPolicy):
         self.deadline = deadline
         self.device, self.site = device, site
         self.writes = [
-            ("PUT", f"/devices/{device}", SLEEP_TIME_PUT),
+            ("PUT", f"/devices/{device}", {"sleep_time": plan.sleep_minutes}),
             ("PUT", f"/devices/{device}", SLEEP_PUT),
         ]
         if plan.intervention.control:
@@ -117,6 +122,8 @@ async def measure(
     site,
     now=time.monotonic,
     panel_off=None,
+    physical_off=None,
+    physical_on=None,
 ):
     """Execute the fixed timeline with injectable timing and transport for tests."""
 
@@ -181,14 +188,19 @@ async def measure(
         if (
             state["power"] != power
             or state["scenary"] != scene
-            or (duration and state["sleep_time"] != "5")
+            or (duration and state["sleep_time"] != str(plan.sleep_minutes))
         ):
             raise LabStopped("Precondition failed")
 
     path = f"/devices/{device}"
     require(await read(), plan.required_start_scene, duration=False)
     await call(
-        "duration", "PUT", path, params=formatted, body=SLEEP_TIME_PUT, structured=False
+        "duration",
+        "PUT",
+        path,
+        params=formatted,
+        body={"sleep_time": plan.sleep_minutes},
+        structured=False,
     )
     require(await read(), plan.required_start_scene)
     await call("scene", "PUT", path, params=formatted, body=SLEEP_PUT, structured=False)
@@ -197,6 +209,42 @@ async def measure(
     require(await read(), "sleep")
     intervention = plan.intervention
     offset = intervention.at_second
+
+    async def send_power(due):
+        await call(
+            "power",
+            "POST",
+            "/events",
+            params=auth,
+            body=power_payload(intervention, device),
+            structured=False,
+            due=due,
+        )
+
+    if plan.wait_for_off_seconds:
+        if physical_off is None or physical_on is None:
+            raise LabStopped("Physical observation unavailable")
+        confirmed = await physical_off(start + plan.wait_for_off_seconds)
+        if not start <= confirmed <= start + plan.wait_for_off_seconds:
+            raise LabStopped("Physical OFF outside measurement window")
+        state = await read()
+        if state["power"] != "0" or state["sleep_time"] != str(plan.sleep_minutes):
+            raise LabStopped("Physical OFF not corroborated by GET")
+        await wait(confirmed + offset)
+        wake_dispatch = now()
+        await send_power(confirmed + offset)
+        wake = now()
+        log("wake_ack")
+        observed_on = await physical_on(wake_dispatch, wake + 20)
+        if not wake_dispatch <= observed_on <= wake + 20:
+            raise LabStopped("Second physical ON outside confirmation window")
+        for second in range(10, plan.observation_seconds + 1, 10):
+            await wait(observed_on + second)
+            if (await read())["sleep_time"] != str(plan.sleep_minutes):
+                raise LabStopped("Unexpected Sleep duration")
+        log("observation_closed", classification="pending_physical_correlation")
+        return
+
     # Keep polling across both candidate expiry windows. Leave spacing before P1.
     for second in range(30, plan.observation_seconds + 1, 30):
         await wait(start + second)
@@ -207,20 +255,12 @@ async def measure(
                 await panel_off()
                 await read()
                 continue
-            await call(
-                "power",
-                "POST",
-                "/events",
-                params=auth,
-                body=power_payload(intervention, device),
-                structured=False,
-                due=start + second,
-            )
+            await send_power(start + second)
             continue
         state = await read()
         if second < offset:
             require(state, "sleep")
-        elif state["sleep_time"] != "5":
+        elif state["sleep_time"] != str(plan.sleep_minutes):
             raise LabStopped("Unexpected observation")
     if plan.observation_seconds % 30:
         raise LabStopped("Invalid observation schedule")
@@ -287,6 +327,9 @@ async def run(plan, journal, email, password, device, site):
     heartbeat = started
     panel_confirmation = asyncio.Event()
     panel_requested = False
+    natural_off = asyncio.Event()
+    wake_on = asyncio.Event()
+    physical_times = {}
 
     def log(event, **fields):
         journal.write(
@@ -304,6 +347,7 @@ async def run(plan, journal, email, password, device, site):
         os.fsync(journal.fileno())
 
     operation = None
+    power_headers_at = None
 
     class SleepSupervisor(LabSupervisor):
         def response(self, status):
@@ -312,14 +356,15 @@ async def run(plan, journal, email, password, device, site):
             )
             super().response(status)
 
-    supervisor = SleepSupervisor(
-        auth_limit=1, state_limit=6 + plan.observation_seconds // 30
-    )
+    supervisor = SleepSupervisor(auth_limit=1, state_limit=plan.state_budget)
     # Only this owned session uses the trial ceiling.
     supervisor.deadline = started + plan.hard_deadline_seconds
     policy = SleepPolicy(device, site, plan, supervisor.deadline)
 
     async def headers_sent(_session, _context, _headers):
+        nonlocal power_headers_at
+        if operation == "power":
+            power_headers_at = time.monotonic()
         log("http_sent", operation=operation)
 
     gateway = await create_gateway(
@@ -327,6 +372,7 @@ async def run(plan, journal, email, password, device, site):
         supervisor,
         middlewares=(fail_on_disconnect,),
         on_headers_sent=headers_sent,
+        empty_put_ack=True,
     )
     task = asyncio.current_task()
 
@@ -367,7 +413,10 @@ async def run(plan, journal, email, password, device, site):
         heartbeat = time.monotonic()
         if command != b"ok":
             try:
-                log("physical", power=command.decode("ascii"))
+                power = command.decode("ascii")
+                physical_times[power] = heartbeat
+                log("physical", power=power)
+                (natural_off if power == "off" else wake_on).set()
             except OSError:
                 stop()
 
@@ -382,7 +431,10 @@ async def run(plan, journal, email, password, device, site):
             try:
                 check()
             except LabStopped:
-                stop()
+                try:
+                    log("supervision_stop", reason=supervisor.reason or "heartbeat")
+                finally:
+                    stop()
                 return
 
     async def request(label, method, path, *, params, body, structured):
@@ -412,6 +464,22 @@ async def run(plan, journal, email, password, device, site):
         finally:
             panel_requested = False
 
+    async def physical_off(deadline):
+        print(
+            "When natural OFF is physically visible, enter off. After wake enter on.",
+            flush=True,
+        )
+        async with asyncio.timeout(max(0, deadline - time.monotonic())):
+            await natural_off.wait()
+        return physical_times["off"]
+
+    async def physical_on(earliest, deadline):
+        if physical_times.get("on", -1) < earliest:
+            wake_on.clear()
+        async with asyncio.timeout(max(0, deadline - time.monotonic())):
+            await wake_on.wait()
+        return physical_times["on"]
+
     async def wait(until):
         await asyncio.sleep(max(0, until - time.monotonic()))
 
@@ -433,7 +501,22 @@ async def run(plan, journal, email, password, device, site):
                         device,
                         site,
                         panel_off=panel_off,
+                        physical_off=physical_off,
+                        physical_on=physical_on,
                     )
+                    if plan.intervention.control:
+                        expected = (
+                            "on"
+                            if plan.intervention.payload["event"]["value"] == "1"
+                            else "off"
+                        )
+                        observed = physical_times.get(expected)
+                        if (
+                            power_headers_at is None
+                            or observed is None
+                            or observed < power_headers_at
+                        ):
+                            raise LabStopped("Physical power change unconfirmed")
         except (Exception, asyncio.CancelledError) as error:
             log("stopped", kind=type(error).__name__, classification="inconclusive")
             raise LabStopped("Session stopped") from None
@@ -445,55 +528,122 @@ async def run(plan, journal, email, password, device, site):
             log("restoration_required")
 
 
+def execute_trial(scenario, grant, directory, credentials):
+    plan = make_plan(scenario)
+    email, password, device, site = credentials
+    if (
+        input(
+            "Confirm physical baseline and exclusive control. Type the scenario name: "
+        )
+        != scenario
+    ):
+        raise LabStopped("Operator declined")
+    folder, lock = authorize(
+        grant, directory, ROOT, scenario, plan.hard_deadline_seconds, (device, site)
+    )
+    try:
+        fd = os.open(
+            folder / "evidence.jsonl", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+        )
+        with os.fdopen(fd, "w") as journal:
+            print(
+                "Enter ok, on or off every 30 seconds. Enter interference or stop to cancel.",
+                flush=True,
+            )
+            asyncio.run(run(plan, journal, email, password, device, site))
+    finally:
+        print(
+            "Confirm physical OFF and restore occupied separately. Check for delayed commands."
+        )
+        print(f"Private evidence directory: {folder.name}")
+    if (
+        input(
+            "Only after corroborating the outcome and independently verifying physical OFF and raw occupied, type restored: "
+        )
+        != "restored"
+    ):
+        raise LabStopped("Restoration unconfirmed")
+    write_private(
+        folder / "restored.json", {"physical_off": True, "raw_occupied": True}
+    )
+    lock.rmdir()
+
+
+def execute_sequence(grants, execute, receipt, approval):
+    """Publish completion only after every trial and its independent restoration."""
+    receipt.unlink(missing_ok=True)
+    for scenario, grant in zip(AUTOMATIC_SCENARIOS, grants, strict=True):
+        execute(scenario, grant)
+    write_private(receipt, approval)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--digest", action="store_true")
-    parser.add_argument("--scenario", choices=SCENARIOS)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--scenario", choices=SCENARIOS)
+    mode.add_argument("--automatic", nargs=3, metavar=("A", "C", "F"), type=Path)
     parser.add_argument("--grant", type=Path)
     args = parser.parse_args()
     if args.digest:
         print(source_digest(ROOT))
         return 0
-    if not (args.scenario and args.grant and sys.stdin.isatty()):
+    if not (
+        sys.stdin.isatty()
+        and ((args.scenario and args.grant) or (args.automatic and not args.grant))
+    ):
         parser.error(
-            "Live execution requires a scenario, private grant and operator TTY"
+            "Live execution requires a private grant per scenario and an operator TTY"
         )
-    plan = make_plan(args.scenario)
     try:
-        email, password, device, site = local_input()
+        if args.automatic and len({grant.resolve() for grant in args.automatic}) != 3:
+            raise LabStopped("Separate grants required")
+        credentials = local_input()
+        directory = ROOT / "secrets/sleep-sessions"
+        # Read the directory requirements before taking the campaign lock.
+        info = directory.lstat()
         if (
-            input(
-                "Confirm physical baseline and exclusive control. Type the scenario name: "
-            )
-            != plan.name
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o077
         ):
-            raise LabStopped("Operator declined")
-        folder, lock = authorize(
-            args.grant,
-            ROOT / "secrets/sleep-sessions",
-            ROOT,
-            plan.name,
-            plan.hard_deadline_seconds,
-            (device, site),
-        )
+            raise LabStopped("Private session directory required")
+        lock = directory / "campaign"
+        lock.mkdir(mode=0o700)
         try:
-            fd = os.open(
-                folder / "evidence.jsonl", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-            )
-            with os.fdopen(fd, "w") as journal:
-                print(
-                    "Enter ok, on or off every 30 seconds. Enter stop to cancel.",
-                    flush=True,
+            receipt = directory / "automatic-restored.json"
+            approval = {
+                "source_digest": source_digest(ROOT),
+                "device_id": credentials[2],
+                "installation_id": credentials[3],
+            }
+            if args.automatic:
+                execute_sequence(
+                    args.automatic,
+                    lambda scenario, grant: execute_trial(
+                        scenario, grant, directory, credentials
+                    ),
+                    receipt,
+                    approval,
                 )
-                asyncio.run(run(plan, journal, email, password, device, site))
+            else:
+                if args.scenario == "on_sleep_then_panel_off":
+                    if (
+                        private_json(receipt) != approval
+                        or input(
+                            "Review A, C and F before B. Type reviewed to confirm: "
+                        )
+                        != "reviewed"
+                    ):
+                        raise LabStopped("Review of A, C and F required")
+                else:
+                    receipt.unlink(missing_ok=True)
+                execute_trial(args.scenario, args.grant, directory, credentials)
         finally:
             lock.rmdir()
-            print(
-                "Confirm physical OFF and restore occupied separately. Check for delayed commands."
-            )
     except Exception, KeyboardInterrupt:
         print(
-            "Sleep LAB stopped or refused. Review the private journal if created.",
+            "Sleep LAB stopped or refused. Review the private journal and any pending restoration.",
             file=sys.stderr,
         )
         return 1

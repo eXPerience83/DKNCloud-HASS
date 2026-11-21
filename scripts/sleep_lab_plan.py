@@ -12,9 +12,14 @@ from dataclasses import asdict, dataclass
 from typing import Literal
 
 ScenarioName = Literal[
-    "off_sleep_then_on", "on_sleep_then_panel_off", "on_sleep_then_off"
+    "off_sleep_then_on",
+    "on_sleep_then_panel_off",
+    "on_sleep_then_off",
+    "one_minute_sleep_rewake",
 ]
-SCENARIOS = ("off_sleep_then_on", "on_sleep_then_panel_off", "on_sleep_then_off")
+REWAKE_SCENARIO = "one_minute_sleep_rewake"
+AUTOMATIC_SCENARIOS = ("off_sleep_then_on", "on_sleep_then_off", REWAKE_SCENARIO)
+SCENARIOS = (*AUTOMATIC_SCENARIOS, "on_sleep_then_panel_off")
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +41,16 @@ class Plan:
     required_mode: str
     required_fan_speed: int
     steps: tuple[Step, ...]
+
+    sleep_minutes: int = 5
+    wait_for_off_seconds: int = 0
+
+    @property
+    def state_budget(self) -> int:
+        if self.wait_for_off_seconds:
+            # Baseline, initial polling, corroboration, wake, and follow-up.
+            return 8 + self.observation_seconds // 10
+        return 6 + self.observation_seconds // 30
 
     @property
     def intervention(self) -> Step:
@@ -70,6 +85,7 @@ def make_plan(name: ScenarioName) -> Plan:
     if name not in SCENARIOS:
         raise ValueError("Unknown experiment")
 
+    minutes = 1 if name == REWAKE_SCENARIO else 5
     common = (
         Step(
             -90,
@@ -79,9 +95,9 @@ def make_plan(name: ScenarioName) -> Plan:
         Step(
             -60,
             "configure_duration",
-            "PUT sleep_time=5, then read back; if rejected or not confirmed, STOP",
+            f"PUT sleep_time={minutes}, then require exact readback.",
             True,
-            SLEEP_TIME_PUT,
+            {"sleep_time": minutes},
         ),
         Step(
             -15,
@@ -130,6 +146,28 @@ def make_plan(name: ScenarioName) -> Plan:
                     "Close evidence and classify; supervised restoration is separate from inference.",
                 ),
             ),
+        )
+    elif name == REWAKE_SCENARIO:
+        plan = Plan(
+            name=name,
+            observation_seconds=90,
+            hard_deadline_seconds=360,
+            required_start_power=1,
+            required_start_scene="occupied",
+            required_mode="3",
+            required_fan_speed=1,
+            steps=common
+            + (
+                Step(
+                    20,
+                    "power_on",
+                    "20 seconds after confirming OFF, send P1 ON once.",
+                    True,
+                    POWER_ON,
+                ),
+            ),
+            sleep_minutes=minutes,
+            wait_for_off_seconds=120,
         )
     else:
         plan = Plan(
@@ -185,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--scenario",
-        choices=[*SCENARIOS, "all", "both"],
+        choices=[*SCENARIOS, "all", "both", "automatic"],
         default="all",
     )
     parser.add_argument(
@@ -201,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
     selected = (
         ("off_sleep_then_on", "on_sleep_then_off")
         if args.scenario == "both"
+        else AUTOMATIC_SCENARIOS
+        if args.scenario == "automatic"
         else SCENARIOS
         if args.scenario == "all"
         else (args.scenario,)

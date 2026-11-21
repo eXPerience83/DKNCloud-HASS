@@ -114,10 +114,20 @@ class LabSupervisor:
 class GuardedContext:
     """Grant a transport lease only around a previously validated operation."""
 
-    def __init__(self, gateway, factory, category=None, websocket=False, path=None):
+    def __init__(
+        self,
+        gateway,
+        factory,
+        category=None,
+        websocket=False,
+        path=None,
+        *,
+        empty_ack=False,
+    ):
         self.gateway, self.factory = gateway, factory
         self.category, self.websocket = category, websocket
         self.path = path
+        self.empty_ack = empty_ack
         self.context = None
 
     async def __aenter__(self):
@@ -148,6 +158,11 @@ class GuardedContext:
                     result.status < 300
                     and result.status != 204
                     and self.path != "/events"
+                    and not (
+                        self.empty_ack
+                        and result.status == 200
+                        and not await result.read()
+                    )
                 ):
                     # Structured endpoints need JSON; information events do not.
                     # Abort outside the handler to drop private exception context.
@@ -227,8 +242,9 @@ class GuardedSocket:
 class LaboratoryGateway:
     """The sole transport injected into every integration API and adapter."""
 
-    def __init__(self, protected, supervisor):
+    def __init__(self, protected, supervisor, *, empty_put_ack=False):
         self.protected, self.supervisor = protected, supervisor
+        self.empty_put_ack = empty_put_ack
         self.observations = dict(
             websocket_established=0,
             get_received=0,
@@ -269,6 +285,7 @@ class LaboratoryGateway:
             lambda: self.protected.request(method, url, **kwargs),
             category,
             path=URL(url).path,
+            empty_ack=self.empty_put_ack and method == "PUT",
         )
 
     def ws_connect(self, url, **kwargs):
@@ -347,7 +364,13 @@ class LaboratoryGateway:
 
 
 async def create_gateway(
-    policy, supervisor, *, connector=None, middlewares=(), on_headers_sent=None
+    policy,
+    supervisor,
+    *,
+    connector=None,
+    middlewares=(),
+    on_headers_sent=None,
+    empty_put_ack=False,
 ):
     """Create owned TLS transport; custom connectors are synthetic-test only."""
     if not policy.enabled:
@@ -358,7 +381,7 @@ async def create_gateway(
         middlewares=middlewares,
         on_headers_sent=on_headers_sent,
     )
-    return LaboratoryGateway(protected, supervisor)
+    return LaboratoryGateway(protected, supervisor, empty_put_ack=empty_put_ack)
 
 
 def real_policy(devices, installations, app_key):
