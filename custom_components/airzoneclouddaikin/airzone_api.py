@@ -234,11 +234,15 @@ class AirzoneAPI:
 
         timeout = ClientTimeout(total=REQUEST_TIMEOUT)
         spath = self._safe_path(path)
-        # Never follow a redirect for a mutating request: aiohttp may replay
-        # a POST body on 307/308 or change it into a GET on 301/302/303.
-        mutating_request = method in {"POST", "PUT", "PATCH", "DELETE"}
-
         event = (json or {}).get("event")
+        # Only the effectful cloud commands need a redirect fence. Keep
+        # authentication and read-only INFO requests on their existing path.
+        mutating_request = (
+            (method == "PUT" and path.startswith(f"{API_DEVICES}/"))
+            or (method == "POST" and path == API_EVENTS
+                and isinstance(event, dict)
+                and event.get("cgi") == "modmaquina")
+        )
         status_only_control = (
             method == "POST"
             and path == API_EVENTS
