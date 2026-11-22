@@ -399,8 +399,11 @@ precede dispatch does not create uncertainty. The explicit, bounded 429
 policy still applies to a current intent. A valid 2xx acknowledges the
 supported `modmaquina` controls even if the response body is unusable.
 The entry session uses the HTTP writer to distinguish pre-dispatch
-cancellation from cancellation after dispatch. Without that trace, a
-cancellation or timeout inside the HTTP attempt can leave the outcome unknown.
+cancellation from cancellation after dispatch. A cancelled call holds the
+device lock while an in-flight P1 finishes and its outcome is reconciled.
+Cancellation after a definitive 429 stops that command before any further
+attempt. Without the writer trace, cancellation or timeout inside the HTTP
+attempt can leave the outcome unknown.
 A connector error or a timeout reported specifically during connection
 acquisition remains known unsent. Information responses still use their bodies.
 

@@ -371,63 +371,56 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
                 hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
             )
 
-    dispatched = False
+    in_flight = False
+    cancellation: asyncio.CancelledError | None = None
 
-    def check_dispatch() -> None:
-        nonlocal dispatched
-        intent.check_dispatch()
-        dispatched = True
+    def set_in_flight(value: bool) -> None:
+        nonlocal in_flight
+        in_flight = value
+        if not value and cancellation is not None:
+            # A definitive 429 ended the drained attempt. Keep the recorded
+            # cooldown, but do not retry after the caller cancelled.
+            raise CommandSuperseded
 
-    def finish_after_cancel(command: asyncio.Task[Any]) -> None:
-        if not intent.is_active():
-            return
-        try:
-            command.result()
-        except asyncio.CancelledError, Exception:
-            mark_uncertain()
-            return
-        if intent.is_current():
-            # Accepted P1 still matters after the caller goes away. Reconcile
-            # through the existing overlay plus bounded readback, not replay.
-            bucket.get("uncertain_power", {}).pop(device_id, None)
-            optimistic_set(hass, entry_id, device_id, "power", str(value))
-            request_ambiguous_control_readback(
-                hass,
-                coordinator,
-                entry_id=entry_id,
-                device_id=device_id,
-                bucket=bucket,
-            )
-        else:
-            # A newer intent won locally; the late P1 still needs readback.
-            mark_uncertain()
-
-    try:
-        intent.check_dispatch()
-        command = asyncio.create_task(
-            api.send_event(
-                modmaquina_payload(device_id, "P1", value),
-                on_start=check_dispatch,
-                on_uncertain=mark_uncertain,
-            )
+    if not intent.is_current():
+        return False
+    command = asyncio.create_task(
+        api.send_event(
+            modmaquina_payload(device_id, "P1", value),
+            on_start=intent.check_dispatch,
+            on_in_flight=set_in_flight,
+            on_uncertain=mark_uncertain,
         )
+    )
+    while True:
         try:
             await asyncio.shield(command)
-        except asyncio.CancelledError:
-            if not dispatched:
+            break
+        except asyncio.CancelledError as error:
+            if command.cancelled():
+                raise (cancellation or error) from None
+            cancellation = error
+            if not in_flight and not command.done():
                 command.cancel()
-            else:
-                mark_uncertain()
-                command.add_done_callback(finish_after_cancel)
+            # Rejoin under the caller's lock, even on a second cancellation.
+        except Exception as error:
+            if cancellation is not None:
+                raise cancellation from None
+            if isinstance(error, CommandSuperseded):
+                return False
             raise
-    except CommandSuperseded:
-        return False
 
-    if not intent.is_active():
-        return False
-    bucket.get("uncertain_power", {}).pop(device_id, None)
-    optimistic_set(hass, entry_id, device_id, "power", str(value))
-    return True
+    active = intent.is_active()
+    if active:
+        bucket.get("uncertain_power", {}).pop(device_id, None)
+        optimistic_set(hass, entry_id, device_id, "power", str(value))
+        if cancellation is not None:
+            request_ambiguous_control_readback(
+                hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
+            )
+    if cancellation is not None:
+        raise cancellation
+    return active
 
 
 def request_ambiguous_control_readback(

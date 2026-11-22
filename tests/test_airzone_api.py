@@ -1489,8 +1489,10 @@ async def test_timed_recovery_get_captures_freshness_at_writer(
 
     waiting, release = asyncio.Event(), asyncio.Event()
     reads = []
+    dispatch = Mock()
 
     async def handler(_request):
+        dispatch.assert_called_once_with()
         reads.append("GET")
         return web.json_response([{"id": "unit", "power": "0"}])
 
@@ -1505,7 +1507,6 @@ async def test_timed_recovery_get_captures_freshness_at_writer(
 
     monkeypatch.setattr(session.connector, "connect", delayed_connect)
     api = AirzoneAPI("synthetic@example.invalid", session)
-    dispatch = Mock()
     task = asyncio.create_task(api.fetch_devices("site", on_start=dispatch))
     try:
         async with asyncio.timeout(3):

@@ -278,6 +278,7 @@ async def test_inactive_climate_entity_uses_real_p1_fallback(
             }
         },
         on_start=ANY,
+        on_in_flight=ANY,
         on_uncertain=ANY,
     )
     assert entity.is_on is (service == "turn_on")

@@ -393,6 +393,7 @@ class AirzoneAPI:
         extra_headers: dict[str, str] | None = None,
         retry: bool = True,
         on_start: Callable[[], None] | None = None,
+        on_in_flight: Callable[[bool], None] | None = None,
         on_uncertain: Callable[[], None] | None = None,
     ) -> Any:
         """Authenticated request with bounded 429 retries and read-only 5xx/timeout retries.
@@ -412,10 +413,14 @@ class AirzoneAPI:
             if on_start is not None:
                 on_start()
             dispatched = True
+            if on_in_flight is not None:
+                on_in_flight(True)
 
         # Restricted transports may not support trace metadata. Preserve
         # the conservative GET start and never forward unsupported options.
-        trace_dispatch = self._dispatch_traced and (on_start or on_uncertain)
+        trace_dispatch = self._dispatch_traced and (
+            on_start or on_in_flight or on_uncertain
+        )
 
         def report_uncertain() -> None:
             # A writer trace can prove that the attempt never reached it.
@@ -444,7 +449,9 @@ class AirzoneAPI:
             dispatched = False
 
             try:
-                if (is_device_write or not trace_dispatch) and on_start is not None:
+                if not trace_dispatch:
+                    dispatch()
+                elif is_device_write and on_start is not None:
                     on_start()
                 return await self._request(
                     method,
@@ -494,6 +501,8 @@ class AirzoneAPI:
                         self._cooldown_until = max(
                             self._cooldown_until, self._now() + delay
                         )
+                        if on_in_flight is not None:
+                            on_in_flight(False)
                     # An HTTP 5xx does not prove the server rejected a
                     # control request; P1/P2 or a device PUT might already
                     # have been accepted before the error response. Surface
@@ -671,9 +680,14 @@ class AirzoneAPI:
         payload: dict[str, Any],
         *,
         on_start: Callable[[], None] | None = None,
+        on_in_flight: Callable[[bool], None] | None = None,
         on_uncertain: Callable[[], None] | None = None,
     ) -> Any:
-        """POST to /events with JSON/XHR headers and no ambiguous 5xx replay."""
+        """POST to /events with JSON/XHR headers and no ambiguous 5xx replay.
+
+        on_start guards the request. on_in_flight marks dispatch (conservatively
+        at preflight on untraced transports) and resets before retrying a 429.
+        """
         params = self._auth_params()
         try:
             return await self._authed_request_with_retries(
@@ -683,6 +697,7 @@ class AirzoneAPI:
                 json=payload,
                 extra_headers=HEADERS_EVENTS,
                 **({"on_start": on_start} if on_start is not None else {}),
+                **({"on_in_flight": on_in_flight} if on_in_flight is not None else {}),
                 **({"on_uncertain": on_uncertain} if on_uncertain is not None else {}),
             )
         except ClientResponseError as cre:

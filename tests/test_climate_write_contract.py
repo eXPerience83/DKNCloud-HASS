@@ -1822,6 +1822,7 @@ async def test_power_on_from_off_uses_p1_before_cooling_mode(
             }
         },
         on_start=ANY,
+        on_in_flight=ANY,
         on_uncertain=ANY,
     )
 
@@ -2851,28 +2852,31 @@ async def test_accepted_p1_survives_caller_cancellation(
     bucket["sync_manager"] = manager
     entered = asyncio.Event()
     release = asyncio.Event()
-    completed = asyncio.Event()
 
-    async def accepted_p1(_payload, *, on_start=None, **_kwargs):
-        assert callable(on_start)
+    async def accepted_p1(_payload, *, on_start, on_in_flight, **_kwargs):
         on_start()
+        on_in_flight(True)
         entered.set()
         await release.wait()
-        completed.set()
 
     api.send_event.side_effect = accepted_p1
     activation = asyncio.create_task(entity.async_turn_on())
-    await asyncio.wait_for(entered.wait(), timeout=2)
-    activation.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await activation
-    assert entity._overlay_value("power", "0") != "1"
-    release.set()
-    await asyncio.wait_for(completed.wait(), timeout=2)
-
-    async with asyncio.timeout(2):
-        while entity._overlay_value("power", "0") != "1":
+    try:
+        async with asyncio.timeout(3):
+            await entered.wait()
+            activation.cancel()
             await asyncio.sleep(0)
+            assert not activation.done()
+            assert entity._overlay_value("power", "0") == "0"
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await activation
+    finally:
+        release.set()
+        activation.cancel()
+        await asyncio.gather(activation, return_exceptions=True)
+
+    assert entity._overlay_value("power", "0") == "1"
     assert "unit-1" not in bucket.get("uncertain_power", {})
     manager.request_recovery.assert_any_call("unit-1", require_fresh=True)
     api.send_event.assert_awaited_once()
@@ -2905,3 +2909,197 @@ async def test_cancel_before_p1_dispatch_never_claims_acceptance(
     assert entity._overlay_value("power", "0") != "1"
     assert not bucket.get("uncertain_power")
     manager.request_recovery.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "connect",
+        "in_flight",
+        "in_flight_429",
+        "ack",
+        "backoff",
+        "unload",
+        "failed_unload",
+    ],
+)
+async def test_traced_p1_cancellation_boundaries(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    boundary,
+):
+    """Exercise cancellation against the actual runtime session and HTTP peer."""
+    from aiohttp import web
+    from aiohttp.client_proto import ResponseHandler
+    from aiohttp.http_writer import StreamWriter
+    from pytest_homeassistant.common import MockConfigEntry
+
+    from custom_components.airzoneclouddaikin import (
+        airzone_api,
+        async_create_runtime_session,
+        async_unload_entry,
+    )
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, _ = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    entry = MockConfigEntry(domain=DOMAIN, entry_id=entity._entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = Mock(close=AsyncMock())
+    lock = acquire_device_lock(hass, entry.entry_id, "unit-1")
+    reached, release = asyncio.Event(), asyncio.Event()
+    received = []
+    written = []
+    settled_on = asyncio.Event()
+
+    async def handler(request):
+        value = (await request.json())["event"]["value"]
+        received.append(value)
+        if value == 0:
+            assert settled_on.is_set()
+            assert entity._overlay_value("power", "?") == "1"
+        if len(received) == 1:
+            if boundary in {"in_flight", "in_flight_429", "unload", "failed_unload"}:
+                reached.set()
+                await release.wait()
+            if boundary in {"backoff", "in_flight_429"}:
+                return web.Response(status=429)
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_post(airzone_api.API_EVENTS, handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    write = StreamWriter._write
+
+    def observe_write(writer, chunk):
+        write(writer, chunk)
+        if isinstance(writer._protocol, ResponseHandler):
+            written.append(bytes(chunk))
+
+    writelines = StreamWriter._writelines
+
+    def observe_writelines(writer, chunks):
+        chunks = tuple(chunks)
+        writelines(writer, chunks)
+        if isinstance(writer._protocol, ResponseHandler):
+            written.extend(map(bytes, chunks))
+
+    monkeypatch.setattr(StreamWriter, "_write", observe_write)
+    monkeypatch.setattr(StreamWriter, "_writelines", observe_writelines)
+    monkeypatch.setattr(
+        hass.config_entries,
+        "async_unload_platforms",
+        AsyncMock(return_value=boundary == "unload"),
+    )
+    session = async_create_runtime_session(hass)
+    api = entity.coordinator.api = airzone_api.AirzoneAPI(
+        "synthetic@example.invalid", session
+    )
+    bucket.update(api=api, sync_manager=manager)
+    connect = session.connector.connect
+    request = api._request
+
+    async def blocked_connect(*args, **kwargs):
+        reached.set()
+        await release.wait()
+        return await connect(*args, **kwargs)
+
+    async def blocked_backoff(_delay):
+        reached.set()
+        await release.wait()
+        monkeypatch.setattr(api, "_now", lambda: api._cooldown_until)
+
+    async def cancel_after_ack(*args, **kwargs):
+        result = await request(*args, **kwargs)
+        on.cancel()
+        reached.set()
+        return result
+
+    async def track_ack(*args, **kwargs):
+        result = await request(*args, **kwargs)
+        if kwargs["json"]["event"]["value"] == 1:
+            settled_on.set()
+        return result
+
+    if boundary == "in_flight":
+        monkeypatch.setattr(api, "_request", track_ack)
+    if boundary == "connect":
+        monkeypatch.setattr(session.connector, "connect", blocked_connect)
+    elif boundary in {"backoff", "in_flight_429"}:
+        monkeypatch.setattr(api, "_sleep", blocked_backoff)
+    elif boundary == "ack":
+        monkeypatch.setattr(api, "_request", cancel_after_ack)
+
+    on = asyncio.create_task(entity.async_turn_on())
+    tasks = [on]
+    try:
+        async with asyncio.timeout(4):
+            await reached.wait()
+            pending = tuple(api._pending)
+            if boundary != "ack":
+                on.cancel()
+                await asyncio.sleep(0)
+            if boundary in {"in_flight", "in_flight_429", "unload", "failed_unload"}:
+                on.cancel()
+                await asyncio.sleep(0)
+                retained_lock = lock.locked() and not on.done()
+            if boundary == "in_flight":
+                off = asyncio.create_task(entity.async_turn_off())
+                tasks.append(off)
+                await asyncio.sleep(0)
+                assert received == [1]
+            if boundary in {"unload", "failed_unload"}:
+                assert await async_unload_entry(hass, entry) == (boundary == "unload")
+            if boundary in {"connect", "backoff"}:
+                await asyncio.gather(on, return_exceptions=True)
+                uncertainty_before_release = bool(bucket.get("uncertain_power"))
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await on
+            await asyncio.gather(*pending, return_exceptions=True)
+            if boundary == "in_flight":
+                await off
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tuple(api._pending), return_exceptions=True)
+
+    assert not api._pending
+    assert not lock.locked()
+    assert not bucket.get("uncertain_power")
+    if boundary in {"connect", "backoff"}:
+        assert not uncertainty_before_release
+        if boundary == "connect":
+            assert written == []
+            assert received == []
+        else:
+            assert b"".join(written).count(b"POST /events?") == 1
+            assert received == [1]
+        manager.request_recovery.assert_not_called()
+    elif boundary == "in_flight":
+        assert retained_lock
+        assert received == [1, 0]
+        assert entity._overlay_value("power", "?") == "0"
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    elif boundary == "in_flight_429":
+        assert retained_lock
+        assert received == [1]
+        assert api._cooldown_until > api._now()
+        manager.request_recovery.assert_not_called()
+    elif boundary == "unload":
+        assert retained_lock
+        assert received == [1]
+        assert entry.entry_id not in hass.data.get(DOMAIN, {})
+        manager.request_recovery.assert_not_called()
+    else:
+        if boundary == "failed_unload":
+            assert retained_lock
+        assert received == [1]
+        assert entity._overlay_value("power", "?") == "1"
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
