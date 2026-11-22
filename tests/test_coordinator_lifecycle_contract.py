@@ -44,7 +44,9 @@ async def test_two_installations_fetch_concurrently_without_external_io(
         async def fetch_installations(self) -> list[dict[str, str]]:
             return [{"installation_id": "first"}, {"installation_id": "second"}]
 
-        async def fetch_devices(self, installation: str) -> list[dict[str, str]]:
+        async def fetch_devices(
+            self, installation: str, **_kwargs
+        ) -> list[dict[str, str]]:
             launched.append(installation)
             if len(launched) == 2:
                 both_started.set()
@@ -80,7 +82,7 @@ async def test_devices_without_server_id_use_normalized_mac_fallback(
         async def fetch_installations(self) -> list[dict[str, str]]:
             return [{"installation_id": "site-1"}]
 
-        async def fetch_devices(self, _site: str) -> list[dict[str, str]]:
+        async def fetch_devices(self, _site: str, **_kwargs) -> list[dict[str, str]]:
             return [
                 {"mac": " AA:BB:CC:DD ", "name": "legacy", "scenary": "occupied"},
                 {"name": "unknown", "scenary": "occupied"},
@@ -120,7 +122,9 @@ async def test_fetch_devices_401_uses_native_auth_failure_even_if_other_succeeds
         async def fetch_installations(self) -> list[dict[str, str]]:
             return [{"installation_id": "bad"}, {"installation_id": "good"}]
 
-        async def fetch_devices(self, installation: str) -> list[dict[str, str]]:
+        async def fetch_devices(
+            self, installation: str, **_kwargs
+        ) -> list[dict[str, str]]:
             if installation == "bad":
                 raise _auth_failure()
             return [{"id": "dev-1", "scenary": "occupied"}]
@@ -141,7 +145,7 @@ async def test_fetch_devices_cancellation_is_not_swallowed(
         async def fetch_installations(self) -> list[dict[str, str]]:
             return [{"installation_id": "site-1"}]
 
-        async def fetch_devices(self, _site: str) -> None:
+        async def fetch_devices(self, _site: str, **_kwargs) -> None:
             raise asyncio.CancelledError()
 
     with pytest.raises(asyncio.CancelledError):
@@ -276,7 +280,7 @@ async def test_retired_polling_refresh_cannot_continue_or_publish(
             await release.wait()
         return [{"installation_id": "site"}]
 
-    async def fetch_devices(_site):
+    async def fetch_devices(_site, **_kwargs):
         if phase == "devices":
             started.set()
             await release.wait()
@@ -306,3 +310,47 @@ async def test_retired_polling_refresh_cannot_continue_or_publish(
     assert "last_data" not in original
     api.fetch_installations.assert_awaited_once_with()
     assert api.fetch_devices.await_count == (phase == "devices")
+
+
+async def test_rest_polling_clears_only_the_uncertainty_seen_at_get_start(hass):
+    """A retained cached snapshot is insufficient, even if it includes power."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from custom_components.airzoneclouddaikin import _async_update_data
+
+    entry = MockConfigEntry(domain=DOMAIN)
+    uncertain = {}
+    bucket = hass.data.setdefault(DOMAIN, {}).setdefault(entry.entry_id, {})
+    bucket["uncertain_power"] = uncertain
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def fetch(_site, *, on_start):
+        nonlocal calls
+        calls += 1
+        on_start()
+        if calls == 1:
+            entered.set()
+            await release.wait()
+        if calls == 2:
+            return None
+        return [{"id": "unit", "power": "0"}]
+
+    api = SimpleNamespace(
+        fetch_installations=AsyncMock(return_value=[{"installation_id": "site"}]),
+        fetch_devices=fetch,
+    )
+    async with asyncio.timeout(3):
+        old = asyncio.create_task(_async_update_data(hass, entry, api))
+        await entered.wait()
+        marker = uncertain["unit"] = object()
+        release.set()
+        await old
+        assert uncertain == {"unit": marker}
+        cached = await _async_update_data(hass, entry, api)
+        assert cached["unit"]["power"] == "0"
+        assert uncertain == {"unit": marker}
+        await _async_update_data(hass, entry, api)
+        assert not uncertain
+    assert calls == 3

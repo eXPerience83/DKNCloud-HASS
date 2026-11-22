@@ -388,13 +388,30 @@ changed is discarded instead of sending an option for the previous mode;
 the FAN_ONLY P2=3/8 telemetry alias is rechecked for fan-channel routing.
 This is local ordering, not physical-state confirmation.
 
-**Ambiguous power-write safety:** A timed-out, cancelled or otherwise
-unconfirmed P1 write from Climate (including implicit HVAC power-on) or the
-direct Switch fallback schedules a readback through SyncManager, or the
-legacy refresh fallback when no manager exists. It never automatically
-replays P1 or claims a successful optimistic power change. Commands known
-to be unsent because of local cooldown do not request corrective readback;
-entry shutdown suppresses new recovery work.
+**Ambiguous power-write safety:** Climate and Switch share the entry's
+per-device lock and intent ordering. A P1 that may have reached the backend
+invalidates the previous power overlay and requests a bounded readback when
+its result is uncertain. During that time, cached power cannot suppress a
+newer explicit ON or OFF. Reads never send a control or replay the old P1.
+A definitive HTTP rejection, a local cooldown or a cancellation known to
+precede dispatch does not create uncertainty. The explicit, bounded 429
+policy still applies to a current intent. A valid 2xx acknowledges the
+supported `modmaquina` controls even if the response body is unusable.
+The entry session uses the HTTP writer to distinguish pre-dispatch
+cancellation from cancellation after dispatch. Once dispatched, P1 keeps the
+device lock through its response or timeout, even if the caller is cancelled
+more than once. The original entry owns reconciliation. Without that trace, a
+cancellation or timeout inside the HTTP attempt can leave the outcome unknown.
+A connector error or a timeout reported specifically during connection
+acquisition remains known unsent. Information responses still use their bodies.
+
+A later accepted P1 or a GET started after the uncertain result can resolve
+the uncertainty within the same entry. The GET must actually apply a valid
+power value. Missing fields, cached coordinator data and GET fields superseded
+by PUSH are insufficient. PUSH retains its normal display precedence. A newer
+intent can stop older wake preparation or prevent its follow-up P2. An already
+accepted P1 still receives its local ON overlay and readback while the entry
+remains active.
 
 **Other ambiguous control writes:** The integration applies the same no-replay
 readback policy to Climate setpoint/fan events (P3/P4/P7/P8) and Number PUTs
@@ -597,9 +614,10 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - In PUSH mode, readbacks after uncertain writes and corroboration of a first
   Sleep OFF report require a device GET dispatched after the corresponding
   request for evidence. Quiet-channel watchdog reads can share an in-flight GET.
-  A GET still waiting on the entry budget or API cooldown can serve newer
-  requests once dispatched. Demands that arrive after dispatch can share one
-  later GET under the same entry budget. Each response is merged once and
+  A GET waiting on the entry budget, API cooldown or the runtime session's
+  connection can serve newer requests once dispatched. A transport without
+  writer tracing uses the conservative pre-request boundary. Demands that arrive
+  after dispatch can share one later GET under the same entry budget. Each response is merged once and
   remains subject to PUSH field precedence. A GET dispatched before a strict
   demand can update the snapshot but cannot confirm that readback. Errors end
   the current worker and preserve the existing reauthentication and backoff
