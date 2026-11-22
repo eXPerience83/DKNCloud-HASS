@@ -456,3 +456,48 @@ async def test_accepted_duration_and_new_sleep_ignore_cached_minutes(hass):
     _derive_state(hass, entry, data, fresh_power_ids=set(), fresh_scenary_ids=set())
     assert not tracking.duration_invalidated
     assert tracking.start_known
+
+
+@pytest.mark.parametrize("intent_before_writer", [False, True])
+async def test_poll_sleep_vote_belongs_to_intent_at_writer(
+    hass, freezer, intent_before_writer
+):
+    import asyncio
+
+    from custom_components.airzoneclouddaikin import _async_update_data
+
+    entry, coordinator, data, tracking, _ = _new_session(hass, "0")
+    waiting, writer, dispatched, reply = (asyncio.Event() for _ in range(4))
+
+    async def fetch(_installation, *, on_start):
+        waiting.set()
+        await writer.wait()
+        on_start()
+        dispatched.set()
+        await reply.wait()
+        return [dict(data["device"])]
+
+    api = SimpleNamespace(
+        fetch_installations=AsyncMock(return_value=[{"id": "site"}]),
+        fetch_devices=fetch,
+    )
+    freezer.tick(timedelta(seconds=331))
+    task = asyncio.create_task(_async_update_data(hass, entry, api))
+    try:
+        async with asyncio.timeout(3):
+            await waiting.wait()
+            if not intent_before_writer:
+                writer.set()
+                await dispatched.wait()
+            hass.data[DOMAIN][entry.entry_id]["power_intents"] = {"device": 1}
+            writer.set()
+            reply.set()
+            coordinator.data = await task
+        assert tracking.expiry_off_reports == int(intent_before_writer)
+        assert (
+            _observe(hass, entry, coordinator.data, "0", 1000) is intent_before_writer
+        )
+    finally:
+        writer.set()
+        reply.set()
+        await asyncio.gather(task, return_exceptions=True)

@@ -320,18 +320,19 @@ async def _async_update_data(
             pending_scenes: dict[str, object] = {}
             duration_at_dispatch: dict[str, object] = {}
 
+            intent_snapshot: dict[str, dict[str, int]] = {}
+
             def dispatched() -> None:
-                nonlocal markers, pending_scenes, duration_at_dispatch
+                nonlocal markers, pending_scenes, duration_at_dispatch, intent_snapshot
                 markers = uncertain_power.copy()
                 pending_scenes = domain_bucket.get("sleep_exit_pending", {}).copy()
                 duration_at_dispatch = duration_writes.copy()
+                intent_snapshot = {
+                    key: domain_bucket.get(key, {}).copy() for key in SLEEP_INTENT_KEYS
+                }
 
             devices = await api.fetch_devices(installation, on_start=dispatched)
             observation = (next(get_sequence), dt_util.utcnow())
-            # Another installation may keep the aggregate waiting after receipt.
-            intent_snapshot = {
-                key: domain_bucket.get(key, {}).copy() for key in SLEEP_INTENT_KEYS
-            }
             return (
                 devices,
                 markers,
@@ -1435,11 +1436,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 }
                 if remote
                 else set(),
-                power_observations={
-                    dev_id: manager.last_power_evidence
-                    for dev_id in fresh_power_ids
-                    if manager.last_power_evidence is not None
-                },
+                power_observations=manager.power_observations if remote else None,
             )
             bucket["last_data"] = data
             if remote:
@@ -1527,6 +1524,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             uncertain_power=bucket.setdefault("uncertain_power", {}),
             get_sequence=bucket.setdefault("sleep_get_sequence", count(1)),
             duration_writes=bucket.setdefault("sleep_duration_writes", {}),
+            intent_revisions=lambda device: sleep_intent_revisions(bucket, device),
         )
         bucket["sync_manager"] = manager
 

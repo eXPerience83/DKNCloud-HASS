@@ -62,12 +62,14 @@ class SyncManager:
         uncertain_power: dict[str, object] | None = None,
         get_sequence: Iterator[int] | None = None,
         duration_writes: dict[str, object] | None = None,
+        intent_revisions: Callable[[str], tuple[int, int, int]] | None = None,
     ) -> None:
         self.state = SyncState()
         self.state.snapshot(list(initial.values()), self.state.checkpoint())
         self._installations = dict(installations)
         self._request, self._fetch = request, fetch
         self._timed_fetch = timed_fetch
+        self._intent_revisions = intent_revisions
         self._duration_writes = duration_writes if duration_writes is not None else {}
         self._uncertain_power = uncertain_power if uncertain_power is not None else {}
         self._publish, self._reauth, self._locks = publish, reauth, locks
@@ -100,7 +102,7 @@ class SyncManager:
         # The derivation layer may not count a cached maintenance publication.
         self.replayed_scene_ids: set[str] = set()
         self._last_scene_push: dict[tuple[str, str], datetime | None] = {}
-        self.last_power_evidence: PowerObservation | None = None
+        self.power_observations: dict[str, PowerObservation] = {}
         self._get_sequence = get_sequence if get_sequence is not None else count(1)
         self._last_received = dict.fromkeys(initial, clock())
         self._last_event: dict[str, float] = {}
@@ -221,6 +223,7 @@ class SyncManager:
         started: ReadStart | None = None
         uncertain_at_dispatch: dict[str, object] = {}
         duration_at_dispatch: dict[str, object] = {}
+        intents_at_dispatch: dict[str, tuple[int, int, int]] = {}
 
         async def read():
             nonlocal checkpoint, started, uncertain_at_dispatch, duration_at_dispatch
@@ -239,29 +242,33 @@ class SyncManager:
                     raise asyncio.CancelledError
                 self._budget.mark_started()
                 checkpoint = self.state.checkpoint()
-                if on_start is not None:
+                generation = checkpoint[0]
+
+                def dispatched():
+                    nonlocal \
+                        checkpoint, \
+                        started, \
+                        uncertain_at_dispatch, \
+                        duration_at_dispatch
+                    # Preserve the connection generation across API cooldown.
+                    checkpoint = generation, self.state.revision
+                    if on_start is not None:
+                        started = on_start()
+                    uncertain_at_dispatch = self._uncertain_power.copy()
+                    duration_at_dispatch = self._duration_writes.copy()
+                    if revisions := self._intent_revisions:
+                        intents_at_dispatch.update(
+                            (device, revisions(device))
+                            for device, site in self._installations.items()
+                            if site == installation
+                        )
+
+                if on_start is not None and self._timed_fetch is not None:
                     started = on_start()
-                    if self._timed_fetch is not None:
-                        generation = checkpoint[0]
-
-                        def dispatched():
-                            nonlocal \
-                                checkpoint, \
-                                started, \
-                                uncertain_at_dispatch, \
-                                duration_at_dispatch
-                            # Preserve the connection generation across API
-                            # cooldown, but compare fields at dispatch.
-                            checkpoint = generation, self.state.revision
-                            started = on_start()
-                            uncertain_at_dispatch = self._uncertain_power.copy()
-                            duration_at_dispatch = self._duration_writes.copy()
-
-                        devices = await self._timed_fetch(installation, dispatched)
-                        return devices, (next(self._get_sequence), dt_util.utcnow())
-                uncertain_at_dispatch = self._uncertain_power.copy()
-                duration_at_dispatch = self._duration_writes.copy()
-                devices = await self._fetch(installation)
+                    devices = await self._timed_fetch(installation, dispatched)
+                else:
+                    dispatched()
+                    devices = await self._fetch(installation)
                 return devices, (next(self._get_sequence), dt_util.utcnow())
 
         devices, observation = await self._budget.run(read)
@@ -300,7 +307,16 @@ class SyncManager:
             )
         }
         self.replayed_scene_ids.clear()
-        self.last_power_evidence = observation
+        revisions = self._intent_revisions
+        self.power_observations = {
+            device: observation
+            for device, keys in self.touched.items()
+            if "power" in keys
+            and (
+                revisions is None
+                or intents_at_dispatch.get(device) == revisions(device)
+            )
+        }
         confirm_power_read(
             self._uncertain_power,
             uncertain_at_dispatch,
@@ -409,6 +425,7 @@ class SyncManager:
             return
         self.replayed_scene_ids.clear()
         applied = patch
+        dated_replay = False
         scene = str(patch.get("scenary")).strip().lower()
         if scene in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
             key = device, scene
@@ -423,6 +440,7 @@ class SyncManager:
                 # Only independent scene reports can unlock another write.
                 self.replayed_scene_ids.add(device)
                 if identity is not None:
+                    dated_replay = True
                     # A dated replay must not let the scene veto an eligible
                     # GET. Apply the other fields with their normal precedence.
                     applied = {
@@ -432,7 +450,13 @@ class SyncManager:
                 self._last_scene_push[key] = identity
         self.state.event(device, applied, generation)
         self.touched = {device: {k for k, v in applied.items() if v is not None}}
-        if "power" in self.touched[device]:
+        self.power_observations = {}
+        replayed_off = dated_replay and str(patch.get("power")).strip().lower() in {
+            "0",
+            "false",
+            "off",
+        }
+        if "power" in self.touched[device] and not replayed_off:
             # Replayed identical PUSH payloads do not become two independent
             # corroborations, even if the socket delivered them twice.
             fingerprint = (
@@ -440,7 +464,7 @@ class SyncManager:
                 for key in ("power", "update_date", "scenary", "connection_date")
                 if key in patch and patch[key] is not None
             )
-            self.last_power_evidence = (
+            self.power_observations[device] = (
                 f"push:{tuple(fingerprint)!r}",
                 dt_util.utcnow(),
             )

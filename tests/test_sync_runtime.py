@@ -265,7 +265,12 @@ async def test_explicit_refresh_counts_single_off_snapshot_once(
     off = {**sample_device, "scenary": "sleep", "power": "0"}
     api = Mock()
     api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
-    api.fetch_devices = AsyncMock(side_effect=[[first], [off]])
+
+    async def fetch(_installation, *, on_start, **_kwargs):
+        on_start()
+        return [first if api.fetch_devices.await_count == 1 else off]
+
+    api.fetch_devices = AsyncMock(side_effect=fetch)
     api.async_set_scenary = AsyncMock(return_value={})
     monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
     monkeypatch.setattr(
@@ -1499,4 +1504,95 @@ async def test_cleanup_http_422_surfaces_actionable_wake_error(
             ("PUT", "/devices/dev1", {"device": {"scenary": "occupied"}})
         ]
     finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("source", ["old_get", "current_get", "old_push"])
+async def test_sleep_votes_require_current_dispatch_or_nonreplayed_push(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device, source
+):
+    initial = {**sample_device, "scenary": "sleep", "power": "0", "sleep_time": 30}
+    waiting, writer, dispatched, reply = (asyncio.Event() for _ in range(4))
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[initial])
+    api.async_set_scenary = AsyncMock()
+    api.send_event = AsyncMock()
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    generation = manager.state.generation
+    tracking = bucket["sleep_tracking"]["dev1"]
+    monkeypatch.setattr(manager, "request_recovery", Mock())
+
+    async def fetch(_installation, *, on_start, **_kwargs):
+        waiting.set()
+        await writer.wait()
+        on_start()
+        dispatched.set()
+        await reply.wait()
+        return [dict(initial)]
+
+    task = None
+    try:
+        if source == "old_push":
+            replays = [
+                {
+                    "power": "0",
+                    "scenary": "sleep",
+                    "update_date": f"2026-11-01T00:00:0{i}Z",
+                }
+                for i in range(2)
+            ]
+            for patch in replays:
+                await manager.event("dev1", patch, generation)
+            await manager.event("dev1", {"scenary": "occupied"}, generation)
+            await manager.event(
+                "dev1",
+                {"scenary": "sleep", "update_date": "2026-11-01T00:00:02Z"},
+                generation,
+            )
+            _arm_synthetic_expired_timer(bucket)
+            for patch in replays:
+                await manager.event("dev1", patch, generation)
+        else:
+            _arm_synthetic_expired_timer(bucket)
+            api.fetch_devices.side_effect = fetch
+            task = asyncio.create_task(manager.recover("dev1"))
+            async with asyncio.timeout(3):
+                await waiting.wait()
+                if source == "old_get":
+                    writer.set()
+                    await dispatched.wait()
+                bucket["power_intents"] = {"dev1": 1}
+                writer.set()
+                reply.set()
+                await task
+
+        assert tracking.expiry_off_reports == int(source == "current_get")
+        api.async_set_scenary.assert_not_awaited()
+        if source == "current_get":
+            await manager.event("dev1", {"power": "1"}, generation)
+            assert tracking.expiry_off_reports == 0
+        # New undated scene messages can still contribute independent power.
+        await manager.event("dev1", {"power": "0", "scenary": "sleep"}, generation)
+        assert tracking.expiry_off_reports == 1
+        await manager.event(
+            "dev1", {"power": "0", "update_date": "2026-11-01T00:00:05Z"}, generation
+        )
+        await hass.async_block_till_done()
+        _assert_occupied_write(api)
+        api.send_event.assert_not_awaited()
+    finally:
+        writer.set()
+        reply.set()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
         assert await hass.config_entries.async_unload(entry.entry_id)
