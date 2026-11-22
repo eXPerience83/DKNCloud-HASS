@@ -411,9 +411,10 @@ power value. Missing fields, cached coordinator data and GET fields superseded
 by PUSH are insufficient. PUSH retains its normal display precedence. A newer
 intent can stop older wake preparation or prevent its follow-up P2. An already
 accepted P1 still receives its local ON overlay and readback while the entry
-remains active. If dependent P2 fails or is superseded after that overlay
-expires, cached power that still disagrees with the accepted ON cannot suppress
-the next explicit power command while readback is pending.
+remains active. If dependent P2 fails or is superseded while cached power still
+disagrees with the accepted ON, its ON overlay can suppress a duplicate ON
+within its TTL. After the overlay expires, stale power cannot suppress an
+explicit command pending valid readback or a newer P1 acknowledgement.
 
 **Other ambiguous control writes:** The integration applies the same no-replay
 readback policy to Climate setpoint/fan events (P3/P4/P7/P8) and Number PUTs

@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import ANY, AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock, call
 
 import pytest
 from homeassistant.components.climate.const import HVACMode
@@ -2656,60 +2656,36 @@ async def test_superseded_p2_keeps_readback_if_newer_off_never_dispatches(
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
 
 
-async def test_queued_off_survives_power_overlay_expiry_during_p2_timeout(
+async def test_explicit_off_after_p2_timeout_and_power_overlay_expiry(
     hass, dummy_coordinator_factory, monkeypatch
 ):
-    """An accepted ON must keep a queued OFF from deduplicating on stale power."""
-    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
-
+    """Cached OFF cannot suppress the explicit OFF after a partial wake."""
     entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
     bucket = hass.data[DOMAIN][entity._entry_id]
-    # Record recovery demands without applying a GET result before OFF runs.
-    manager = bucket["sync_manager"] = Mock()
-    p2_started, release_p2, off_queued = (asyncio.Event() for _ in range(3))
-    lock = acquire_device_lock(hass, entity._entry_id, "unit-1")
-    acquire = lock.acquire
-    clock = hass.loop.time
-    advance = 0.0
+    manager = bucket["sync_manager"] = Mock()  # Record readback without applying it.
     commands = []
-
-    async def signal_queued():
-        if lock.locked():
-            off_queued.set()
-        return await acquire()
 
     async def send(payload, **_kwargs):
         event = payload["event"]
         commands.append((event["option"], event["value"]))
         if event["option"] == "P2":
-            p2_started.set()
-            await release_p2.wait()
             raise TimeoutError("P2 response timed out")
 
-    monkeypatch.setattr(lock, "acquire", signal_queued)
     api.send_event.side_effect = send
-    async with asyncio.timeout(3) as deadline:
-        activation = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.HEAT))
-        tasks = [activation]
-        try:
-            await p2_started.wait()
-            off = asyncio.create_task(entity.async_turn_off())
-            tasks.append(off)
-            await off_queued.wait()
-            monkeypatch.setattr(hass.loop, "time", lambda: clock() + advance)
-            advance = 31.0
-            deadline.reschedule(hass.loop.time() + 3)
-            release_p2.set()
-            with pytest.raises(TimeoutError, match="P2 response timed out"):
-                await activation
-            await off
-        finally:
-            advance = 0.0
-            release_p2.set()
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+    with pytest.raises(TimeoutError, match="P2 response timed out"):
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+    assert entity._overlay_value("power", "0") == "1"
+    await entity.async_turn_on()  # The accepted ON still deduplicates during its TTL.
+    clock = hass.loop.time
+    with monkeypatch.context() as patched:
+        patched.setattr(hass.loop, "time", lambda: clock() + 31)
+        await entity.async_turn_off()
 
     assert commands == [("P1", 1), ("P2", "2"), ("P1", 0)]
-    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    assert (
+        manager.request_recovery.call_args_list.count(
+            call("unit-1", require_fresh=True)
+        )
+        == 1
+    )
     assert not bucket.get("uncertain_power")

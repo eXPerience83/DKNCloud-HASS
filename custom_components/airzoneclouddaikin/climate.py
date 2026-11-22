@@ -773,7 +773,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         )
         if intent is None:
             return
-        bucket = intent.bucket
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         prepared = False
         while True:
@@ -787,7 +786,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     "1",
                     "true",
                     "on",
-                } and not power_is_uncertain(bucket, self._device_id):
+                } and not power_is_uncertain(intent):
                     # Waking from Away still needs Home even when P1 is redundant.
                     if prepared or self.preset_mode != "away":
                         return
@@ -815,7 +814,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         )
         if intent is None:
             return
-        bucket = intent.bucket
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
             if not intent.is_current():
@@ -826,7 +824,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 "false",
                 "off",
                 "",
-            } and not power_is_uncertain(bucket, self._device_id):
+            } and not power_is_uncertain(intent):
                 return
             if await async_send_power(intent, 0):
                 self.async_write_ha_state()
@@ -854,8 +852,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 if not intent.is_current():
                     return
                 if (
-                    self._device_power_on()
-                    or power_is_uncertain(bucket, self._device_id)
+                    self._device_power_on() or power_is_uncertain(intent)
                 ) and not await async_send_power(intent, 0):
                     return
                 optimistic_invalidate(
@@ -919,10 +916,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             normalize_fan_alias = (
                 hvac_mode == HVACMode.FAN_ONLY and self._backend_mode_code() == "8"
             )
-            needs_power = (
-                power_is_uncertain(bucket, self._device_id)
-                or not self._device_power_on()
-            )
+            needs_power = power_is_uncertain(intent) or not self._device_power_on()
             if (
                 not needs_power
                 and self._hvac_from_device() == hvac_mode
@@ -951,23 +945,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except (Exception, asyncio.CancelledError) as error:
                 if entry_active():
                     if powered_on:
-                        overlay = (
-                            bucket.get("optimistic", {})
-                            .get(self._device_id, {})
-                            .get("power", {})
-                        )
-                        expires = overlay.get("expires", 0)
-                        if expires <= self.hass.loop.time() and not power_is_on(
-                            self._device.get("power")
-                        ):
-                            # The ON was acknowledged, but cached power
-                            # can no longer justify skipping the next P1.
+                        if not power_is_on(self._device.get("power")):
+                            # Keep the accepted overlay usable for its TTL.
+                            # Its removal must not make older raw power reliable.
+                            overlay = bucket.get("optimistic", {}).get(
+                                self._device_id, {}
+                            )
                             bucket.setdefault("uncertain_power", {})[
                                 self._device_id
-                            ] = object()
-                            optimistic_invalidate(
-                                self.hass, self._entry_id, self._device_id, "power"
-                            )
+                            ] = overlay.get("power") or object()
                         self.async_write_ha_state()
                     if powered_on or not isinstance(
                         error, (CommandSuperseded, CommandNotSentCooldown)

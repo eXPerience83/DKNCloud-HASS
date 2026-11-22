@@ -326,9 +326,15 @@ def reserve_power_intent(
     return PowerIntent(hass, coordinator, entry_id, device_id, bucket, number)
 
 
-def power_is_uncertain(bucket: dict[str, Any], device_id: str) -> bool:
-    """Return whether cached power must be ignored for control deduplication."""
-    return device_id in bucket.get("uncertain_power", {})
+def power_is_uncertain(intent: PowerIntent) -> bool:
+    """Ignore stale power for deduplication after an ambiguous or partial write."""
+    bucket, device = intent.bucket, intent.device_id
+    marker = bucket.get("uncertain_power", {}).get(device)
+    if marker is None:
+        return False
+    overlay = bucket.get("optimistic", {}).get(device, {}).get("power")
+    # Only the specific acknowledged P1 overlay can still justify a duplicate.
+    return marker is not overlay or intent.hass.loop.time() >= overlay["expires"]
 
 
 async def async_send_power(intent: PowerIntent, value: int) -> bool:

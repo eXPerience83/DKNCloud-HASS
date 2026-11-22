@@ -272,9 +272,7 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
                 if not intent.is_current():
                     return
                 current = str(self._overlay_power() or "").strip().lower()
-                if current in matching and not power_is_uncertain(
-                    intent.bucket, self._device_id
-                ):
+                if current in matching and not power_is_uncertain(intent):
                     return
                 if prepared:
                     if await async_send_power(intent, value):
