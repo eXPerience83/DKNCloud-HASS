@@ -30,7 +30,7 @@ from homeassistant.helpers.translation import async_get_translations
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import AirzoneAPI, prevent_device_put_replay
+from .airzone_api import AirzoneAPI, prevent_device_put_replay, request_dispatch_trace
 from .const import (
     CONF_ENABLE_HEAT_COOL,
     CONF_SLEEP_CLEANUP_ENABLED,
@@ -724,7 +724,10 @@ def _is_online(dev: dict[str, Any], now: datetime) -> bool:
 def async_create_runtime_session(hass: HomeAssistant) -> ClientSession:
     """Use entry-scoped middleware on HA's shared connector."""
     return async_create_clientsession(
-        hass, connector_owner=False, middlewares=(prevent_device_put_replay,)
+        hass,
+        connector_owner=False,
+        middlewares=(prevent_device_put_replay,),
+        trace_configs=[request_dispatch_trace()],
     )
 
 

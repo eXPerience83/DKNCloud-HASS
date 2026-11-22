@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 import traceback
+from contextlib import AsyncExitStack
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from aiohttp import ClientOSError, ClientResponseError, ClientSession, web
+from aiohttp import (
+    ClientConnectorError,
+    ClientOSError,
+    ClientPayloadError,
+    ClientResponseError,
+    ClientSession,
+    ClientTimeout,
+    ServerDisconnectedError,
+    web,
+)
 from aiohttp.client_reqrep import RequestInfo
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from multidict import CIMultiDict
@@ -1186,3 +1197,256 @@ async def test_entry_unload_detaches_runtime_session_and_cancels_pending_put(
         if not command.done():
             command.cancel()
         await asyncio.gather(command, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "outcome", ["cancel_before_connection", "superseded_at_writer"]
+)
+async def test_power_intent_fences_writes_waiting_for_connection(
+    hass, socket_enabled, monkeypatch, outcome
+):
+    """No headers or ambiguity when the intent cannot reach the HTTP writer."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+    from custom_components.airzoneclouddaikin.airzone_api import CommandSuperseded
+
+    entered, release, peer_done = (asyncio.Event() for _ in range(3))
+    received = []
+    superseded = False
+
+    async def peer(reader, writer):
+        try:
+            received.append(await reader.read(1))
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            peer_done.set()
+
+    server = await asyncio.start_server(peer, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.airzone_api.BASE_URL",
+        f"http://127.0.0.1:{port}",
+    )
+    session = async_create_runtime_session(hass)
+    connect = session.connector.connect
+
+    async def delayed_connect(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return await connect(*args, **kwargs)
+
+    monkeypatch.setattr(session.connector, "connect", delayed_connect)
+
+    def check():
+        if superseded:
+            raise CommandSuperseded
+
+    api = AirzoneAPI("synthetic@example.invalid", session, token="synthetic")
+    uncertain = Mock()
+    task = asyncio.create_task(
+        api.send_event(
+            {"event": {"option": "P1", "value": 1}},
+            on_start=check,
+            on_uncertain=uncertain,
+        )
+    )
+    try:
+        async with asyncio.timeout(3):
+            await entered.wait()
+            superseded = True
+            if outcome == "cancel_before_connection":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                release.set()
+                with pytest.raises(CommandSuperseded):
+                    await task
+                await peer_done.wait()
+    finally:
+        release.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        server.close()
+        await server.wait_closed()
+    uncertain.assert_not_called()
+    assert received == ([] if outcome == "cancel_before_connection" else [b""])
+    assert not api._pending
+
+
+@pytest.mark.parametrize(
+    ("status", "option", "traced"),
+    [(200, "P1", True), (201, "P2", False), (204, "P1", True)],
+)
+async def test_controls_accept_valid_2xx_without_decoding_response(
+    hass, socket_enabled, aiohttp_server, monkeypatch, status, option, traced
+):
+    """A documented 2xx acknowledges a supported control without decoding its body."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    received = []
+
+    async def handler(request):
+        received.append(await request.json())
+        if status == 204:
+            return web.Response(status=status)
+        return web.Response(
+            status=status, body=b"not JSON", content_type="application/json"
+        )
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    payload = {"event": {"cgi": "modmaquina", "option": option, "value": 1}}
+    uncertain = Mock()
+    async with AsyncExitStack() as stack:
+        session = (
+            async_create_runtime_session(hass)
+            if traced
+            else await stack.enter_async_context(ClientSession())
+        )
+        api = AirzoneAPI("synthetic@example.invalid", session)
+        if option == "P1":
+            await api.send_event(payload, on_uncertain=uncertain)
+        elif option == "P2":
+            await api.send_event(payload, on_start=lambda: None)
+        else:
+            await api.send_event(payload)
+    uncertain.assert_not_called()
+    assert received == [payload]
+
+
+@pytest.mark.parametrize("traced", [True, False], ids=["writer", "plain"])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "disconnect",
+        "malformed",
+        "cancel_sent",
+        "timeout",
+        401,
+        423,
+        429,
+        503,
+    ],
+)
+async def test_power_uncertainty_tracks_real_dispatch(
+    hass, socket_enabled, aiohttp_server, monkeypatch, outcome, traced
+):
+    """Classify failures of a P1 actually received by the loopback server."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    arrived, release = asyncio.Event(), asyncio.Event()
+    received = []
+    payload = {"event": {"cgi": "modmaquina", "option": "P1", "value": 1}}
+
+    async def handler(request):
+        received.append(await request.json())
+        arrived.set()
+        if outcome in {"disconnect", "malformed"}:
+            if outcome == "malformed":
+                request.transport.write(b"HTTP/1.1 invalid status\r\n\r\n")
+            request.transport.close()
+            return web.Response()
+        if outcome in {"cancel_sent", "timeout"}:
+            await release.wait()
+            return web.Response()
+        headers = {"Retry-After": "60"} if outcome == 429 else None
+        return web.Response(status=outcome, headers=headers)
+
+    await _serve_api(aiohttp_server, monkeypatch, "POST", API_EVENTS, handler)
+    if outcome == "timeout":
+        monkeypatch.setattr(
+            "custom_components.airzoneclouddaikin.airzone_api.ClientTimeout",
+            lambda **_: ClientTimeout(sock_read=0.5),
+        )
+    async with AsyncExitStack() as stack:
+        session = (
+            async_create_runtime_session(hass)
+            if traced
+            else await stack.enter_async_context(ClientSession())
+        )
+        api = AirzoneAPI("synthetic@example.invalid", session, token="synthetic")
+        api.on_write_auth_failure = reauth = Mock()
+        uncertain = Mock()
+        task = asyncio.create_task(api.send_event(payload, on_uncertain=uncertain))
+        try:
+            async with asyncio.timeout(3):
+                await arrived.wait()
+                if outcome == "cancel_sent":
+                    task.cancel()
+                error = {
+                    "cancel_sent": asyncio.CancelledError,
+                    "disconnect": ServerDisconnectedError,
+                    "malformed": ClientPayloadError,
+                    "timeout": TimeoutError,
+                    401: ConfigEntryAuthFailed,
+                }.get(outcome, HomeAssistantError)
+                with pytest.raises(error):
+                    await task
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    assert not api._pending
+    assert received == [payload]
+    assert uncertain.call_count == int(outcome not in (401, 423, 429))
+    assert reauth.call_count == int(outcome == 401)
+    if outcome == 429:
+        assert api._cooldown_until > api._now() + 10
+
+
+async def test_untraced_power_connection_refusal_is_known_unsent(
+    monkeypatch, socket_enabled
+):
+    """Bind without listening so nobody can accept this loopback connection."""
+    from custom_components.airzoneclouddaikin import airzone_api
+
+    uncertain = Mock()
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+        monkeypatch.setattr(airzone_api, "BASE_URL", f"http://127.0.0.1:{port}")
+        async with ClientSession() as session:
+            api = AirzoneAPI("synthetic@example.invalid", session)
+            with pytest.raises(ClientConnectorError):
+                await api.send_event(
+                    {"event": {"cgi": "modmaquina", "option": "P1", "value": 1}},
+                    on_uncertain=uncertain,
+                )
+    uncertain.assert_not_called()
+    assert not api._pending
+
+
+@pytest.mark.parametrize("status", [302, 307])
+async def test_power_post_never_follows_cloud_redirect(
+    hass, socket_enabled, aiohttp_server, monkeypatch, status
+):
+    """Do not redirect or replay a side-effecting P1 POST, even on 307/308."""
+    from custom_components.airzoneclouddaikin import async_create_runtime_session
+
+    received = []
+
+    async def handler(request):
+        received.append((request.method, request.path))
+        await request.read()
+        if request.path == API_EVENTS:
+            return web.Response(status=status, headers={"Location": "/replayed"})
+        return web.json_response({"unexpected": True})
+
+    await _serve_api(aiohttp_server, monkeypatch, "*", "/{path:.*}", handler)
+    api = AirzoneAPI(
+        "synthetic@example.invalid",
+        async_create_runtime_session(hass),
+        token="synthetic",
+    )
+    event = {
+        "event": {
+            "cgi": "modmaquina",
+            "option": "P1",
+            "value": "1",
+            "device_id": "synthetic",
+        }
+    }
+    with pytest.raises(HomeAssistantError):
+        await api.send_event(event)
+
+    assert received == [("POST", API_EVENTS)]
