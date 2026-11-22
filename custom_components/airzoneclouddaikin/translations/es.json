@@ -89,7 +89,7 @@
         "name": "Tiempo restante de Sleep (estimado)"
       },
       "sleep_estimated_end": {
-        "name": "Fin estimada de Sleep"
+        "name": "Fin estimado de Sleep"
       }
     }
   }

@@ -14,7 +14,7 @@
 
 - **Climate control:** Power, cooling, heating, ventilation, dehumidification, target temperature and supported fan speeds.
 - **Native presets:** `home`, `away` and `sleep` on each climate entity. No separate `select.scenary` entity.
-- **Sleep and away settings:** Configurable timer and unoccupied temperature limits. Sleep starts without changing power; an early OFF or later ON does not reset the original countdown. Optional scene-only Home cleanup occurs **only after the estimated timer expiry, a 30-second settle period, and two independent fresh OFF observations**. Supervised A/C/revised-B experiments support the countdown behavior; post-natural-OFF rearm experiment F has not been performed.
+- **Sleep and away settings:** Configurable timer and unoccupied temperature limits. Home Assistant selects Sleep without changing power and preserves its local session and estimate across an early OFF and a later ON. The supervised A, C and revised B results apply to the device and sessions tested. Experiment F (wake after a natural timed OFF) remains unrun and unauthorized.
 - **Status and diagnostics:** Room temperature, device power, connection status, last connection, and (starting with 0.6.0b1) a per-device cloud PUSH/REST synchronization-mode sensor. Connection monitoring is passive (no additional pings).
 - **Privacy by default:** Identifiers such as MAC, PIN and installation/location are only exposed by opting in; those entities remain disabled by default.
 - **Localized UI:** English, Spanish, French, German, Italian and Portuguese.
@@ -81,7 +81,7 @@ Optional settings in the Home Assistant UI:
 - **Automatic synchronization:** The integration owns its fixed nominal cadence and recovery; no scan interval option is exposed.
 - **Expose PII identifiers:** Add sensitive identifier entities (off by default; the entities themselves are disabled by default).
 - **Experimental HEAT_COOL:** Only when the device advertises support; this mode is not broadly validated on hardware.
-- **Automatic Sleep cleanup:** Enabled by default and configurable. Home is restored by a single scene-only write only after the original expiry plus settling and two new, independent OFF observations (including Sleep started OFF); never from an early OFF. Disable to preserve the backend scene. Explicit Home/Away cancels immediately. An ON anomaly after the separate five-minute margin is read-only.
+- **Automatic Sleep cleanup:** Enabled by default and configurable. After the session’s conservative deadline, 30 seconds of settling and two independent fresh OFF observations, the integration can request Home with one guarded scene-only PUT and verify the reported scene by readback. This also applies to Sleep selected while OFF. Disable cleanup to leave the backend scene alone. You can request Home or Away immediately. An HTTP 2xx acknowledges the request. Fresh readback is needed to establish the reported scene, and the response alone cannot establish physical state. The ON anomaly after the separate five-minute margin is read-only.
 
 ## Available entities
 
@@ -122,7 +122,7 @@ For the API commands, device modes, capabilities and detailed backend behavior, 
 
 **How do I change Home/Away/Sleep?** Use the climate entity's presets or the Home Assistant `climate.set_preset_mode` service. The old `select.scenary` entity was removed.
 
-**Why does Sleep sometimes remain active after the unit turns off?** An OFF before the original timer finishes does **not** cancel Sleep. Some devices also retain the scene after their natural timed shutdown. Automatic cleanup waits for the estimated original expiry, a 30-second margin and two independent fresh OFF observations; it then requests `occupied` without changing power and confirms via readback. Sleep can also begin and remain OFF. Selecting Sleep again while the timer is active is idempotent. After *verified* completion with raw Sleep still present, an explicit new selection may rearm via `occupied → confirmed readback → sleep`. Unknown sessions and silent external rearm remain conservative; the remaining-time diagnostics are estimates, not physical shutdown confirmation.
+**Why does Sleep sometimes remain active after the unit turns off?** Home Assistant preserves Sleep through an early OFF. The tested device also retained raw Sleep after natural timed shutdown. Selecting Sleep again during an active session leaves the estimate intact. After verified completion with raw Sleep still present, an explicit new selection may rearm via `occupied → confirmed readback → sleep`. After restart, a validated saved estimate can be shown while cleanup waits on a new conservative deadline. Both timer sensors use local estimates. Zero means the estimated time elapsed and does not establish that the equipment turned off.
 
 **Why can't I select HEAT_COOL?** Both the device capability bit and the **Enable experimental HEAT_COOL mode** option are required. Even then, its physical behavior is not fully validated across devices.
 

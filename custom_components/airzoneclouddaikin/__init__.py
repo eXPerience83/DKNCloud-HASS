@@ -26,6 +26,7 @@ from homeassistant.const import CONF_USERNAME, EVENT_HOMEASSISTANT_STOP, Platfor
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.translation import async_get_translations
@@ -586,17 +587,6 @@ def _derive_state(
             # erase a new, still-pending manual Sleep/scene selection.
             _update_sleep_tracking_for_device(tracking, raw_scenary)
 
-        # Preserve an HA-owned clock after restart, but use a newly observed
-        # upper bound for cleanup: another app could rearm Sleep while HA was off.
-        if (
-            tracking.confidence == "restored"
-            and tracking.cleanup_started_at_utc is None
-            and fresh_scenary_ids is not None
-            and dev_id in fresh_scenary_ids
-            and raw_scenary == SCENARY_SLEEP
-        ):
-            tracking.cleanup_started_at_utc = now
-
         # OFF before the deadline is not a cancellation. Only distinct, newly
         # applied observations *after* deadline plus settling can end Sleep.
         active_sleep = (
@@ -619,8 +609,28 @@ def _derive_state(
                 # Do not infer an overdue physical timer from such a session.
                 tracking.invalidate_duration()
 
+        # Validate a restored estimate with a newly applied observation of the
+        # scene, duration and power. Its cleanup bound starts at this observation.
+        power_value = str(dev.get("power")).strip().lower()
+        observation = (power_observations or {}).get(dev_id)
+        if (
+            tracking.confidence == "restored"
+            and tracking.cleanup_started_at_utc is None
+            and raw_scenary == SCENARY_SLEEP
+            and fresh_scenary_ids is not None
+            and dev_id in fresh_scenary_ids
+            and supplied_durations is not None
+            and dev_id in supplied_durations
+            and sleep_time_minutes == tracking.expected_minutes
+            and observation is not None
+            and power_value in {"0", "false", "off", "1", "true", "on"}
+            and not tracking.duration_invalidated
+        ):
+            tracking.cleanup_started_at_utc = now
+
         valid_timer = (
             active_sleep
+            and tracking.cleanup_started_at_utc is not None
             and not tracking.duration_invalidated
             and tracking.expected_minutes is not None
             and tracking.expected_minutes > 0
@@ -646,8 +656,6 @@ def _derive_state(
             and raw_scenary != overlay_value
         )
         fresh_power = fresh_power_ids is not None and dev_id in fresh_power_ids
-        observation = (power_observations or {}).get(dev_id)
-        power_value = str(dev.get("power")).strip().lower()
         reported_off = power_value in {"0", "false", "off"}
         distinct = False
         if active_sleep and fresh_power and observation is not None:
@@ -926,7 +934,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
 
     # Entry-scoped storage holds only HA-acknowledged Sleep session metadata.
     # Restarts do not restore old OFF confirmations or claim an external t0.
-    sleep_store = Store(hass, 1, f"{DOMAIN}_sleep_{entry.entry_id}")
+    sleep_store = Store(
+        hass, 1, f"{DOMAIN}_sleep_{entry.entry_id}", private=True, atomic_writes=True
+    )
     try:
         stored = await sleep_store.async_load()
     except Exception as err:  # noqa: BLE001
@@ -963,30 +973,63 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     confidence="restored",
                 )
 
-    def save_sleep_sessions() -> None:
-        def snapshot() -> dict[str, Any]:
-            records = {
-                device_id: {
-                    "started_utc": tracking.sleep_started_at_utc.isoformat(),
-                    "duration_minutes": tracking.expected_minutes,
-                    "generation": tracking.session_revision,
-                }
-                for device_id, tracking in bucket.get("sleep_tracking", {}).items()
-                if tracking.last_scenary == SCENARY_SLEEP
-                and tracking.sleep_started_at_utc is not None
-                and tracking.confidence in {"local_ack", "restored"}
-                and tracking.expected_minutes is not None
-                and tracking.expected_minutes > 0
-                and not tracking.duration_invalidated
-            }
-            return {"entry_id": entry.entry_id, "sessions": records}
+    sleep_save_pending = False
 
-        try:
-            sleep_store.async_delay_save(snapshot, 1)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("Unable to queue Sleep metadata (%s)", type(err).__name__)
+    def owns_sleep_store() -> bool:
+        return (
+            hass.data.get(DOMAIN, {}).get(entry.entry_id) is bucket
+            and bucket.get("save_sleep_sessions") is save_sleep_sessions
+        )
+
+    async def write_sleep_sessions() -> None:
+        nonlocal sleep_save_pending
+        if not sleep_save_pending or not owns_sleep_store():
+            return
+        sleep_save_pending = False
+        records = {
+            device_id: {
+                "started_utc": tracking.sleep_started_at_utc.isoformat(),
+                "duration_minutes": tracking.expected_minutes,
+                "generation": tracking.session_revision,
+            }
+            for device_id, tracking in bucket["sleep_tracking"].items()
+            if tracking.last_scenary == SCENARY_SLEEP
+            and tracking.sleep_started_at_utc is not None
+            and tracking.confidence in {"local_ack", "restored"}
+            and tracking.expected_minutes is not None
+            and tracking.expected_minutes > 0
+            and not tracking.duration_invalidated
+        }
+        await sleep_store.async_save({"entry_id": entry.entry_id, "sessions": records})
+
+    async def write_deferred_sleep_sessions() -> None:
+        if not bucket["closing"]:
+            await write_sleep_sessions()
+
+    sleep_save = Debouncer(
+        hass,
+        _LOGGER,
+        cooldown=1,
+        immediate=False,
+        function=write_deferred_sleep_sessions,
+    )
+    entry.async_on_unload(sleep_save.async_shutdown)
+
+    @callback
+    def save_sleep_sessions() -> None:
+        nonlocal sleep_save_pending
+        if not bucket["closing"] and owns_sleep_store():
+            sleep_save_pending = True
+            sleep_save.async_schedule_call()
+
+    async def finish_sleep_storage() -> None:
+        sleep_save.async_shutdown()
+        # The entry reload lock covers this drain and the successor's load.
+        async with sleep_save.async_lock():
+            await write_sleep_sessions()
 
     bucket["save_sleep_sessions"] = save_sleep_sessions
+    bucket["finish_sleep_storage"] = finish_sleep_storage
     cfg = entry.data
     opts = entry.options
 
@@ -1530,24 +1573,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         entry.async_on_unload(cancel_maintenance)
         bucket["sync_maintenance_cancel"] = cancel_maintenance
 
-        async def stop_sync(_event):
-            api.suspend(auth=False)
-            if bucket.get("coordinator") is coordinator:
-                bucket["closing"] = True
-                _cancel_sleep_expiry_task()
-                if task := bucket.get("sleep_expiry_task"):
-                    await asyncio.gather(task, return_exceptions=True)
-            cancel_maintenance()
-            await manager.close()
-
-        cancel_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_sync)
-        entry.async_on_unload(cancel_stop)
-
         @callback
         def close_sync():
             hass.async_create_task(manager.close())
 
         entry.async_on_unload(close_sync)
+
+    async def stop_runtime(_event):
+        if (
+            not owns_sleep_store()
+            or bucket.get("coordinator") is not coordinator
+            or bucket["closing"]
+        ):
+            return
+        bucket["closing"] = True
+        cancel_post_write_refresh(bucket)
+        api.suspend(auth=False)
+        _cancel_sleep_expiry_task()
+        if task := bucket.get("sleep_expiry_task"):
+            await asyncio.gather(task, return_exceptions=True)
+        if connector is not None:
+            cancel_maintenance()
+            await manager.close()
+        await finish_sleep_storage()
+
+    cancel_stop = hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_runtime)
+    entry.async_on_unload(cancel_stop)
 
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -1559,9 +1610,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             _cancel_sleep_expiry_task()
             if task := bucket.get("sleep_expiry_task"):
                 await asyncio.gather(task, return_exceptions=True)
+        cancel_stop()
         if connector is not None:
             cancel_maintenance()
-            cancel_stop()
             await manager.close()
         raise
 
@@ -1620,6 +1671,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
         if cancel := bucket.pop("sync_maintenance_cancel", None):
             cancel()
         await manager.close()
+
+    if unload_ok and (finish := bucket.get("finish_sleep_storage")):
+        await finish()
 
     if bucket.get("coordinator") is not coordinator:
         return unload_ok

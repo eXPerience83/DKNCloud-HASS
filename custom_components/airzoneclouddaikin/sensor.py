@@ -339,10 +339,10 @@ class AirzoneSensor(CoordinatorEntity[AirzoneCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._device_id = device_id
         self._attribute = attribute
-        self._attr_name = friendly
         if attribute in {"sleep_remaining_estimated", "sleep_estimated_end"}:
             self._attr_translation_key = attribute
-            self._attr_name = None
+        else:
+            self._attr_name = friendly
         self._attr_icon = icon
         self._attr_unique_id = f"{device_id}_{attribute}"
         self._is_pii: bool = attribute in PII_ATTRS
