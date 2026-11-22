@@ -1420,11 +1420,9 @@ async def test_duration_get_predating_edit_cannot_invalidate_new_sleep(
     uses_push_manager,
 ):
     """An otherwise fresh response can carry duration older than the edit."""
-    from custom_components.airzoneclouddaikin.helpers import optimistic_set
-
     entry = dkn_config_entry_factory()
     entry.add_to_hass(hass)
-    initial = {**sample_device, "power": "0", "scenary": "sleep", "sleep_time": 30}
+    initial = {**sample_device, "power": "0", "scenary": "occupied", "sleep_time": 30}
     arrived, release = asyncio.Event(), asyncio.Event()
     calls = 0
 
@@ -1436,23 +1434,26 @@ async def test_duration_get_predating_edit_cannot_invalidate_new_sleep(
         if calls == 2:
             arrived.set()
             await release.wait()
-        return [{**initial, "sleep_time": 40 if calls == 3 else 30}]
+        return [
+            initial | {"sleep_time": 40, "scenary": "sleep"}
+            if calls >= 3
+            else dict(initial)
+        ]
 
     api = Mock(
         fetch_installations=AsyncMock(return_value=[{"installation_id": "fake"}]),
         fetch_devices=AsyncMock(side_effect=fetch),
+        put_device_fields=AsyncMock(),
     )
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
     if uses_push_manager:
-        monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
         monkeypatch.setattr(
             integration, "build_verified_adapter", Mock(connect=AsyncMock())
         )
         monkeypatch.setattr(integration.SyncManager, "start", Mock())
-        assert await hass.config_entries.async_setup(entry.entry_id)
-    else:
-        await integration._async_update_data(hass, entry, api)
-
+    assert await hass.config_entries.async_setup(entry.entry_id)
     bucket = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data.coordinator
     if uses_push_manager:
         manager = bucket["sync_manager"]
         now = 40.0
@@ -1467,27 +1468,111 @@ async def test_duration_get_predating_edit_cannot_invalidate_new_sleep(
         async def refresh():
             await manager.recover("dev1")
     else:
+        refresh = coordinator.async_refresh
 
-        async def refresh():
-            data = await integration._async_update_data(hass, entry, api)
-            bucket["coordinator"] = Mock(data=data)
-
+    registry = er.async_get(hass)
+    number = registry.async_get_entity_id("number", DOMAIN, "dev1_sleep_time")
+    climate = registry.async_get_entity_id("climate", DOMAIN, "dev1_climate")
     old = asyncio.create_task(refresh())
     try:
-        await asyncio.wait_for(arrived.wait(), 2)
-        bucket.setdefault("sleep_duration_writes", {})["dev1"] = object()
-        optimistic_set(hass, entry.entry_id, "dev1", "sleep_time", 40)
-        optimistic_set(hass, entry.entry_id, "dev1", "scenary", "sleep")
+        await asyncio.wait_for(arrived.wait(), 5)
+        await hass.services.async_call(
+            "number", "set_value", {"entity_id": number, "value": 40}, blocking=True
+        )
+        await hass.services.async_call(
+            "climate",
+            "set_preset_mode",
+            {"entity_id": climate, "preset_mode": "sleep"},
+            blocking=True,
+        )
+        assert [call.args for call in api.put_device_fields.await_args_list] == [
+            ("dev1", {"sleep_time": 40}),
+            ("dev1", {"device": {"scenary": "sleep"}}),
+        ]
+        assert coordinator.data["dev1"]["sleep_time"] == 30
         tracking = bucket["sleep_tracking"]["dev1"]
+        session = tracking.session_revision
         assert tracking.expected_minutes == 40
         release.set()
-        await asyncio.wait_for(old, 2)
-        assert not tracking.duration_invalidated
+        await asyncio.wait_for(old, 5)
+        assert coordinator.data["dev1"]["sleep_time"] == 30
+        assert tracking.start_known and not tracking.duration_invalidated
         await refresh()
-        assert tracking.start_known
+        assert coordinator.data["dev1"]["sleep_time"] == 40
+        assert tracking.start_known and not tracking.duration_invalidated
         assert tracking.expected_minutes == 40
+        assert tracking.session_revision == session
     finally:
         release.set()
         await asyncio.gather(old, return_exceptions=True)
-        if uses_push_manager:
-            assert await hass.config_entries.async_unload(entry.entry_id)
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("action", ["climate", "switch", "fallback"])
+async def test_cleanup_http_422_surfaces_actionable_wake_error(
+    hass,
+    monkeypatch,
+    dkn_config_entry_factory,
+    sample_device,
+    socket_enabled,
+    aiohttp_server,
+    action,
+):
+    """A real rejected cleanup must surface through the HA wake service."""
+    from aiohttp import web
+    from homeassistant.exceptions import HomeAssistantError
+
+    from custom_components.airzoneclouddaikin import airzone_api
+
+    device = sample_device | {"scenary": "sleep", "power": "0", "sleep_time": 30}
+    requests = []
+
+    async def installations(_request):
+        return web.json_response([{"installation_id": "fake"}])
+
+    async def devices(_request):
+        return web.json_response([device])
+
+    async def command(request):
+        requests.append((request.method, request.path, await request.json()))
+        return web.Response(status=422)
+
+    app = web.Application()
+    app.router.add_get("/installation_relations", installations)
+    app.router.add_get("/devices", devices)
+    app.router.add_put("/devices/dev1", command)
+    app.router.add_post("/events", command)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data.coordinator
+    registry = er.async_get(hass)
+    climate = registry.async_get_entity_id("climate", DOMAIN, "dev1_climate")
+    switch = registry.async_get_entity_id("switch", DOMAIN, "dev1_power")
+    assert climate and switch
+    try:
+        _mark_synthetic_sleep_off(bucket)
+        coordinator.async_update_listeners()
+        await asyncio.wait_for(bucket["sleep_expiry_task"], 5)
+        assert bucket["sleep_exit_pending"]["dev1"] == "rejected"
+        await coordinator.async_refresh()
+        assert coordinator.data["dev1"]["scenary"] == "sleep"
+
+        if action == "fallback":
+            hass.states.async_remove(climate)
+        with pytest.raises(HomeAssistantError, match="Confirm Home before turning on"):
+            await hass.services.async_call(
+                "climate" if action == "climate" else "switch",
+                "turn_on",
+                {"entity_id": climate if action == "climate" else switch},
+                blocking=True,
+            )
+        assert requests == [
+            ("PUT", "/devices/dev1", {"device": {"scenary": "occupied"}})
+        ]
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)

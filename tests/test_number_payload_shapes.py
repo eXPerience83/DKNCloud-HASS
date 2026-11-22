@@ -690,7 +690,9 @@ async def test_sleep_duration_loopback_and_old_get(
     assert data["dev1"]["sleep_expiry_verified"] == (http_status == 422)
 
 
-@pytest.mark.parametrize("outcome", ["accepted", "authentication_interrupted"])
+@pytest.mark.parametrize(
+    "outcome", ["accepted", "get_401_before_dispatch", "get_401_in_flight", "put_401"]
+)
 async def test_sleep_begins_during_duration_loopback(
     hass,
     dummy_coordinator_factory,
@@ -702,7 +704,7 @@ async def test_sleep_begins_during_duration_loopback(
     """Remote Sleep can begin while the traced edit owns the write lock."""
     from types import SimpleNamespace
 
-    from aiohttp import web
+    from aiohttp import ClientResponseError, web
     from homeassistant.exceptions import ConfigEntryAuthFailed
 
     from custom_components.airzoneclouddaikin import (
@@ -719,22 +721,41 @@ async def test_sleep_begins_during_duration_loopback(
     data = {"dev1": dev}
     _derive_state(hass, entry, data, fresh_scenary_ids={"dev1"})
     arrived, release = asyncio.Event(), asyncio.Event()
+    requests = []
 
     async def put(request):
+        requests.append("PUT")
         assert await request.json() == {"sleep_time": 40}
         arrived.set()
         await release.wait()
-        return web.Response(status=204)
+        return web.Response(status=401 if outcome == "put_401" else 204)
+
+    async def get_unauthorized(_request):
+        requests.append("GET")
+        return web.Response(status=401)
 
     app = web.Application()
     app.router.add_put("/devices/dev1", put)
+    app.router.add_get("/devices", get_unauthorized)
     server = await aiohttp_server(app)
     monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+    session = async_create_runtime_session(hass)
     entity._api = api = airzone_api.AirzoneAPI(
         "synthetic@example.invalid",
-        async_create_runtime_session(hass),
+        session,
         token="synthetic",
     )
+    api.on_write_auth_failure = Mock()
+    connect = session.connector.connect
+
+    async def hold_put_connection(request, *args, **kwargs):
+        if request.method == "PUT":
+            arrived.set()
+            await release.wait()
+        return await connect(request, *args, **kwargs)
+
+    if outcome == "get_401_before_dispatch":
+        monkeypatch.setattr(session.connector, "connect", hold_put_connection)
     task = asyncio.create_task(entity.async_set_native_value(40))
     try:
         await asyncio.wait_for(arrived.wait(), 2)
@@ -742,14 +763,33 @@ async def test_sleep_begins_during_duration_loopback(
         _derive_state(hass, entry, data, fresh_scenary_ids={"dev1"})
         tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["dev1"]
         assert not tracking.duration_invalidated
-        if outcome == "authentication_interrupted":
-            api.suspend()
-            with pytest.raises(ConfigEntryAuthFailed):
+        if outcome.startswith("get_401"):
+            with pytest.raises(ClientResponseError) as get_error:
+                await api.fetch_devices("fake", retry=False)
+            assert get_error.value.status == 401
+            with pytest.raises(airzone_api._PutInterruptedByReauth) as error:
                 await asyncio.wait_for(task, 2)
+            in_flight = outcome == "get_401_in_flight"
+            assert airzone_api.device_write_rejected(
+                error.value, in_flight=in_flight
+            ) == (not in_flight)
+            assert requests == (["PUT", "GET"] if in_flight else ["GET"])
+            api.on_write_auth_failure.assert_not_called()
         else:
             release.set()
-            await asyncio.wait_for(task, 2)
-        assert tracking.duration_invalidated
+            if outcome == "put_401":
+                with pytest.raises(ConfigEntryAuthFailed) as error:
+                    await asyncio.wait_for(task, 2)
+                assert type(error.value) is ConfigEntryAuthFailed
+                assert airzone_api.device_write_rejected(error.value, in_flight=True)
+                api.on_write_auth_failure.assert_called_once_with()
+            else:
+                await asyncio.wait_for(task, 2)
+                api.on_write_auth_failure.assert_not_called()
+            assert requests == ["PUT"]
+        assert tracking.duration_invalidated == (
+            outcome in {"accepted", "get_401_in_flight"}
+        )
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
