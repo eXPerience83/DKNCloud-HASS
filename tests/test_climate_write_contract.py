@@ -1660,23 +1660,37 @@ async def test_hvac_off_supersedes_delayed_climate_or_switch_wake(
         await release.wait()
 
     if first == "switch":
-        monkeypatch.setattr(
-            switch, "_ensure_occupied_before_active_action", wait_for_scene
-        )
-        older = switch._fallback_turn_on
+        from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+        lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+        tasks = []
+        try:
+            async with lock:
+                tasks.append(asyncio.create_task(switch._fallback_turn_on()))
+                await asyncio.sleep(0)
+                tasks.append(
+                    asyncio.create_task(climate.async_set_hvac_mode(HVACMode.OFF))
+                )
+                await asyncio.sleep(0)
+                assert (
+                    hass.data[DOMAIN]["climate-entry"]["power_intents"]["unit-1"] == 2
+                )
+            await asyncio.wait_for(asyncio.gather(*tasks), 3)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
     else:
         monkeypatch.setattr(
             climate, "_ensure_occupied_before_active_action", wait_for_scene
         )
-        older = climate.async_turn_on
-
-    pending_wake = asyncio.create_task(older())
-    try:
-        await asyncio.wait_for(entered.wait(), timeout=2)
-        await climate.async_set_hvac_mode(HVACMode.OFF)
-    finally:
-        release.set()
-    await asyncio.wait_for(pending_wake, timeout=3)
+        pending_wake = asyncio.create_task(climate.async_turn_on())
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            await climate.async_set_hvac_mode(HVACMode.OFF)
+        finally:
+            release.set()
+            await asyncio.wait_for(pending_wake, timeout=3)
 
     events = [c.args[0]["event"] for c in api.send_event.await_args_list]
     assert [(e["option"], e["value"]) for e in events] == []

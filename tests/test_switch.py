@@ -160,12 +160,13 @@ async def test_switch_fallback_concurrent_power_intents_are_serialized(
     assert entity.is_on is final
 
 
-async def test_switch_newer_off_supersedes_on_during_sleep_preparation(
+async def test_switch_newer_off_supersedes_on_while_waiting_for_lock(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A newer OFF prevents an older delayed fallback wake from sending P1."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
     entity = _make_switch(
         hass,
         dummy_coordinator_factory,
@@ -173,21 +174,20 @@ async def test_switch_newer_off_supersedes_on_during_sleep_preparation(
         climate_entity_id=None,
     )
     entity.coordinator.api = AsyncMock()
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def paused_prepare(_reason: str, **_kwargs) -> None:
-        started.set()
-        await release.wait()
-
-    monkeypatch.setattr(entity, "_ensure_occupied_before_active_action", paused_prepare)
-    old_on = asyncio.create_task(entity._fallback_turn_on())
+    lock = acquire_device_lock(hass, entity._entry_id, "dev1")
+    tasks = []
     try:
-        await asyncio.wait_for(started.wait(), timeout=2)
-        await entity._fallback_turn_off()
+        async with lock:
+            for action in (entity._fallback_turn_on, entity._fallback_turn_off):
+                tasks.append(asyncio.create_task(action()))
+                await asyncio.sleep(0)
+            assert hass.data[DOMAIN][entity._entry_id]["power_intents"]["dev1"] == 2
+            assert all(not task.done() for task in tasks)
+        await asyncio.wait_for(asyncio.gather(*tasks), 3)
     finally:
-        release.set()
-    await asyncio.wait_for(old_on, timeout=3)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     entity.coordinator.api.send_event.assert_not_awaited()
     assert not entity.is_on

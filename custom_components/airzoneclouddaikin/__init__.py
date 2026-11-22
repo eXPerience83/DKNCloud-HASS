@@ -17,6 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import count
+from math import ceil
 from typing import Any
 
 from aiohttp import ClientResponseError, ClientSession
@@ -725,7 +726,7 @@ def _derive_state(
             tracking.confidence if estimated_end is not None else "unknown"
         )
         dev["sleep_remaining_estimated"] = (
-            max(0, int((estimated_end - now).total_seconds() + 59) // 60)
+            max(0, ceil((estimated_end - now).total_seconds() / 60))
             if estimated_end is not None
             else None
         )

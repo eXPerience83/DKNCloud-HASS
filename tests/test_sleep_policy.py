@@ -501,3 +501,21 @@ async def test_poll_sleep_vote_belongs_to_intent_at_writer(
         writer.set()
         reply.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "minutes"),
+    [(60.5, 2), (60, 1), (0.5, 1), (0, 0), (-0.5, 0), (None, None)],
+)
+async def test_sleep_remaining_rounds_up_until_estimated_end(
+    hass, freezer, seconds, minutes
+):
+    from custom_components.airzoneclouddaikin import _derive_state
+
+    entry, _, data, tracking, _ = _new_session(hass, "0")
+    if seconds is None:
+        tracking.invalidate_duration()
+    else:
+        freezer.tick(timedelta(seconds=300 - seconds))
+    _derive_state(hass, entry, data)
+    assert data["device"]["sleep_remaining_estimated"] == minutes
