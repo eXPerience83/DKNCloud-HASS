@@ -938,7 +938,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         # A mode selection may implicitly power on the unit. Fence this P1
         # against newer direct power commands before scene preparation awaits.
         intent = reserve_power_intent(
-            self.hass, self.coordinator, self._entry_id, self._device_id
+            self.hass,
+            self.coordinator,
+            self._entry_id,
+            self._device_id,
+            requested_value=1,
         )
         if intent is None:
             return

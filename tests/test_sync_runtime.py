@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
 import custom_components.airzoneclouddaikin as integration
@@ -1127,8 +1128,18 @@ async def test_get_predating_sleep_exit_readback_cannot_clear_pending_scene(
         ("rearm", "replayed_push"),
         ("rearm", "reload"),
         ("climate", "get"),
+        ("mode", "get"),
+        ("mode", "p2_failed"),
+        ("mode", "already_on"),
+        ("mode", "active_sleep"),
+        ("mode", "unknown_sleep"),
+        ("mode", "cleanup_disabled"),
+        ("mode", "ambiguous"),
         ("switch", "get"),
         ("fallback", "get"),
+        ("climate", "newer_on"),
+        ("switch", "newer_on"),
+        ("fallback", "newer_on"),
         ("climate", "ambiguous"),
     ],
 )
@@ -1137,6 +1148,8 @@ async def test_sleep_home_barrier_through_entity_services(
 ):
     """Use the real HA entry, entity services, field merge and RecoveryPool."""
     initial = {**sample_device, "scenary": "sleep", "power": "0", "sleep_time": 30}
+    if source == "already_on":
+        initial.update(power="1", mode="2")
     home = {**initial, "scenary": "occupied"}
     old_started, release_old, new_started, release_new, demanded = (
         asyncio.Event() for _ in range(5)
@@ -1172,9 +1185,17 @@ async def test_sleep_home_barrier_through_entity_services(
     async def send(payload, **kwargs):
         if guard := kwargs.get("on_start"):
             guard()
-        assert payload["event"]["option"] == "P1"
-        assert payload["event"]["value"] == 1
-        sequence.append("P1")
+        option = payload["event"]["option"]
+        assert option == (
+            "P2"
+            if source == "already_on" or sequence[-1:] == ["P1"] and action == "mode"
+            else "P1"
+        )
+        if option == "P1":
+            assert payload["event"]["value"] == 1
+        sequence.append(option)
+        if option == "P2" and source == "p2_failed":
+            raise HomeAssistantError("Synthetic P2 failure")
 
     api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
     api.fetch_devices = AsyncMock(side_effect=fetch)
@@ -1185,13 +1206,15 @@ async def test_sleep_home_barrier_through_entity_services(
         integration, "build_verified_adapter", Mock(connect=AsyncMock())
     )
     monkeypatch.setattr(integration.SyncManager, "start", Mock())
-    entry = dkn_config_entry_factory()
+    entry = dkn_config_entry_factory(
+        options={"sleep_cleanup_enabled": False} if source == "cleanup_disabled" else {}
+    )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     bucket = hass.data[DOMAIN][entry.entry_id]
     manager = bucket["sync_manager"]
     registry = er.async_get(hass)
-    platform = "climate" if action in {"rearm", "climate"} else "switch"
+    platform = "climate" if action in {"rearm", "climate", "mode"} else "switch"
     unique_id = "dev1_climate" if platform == "climate" else "dev1_power"
     entity_id = registry.async_get_entity_id(platform, DOMAIN, unique_id)
     assert entity_id
@@ -1218,8 +1241,66 @@ async def test_sleep_home_barrier_through_entity_services(
 
     monkeypatch.setattr(manager, "request_recovery", observe_request)
     service = None
+    service_name, values = {
+        "rearm": ("set_preset_mode", {"preset_mode": "sleep"}),
+        "mode": ("set_hvac_mode", {"hvac_mode": "cool"}),
+    }.get(action, ("turn_on", {}))
     replayed_home = {"scenary": "occupied", "update_date": "2026-11-01T00:00:00Z"}
     try:
+        if source == "newer_on":
+            _mark_synthetic_sleep_off(bucket)
+            lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
+            commands = []
+            try:
+                async with lock, asyncio.timeout(2):
+                    for revision in (1, 2):
+                        commands.append(
+                            asyncio.create_task(
+                                hass.services.async_call(
+                                    platform,
+                                    service_name,
+                                    {"entity_id": entity_id},
+                                    blocking=True,
+                                )
+                            )
+                        )
+                        while bucket.get("power_intents", {}).get("dev1") != revision:
+                            await asyncio.sleep(0)
+                old, latest = await asyncio.wait_for(
+                    asyncio.gather(*commands, return_exceptions=True), 2
+                )
+                assert old is None
+                assert isinstance(latest, HomeAssistantError)
+                assert "Confirm Home" in str(latest)
+                assert demanded.is_set()
+                api.send_event.assert_not_awaited()
+                api.put_device_fields.assert_not_awaited()
+            finally:
+                release_old.set()
+                release_new.set()
+                for command in commands:
+                    command.cancel()
+                await asyncio.gather(*commands, return_exceptions=True)
+            return
+        if source in {
+            "already_on",
+            "active_sleep",
+            "unknown_sleep",
+            "cleanup_disabled",
+        }:
+            if source == "cleanup_disabled":
+                _mark_synthetic_sleep_off(bucket)
+            elif source == "active_sleep":
+                bucket["sleep_tracking"]["dev1"].start_known = True
+            await hass.services.async_call(
+                platform,
+                service_name,
+                {"entity_id": entity_id, **values},
+                blocking=True,
+            )
+            assert sequence == (["P2"] if source == "already_on" else ["P1", "P2"])
+            api.put_device_fields.assert_not_awaited()
+            return
         if source == "replayed_push":
             await manager.event("dev1", replayed_home, manager.state.generation)
             await manager.event("dev1", {"scenary": "sleep"}, manager.state.generation)
@@ -1229,18 +1310,15 @@ async def test_sleep_home_barrier_through_entity_services(
         service = asyncio.create_task(
             hass.services.async_call(
                 platform,
-                "set_preset_mode" if action == "rearm" else "turn_on",
-                {
-                    "entity_id": entity_id,
-                    **({"preset_mode": "sleep"} if action == "rearm" else {}),
-                },
+                service_name,
+                {"entity_id": entity_id, **values},
                 blocking=True,
             )
         )
         await asyncio.wait_for(demanded.wait(), 2)
         assert sequence == ["GET old", "occupied"]
         if source == "ambiguous":
-            with pytest.raises(TimeoutError, match="Unknown Home PUT outcome"):
+            with pytest.raises(HomeAssistantError, match="Confirm Home"):
                 await asyncio.wait_for(service, 2)
             assert "dev1" in bucket["sleep_exit_pending"]
             assert api.send_event.await_count == 0
@@ -1248,7 +1326,10 @@ async def test_sleep_home_barrier_through_entity_services(
             demanded.clear()
             service = asyncio.create_task(
                 hass.services.async_call(
-                    platform, "turn_on", {"entity_id": entity_id}, blocking=True
+                    platform,
+                    service_name,
+                    {"entity_id": entity_id, **values},
+                    blocking=True,
                 )
             )
             await asyncio.wait_for(demanded.wait(), 2)
@@ -1266,7 +1347,11 @@ async def test_sleep_home_barrier_through_entity_services(
             api.put_device_fields.assert_awaited_once()
             return
         if source == "replayed_push":
+            confirmation = bucket["sleep_exit_pending"]["dev1"]
             await manager.event("dev1", replayed_home, manager.state.generation)
+            assert bucket["sleep_exit_pending"]["dev1"] is confirmation
+            assert not confirmation.done()
+            assert api.put_device_fields.await_count == 1
             assert not service.done()
         if source in {"push", "push_wins"}:
             await manager.event(
@@ -1276,6 +1361,12 @@ async def test_sleep_home_barrier_through_entity_services(
             )
         if source != "push":
             release_new.set()
+        if source == "p2_failed":
+            with pytest.raises(HomeAssistantError, match="Synthetic P2 failure"):
+                await asyncio.wait_for(service, 2)
+            assert sequence == ["GET old", "occupied", "GET fresh", "P1", "P2"]
+            assert bucket["optimistic"]["dev1"]["power"]["value"] == "1"
+            return
         await asyncio.wait_for(service, 2)
         if source == "push_wins":
             assert sequence == ["GET old", "occupied", "GET fresh"]
@@ -1286,6 +1377,7 @@ async def test_sleep_home_barrier_through_entity_services(
                 "occupied",
                 "GET fresh",
                 "sleep" if action == "rearm" else "P1",
+                *(["P2"] if action == "mode" else []),
             ]
     finally:
         release_old.set()
@@ -1437,7 +1529,7 @@ async def test_duration_get_predating_edit_cannot_invalidate_new_sleep(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-@pytest.mark.parametrize("action", ["climate", "switch", "fallback"])
+@pytest.mark.parametrize("action", ["climate", "switch", "fallback", "mode"])
 async def test_cleanup_http_422_surfaces_actionable_wake_error(
     hass,
     monkeypatch,
@@ -1449,7 +1541,6 @@ async def test_cleanup_http_422_surfaces_actionable_wake_error(
 ):
     """A real rejected cleanup must surface through the HA wake service."""
     from aiohttp import web
-    from homeassistant.exceptions import HomeAssistantError
 
     from custom_components.airzoneclouddaikin import airzone_api
 
@@ -1495,9 +1586,12 @@ async def test_cleanup_http_422_surfaces_actionable_wake_error(
             hass.states.async_remove(climate)
         with pytest.raises(HomeAssistantError, match="Confirm Home before turning on"):
             await hass.services.async_call(
-                "climate" if action == "climate" else "switch",
-                "turn_on",
-                {"entity_id": climate if action == "climate" else switch},
+                "climate" if action in {"climate", "mode"} else "switch",
+                "set_hvac_mode" if action == "mode" else "turn_on",
+                {
+                    "entity_id": climate if action in {"climate", "mode"} else switch,
+                    **({"hvac_mode": "cool"} if action == "mode" else {}),
+                },
                 blocking=True,
             )
         assert requests == [

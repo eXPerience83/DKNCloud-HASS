@@ -27,6 +27,7 @@ from typing import Any
 
 from aiohttp import (
     ClientConnectorError,
+    ClientError,
     ClientResponseError,
     ConnectionTimeoutError,
     ServerFingerprintMismatch,
@@ -353,7 +354,6 @@ class PowerIntent:
     device_id: str
     bucket: dict[str, Any]
     number: int
-    explicit_on: bool = False
     sleep_expiry: SleepExpiryFence | None = None
 
     def is_active(self) -> bool:
@@ -416,10 +416,9 @@ def reserve_power_intent(
     bucket = active_entry_bucket(hass, entry_id, coordinator)
     if bucket is None:
         return None
-    explicit_on = requested_value == 1
     sleep_expiry = (
         SleepExpiryFence.capture(hass, coordinator, bucket, device_id, for_wake=True)
-        if explicit_on and _sleep_cleanup_enabled(coordinator)
+        if requested_value == 1 and _sleep_cleanup_enabled(coordinator)
         else None
     )
     intents: dict[str, int] = bucket.setdefault("power_intents", {})
@@ -432,7 +431,6 @@ def reserve_power_intent(
         device_id,
         bucket,
         number,
-        explicit_on,
         sleep_expiry,
     )
 
@@ -544,13 +542,10 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     if not intent.is_current():
         return False
 
+    home_required = "Confirm Home before turning on the device. Select Home or wait for readback, then retry."
     home_revisions = None
     pending = bucket.get("sleep_exit_pending", {})
-    if (
-        value == 1
-        and intent.explicit_on
-        and (intent.sleep_expiry is not None or device_id in pending)
-    ):
+    if value == 1 and (intent.sleep_expiry is not None or device_id in pending):
         expiry = intent.sleep_expiry
         revisions = sleep_intent_revisions(bucket, device_id)
         scene_before = revisions[1]
@@ -577,7 +572,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
                     device_id=device_id,
                     bucket=bucket,
                 )
-                return False
+                raise HomeAssistantError(home_required)
 
             def check_home_write() -> None:
                 if (
@@ -595,13 +590,18 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
                 ):
                     raise CommandSuperseded
 
-            if not await async_restore_sleep_home(
-                hass,
-                coordinator,
-                entry_id,
-                device_id,
-                check_home_write,
-            ):
+            try:
+                confirmed = await async_restore_sleep_home(
+                    hass, coordinator, entry_id, device_id, check_home_write
+                )
+            except (ClientError, TimeoutError) as error:
+                raise HomeAssistantError(home_required) from error
+            if not confirmed:
+                if (
+                    intent.is_current()
+                    and sleep_intent_revisions(bucket, device_id)[2] == revisions[2]
+                ):
+                    raise HomeAssistantError(home_required)
                 return False
             scene_before += not already_pending
         home_revisions = (intent.number, scene_before, revisions[2])

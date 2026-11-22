@@ -122,9 +122,12 @@ PUTs. Confirmation requires a newly applied PUSH scene or a GET that started
 after the readback demand. An older or coalesced read that only returns cached
 state cannot advance the sequence. A newer Home/Away request can supersede
 either pending write. With automatic cleanup enabled, an explicit Climate or
-Switch ON from verified expired Sleep confirms Home before sending P1. A pending
+Switch ON from verified expired Sleep confirms Home before sending P1. A Climate
+mode selection that needs P1 ON uses the same barrier before P1 and P2. A mode
+selection that only needs P2 preserves the current scene. A pending
 ambiguous restoration is read back without repeating the PUT. A rejected
-automatic restoration surfaces an error on explicit ON until Home is verifiable.
+automatic restoration or an unresolved Home readback surfaces an actionable error
+for a current wake request. No pending ON is replayed in the background.
 ON during active or unverified Sleep preserves the scene and the original deadline.
 
 Home Assistant stores only the accepted Sleep start, duration and generation

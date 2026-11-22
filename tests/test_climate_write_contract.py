@@ -3416,7 +3416,12 @@ async def test_newer_on_cannot_bypass_expired_sleep_barrier(
         assert bucket["power_intents"]["unit-1"] == 2
     finally:
         lock.release()
-        await asyncio.wait_for(asyncio.gather(*tasks), 2)
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True), 2
+        )
+    assert results[0] is None
+    assert isinstance(results[1], HomeAssistantError)
+    assert "Confirm Home" in str(results[1])
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
