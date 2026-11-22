@@ -1005,6 +1005,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     async def write_deferred_sleep_sessions() -> None:
         if not bucket["closing"]:
             await write_sleep_sessions()
+            # A debounce timer can expire while this write holds the lock.
+            if sleep_save_pending and not bucket["closing"] and owns_sleep_store():
+                sleep_save.async_schedule_call()
 
     sleep_save = Debouncer(
         hass,

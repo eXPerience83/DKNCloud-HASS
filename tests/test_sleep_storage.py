@@ -69,7 +69,7 @@ async def _setup(hass, entry):
     return hass.data[DOMAIN][entry.entry_id]
 
 
-async def _select_sleep(hass):
+async def _select_preset(hass, preset_mode="sleep"):
     entity_id = er.async_get(hass).async_get_entity_id(
         "climate", DOMAIN, "dev1_climate"
     )
@@ -77,7 +77,7 @@ async def _select_sleep(hass):
     await hass.services.async_call(
         "climate",
         "set_preset_mode",
-        {"entity_id": entity_id, "preset_mode": "sleep"},
+        {"entity_id": entity_id, "preset_mode": preset_mode},
         blocking=True,
     )
 
@@ -121,7 +121,7 @@ async def test_reload_waits_for_owned_sleep_snapshot(
     monkeypatch.setattr(storage.Store, "async_load", observe_load)
     reload_task = None
     try:
-        await _select_sleep(hass)
+        await _select_preset(hass)
         original = bucket["sleep_tracking"]["dev1"].sleep_started_at_utc
         assert not started_write.is_set()
         if blocked_write:
@@ -157,6 +157,69 @@ async def test_reload_waits_for_owned_sleep_snapshot(
             assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+async def test_sleep_save_survives_debounce_during_disk_write(
+    hass, monkeypatch, dkn_config_entry_factory, backend, tmp_path
+):
+    entry = dkn_config_entry_factory()
+    bucket = await _setup(hass, entry)
+    store = _store(hass, entry)
+    path = tmp_path / store.key
+    started_write, release_write = asyncio.Event(), asyncio.Event()
+    write = _REAL_FILE_IO.async_write
+    written = []
+
+    async def gated_write(io, mode, data):
+        if io._key != store.key:
+            await write(io, mode, data)
+            return
+        if not written:
+            started_write.set()
+            await release_write.wait()
+        await write(io, mode, data)
+        written.append(json.loads(data)["data"]["sessions"]["dev1"])
+
+    def fire_debounce():
+        async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=2))
+
+    def session_record():
+        tracking = bucket["sleep_tracking"]["dev1"]
+        return {
+            "started_utc": tracking.sleep_started_at_utc.isoformat(),
+            "duration_minutes": 30,
+            "generation": tracking.session_revision,
+        }
+
+    monkeypatch.setattr(_REAL_FILE_IO, "async_write", gated_write)
+    try:
+        await _select_preset(hass)
+        first = session_record()
+        fire_debounce()
+        await asyncio.wait_for(started_write.wait(), 5)
+
+        await _select_preset(hass, "home")
+        await _select_preset(hass)
+        latest = session_record()
+        assert latest["generation"] > first["generation"]
+        # Run the pending debounce timer before releasing the first physical write.
+        fire_debounce()
+        assert written == []
+
+        release_write.set()
+        await hass.async_block_till_done()
+        assert written == [first]
+        fire_debounce()
+        await hass.async_block_till_done()
+        saved = json.loads(await hass.async_add_executor_job(path.read_text))
+        assert saved["data"]["sessions"] == {"dev1": latest}
+        fire_debounce()
+        await hass.async_block_till_done()
+        assert written == [first, latest]
+    finally:
+        release_write.set()
+        await hass.async_block_till_done()
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
 async def test_failed_unload_keeps_owned_save_live(
     hass, monkeypatch, dkn_config_entry_factory, backend
 ):
@@ -180,7 +243,7 @@ async def test_failed_unload_keeps_owned_save_live(
         assert not await integration.async_unload_entry(hass, entry)
         assert hass.data[DOMAIN][entry.entry_id] is bucket
         assert not bucket["closing"]
-        await _select_sleep(hass)
+        await _select_preset(hass)
         async with asyncio.timeout(5):
             await written.wait()
         stored = await store.async_load()
@@ -214,7 +277,7 @@ async def test_store_write_failure_recovers_without_persisted_clock(
 
     monkeypatch.setattr(_REAL_FILE_IO, "async_write", observe_error)
     try:
-        await _select_sleep(hass)
+        await _select_preset(hass)
         assert await hass.config_entries.async_reload(entry.entry_id)
         assert failures == [store.key]
         assert f"Error writing config for {store.key}" in caplog.text
@@ -399,7 +462,7 @@ async def test_deferred_write_cannot_follow_a_replaced_bucket(
     entry = dkn_config_entry_factory()
     old = await _setup(hass, entry)
     try:
-        await _select_sleep(hass)
+        await _select_preset(hass)
         successor = {"coordinator": object()}
         hass.data[DOMAIN][entry.entry_id] = successor
         async_fire_time_changed(hass, datetime.now(UTC) + timedelta(seconds=2))
@@ -418,7 +481,7 @@ async def test_ha_shutdown_preserves_pending_sleep_snapshot(
     bucket = await _setup(hass, entry)
     previous_state = hass.state
     try:
-        await _select_sleep(hass)
+        await _select_preset(hass)
         store = _store(hass, entry)
         assert await store.async_load() is None
         hass.set_state(CoreState.stopping)
