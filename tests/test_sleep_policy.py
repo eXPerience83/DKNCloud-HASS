@@ -114,7 +114,6 @@ async def test_original_timer_survives_intermediate_power_changes(
         device=data["device"],
         coordinator=coordinator,
         reason="expiry",
-        is_device_on=lambda: False,
         allow_away_handling=False,
     )
     coordinator.api.async_set_scenary.assert_awaited_once()
@@ -213,7 +212,6 @@ async def test_on_after_expiry_stays_read_only_until_off_confirmed(hass, freezer
         device=data["device"],
         coordinator=coordinator,
         reason="expiry",
-        is_device_on=lambda: True,
         allow_away_handling=False,
     )
     coordinator.api.async_set_scenary.assert_not_awaited()
@@ -402,7 +400,6 @@ async def test_sleep_cleanup_writer_rechecks_live_off(
             device=data["device"],
             coordinator=coordinator,
             reason="expiry",
-            is_device_on=lambda: False,
             allow_away_handling=False,
         )
 

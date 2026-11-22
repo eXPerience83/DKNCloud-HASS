@@ -118,7 +118,6 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             device=self._device,
             coordinator=self.coordinator,
             reason=reason,
-            is_device_on=self._backend_power_is_on,
             allow_away_handling=False,
             is_current=is_current,
         )

@@ -535,7 +535,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             device=self._device,
             coordinator=self.coordinator,
             reason=reason,
-            is_device_on=self._device_power_on,
             allow_away_handling=True,
             auto_exit_away=exit_away,
             on_success=self.async_write_ha_state,

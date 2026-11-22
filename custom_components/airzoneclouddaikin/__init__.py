@@ -102,44 +102,33 @@ _NOTIFY_FMT_FALLBACK_LOGGED: set[str] = set()
 
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
     """Track a newly observed scene without inventing a backend Sleep t0."""
-    now = dt_util.utcnow()
-
     if scenary == SCENARY_SLEEP:
         if (
-            tracking.sleep_started_at_utc is None
-            or tracking.last_scenary != SCENARY_SLEEP
+            tracking.last_scenary == SCENARY_SLEEP
+            and tracking.sleep_started_at_utc is not None
         ):
-            tracking.session_revision += 1
-            tracking.sleep_started_at_utc = now
-            tracking.cleanup_started_at_utc = now
-            tracking.start_known = False
-            tracking.confidence = "startup_upper_bound"
-            tracking.force_exit_requested = False
-            tracking.observed_on = False
-            tracking.consecutive_off_reports = 0
-            tracking.expected_minutes = None
-            tracking.duration_invalidated = False
-            tracking.reset_expiry_session()
-            tracking.overdue_on_reports = 0
-            tracking.last_confirmed_on_utc = None
-            tracking.overdue_probe_requested = False
-            tracking.overdue_recorded = False
+            return
+        now = dt_util.utcnow()
+        tracking.session_revision += 1
+        tracking.sleep_started_at_utc = now
+        tracking.cleanup_started_at_utc = now
+        tracking.confidence = "startup_upper_bound"
     else:
         tracking.sleep_started_at_utc = None
         tracking.cleanup_started_at_utc = None
-        tracking.start_known = False
         tracking.confidence = "unknown"
-        tracking.force_exit_requested = False
-        tracking.observed_on = False
-        tracking.consecutive_off_reports = 0
-        tracking.expected_minutes = None
-        tracking.duration_invalidated = False
-        tracking.reset_expiry_session()
-        tracking.overdue_on_reports = 0
-        tracking.last_confirmed_on_utc = None
-        tracking.overdue_probe_requested = False
-        tracking.overdue_recorded = False
 
+    tracking.start_known = False
+    tracking.force_exit_requested = False
+    tracking.observed_on = False
+    tracking.consecutive_off_reports = 0
+    tracking.expected_minutes = None
+    tracking.duration_invalidated = False
+    tracking.reset_expiry_session()
+    tracking.overdue_on_reports = 0
+    tracking.last_confirmed_on_utc = None
+    tracking.overdue_probe_requested = False
+    tracking.overdue_recorded = False
     tracking.last_scenary = scenary
 
 
@@ -772,9 +761,9 @@ def _derive_state(
             tracking.expected_minutes,
             tracking.duration_invalidated,
         )
-        if previously_persisted and previous_record != current_record:
-            persist_changed = True
-        if tracking.confidence == "local_ack" and previous_record != current_record:
+        if (
+            previously_persisted or tracking.confidence == "local_ack"
+        ) and previous_record != current_record:
             persist_changed = True
 
         if dev["sleep_overdue"] and not tracking.overdue_recorded:
@@ -1184,7 +1173,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     device=dev,
                     coordinator=coordinator,
                     reason="expiry",
-                    is_device_on=lambda: True,
                     allow_away_handling=False,
                     is_current=lambda: entry.options.get(
                         CONF_SLEEP_CLEANUP_ENABLED, True

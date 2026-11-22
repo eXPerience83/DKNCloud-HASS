@@ -811,7 +811,6 @@ async def async_auto_exit_sleep_if_needed(
     device: Mapping[str, Any] | dict[str, Any],
     coordinator: DataUpdateCoordinator[Any],
     reason: str,
-    is_device_on: Callable[[], bool],
     allow_away_handling: bool,
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
     on_success: Callable[[], None] | None = None,

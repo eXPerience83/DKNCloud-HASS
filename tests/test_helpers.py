@@ -184,7 +184,6 @@ async def test_sleep_exit_after_unload_does_not_recreate_entry_or_write(
         device={"scenary": "sleep", "power": "0"},
         coordinator=coordinator,
         reason="turn_on",
-        is_device_on=lambda: False,
         allow_away_handling=False,
     )
     assert api.calls == []
@@ -226,7 +225,6 @@ async def test_auto_exit_sleep_when_expired(
         device=device,
         coordinator=coordinator,
         reason="expiry",
-        is_device_on=lambda: False,
         allow_away_handling=False,
     )
 
@@ -268,7 +266,6 @@ async def test_auto_exit_sleep_skips_active_session(
         device=device,
         coordinator=coordinator,
         reason="test",
-        is_device_on=lambda: True,
         allow_away_handling=False,
     )
 
@@ -398,7 +395,6 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
         device=device,
         coordinator=coordinator,
         reason="expiry",
-        is_device_on=lambda: True,
         allow_away_handling=False,
     )
     api.async_set_scenary.assert_not_awaited()
@@ -437,7 +433,6 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
             device=device,
             coordinator=coordinator,
             reason="expiry",
-            is_device_on=lambda: False,
             allow_away_handling=False,
         )
 
@@ -739,7 +734,6 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
             device=device,
             coordinator=coordinator,
             reason="expiry",
-            is_device_on=lambda: False,
             allow_away_handling=False,
         )
     assert hass.data[DOMAIN]["entry"]["sleep_exit_pending"]["device"] == "rejected"

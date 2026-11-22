@@ -668,7 +668,6 @@ async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
             device=entity._device,
             coordinator=entity.coordinator,
             reason="expiry",
-            is_device_on=lambda: True,
             allow_away_handling=False,
             on_success=entity.async_write_ha_state,
         )
@@ -895,7 +894,6 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
             device=entity._device,
             coordinator=entity.coordinator,
             reason="expiry",
-            is_device_on=lambda: True,
             allow_away_handling=False,
         )
     )
@@ -1004,7 +1002,6 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
                 device=entity._device,
                 coordinator=entity.coordinator,
                 reason="expiry",
-                is_device_on=lambda: True,
                 allow_away_handling=False,
             )
         )
@@ -1058,7 +1055,6 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
         device=entity._device,
         coordinator=entity.coordinator,
         reason="expiry",
-        is_device_on=lambda: True,
         allow_away_handling=False,
     )
     assert api.put_device_fields.await_count == 1
@@ -1104,7 +1100,6 @@ async def test_ambiguous_explicit_home_away_blocks_old_sleep_cleanup(
         device=entity._device,
         coordinator=entity.coordinator,
         reason="expiry",
-        is_device_on=lambda: True,
         allow_away_handling=False,
     )
     api.async_set_scenary.assert_not_awaited()
@@ -1207,7 +1202,6 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
                 device=entity._device,
                 coordinator=entity.coordinator,
                 reason="expiry",
-                is_device_on=lambda: True,
                 allow_away_handling=False,
             )
         )
