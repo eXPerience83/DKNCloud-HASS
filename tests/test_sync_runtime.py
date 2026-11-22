@@ -27,10 +27,8 @@ def _arm_synthetic_expired_timer(bucket, dev_id="dev1") -> None:
     tracking.expected_minutes = minutes
     tracking.start_known = True
     tracking.duration_invalidated = False
-    tracking.expiry_verified = False
     tracking.expiry_off_reports = 0
-    tracking.last_off_evidence = None
-    tracking.expiry_power_revision = None
+    tracking.expiry_revisions = None
     tracking.expiry_probe_requested = True
 
 
@@ -41,8 +39,7 @@ def _mark_synthetic_sleep_off(bucket, dev_id="dev1") -> None:
     tracking.observed_on = True
     tracking.consecutive_off_reports = 2
     tracking.expiry_off_reports = 2
-    tracking.expiry_verified = True
-    tracking.expiry_power_revision = bucket.get("power_intents", {}).get(dev_id, 0)
+    tracking.expiry_revisions = integration.sleep_intent_revisions(bucket, dev_id)
     bucket["coordinator"].data[dev_id]["sleep_expiry_verified"] = True
 
 
@@ -381,7 +378,7 @@ async def test_inflight_get_discarded_power_cannot_confirm_pushed_off(
             coordinator.data,
             fresh_power_ids={"dev1"},
             fresh_scenary_ids=set(),
-            power_evidence_ids={"dev1": "get:distinct-after-push"},
+            power_observations={"dev1": (100, integration.dt_util.utcnow())},
         )
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
@@ -632,14 +629,14 @@ async def test_current_sleep_off_needs_on_then_two_fresh_off_reports(
 
     # Advance this synthetic session, without waiting in real time.
     _arm_synthetic_expired_timer(bucket)
-    for token in ("get:after-deadline-1", "get:after-deadline-2"):
+    for token in (100, 101):
         integration._derive_state(
             hass,
             entry,
             entry.runtime_data.coordinator.data,
             fresh_power_ids={"dev1"},
             fresh_scenary_ids=set(),
-            power_evidence_ids={"dev1": token},
+            power_observations={"dev1": (token, integration.dt_util.utcnow())},
         )
     entry.runtime_data.coordinator.async_update_listeners()
     await hass.async_block_till_done()
@@ -715,11 +712,14 @@ async def test_disabled_automatic_cleanup_keeps_raw_sleep_after_confirmed_off(
     manager = bucket["sync_manager"]
     generation = manager.state.generation
     await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
-    await manager.event("dev1", {"power": "0"}, generation)
-    await manager.event("dev1", {"power": "0"}, generation)
+    _arm_synthetic_expired_timer(bucket)
+    monkeypatch.setattr(manager, "request_recovery", Mock())
+    await manager.event("dev1", {"power": "0", "update_date": "first"}, generation)
+    await manager.event("dev1", {"power": "0", "update_date": "second"}, generation)
     await hass.async_block_till_done()
     assert bucket["sleep_tracking"]["dev1"].consecutive_off_reports == 2
     assert entry.runtime_data.coordinator.data["dev1"]["scenary"] == "sleep"
+    assert entry.runtime_data.coordinator.data["dev1"]["sleep_expiry_verified"]
     assert not bucket.get("sleep_expiry_task")
     api.async_set_scenary.assert_not_awaited()
     assert await hass.config_entries.async_unload(entry.entry_id)
@@ -769,6 +769,7 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
             coordinator.data,
             fresh_power_ids={"dev1"},
             fresh_scenary_ids=set(),
+            power_observations={"dev1": (100, integration.dt_util.utcnow())},
         )
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
@@ -800,6 +801,7 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
             coordinator.data,
             fresh_power_ids={"dev1"},
             fresh_scenary_ids=set(),
+            power_observations={"dev1": (101, integration.dt_util.utcnow())},
         )
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
@@ -813,8 +815,11 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
+@pytest.mark.parametrize(
+    "invalidation", ["power_intents", "scene_preset_intents", "evidence"]
+)
 async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
-    hass, monkeypatch, dkn_config_entry_factory, sample_device
+    hass, monkeypatch, dkn_config_entry_factory, sample_device, invalidation
 ):
     """An expiry cleared during a lock wait must not latch the session."""
     api = Mock()
@@ -849,7 +854,13 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
         await asyncio.sleep(0)
         first_task = bucket["sleep_expiry_task"]
         assert not first_task.done()
-        coordinator.data["dev1"]["sleep_expiry_verified"] = False
+        if invalidation == "power_intents":
+            bucket.setdefault("power_intents", {})["dev1"] = 1
+        elif invalidation == "scene_preset_intents":
+            bucket.setdefault("scene_preset_intents", {})["dev1"] = 1
+        else:
+            tracking.expiry_off_reports = 0
+            coordinator.data["dev1"]["sleep_expiry_verified"] = False
     finally:
         lock.release()
 
@@ -860,7 +871,7 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     recovery.assert_not_called()
 
     # Expiry recurs in the same Sleep session: cleanup is still eligible.
-    coordinator.data["dev1"]["sleep_expiry_verified"] = True
+    _mark_synthetic_sleep_off(bucket)
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
     _assert_occupied_write(api)

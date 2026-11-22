@@ -344,7 +344,10 @@ class AirzoneAPI:
             if on_uncertain is not None and not isinstance(err, ConnectionTimeoutError):
                 on_uncertain()
             _LOGGER.debug("HTTP %s %s timed out", method, spath)
-            safe_error = TimeoutError("Cloud request timed out")
+            if isinstance(err, ConnectionTimeoutError):
+                safe_error = ConnectionTimeoutError("Cloud request timed out")
+            else:
+                safe_error = TimeoutError("Cloud request timed out")
         except asyncio.CancelledError, ClientConnectionError, ClientPayloadError:
             if on_uncertain is not None:
                 on_uncertain()

@@ -16,6 +16,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import count
 from typing import Any
 
 from aiohttp import ClientResponseError, ClientSession
@@ -43,7 +44,6 @@ from .const import (
     SCENARY_HOME,
     SCENARY_SLEEP,
     SCENARY_VACANT,
-    SLEEP_CLEANUP_SETTLE_SECONDS,
     SLEEP_TIMEOUT_GRACE_MINUTES,
 )
 from .device_state import confirm_power_read
@@ -58,11 +58,20 @@ from .helpers import (
     optimistic_set as optimistic_set,
 )
 from .push_adapter import build_verified_adapter
+from .sleep import (
+    SLEEP_INTENT_KEYS,
+    PowerObservation,
+    SleepTracking as SleepTracking,
+    sleep_cleanup_due,
+    sleep_expiry_is_current,
+    sleep_intent_revisions,
+)
 from .sync_manager import SyncManager
 
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_SEC = 10
+_MAX_SLEEP_PUSH_IDENTITIES = 256
 _OFFLINE_STALE_SECONDS = int(INTERNAL_STALE_AFTER_SEC)
 
 PLATFORMS: tuple[Platform, ...] = (
@@ -89,34 +98,6 @@ _DEFAULT_NOTIFY_STRINGS: dict[str, dict[str, str]] = {
 _NOTIFY_FMT_FALLBACK_LOGGED: set[str] = set()
 
 
-@dataclass(slots=True)
-class SleepTracking:
-    """Track sleep scenary sessions per device."""
-
-    last_scenary: str | None = None
-    sleep_started_at_utc: datetime | None = None
-    force_exit_requested: bool = False
-    session_revision: int = 0
-    observed_on: bool = False
-    consecutive_off_reports: int = 0
-    start_known: bool = False
-    expected_minutes: int | None = None
-    overdue_on_reports: int = 0
-    last_confirmed_on_utc: datetime | None = None
-    overdue_probe_requested: bool = False
-    overdue_recorded: bool = False
-    # An external or restored timer uses the first post-startup observation as
-    # the *earliest safe cleanup bound*, not as proof of its original start.
-    cleanup_started_at_utc: datetime | None = None
-    confidence: str = "unknown"
-    duration_invalidated: bool = False
-    expiry_off_reports: int = 0
-    last_off_evidence: str | None = None
-    expiry_probe_requested: bool = False
-    expiry_verified: bool = False
-    expiry_power_revision: int | None = None
-
-
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
     """Track a newly observed scene without inventing a backend Sleep t0."""
     now = dt_util.utcnow()
@@ -136,11 +117,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.consecutive_off_reports = 0
             tracking.expected_minutes = None
             tracking.duration_invalidated = False
-            tracking.expiry_off_reports = 0
-            tracking.last_off_evidence = None
-            tracking.expiry_probe_requested = False
-            tracking.expiry_verified = False
-            tracking.expiry_power_revision = None
+            tracking.reset_expiry_session()
             tracking.overdue_on_reports = 0
             tracking.last_confirmed_on_utc = None
             tracking.overdue_probe_requested = False
@@ -155,11 +132,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
         tracking.consecutive_off_reports = 0
         tracking.expected_minutes = None
         tracking.duration_invalidated = False
-        tracking.expiry_off_reports = 0
-        tracking.last_off_evidence = None
-        tracking.expiry_probe_requested = False
-        tracking.expiry_verified = False
-        tracking.expiry_power_revision = None
+        tracking.reset_expiry_session()
         tracking.overdue_on_reports = 0
         tracking.last_confirmed_on_utc = None
         tracking.overdue_probe_requested = False
@@ -304,6 +277,8 @@ async def _async_update_data(
         data: dict[str, dict[str, Any]] = {}
         fresh_power_ids: set[str] = set()
         fresh_scenary_ids: set[str] = set()
+        power_observations: dict[str, PowerObservation] = {}
+        get_sequence = domain_bucket.setdefault("sleep_get_sequence", count(1))
         relations = await api.fetch_installations()
         check_owner()
         # Malformed installation responses are transient failures, not an
@@ -354,7 +329,12 @@ async def _async_update_data(
                 markers = uncertain_power.copy()
 
             devices = await api.fetch_devices(installation, on_start=dispatched)
-            return devices, markers
+            observation = (next(get_sequence), dt_util.utcnow())
+            # Another installation may keep the aggregate waiting after receipt.
+            intent_snapshot = {
+                key: domain_bucket.get(key, {}).copy() for key in SLEEP_INTENT_KEYS
+            }
+            return devices, markers, observation, intent_snapshot
 
         fetches = [fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
@@ -396,7 +376,7 @@ async def _async_update_data(
                 )
                 continue
 
-            devices, markers = result
+            devices, markers, observation, intent_snapshot = result
             # None indicates an invalid HTTP 200 device payload, not zero
             # devices. Handle it like an installation fetch failure so an
             # existing snapshot is retained and initial setup fails safely.
@@ -422,6 +402,10 @@ async def _async_update_data(
                 data[dev_id_str] = dev
                 if dev.get("power") is not None:
                     fresh_power_ids.add(dev_id_str)
+                    if sleep_intent_revisions(
+                        domain_bucket, dev_id_str
+                    ) == sleep_intent_revisions(intent_snapshot, dev_id_str):
+                        power_observations[dev_id_str] = observation
                 if dev.get("scenary") is not None:
                     fresh_scenary_ids.add(dev_id_str)
                 inst_device_ids.add(dev_id_str)
@@ -467,6 +451,7 @@ async def _async_update_data(
             had_non_auth_install_errors,
             fresh_power_ids=fresh_power_ids,
             fresh_scenary_ids=fresh_scenary_ids,
+            power_observations=power_observations,
         )
 
         return data
@@ -495,7 +480,7 @@ def _derive_state(
     *,
     fresh_power_ids: set[str] | None = None,
     fresh_scenary_ids: set[str] | None = None,
-    power_evidence_ids: dict[str, str] | None = None,
+    power_observations: dict[str, PowerObservation] | None = None,
 ):
     """Recompute local scene state without treating maintenance as new evidence."""
     bucket = hass.data[DOMAIN][entry.entry_id]
@@ -504,14 +489,6 @@ def _derive_state(
     tracked_ids = set(sleep_tracking)
     active_ids = set(data)
     persist_changed = False
-    if fresh_power_ids and power_evidence_ids is None:
-        # An independent completed GET is one observation, even when fields
-        # have the same values. Maintenance and cached fallbacks do not qualify.
-        bucket["sleep_get_observation"] = bucket.get("sleep_get_observation", 0) + 1
-        power_evidence_ids = {
-            dev_id: f"get:{bucket['sleep_get_observation']}"
-            for dev_id in fresh_power_ids
-        }
     if not had_non_auth_install_errors:
         for stale_id in tracked_ids - active_ids:
             old_tracking = sleep_tracking.pop(stale_id, None)
@@ -588,9 +565,7 @@ def _derive_state(
                 # Do not infer an overdue physical timer from such a session.
                 tracking.start_known = False
                 tracking.duration_invalidated = True
-                tracking.expiry_verified = False
-                tracking.expiry_power_revision = None
-                tracking.expiry_off_reports = 0
+                tracking.reset_expiry_votes()
                 tracking.overdue_on_reports = 0
 
         valid_timer = (
@@ -604,15 +579,7 @@ def _derive_state(
             if valid_timer and tracking.sleep_started_at_utc is not None
             else None
         )
-        cleanup_due = (
-            tracking.cleanup_started_at_utc
-            + timedelta(
-                minutes=tracking.expected_minutes,
-                seconds=SLEEP_CLEANUP_SETTLE_SECONDS,
-            )
-            if valid_timer and tracking.cleanup_started_at_utc is not None
-            else None
-        )
+        cleanup_due = sleep_cleanup_due(tracking)
         due = (
             tracking.cleanup_started_at_utc
             + timedelta(minutes=tracking.expected_minutes + SLEEP_TIMEOUT_GRACE_MINUTES)
@@ -627,17 +594,30 @@ def _derive_state(
             and overlay_value is not None
             and raw_scenary != overlay_value
         )
-        fresh_power = (
-            fresh_power_ids is not None
-            and dev_id in fresh_power_ids
-            and not conflicting_scene
-        )
+        fresh_power = fresh_power_ids is not None and dev_id in fresh_power_ids
+        observation = (power_observations or {}).get(dev_id)
+        power_value = str(dev.get("power")).strip().lower()
+        reported_off = power_value in {"0", "false", "off"}
+        distinct = False
+        if active_sleep and fresh_power and observation is not None:
+            identity, _ = observation
+            if isinstance(identity, int):
+                # GET ids increase at reception within this entry. An older
+                # publication cannot vote again, even across an intervening ON.
+                distinct = identity > tracking.last_get_observation
+                if distinct:
+                    tracking.last_get_observation = identity
+            elif reported_off:
+                seen = tracking.seen_off_pushes
+                distinct = (
+                    identity not in seen and len(seen) < _MAX_SLEEP_PUSH_IDENTITIES
+                )
+                if distinct:
+                    seen.add(identity)
         if active_sleep and fresh_power:
-            raw_power = dev.get("power")
-            power_value = (
-                str(raw_power if raw_power is not None else "").strip().lower()
-            )
             if power_value in {"1", "true", "on"}:
+                tracking.reset_expiry_votes()
+            if power_value in {"1", "true", "on"} and not conflicting_scene:
                 if (
                     tracking.last_confirmed_on_utc is not None
                     and now - tracking.last_confirmed_on_utc > timedelta(seconds=60)
@@ -647,10 +627,6 @@ def _derive_state(
                     tracking.overdue_on_reports = 0
                 tracking.observed_on = True
                 tracking.consecutive_off_reports = 0
-                tracking.expiry_off_reports = 0
-                tracking.expiry_verified = False
-                tracking.expiry_power_revision = None
-                tracking.last_off_evidence = None
                 tracking.last_confirmed_on_utc = now
                 if due is not None and now >= due:
                     tracking.overdue_on_reports = min(
@@ -658,34 +634,28 @@ def _derive_state(
                     )
                 else:
                     tracking.overdue_on_reports = 0
-            elif power_value in {"0", "false", "off"}:
+            elif reported_off and not conflicting_scene:
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
                 if tracking.observed_on and tracking.consecutive_off_reports < 2:
                     tracking.consecutive_off_reports += 1
-                evidence = (power_evidence_ids or {}).get(dev_id)
                 if (
                     cleanup_due is not None
-                    and now >= cleanup_due
-                    and evidence is not None
-                    and evidence != tracking.last_off_evidence
+                    and observation is not None
+                    and observation[1] >= cleanup_due
+                    and distinct
+                    and raw_scenary == SCENARY_SLEEP
                     and dev_id not in bucket.get("uncertain_power", {})
                     and dev_id not in bucket.get("sleep_exit_pending", {})
                     and not optimistic_power_on
                 ):
-                    power_revision = bucket.get("power_intents", {}).get(dev_id, 0)
-                    if (
-                        tracking.expiry_off_reports > 0
-                        and tracking.expiry_power_revision != power_revision
-                    ):
-                        # A later HA power request invalidated an older OFF.
-                        tracking.expiry_off_reports = 0
-                    tracking.expiry_power_revision = power_revision
-                    tracking.last_off_evidence = evidence
+                    revisions = sleep_intent_revisions(bucket, dev_id)
+                    if tracking.expiry_revisions != revisions:
+                        tracking.reset_expiry_votes()
+                    tracking.expiry_revisions = revisions
                     tracking.expiry_off_reports = min(
                         2, tracking.expiry_off_reports + 1
                     )
-                    tracking.expiry_verified = tracking.expiry_off_reports >= 2
                     if tracking.expiry_off_reports == 1:
                         if manager := bucket.get("sync_manager"):
                             manager.request_recovery(dev_id, require_fresh=True)
@@ -696,15 +666,8 @@ def _derive_state(
             and _backend_power_is_off(dev)
         )
         dev["sleep_start_known"] = bool(active_sleep and tracking.start_known)
-        dev["sleep_expiry_verified"] = bool(
-            active_sleep
-            and tracking.expiry_verified
-            and cleanup_due is not None
-            and now >= cleanup_due
-            and _backend_power_is_off(dev)
-            and not optimistic_power_on
-            and tracking.expiry_power_revision
-            == bucket.get("power_intents", {}).get(dev_id, 0)
+        dev["sleep_expiry_verified"] = sleep_expiry_is_current(
+            bucket, dev_id, dev, now=now, monotonic=hass.loop.time()
         )
         dev["sleep_estimated_end"] = (
             estimated_end.isoformat() if estimated_end is not None else None
@@ -1126,12 +1089,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     reason="expiry",
                     is_device_on=lambda: True,
                     allow_away_handling=False,
+                    is_current=lambda: entry.options.get(
+                        CONF_SLEEP_CLEANUP_ENABLED, True
+                    ),
                 )
                 if not entry_active():
                     return
-                if result is None and tracking.session_revision == session_revision:
-                    # True means the locked recheck found expiry no longer due;
-                    # False means cooldown deferred before any write was sent.
+                if (
+                    result
+                    and sleep_tracking.get(dev_id) is tracking
+                    and tracking.session_revision == session_revision
+                ):
                     tracking.force_exit_requested = True
 
     def _on_sleep_candidate() -> None:
@@ -1375,7 +1343,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 data,
                 fresh_power_ids=fresh_power_ids,
                 fresh_scenary_ids=fresh_scenary_ids,
-                power_evidence_ids={
+                power_observations={
                     dev_id: manager.last_power_evidence
                     for dev_id in fresh_power_ids
                     if manager.last_power_evidence is not None
@@ -1465,6 +1433,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             on_topology_change=topology_changed,
             on_mode_change=sync_mode_changed,
             uncertain_power=bucket.setdefault("uncertain_power", {}),
+            get_sequence=bucket.setdefault("sleep_get_sequence", count(1)),
         )
         bucket["sync_manager"] = manager
 

@@ -737,8 +737,7 @@ async def test_expired_sleep_rearms_via_occupied_then_sleep(
         cleanup_started_at_utc=old_start,
         expected_minutes=5,
         expiry_off_reports=2,
-        expiry_power_revision=0,
-        expiry_verified=True,
+        expiry_revisions=(0, 0, 0),
         force_exit_requested=True,
     )
     hass.data[DOMAIN]["climate-entry"]["sleep_tracking"] = {"unit-1": tracking}
@@ -898,9 +897,8 @@ def _arm_current_sleep_off_evidence(hass) -> None:
             cleanup_started_at_utc=started,
             start_known=True,
             expected_minutes=5,
-            expiry_verified=True,
             expiry_off_reports=2,
-            expiry_power_revision=0,
+            expiry_revisions=(0, 0, 0),
         )
     }
 

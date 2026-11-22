@@ -666,12 +666,18 @@ Home Assistant policy:
   with the same current Sleep session, unchanged duration and no competing intent.
   PUSH+PUSH, GET+GET or PUSH+GET may qualify; duplicated PUSH, one GET delivered
   twice, cached maintenance and stale snapshots do not. Sleep started while OFF
-  and never turned ON follows the same rule.
+  and never turned ON follows the same rule. GET receipt is recorded per response
+  before batching, independently of the GET dispatch timestamp. A Sleep session
+  remembers OFF PUSH identities from before and after the boundary. When the
+  256-identity limit is reached, additional PUSH cannot vote in that session,
+  while independent GETs can still corroborate OFF.
 - An OFF before expiry never authorizes an automatic occupied PUT. If power remains
   ON after expiry, do not force P1 OFF or Home; report the read-only `sleep_overdue`
   anomaly only after its separate **five-minute** grace and fresh corroborated ON.
 - On eligible cleanup send **one non-retried `scenary=occupied` PUT**, no P1, and
   require independent scene readback; HTTP 2xx is acceptance, not backend convergence.
+  Recheck the current session, OFF evidence and competing intents at dispatch.
+  A superseded or known-unsent attempt leaves cleanup eligible for reevaluation.
   Manual Home/Away may cancel Sleep immediately.
 - Two read-only diagnostic sensors expose estimated remaining minutes and expected
   end as a timestamp. Zero minutes does **not** prove OFF. The local HA Store retains

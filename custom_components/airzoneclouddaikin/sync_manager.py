@@ -6,8 +6,9 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from copy import deepcopy
+from itertools import count
 from typing import Any
 
 from aiohttp import ClientResponseError
@@ -18,6 +19,7 @@ from .device_state import confirm_power_read
 from .pusher_client import PusherProtocolError
 from .recovery_pool import ReadStart, RecoveryPool
 from .request_budget import RequestBudget
+from .sleep import PowerObservation
 from .sync_scheduler import FALLBACK_READ_DELAY, InformationScheduler
 from .sync_state import SyncState
 
@@ -56,6 +58,7 @@ class SyncManager:
         on_topology_change=None,
         on_mode_change: Callable[[], None] | None = None,
         uncertain_power: dict[str, object] | None = None,
+        get_sequence: Iterator[int] | None = None,
     ) -> None:
         self.state = SyncState()
         self.state.snapshot(list(initial.values()), self.state.checkpoint())
@@ -91,8 +94,8 @@ class SyncManager:
         self.touched: dict[str, set[str]] = {}
         # A single applied GET or one distinct PUSH payload is one observation.
         # The derivation layer may not count a cached maintenance publication.
-        self.last_power_evidence: str | None = None
-        self._get_evidence_sequence = 0
+        self.last_power_evidence: PowerObservation | None = None
+        self._get_sequence = get_sequence if get_sequence is not None else count(1)
         self._last_received = dict.fromkeys(initial, clock())
         self._last_event: dict[str, float] = {}
         self._last_get: dict[str, float] = dict.fromkeys(initial, clock())
@@ -242,11 +245,13 @@ class SyncManager:
                             started = on_start()
                             uncertain_at_dispatch = self._uncertain_power.copy()
 
-                        return await self._timed_fetch(installation, dispatched)
+                        devices = await self._timed_fetch(installation, dispatched)
+                        return devices, (next(self._get_sequence), dt_util.utcnow())
                 uncertain_at_dispatch = self._uncertain_power.copy()
-                return await self._fetch(installation)
+                devices = await self._fetch(installation)
+                return devices, (next(self._get_sequence), dt_util.utcnow())
 
-        devices = await self._budget.run(read)
+        devices, observation = await self._budget.run(read)
         for device in list(self._information_ready):
             if self._installations.get(device) == installation:
                 self._information_ready.pop(device, None)
@@ -279,8 +284,7 @@ class SyncManager:
                 or (started is not None and started >= demand)
             )
         }
-        self._get_evidence_sequence += 1
-        self.last_power_evidence = f"get:{self._get_evidence_sequence}"
+        self.last_power_evidence = observation
         confirm_power_read(
             self._uncertain_power,
             uncertain_at_dispatch,
@@ -397,7 +401,10 @@ class SyncManager:
                 for key in ("power", "update_date", "scenary", "connection_date")
                 if key in patch and patch[key] is not None
             )
-            self.last_power_evidence = f"push:{tuple(fingerprint)!r}"
+            self.last_power_evidence = (
+                f"push:{tuple(fingerprint)!r}",
+                dt_util.utcnow(),
+            )
         self._last_event[device] = self._last_received[device] = self._clock()
         self._publish(deepcopy(self.state.data), True)
 

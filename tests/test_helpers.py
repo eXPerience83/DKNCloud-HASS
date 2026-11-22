@@ -159,8 +159,7 @@ def _eligible_sleep(hass, entry_id, coordinator, device_id="device"):
                 start_known=True,
                 expected_minutes=5,
                 expiry_off_reports=2,
-                expiry_verified=True,
-                expiry_power_revision=0,
+                expiry_revisions=(0, 0, 0),
             )
         },
     }
