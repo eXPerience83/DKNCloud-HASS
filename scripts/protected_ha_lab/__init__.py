@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
@@ -242,21 +243,38 @@ async def async_setup(hass, config):
                 report["push_recovered"] = (
                     observations["device_applied"] > before_events
                 )
-            if case == "sleep":
-                # Inject the post-confirmation state, not merely a timed-out
-                # Sleep scene. The write barrier must reject the resulting
-                # automatic Home command even when OFF was corroborated.
-                tracking = hass.data[entry.domain][entry.entry_id]["sleep_tracking"][
-                    device
-                ]
-                tracking.last_scenary = "sleep"
-                tracking.sleep_started_at_utc = integration.dt_util.utcnow()
-                tracking.observed_on = True
-                tracking.consecutive_off_reports = 2
-                coordinator.data[device].update(
-                    scenary="sleep", power="0", sleep_off_confirmed=True
+            if case == "sleep" and not real:
+                # Record the specific write at the gateway without accepting it.
+                request = gateway.request
+
+                def observe_cleanup(method, url, **kwargs):
+                    if method == "PUT" and kwargs.get("json") == {
+                        "device": {"scenary": "occupied"}
+                    }:
+                        report["sleep_cleanup_attempted"] = True
+                    return request(method, url, **kwargs)
+
+                gateway.request = observe_cleanup
+                generation = manager.state.generation
+                await manager.event(
+                    device, {"scenary": "sleep", "sleep_time": 5}, generation
                 )
-                coordinator.async_update_listeners()
+                bucket = hass.data[entry.domain][entry.entry_id]
+                tracking = bucket["sleep_tracking"][device]
+                started = integration.dt_util.utcnow() - timedelta(minutes=6)
+                tracking.sleep_started_at_utc = started
+                tracking.cleanup_started_at_utc = started
+                for seconds_ago in (1, 0):
+                    updated = integration.dt_util.utcnow() - timedelta(
+                        seconds=seconds_ago
+                    )
+                    await manager.event(
+                        device,
+                        {"power": "0", "update_date": updated.isoformat()},
+                        generation,
+                    )
+                if not coordinator.data[device]["sleep_expiry_verified"]:
+                    raise RuntimeError("Synthetic Sleep cleanup was not eligible")
                 await supervisor.stopped.wait()
                 return
             if real:

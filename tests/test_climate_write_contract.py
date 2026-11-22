@@ -897,26 +897,28 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
             allow_away_handling=False,
         )
     )
-    await asyncio.wait_for(entered.wait(), timeout=2)
-    manual_sleep = asyncio.create_task(entity.async_set_preset_mode("sleep"))
-    await asyncio.sleep(0)
-    # Repeating the same raw Sleep while cleanup awaits a response is
-    # idempotent; it must not queue a new timer or bypass scene readback.
-    assert manual_sleep.done()
-    release.set()
-    await asyncio.wait_for(asyncio.gather(cleanup, manual_sleep), timeout=3)
+    manual_sleep = None
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        manual_sleep = asyncio.create_task(entity.async_set_preset_mode("sleep"))
+        await asyncio.sleep(0)
+        # Reselecting Sleep while cleanup awaits a response is idempotent.
+        assert manual_sleep.done()
+        release.set()
+        await asyncio.wait_for(asyncio.gather(cleanup, manual_sleep), timeout=3)
 
-    api.async_set_scenary.assert_awaited_once()
-    assert api.async_set_scenary.await_args.args == ("unit-1", "occupied")
-    assert api.async_set_scenary.await_args.kwargs["retry"] is False
-    assert callable(api.async_set_scenary.await_args.kwargs["on_start"])
-    api.put_device_fields.assert_not_awaited()
-    assert entity.preset_mode == "home"
-    # The automatic Home path schedules a one-second coordinator refresh
-    # without a live SyncManager. The official HA harness requires this
-    # fixture-owned timer to be cancelled at test teardown.
-    if cancel := hass.data[DOMAIN]["climate-entry"].get("pending_refresh"):
-        cancel()
+        api.async_set_scenary.assert_awaited_once()
+        assert api.async_set_scenary.await_args.args == ("unit-1", "occupied")
+        assert api.async_set_scenary.await_args.kwargs["retry"] is False
+        assert callable(api.async_set_scenary.await_args.kwargs["on_start"])
+        api.put_device_fields.assert_not_awaited()
+        assert entity.preset_mode == "home"
+    finally:
+        release.set()
+        tasks = (cleanup,) if manual_sleep is None else (cleanup, manual_sleep)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if cancel := hass.data[DOMAIN]["climate-entry"].get("pending_refresh"):
+            cancel()
 
 
 def _arm_current_sleep_off_evidence(hass) -> None:
