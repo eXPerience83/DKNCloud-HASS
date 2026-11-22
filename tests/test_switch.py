@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE
@@ -137,7 +137,7 @@ async def test_switch_fallback_concurrent_power_intents_are_serialized(
     release = asyncio.Event()
     commands: list[int] = []
 
-    async def paused_send(payload: dict[str, Any]) -> None:
+    async def paused_send(payload: dict[str, Any], **_kwargs) -> None:
         event = payload["event"]
         assert event["option"] == "P1"
         commands.append(event["value"])
@@ -176,7 +176,7 @@ async def test_switch_newer_off_supersedes_on_during_sleep_preparation(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def paused_prepare(_reason: str) -> None:
+    async def paused_prepare(_reason: str, **_kwargs) -> None:
         started.set()
         await release.wait()
 
@@ -276,7 +276,10 @@ async def test_inactive_climate_entity_uses_real_p1_fallback(
                 "option": "P1",
                 "value": 1 if service == "turn_on" else 0,
             }
-        }
+        },
+        on_start=ANY,
+        on_in_flight=ANY,
+        on_uncertain=ANY,
     )
     assert entity.is_on is (service == "turn_on")
     assert entity._climate_entity_id == "climate.device"
@@ -408,7 +411,12 @@ async def test_ambiguous_switch_fallback_p1_requests_recovery_without_overlay(
         climate_entity_id=None,
     )
     entity.coordinator.api = AsyncMock()
-    entity.coordinator.api.send_event.side_effect = failure("P1 outcome unknown")
+
+    async def ambiguous(_payload, *, on_uncertain, **_kwargs):
+        on_uncertain()
+        raise failure("P1 outcome unknown")
+
+    entity.coordinator.api.send_event.side_effect = ambiguous
     manager = Mock()
     hass.data[DOMAIN]["entry"]["sync_manager"] = manager
 
@@ -453,11 +461,11 @@ async def test_known_unsent_switch_fallback_p1_does_not_request_recovery(
 
 
 @pytest.mark.asyncio
-async def test_send_event_logs_and_reraises_on_failure(
+async def test_fallback_reports_ambiguous_failure(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[[dict[str, dict[str, Any]], Any | None], Any],
 ) -> None:
-    """_send_event should log and re-raise errors from the API client."""
+    """A failed direct ON propagates the error and requests fresh readback."""
     entity = _make_switch(
         hass,
         dummy_coordinator_factory,
@@ -465,15 +473,18 @@ async def test_send_event_logs_and_reraises_on_failure(
     )
 
     class DummyAPI:
-        async def send_event(self, _payload: dict[str, Any]) -> None:
-            raise RuntimeError("P1 failed")
+        async def send_event(
+            self, _payload: dict[str, Any], *, on_uncertain, **_kwargs
+        ) -> None:
+            on_uncertain()
+            raise TimeoutError("P1 failed")
 
     entity.coordinator.api = DummyAPI()
     manager = Mock()
     hass.data[DOMAIN]["entry"]["sync_manager"] = manager
 
-    with pytest.raises(RuntimeError, match="P1 failed"):
-        await entity._send_event("P1", 1)
+    with pytest.raises(TimeoutError, match="P1 failed"):
+        await entity.async_turn_on()
     manager.request_recovery.assert_called_once_with("dev1", require_fresh=True)
 
 

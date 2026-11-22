@@ -1191,3 +1191,77 @@ async def test_close_cancels_fresh_followup_waiting_for_request_budget():
     finally:
         await old.close()
         await successor.close()
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence", ["old", "missing", "invalid", "superseded", "new_marker"]
+)
+async def test_only_applied_fresh_get_resolves_power_uncertainty(invalid_evidence):
+    """One newer GET can resolve the exact uncertainty it observed at dispatch."""
+    mark = object()
+    uncertain = {} if invalid_evidence == "old" else {"a": mark}
+    started, release = asyncio.Event(), asyncio.Event()
+    clock = 0.0
+    reads = []
+
+    async def sleep(delay):
+        nonlocal clock
+        clock += delay
+
+    async def fetch(_installation, on_start):
+        on_start()
+        reads.append(clock)
+        if len(reads) == 1:
+            started.set()
+            await release.wait()
+            if invalid_evidence == "missing":
+                return [{"id": "a", "mode": "2"}]
+            if invalid_evidence == "invalid":
+                return [{"id": "a", "power": "unknown"}]
+        return [{"id": "a", "power": "0"}]
+
+    publish, controls = Mock(), AsyncMock()
+    owner = SyncManager(
+        {"a": {"id": "a", "power": "1"}},
+        {"a": "site"},
+        controls,
+        fetch,
+        publish,
+        Mock(),
+        lambda _: asyncio.Lock(),
+        connect=AsyncMock(),
+        clock=lambda: clock,
+        sleep=sleep,
+        timed_fetch=fetch,
+        uncertain_power=uncertain,
+    )
+    try:
+        async with asyncio.timeout(3):
+            owner.request_recovery("a")
+            first = owner._quiet_tasks["a"]
+            await started.wait()
+            if invalid_evidence == "old":
+                uncertain["a"] = mark
+            if invalid_evidence == "new_marker":
+                mark = uncertain["a"] = object()
+            await owner.event("a", {"mode": "3"}, owner.state.generation)
+            if invalid_evidence == "superseded":
+                await owner.event("a", {"power": "1"}, owner.state.generation)
+            assert uncertain == {"a": mark}
+            release.set()
+            await first
+            assert uncertain == {"a": mark}
+            if invalid_evidence == "superseded":
+                assert owner.state.data["a"]["power"] == "1"
+
+            owner.request_recovery("a", require_fresh=True)
+            await owner._quiet_tasks["a"]
+            assert not uncertain
+    finally:
+        release.set()
+        await owner.close()
+    assert reads == [0.0, 10.0]
+    assert owner.state.data["a"]["power"] == "0"
+    controls.assert_not_awaited()
+    assert not owner._quiet_tasks
+    assert not owner._pool._pending

@@ -58,7 +58,9 @@ class FakeSetupAPI:
         self.token = token
         self.fetch_installations = AsyncMock(return_value=list(self.installations))
 
-        async def _fetch_devices(installation_id: str) -> list[dict[str, Any]]:
+        async def _fetch_devices(
+            installation_id: str, **_kwargs
+        ) -> list[dict[str, Any]]:
             return list(self.devices_by_installation.get(str(installation_id), []))
 
         self.fetch_devices = AsyncMock(side_effect=_fetch_devices)
@@ -614,7 +616,7 @@ async def test_async_update_data_uses_installation_id_over_relation_id(
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"id": "relation-1", "installation_id": "install-1"}]
 
-        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             fetched.append(inst_id)
             return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
 
@@ -640,7 +642,7 @@ async def test_async_update_data_raises_on_initial_partial_installation_error(
                 {"installation_id": "inst-b"},
             ]
 
-        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 raise RuntimeError("temporary")
             return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
@@ -663,7 +665,7 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
-        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 return [
                     {
@@ -690,7 +692,7 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
-        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 raise RuntimeError("temporary")
             return [
@@ -730,7 +732,7 @@ async def test_async_update_data_propagates_cancelled_fetch(
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"installation_id": "inst-cancel"}]
 
-        async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, _inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             raise asyncio.CancelledError()
 
     with pytest.raises(asyncio.CancelledError):
@@ -753,7 +755,7 @@ async def test_async_update_data_401_from_one_installation_triggers_reauth(
                 {"installation_id": "inst-ok"},
             ]
 
-        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             if inst_id == "inst-401":
                 raise _client_response_error(401)
             return [{"id": "dev-ok", "name": "Unit OK", "scenary": "home"}]
@@ -826,7 +828,7 @@ async def test_async_update_data_prunes_removed_installation_cache_state(
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
-        async def fetch_devices(self, inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             if inst_id == "inst-a":
                 return [{"id": "dev-a", "name": "Unit A", "scenary": "home"}]
             return [{"id": "dev-b", "name": "Unit B", "scenary": "home"}]
@@ -837,7 +839,7 @@ async def test_async_update_data_prunes_removed_installation_cache_state(
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"installation_id": "inst-b"}]
 
-        async def fetch_devices(self, _inst_id: str) -> list[dict[str, Any]]:
+        async def fetch_devices(self, _inst_id: str, **_kwargs) -> list[dict[str, Any]]:
             return [{"id": "dev-b", "name": "Unit B2", "scenary": "home"}]
 
     data = await integration._async_update_data(hass, entry, DummyAPIRemovedA())
@@ -1093,7 +1095,7 @@ async def test_initial_snapshot_auth_error_precedes_sibling_cancellation(
                 {"installation_id": item} for item in (ids[::-1] if reverse else ids)
             ]
 
-        async def fetch_devices(self, installation):
+        async def fetch_devices(self, installation, **_kwargs):
             if installation == "cancel":
                 raise asyncio.CancelledError
             raise _client_response_error(401)
