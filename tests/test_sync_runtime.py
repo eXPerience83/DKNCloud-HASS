@@ -37,8 +37,6 @@ def _mark_synthetic_sleep_off(bucket, dev_id="dev1") -> None:
     """Simulate two independent OFFs received *after* the timer deadline."""
     _arm_synthetic_expired_timer(bucket, dev_id)
     tracking = bucket["sleep_tracking"][dev_id]
-    tracking.observed_on = True
-    tracking.consecutive_off_reports = 2
     tracking.expiry_off_reports = 2
     tracking.expiry_revisions = integration.sleep_intent_revisions(bucket, dev_id)
     bucket["coordinator"].data[dev_id]["sleep_expiry_verified"] = True
@@ -292,15 +290,15 @@ async def test_explicit_refresh_counts_single_off_snapshot_once(
         # The observed ON must belong to the same Sleep session.
         await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
         tracking = bucket["sleep_tracking"]["dev1"]
-        assert tracking.observed_on
+        assert coordinator.data["dev1"]["power"] == "1"
         _arm_synthetic_expired_timer(bucket)
 
         # One GET publishes once, then returns via refresh_sync. The latter
         # must reuse derived data without treating the same GET as a second OFF.
         await coordinator.async_refresh()
         assert api.fetch_devices.await_count == 2
-        assert tracking.consecutive_off_reports == 1
-        assert not coordinator.data["dev1"]["sleep_off_confirmed"]
+        assert tracking.expiry_off_reports == 1
+        assert not coordinator.data["dev1"]["sleep_expiry_verified"]
         api.async_set_scenary.assert_not_awaited()
         recovery.assert_called_once_with("dev1", require_fresh=True)
 
@@ -353,14 +351,14 @@ async def test_inflight_get_discarded_power_cannot_confirm_pushed_off(
     try:
         await manager.event("dev1", {"scenary": "sleep", "power": "1"}, generation)
         tracking = bucket["sleep_tracking"]["dev1"]
-        assert tracking.observed_on
+        assert coordinator.data["dev1"]["power"] == "1"
         _arm_synthetic_expired_timer(bucket)
         refresh = asyncio.create_task(coordinator.async_refresh())
         await asyncio.wait_for(entered.wait(), timeout=3)
 
         # GET began with an ON power value, but a newer Pusher OFF wins.
         await manager.event("dev1", {"power": "0"}, generation)
-        assert tracking.consecutive_off_reports == 1
+        assert tracking.expiry_off_reports == 1
         api.async_set_scenary.assert_not_awaited()
         release.set()
         await asyncio.wait_for(refresh, timeout=3)
@@ -368,8 +366,8 @@ async def test_inflight_get_discarded_power_cannot_confirm_pushed_off(
         # The returned GET did not apply its stale power field.
         assert manager.state.data["dev1"]["power"] == "0"
         assert "power" not in manager.touched.get("dev1", set())
-        assert tracking.consecutive_off_reports == 1
-        assert coordinator.data["dev1"]["sleep_off_confirmed"] is False
+        assert tracking.expiry_off_reports == 1
+        assert coordinator.data["dev1"]["sleep_expiry_verified"] is False
         api.async_set_scenary.assert_not_awaited()
         recovery.assert_called_once_with("dev1", require_fresh=True)
 
@@ -485,7 +483,6 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
     coordinator.data["dev1"].update(
         scenary="sleep",
-        sleep_off_confirmed=True,
         power="0",
     )
     _mark_synthetic_sleep_off(bucket)
@@ -507,14 +504,13 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
 
             optimistic_get(hass, entry.entry_id, "dev1", "scenary", "sleep")
         if stop == "race_new_sleep":
-            coordinator.data["dev1"]["sleep_off_confirmed"] = False
+            assert bucket["sleep_tracking"]["dev1"].expiry_off_reports == 0
         lock.release()
         await hass.async_block_till_done()
         api.async_set_scenary.assert_not_awaited()
         if stop == "race_new_sleep":
             assert not bucket["sleep_tracking"]["dev1"].force_exit_requested
             release.set()
-            coordinator.data["dev1"]["sleep_off_confirmed"] = True
             _mark_synthetic_sleep_off(bucket)
             coordinator.async_update_listeners()
             await hass.async_block_till_done()
@@ -684,13 +680,13 @@ async def test_rejected_scene_power_cannot_auto_cleanup_new_sleep(
     for power in ("1", "0", "0"):
         await manager.event("dev1", {"scenary": "occupied", "power": power}, generation)
     assert tracking.last_scenary == "sleep"
-    assert not tracking.observed_on
-    assert tracking.consecutive_off_reports == 0
+    assert tracking.overdue_on_reports == 0
+    assert tracking.expiry_off_reports == 0
 
     # The delayed Sleep scene-only acknowledgement does not reuse old OFF.
     await manager.event("dev1", {"scenary": "sleep"}, generation)
     await hass.async_block_till_done()
-    assert not entry.runtime_data.coordinator.data["dev1"]["sleep_off_confirmed"]
+    assert not entry.runtime_data.coordinator.data["dev1"]["sleep_expiry_verified"]
     api.async_set_scenary.assert_not_awaited()
     assert await hass.config_entries.async_unload(entry.entry_id)
 
@@ -723,7 +719,7 @@ async def test_disabled_automatic_cleanup_keeps_raw_sleep_after_confirmed_off(
     await manager.event("dev1", {"power": "0", "update_date": "first"}, generation)
     await manager.event("dev1", {"power": "0", "update_date": "second"}, generation)
     await hass.async_block_till_done()
-    assert bucket["sleep_tracking"]["dev1"].consecutive_off_reports == 2
+    assert bucket["sleep_tracking"]["dev1"].expiry_off_reports == 2
     assert entry.runtime_data.coordinator.data["dev1"]["scenary"] == "sleep"
     assert entry.runtime_data.coordinator.data["dev1"]["sleep_expiry_verified"]
     assert not bucket.get("sleep_expiry_task")
@@ -763,8 +759,8 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
             fresh_scenary_ids={"dev1"},
         )
         tracking = bucket["sleep_tracking"]["dev1"]
-        assert tracking.observed_on
-        assert tracking.consecutive_off_reports == 0
+        assert coordinator.data["dev1"]["power"] == "1"
+        assert tracking.expiry_off_reports == 0
         _arm_synthetic_expired_timer(bucket)
 
         # A first newly received OFF is insufficient; request readback.
@@ -779,8 +775,8 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
         )
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
-        assert tracking.consecutive_off_reports == 1
-        assert not device["sleep_off_confirmed"]
+        assert tracking.expiry_off_reports == 1
+        assert not device["sleep_expiry_verified"]
         api.async_set_scenary.assert_not_awaited()
         recovery.assert_called_once_with("dev1", require_fresh=True)
 
@@ -795,8 +791,8 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
         )
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
-        assert tracking.consecutive_off_reports == 1
-        assert not device["sleep_off_confirmed"]
+        assert tracking.expiry_off_reports == 1
+        assert not device["sleep_expiry_verified"]
         assert "sleep_snapshot_fresh" not in device
         api.async_set_scenary.assert_not_awaited()
 
@@ -811,8 +807,8 @@ async def test_stale_power_snapshot_cannot_trigger_sleep_cleanup(
         )
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
-        assert tracking.consecutive_off_reports == 2
-        assert device["sleep_off_confirmed"]
+        assert tracking.expiry_off_reports == 2
+        assert device["sleep_expiry_verified"]
         _assert_occupied_write(api)
         # One recovery follows the first OFF, and another verifies the scene PUT.
         assert recovery.call_count == 2
@@ -860,7 +856,6 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     try:
         coordinator.data["dev1"].update(
             scenary="sleep",
-            sleep_off_confirmed=True,
             power="0",
         )
         _mark_synthetic_sleep_off(bucket)
@@ -920,7 +915,6 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
     coordinator.data["dev1"].update(
         scenary="sleep",
-        sleep_off_confirmed=True,
         power="0",
     )
     _mark_synthetic_sleep_off(bucket)
@@ -1040,9 +1034,9 @@ async def test_sleep_corroboration_requires_an_independent_later_get(
                 (worker, next_read), timeout=2, return_when=asyncio.FIRST_COMPLETED
             )
             assert done == {next_read}
-            assert track.consecutive_off_reports == 1
+            assert track.expiry_off_reports == 1
             assert not entry.runtime_data.coordinator.data["dev1"][
-                "sleep_off_confirmed"
+                "sleep_expiry_verified"
             ]
             api.async_set_scenary.assert_not_awaited()
         finally:
@@ -1050,8 +1044,8 @@ async def test_sleep_corroboration_requires_an_independent_later_get(
             await asyncio.gather(next_read, return_exceptions=True)
         release_next.set()
         await asyncio.wait_for(worker, 2)
-        assert track.consecutive_off_reports == 2
-        assert entry.runtime_data.coordinator.data["dev1"]["sleep_off_confirmed"]
+        assert track.expiry_off_reports == 2
+        assert entry.runtime_data.coordinator.data["dev1"]["sleep_expiry_verified"]
         assert calls == 3  # bootstrap plus two independent recovery reads
         api.async_set_scenary.assert_not_awaited()
     finally:

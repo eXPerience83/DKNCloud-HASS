@@ -24,8 +24,6 @@ class SleepTracking:
     sleep_started_at_utc: datetime | None = None
     force_exit_requested: bool = False
     session_revision: int = 0
-    observed_on: bool = False
-    consecutive_off_reports: int = 0
     start_known: bool = False
     expected_minutes: int | None = None
     overdue_on_reports: int = 0

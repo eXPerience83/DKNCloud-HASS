@@ -141,14 +141,11 @@ async def test_real_entry_loopback_and_control_barrier(
         tracking.sleep_started_at_utc = started
         tracking.cleanup_started_at_utc = started
         tracking.expected_minutes = minutes
-        tracking.observed_on = True
-        tracking.consecutive_off_reports = 2
         tracking.expiry_off_reports = 2
         tracking.expiry_revisions = (0, 0, 0)
         coordinator.data["dev1"].update(
             scenary="sleep",
             power="0",
-            sleep_off_confirmed=True,
             sleep_expiry_verified=True,
         )
         coordinator.async_update_listeners()

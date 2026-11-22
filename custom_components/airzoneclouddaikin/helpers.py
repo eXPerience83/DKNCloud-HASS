@@ -144,8 +144,6 @@ def optimistic_set(
                 tracking.reset_expiry_session()
                 tracking.last_scenary = SCENARY_SLEEP
                 tracking.force_exit_requested = False
-                tracking.observed_on = False
-                tracking.consecutive_off_reports = 0
                 tracking.start_known = True
                 raw_minutes = _entry_bucket(hass, entry_id).get("coordinator", None)
                 current_device = (
@@ -816,7 +814,6 @@ async def async_auto_exit_sleep_if_needed(
     reason: str,
     allow_away_handling: bool,
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
-    on_success: Callable[[], None] | None = None,
     is_current: Callable[[], bool] | None = None,
 ) -> bool:
     """Return whether automatic cleanup consumed this session's opportunity."""
@@ -911,8 +908,6 @@ async def async_auto_exit_sleep_if_needed(
                 _record_accepted_sleep_home(
                     hass, entry_id, device_id, bucket, revisions[2]
                 )
-                if on_success:
-                    on_success()
         finally:
             if attempted:
                 if (

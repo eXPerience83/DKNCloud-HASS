@@ -371,13 +371,13 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     api = DummyApi()
     api.async_set_scenary = AsyncMock()
     coordinator = DummyCoordinator(api)
-    device = {"scenary": "sleep", "power": "0", "sleep_off_confirmed": True}
+    device = {"scenary": "sleep", "power": "0", "sleep_expiry_verified": True}
     coordinator.data = {"device": device}
     tracking = SleepTracking(
         last_scenary="sleep",
         sleep_started_at_utc=dt_util.utcnow(),
-        observed_on=True,
-        consecutive_off_reports=2,
+        expiry_off_reports=2,
+        expiry_revisions=(0, 0, 0),
     )
     hass.data.setdefault(DOMAIN, {})["entry"] = {
         "sleep_tracking": {"device": tracking},
@@ -386,8 +386,8 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
 
     # A new manual Sleep resets tracking before a coordinator refresh.
     optimistic_set(hass, "entry", "device", "scenary", "sleep")
-    assert device["sleep_off_confirmed"]
-    assert not tracking.observed_on
+    assert device["sleep_expiry_verified"]
+    assert not tracking.expiry_verified
     await async_auto_exit_sleep_if_needed(
         hass,
         entry_id="entry",

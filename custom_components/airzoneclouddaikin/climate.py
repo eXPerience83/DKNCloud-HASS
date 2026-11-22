@@ -555,7 +555,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             reason=reason,
             allow_away_handling=True,
             auto_exit_away=exit_away,
-            on_success=self.async_write_ha_state,
             **({"is_current": is_current} if is_current is not None else {}),
         )
 

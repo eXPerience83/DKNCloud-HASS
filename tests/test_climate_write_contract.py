@@ -652,7 +652,6 @@ async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
-    entity.coordinator.data["unit-1"]["sleep_off_confirmed"] = True
     _arm_current_sleep_off_evidence(hass)
     bucket = hass.data[DOMAIN]["climate-entry"]
     manager = Mock()
@@ -673,7 +672,6 @@ async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
             coordinator=entity.coordinator,
             reason="expiry",
             allow_away_handling=False,
-            on_success=entity.async_write_ha_state,
         )
     )
     try:
@@ -880,9 +878,6 @@ async def test_automatic_cleanup_finishes_before_newer_manual_sleep(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
-    entity.coordinator.data["unit-1"].update(
-        sleep_off_confirmed=True,
-    )
     # A bare coordinator flag is unsafe; use a verified expiry fixture.
     _arm_current_sleep_off_evidence(hass)
     _confirm_rearm_home_readback(entity)
@@ -942,7 +937,6 @@ def _arm_current_sleep_off_evidence(hass) -> None:
     coordinator.data["unit-1"].update(
         sleep_time=5,
         sleep_expiry_verified=True,
-        sleep_off_confirmed=True,
     )
     started = dt_util.utcnow() - timedelta(minutes=6)
     bucket["sleep_tracking"] = {
@@ -995,9 +989,6 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
-    entity.coordinator.data["unit-1"].update(
-        sleep_off_confirmed=True,
-    )
     api.async_set_scenary = AsyncMock()
     _arm_current_sleep_off_evidence(hass)
     _confirm_rearm_home_readback(entity)
@@ -1036,9 +1027,6 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
 
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
-    )
-    entity.coordinator.data["unit-1"].update(
-        sleep_off_confirmed=True,
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
     _arm_current_sleep_off_evidence(hass)
@@ -1172,7 +1160,6 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
         "unit-1": SleepTracking(
             last_scenary="sleep",
             sleep_started_at_utc=dt_util.utcnow(),
-            observed_on=True,
         )
     }
     manager = Mock()
@@ -1194,18 +1181,19 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
     try:
         await asyncio.wait_for(write_entered.wait(), timeout=2)
         # Realistic OFF telemetry arrives while the manual PUT remains pending.
-        # Two distinct fresh observations satisfy the active-session gate.
+        # Two distinct early OFF observations leave expiry unverified.
         entity.coordinator.data["unit-1"]["power"] = "0"
         entry = SimpleNamespace(entry_id="climate-entry", options={})
-        for _ in range(2):
+        for observation in (1, 2):
             _derive_state(
                 hass,
                 entry,
                 entity.coordinator.data,
                 fresh_power_ids={"unit-1"},
                 fresh_scenary_ids=set(),
+                power_observations={"unit-1": (observation, dt_util.utcnow())},
             )
-        assert entity.coordinator.data["unit-1"]["sleep_off_confirmed"]
+        assert not entity.coordinator.data["unit-1"]["sleep_expiry_verified"]
 
         original_acquire = helpers.acquire_device_lock
 

@@ -121,8 +121,6 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
 
     tracking.start_known = False
     tracking.force_exit_requested = False
-    tracking.observed_on = False
-    tracking.consecutive_off_reports = 0
     tracking.expected_minutes = None
     tracking.duration_invalidated = False
     tracking.reset_expiry_session()
@@ -677,8 +675,6 @@ def _derive_state(
                     # A long telemetry gap starts a new corroboration window;
                     # one resumed ON report cannot reuse an old pair.
                     tracking.overdue_on_reports = 0
-                tracking.observed_on = True
-                tracking.consecutive_off_reports = 0
                 tracking.last_confirmed_on_utc = now
                 if due is not None and now >= due:
                     tracking.overdue_on_reports = min(
@@ -689,8 +685,6 @@ def _derive_state(
             elif reported_off and not conflicting_scene:
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
-                if tracking.observed_on and tracking.consecutive_off_reports < 2:
-                    tracking.consecutive_off_reports += 1
                 if (
                     cleanup_due is not None
                     and observation is not None
@@ -711,12 +705,6 @@ def _derive_state(
                     if tracking.expiry_off_reports == 1:
                         if manager := bucket.get("sync_manager"):
                             manager.request_recovery(dev_id, require_fresh=True)
-        dev["sleep_off_confirmed"] = bool(
-            active_sleep
-            and tracking.observed_on
-            and tracking.consecutive_off_reports >= 2
-            and _backend_power_is_off(dev)
-        )
         dev["sleep_start_known"] = bool(active_sleep and tracking.start_known)
         dev["sleep_expiry_verified"] = sleep_expiry_is_current(
             bucket, dev_id, dev, now=now, monotonic=hass.loop.time()
