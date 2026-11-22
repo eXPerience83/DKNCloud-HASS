@@ -194,7 +194,11 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             return False
 
         intent = reserve_power_intent(
-            self.hass, self.coordinator, self._entry_id, self._device_id
+            self.hass,
+            self.coordinator,
+            self._entry_id,
+            self._device_id,
+            requested_value=int(service == "turn_on"),
         )
         if intent is None:
             return True
@@ -259,7 +263,11 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
 
     async def _fallback_set_power(self, value: int) -> None:
         intent = reserve_power_intent(
-            self.hass, self.coordinator, self._entry_id, self._device_id
+            self.hass,
+            self.coordinator,
+            self._entry_id,
+            self._device_id,
+            requested_value=value,
         )
         if intent is None:
             return

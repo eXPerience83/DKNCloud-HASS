@@ -37,18 +37,29 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import CommandNotSentCooldown, CommandSuperseded
+from .airzone_api import (
+    CommandNotSentCooldown,
+    CommandSuperseded,
+    device_write_rejected,
+)
 from .commands import modmaquina_payload
 from .const import (
+    CONF_SLEEP_CLEANUP_ENABLED,
     DOMAIN,
     MANUFACTURER,
     OPTIMISTIC_TTL_SEC,
     POST_WRITE_REFRESH_DELAY_SEC,
+    REQUEST_TIMEOUT,
     SCENARY_HOME,
     SCENARY_SLEEP,
     SCENARY_VACANT,
 )
-from .sleep import sleep_expiry_is_current, sleep_intent_revisions
+from .sleep import (
+    SLEEP_REARM_UNVERIFIED,
+    SleepTracking,
+    sleep_expiry_is_current,
+    sleep_intent_revisions,
+)
 
 OptimisticEntry = dict[str, dict[str, dict[str, Any]]]
 
@@ -140,7 +151,15 @@ def optimistic_set(
                     else {}
                 )
                 try:
-                    minutes = int(current_device.get("sleep_time"))
+                    minutes = int(
+                        optimistic_get(
+                            hass,
+                            entry_id,
+                            device_id,
+                            "sleep_time",
+                            current_device.get("sleep_time"),
+                        )
+                    )
                 except ValueError, TypeError:
                     minutes = 0
                 tracking.expected_minutes = minutes if minutes > 0 else None
@@ -272,6 +291,58 @@ def acquire_device_lock(
 
 
 @dataclass(frozen=True, slots=True)
+class SleepExpiryFence:
+    """Current evidence captured before reserving a single new intent."""
+
+    tracking: SleepTracking
+    session: int
+    revisions: tuple[int, int, int]
+
+    @classmethod
+    def capture(
+        cls, hass, coordinator, bucket, device_id, *, for_wake: bool = False
+    ) -> SleepExpiryFence | None:
+        """Capture verified expiry or a wake that needs renewed evidence."""
+        tracking = bucket.get("sleep_tracking", {}).get(device_id)
+        if tracking is None or not tracking.start_known:
+            return None
+        revisions = sleep_intent_revisions(bucket, device_id)
+        evidence = tracking.expiry_revisions
+        if for_wake and evidence is not None and evidence[1:] == revisions[1:]:
+            # A prior power reservation may have invalidated the same OFF pair.
+            # Carry the need for confirmation, never permission to use its votes.
+            fence = cls(tracking, tracking.session_revision, evidence)
+        else:
+            fence = cls(tracking, tracking.session_revision, revisions)
+        return (
+            fence
+            if fence.is_current(hass, coordinator, bucket, device_id, revisions)
+            else None
+        )
+
+    def is_current(self, hass, coordinator, bucket, device_id, revisions) -> bool:
+        """Permit only the caller's documented single intent transition."""
+        return (
+            bucket.get("sleep_tracking", {}).get(device_id) is self.tracking
+            and self.tracking.session_revision == self.session
+            and sleep_intent_revisions(bucket, device_id) == revisions
+            and sleep_expiry_is_current(
+                bucket,
+                device_id,
+                (coordinator.data or {}).get(device_id, {}),
+                now=dt_util.utcnow(),
+                monotonic=hass.loop.time(),
+                evidence_revisions=self.revisions,
+            )
+        )
+
+
+def _sleep_cleanup_enabled(coordinator: DataUpdateCoordinator[Any]) -> bool:
+    entry = getattr(coordinator, "config_entry", None)
+    return entry is None or entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True)
+
+
+@dataclass(frozen=True, slots=True)
 class PowerIntent:
     """An entry-owned reservation in the existing per-device intent counter."""
 
@@ -281,6 +352,8 @@ class PowerIntent:
     device_id: str
     bucket: dict[str, Any]
     number: int
+    explicit_on: bool = False
+    sleep_expiry: SleepExpiryFence | None = None
 
     def is_active(self) -> bool:
         return (
@@ -320,14 +393,14 @@ def reserve_power_intent(
     entry_id: str,
     device_id: str,
     *,
-    delegated_value: int | None = None,
+    requested_value: int | None = None,
     service_context: Context | None = None,
 ) -> PowerIntent | None:
     """Record the request before waiting for a device lock or scene preparation."""
     if (
         (delegated := delegated_power_intent.get()) is not None
         and delegated.caller is None
-        and delegated.value == delegated_value
+        and delegated.value == requested_value
         and delegated.context is service_context
         and delegated.intent.entry_id == entry_id
         and delegated.intent.device_id == device_id
@@ -342,15 +415,118 @@ def reserve_power_intent(
     bucket = active_entry_bucket(hass, entry_id, coordinator)
     if bucket is None:
         return None
+    explicit_on = requested_value == 1
+    sleep_expiry = (
+        SleepExpiryFence.capture(hass, coordinator, bucket, device_id, for_wake=True)
+        if explicit_on and _sleep_cleanup_enabled(coordinator)
+        else None
+    )
     intents: dict[str, int] = bucket.setdefault("power_intents", {})
     number = intents.get(device_id, 0) + 1
     intents[device_id] = number
-    return PowerIntent(hass, coordinator, entry_id, device_id, bucket, number)
+    return PowerIntent(
+        hass,
+        coordinator,
+        entry_id,
+        device_id,
+        bucket,
+        number,
+        explicit_on,
+        sleep_expiry,
+    )
 
 
 def power_is_uncertain(bucket: dict[str, Any], device_id: str) -> bool:
     """Return whether cached power must be ignored for control deduplication."""
     return device_id in bucket.get("uncertain_power", {})
+
+
+def _record_accepted_sleep_home(hass, entry_id, device_id, bucket, preset) -> None:
+    """Publish the Home acknowledgement once and let newer presets proceed."""
+    optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
+    _, scene, _ = sleep_intent_revisions(bucket, device_id)
+    bucket.setdefault("scene_preset_last_write", {})[device_id] = scene, preset
+
+
+async def async_restore_sleep_home(
+    hass: HomeAssistant,
+    coordinator: DataUpdateCoordinator[Any],
+    entry_id: str,
+    device_id: str,
+    check_dispatch: Callable[[], None],
+) -> bool:
+    """Under the device lock, restore Home once and require a new applied read."""
+    bucket = active_entry_bucket(hass, entry_id, coordinator)
+    if bucket is None:
+        return False
+    pending = bucket.setdefault("sleep_exit_pending", {})
+    if pending.get(device_id) == SLEEP_REARM_UNVERIFIED:
+        request_ambiguous_control_readback(
+            hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
+        )
+        return False
+    if device_id not in pending:
+        _, _, preset = sleep_intent_revisions(bucket, device_id)
+        in_flight = False
+
+        def mark_dispatched(value: bool) -> None:
+            nonlocal in_flight
+            in_flight = value
+
+        try:
+            check_dispatch()
+            await coordinator.api.put_device_fields(
+                device_id,
+                {"device": {"scenary": SCENARY_HOME}},
+                retry=False,
+                on_start=check_dispatch,
+                on_in_flight=mark_dispatched,
+            )
+        except CommandSuperseded:
+            return False
+        except (Exception, asyncio.CancelledError) as error:
+            if (
+                active_entry_bucket(hass, entry_id, coordinator) is bucket
+                and not device_write_rejected(error)
+                and (not isinstance(error, asyncio.CancelledError) or in_flight)
+            ):
+                pending[device_id] = hass.loop.create_future()
+                request_ambiguous_control_readback(
+                    hass,
+                    coordinator,
+                    entry_id=entry_id,
+                    device_id=device_id,
+                    bucket=bucket,
+                )
+            raise
+        if active_entry_bucket(hass, entry_id, coordinator) is not bucket:
+            return False
+        if tracking := bucket.get("sleep_tracking", {}).get(device_id):
+            tracking.force_exit_requested = True
+        _record_accepted_sleep_home(hass, entry_id, device_id, bucket, preset)
+
+    # Install the demand before either transport can publish. Nothing from
+    # the PUT response or cache can resolve this future.
+    confirmation = pending[device_id] = hass.loop.create_future()
+    try:
+        if manager := bucket.get("sync_manager"):
+            recovery = manager.request_recovery(device_id, require_fresh=True)
+            if recovery is not None:
+                await asyncio.wait(
+                    {confirmation, recovery},
+                    timeout=REQUEST_TIMEOUT,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+        else:
+            async with asyncio.timeout(REQUEST_TIMEOUT):
+                await coordinator.async_request_refresh()
+    except TimeoutError:
+        return False
+    return (
+        active_entry_bucket(hass, entry_id, coordinator) is bucket
+        and confirmation.done()
+        and confirmation.result()
+    )
 
 
 async def async_send_power(intent: PowerIntent, value: int) -> bool:
@@ -361,6 +537,71 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     if api is None:
         _LOGGER.error("API not attached to coordinator; cannot send power command")
         return False
+
+    if not intent.is_current():
+        return False
+
+    home_revisions = None
+    pending = bucket.get("sleep_exit_pending", {})
+    if (
+        value == 1
+        and intent.explicit_on
+        and (intent.sleep_expiry is not None or device_id in pending)
+    ):
+        expiry = intent.sleep_expiry
+        revisions = sleep_intent_revisions(bucket, device_id)
+        scene_before = revisions[1]
+        device = (coordinator.data or {}).get(device_id, {})
+        home_confirmed = (
+            str(device.get("scenary")).strip().lower() == SCENARY_HOME
+            and device_id not in pending
+            and expiry is not None
+            and revisions[1] == expiry.revisions[1] + 1
+        )
+        if expiry is not None and revisions[2] != expiry.revisions[2]:
+            return False
+        if not home_confirmed:
+            already_pending = device_id in pending
+            if (
+                not already_pending
+                and expiry is not None
+                and expiry.revisions[0] + 1 != intent.number
+            ):
+                request_ambiguous_control_readback(
+                    hass,
+                    coordinator,
+                    entry_id=entry_id,
+                    device_id=device_id,
+                    bucket=bucket,
+                )
+                return False
+
+            def check_home_write() -> None:
+                if (
+                    not intent.is_current()
+                    or not _sleep_cleanup_enabled(coordinator)
+                    or expiry is None
+                    or expiry.tracking.force_exit_requested
+                    or not expiry.is_current(
+                        hass,
+                        coordinator,
+                        bucket,
+                        device_id,
+                        (intent.number, *expiry.revisions[1:]),
+                    )
+                ):
+                    raise CommandSuperseded
+
+            if not await async_restore_sleep_home(
+                hass,
+                coordinator,
+                entry_id,
+                device_id,
+                check_home_write,
+            ):
+                return False
+            scene_before += not already_pending
+        home_revisions = (intent.number, scene_before, revisions[2])
 
     def mark_uncertain() -> None:
         # A queued intent may supersede this one while the request is on the
@@ -381,6 +622,16 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
         if owner is not None and owner.cancelling():
             raise CommandSuperseded
         intent.check_dispatch()
+        if home_revisions is not None:
+            device = (coordinator.data or {}).get(device_id, {})
+            if (
+                sleep_intent_revisions(bucket, device_id) != home_revisions
+                or str(device.get("scenary")).strip().lower() != SCENARY_HOME
+                or str(device.get("power")).strip().lower() not in {"0", "false", "off"}
+                or power_is_uncertain(bucket, device_id)
+                or device_id in bucket.get("sleep_exit_pending", {})
+            ):
+                raise CommandSuperseded
 
     def set_in_flight(value: bool) -> None:
         nonlocal in_flight
@@ -652,11 +903,8 @@ async def async_auto_exit_sleep_if_needed(
         else:
             if active_entry_bucket(hass, entry_id, coordinator) is bucket:
                 pending[device_id] = "accepted"
-                optimistic_set(hass, entry_id, device_id, "scenary", SCENARY_HOME)
-                # A newer preset can proceed after this intervening local write.
-                bucket.setdefault("scene_preset_last_write", {})[device_id] = (
-                    bucket["scene_revisions"][device_id],
-                    revisions[2],
+                _record_accepted_sleep_home(
+                    hass, entry_id, device_id, bucket, revisions[2]
                 )
                 if on_success:
                     on_success()

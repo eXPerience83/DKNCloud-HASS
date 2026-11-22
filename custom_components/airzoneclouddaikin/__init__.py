@@ -60,6 +60,7 @@ from .helpers import (
 from .push_adapter import build_verified_adapter
 from .sleep import (
     SLEEP_INTENT_KEYS,
+    SLEEP_REARM_UNVERIFIED,
     PowerObservation,
     SleepTracking as SleepTracking,
     sleep_cleanup_due,
@@ -277,6 +278,7 @@ async def _async_update_data(
         data: dict[str, dict[str, Any]] = {}
         fresh_power_ids: set[str] = set()
         fresh_scenary_ids: set[str] = set()
+        scene_readbacks: set[str] = set()
         power_observations: dict[str, PowerObservation] = {}
         get_sequence = domain_bucket.setdefault("sleep_get_sequence", count(1))
         relations = await api.fetch_installations()
@@ -323,10 +325,12 @@ async def _async_update_data(
 
         async def fetch_devices(installation: str):
             markers: dict[str, object] = {}
+            pending_scenes: dict[str, object] = {}
 
             def dispatched() -> None:
-                nonlocal markers
+                nonlocal markers, pending_scenes
                 markers = uncertain_power.copy()
+                pending_scenes = domain_bucket.get("sleep_exit_pending", {}).copy()
 
             devices = await api.fetch_devices(installation, on_start=dispatched)
             observation = (next(get_sequence), dt_util.utcnow())
@@ -334,7 +338,7 @@ async def _async_update_data(
             intent_snapshot = {
                 key: domain_bucket.get(key, {}).copy() for key in SLEEP_INTENT_KEYS
             }
-            return devices, markers, observation, intent_snapshot
+            return devices, markers, observation, intent_snapshot, pending_scenes
 
         fetches = [fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
@@ -376,7 +380,7 @@ async def _async_update_data(
                 )
                 continue
 
-            devices, markers, observation, intent_snapshot = result
+            devices, markers, observation, intent_snapshot, pending_scenes = result
             # None indicates an invalid HTTP 200 device payload, not zero
             # devices. Handle it like an installation fetch failure so an
             # existing snapshot is retained and initial setup fails safely.
@@ -408,6 +412,10 @@ async def _async_update_data(
                         power_observations[dev_id_str] = observation
                 if dev.get("scenary") is not None:
                     fresh_scenary_ids.add(dev_id_str)
+                    if pending_scenes.get(dev_id_str) is domain_bucket.get(
+                        "sleep_exit_pending", {}
+                    ).get(dev_id_str):
+                        scene_readbacks.add(dev_id_str)
                 inst_device_ids.add(dev_id_str)
                 device_installation_map[dev_id_str] = inst_id
 
@@ -451,6 +459,7 @@ async def _async_update_data(
             had_non_auth_install_errors,
             fresh_power_ids=fresh_power_ids,
             fresh_scenary_ids=fresh_scenary_ids,
+            scene_readbacks=scene_readbacks,
             power_observations=power_observations,
         )
 
@@ -480,6 +489,7 @@ def _derive_state(
     *,
     fresh_power_ids: set[str] | None = None,
     fresh_scenary_ids: set[str] | None = None,
+    scene_readbacks: set[str] | None = None,
     power_observations: dict[str, PowerObservation] | None = None,
 ):
     """Recompute local scene state without treating maintenance as new evidence."""
@@ -496,15 +506,27 @@ def _derive_state(
                 persist_changed = True
     for dev_id, dev in data.items():
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
+        pending_scenes = bucket.get("sleep_exit_pending", {})
+        scene_after_demand = scene_readbacks is None or dev_id in scene_readbacks
+        can_update_scene = dev_id not in pending_scenes or scene_after_demand
         if (
-            raw_scenary in {SCENARY_HOME, SCENARY_VACANT}
+            (
+                raw_scenary in {SCENARY_HOME, SCENARY_VACANT}
+                or (
+                    raw_scenary == SCENARY_SLEEP
+                    and pending_scenes.get(dev_id) == SLEEP_REARM_UNVERIFIED
+                )
+            )
             and fresh_scenary_ids is not None
             and dev_id in fresh_scenary_ids
+            and scene_after_demand
         ):
             # Partial Pusher events or cached installation snapshots may
             # retain an old Home scene: only a newly observed scene resolves
             # an ambiguous scene write.
-            bucket.get("sleep_exit_pending", {}).pop(dev_id, None)
+            pending = pending_scenes.pop(dev_id, None)
+            if isinstance(pending, asyncio.Future) and not pending.done():
+                pending.set_result(raw_scenary == SCENARY_HOME)
 
         tracking = sleep_tracking.setdefault(dev_id, SleepTracking())
         power_overlay = bucket.get("optimistic", {}).get(dev_id, {}).get("power")
@@ -533,6 +555,7 @@ def _derive_state(
         if (
             raw_scenary in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}
             and (fresh_scenary_ids is None or dev_id in fresh_scenary_ids)
+            and can_update_scene
             and (overlay_value is None or overlay_value == raw_scenary)
         ):
             # A maintenance tick, partial push or an older remote scene cannot
@@ -563,10 +586,7 @@ def _derive_state(
             elif tracking.expected_minutes != sleep_time_minutes:
                 # A changed timer may or may not reschedule the physical unit.
                 # Do not infer an overdue physical timer from such a session.
-                tracking.start_known = False
-                tracking.duration_invalidated = True
-                tracking.reset_expiry_votes()
-                tracking.overdue_on_reports = 0
+                tracking.invalidate_duration()
 
         valid_timer = (
             active_sleep
@@ -1343,6 +1363,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 data,
                 fresh_power_ids=fresh_power_ids,
                 fresh_scenary_ids=fresh_scenary_ids,
+                scene_readbacks=fresh_scenary_ids - manager.replayed_scene_ids,
                 power_observations={
                     dev_id: manager.last_power_evidence
                     for dev_id in fresh_power_ids

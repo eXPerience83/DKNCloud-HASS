@@ -16,7 +16,11 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
-from .airzone_api import CommandNotSentCooldown, CommandSuperseded
+from .airzone_api import (
+    CommandNotSentCooldown,
+    CommandSuperseded,
+    device_write_rejected,
+)
 from .commands import modmaquina_payload
 from .const import (
     CONF_ENABLE_HEAT_COOL,
@@ -25,9 +29,11 @@ from .const import (
 from .device_state import power_is_on, preset_to_scenary, scenary_to_preset
 from .helpers import (
     PowerDelegation,
+    SleepExpiryFence,
     acquire_device_lock,
     active_entry_bucket,
     async_auto_exit_sleep_if_needed,
+    async_restore_sleep_home,
     async_send_power,
     bitmask_supports_p2,
     build_device_info,
@@ -43,6 +49,7 @@ from .helpers import (
     reserve_power_intent,
     schedule_post_write_refresh,
 )
+from .sleep import SLEEP_REARM_UNVERIFIED, sleep_intent_revisions
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -275,25 +282,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
             return
 
-        def terminated_raw_sleep() -> bool:
-            """Only independently verified expiry can authorize a new cycle."""
-            runtime = self._active_entry_bucket()
-            tracking = (
-                runtime.get("sleep_tracking", {}).get(self._device_id)
-                if runtime is not None
-                else None
-            )
-            return bool(
-                tracking is not None
-                and tracking.expiry_verified
-                and not tracking.duration_invalidated
-                and not runtime.get("sleep_exit_pending", {}).get(self._device_id)
-                and str(self._device.get("scenary") or "").strip().lower() == "sleep"
-                and str(self._device.get("power")).strip().lower()
-                in {"0", "false", "off"}
-                and not self._device_power_on()
-            )
-
         scenary = preset_to_scenary(preset_mode)
         if not scenary:
             _LOGGER.debug("Unsupported preset -> scenary mapping: %s", preset_mode)
@@ -309,8 +297,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             return
         # An unchanged Sleep selection is not a new intent: no network,
         # session revision or Store write, including while power is OFF.
+        expiry = None
         if preset_mode == "sleep" and self.preset_mode == "sleep":
-            if not terminated_raw_sleep():
+            expiry = SleepExpiryFence.capture(
+                self.hass, self.coordinator, bucket, self._device_id
+            )
+            if expiry is None or self._device_id in bucket.get(
+                "sleep_exit_pending", {}
+            ):
                 return
 
         def entry_active() -> bool:
@@ -355,20 +349,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 ):
                     return
 
-            stale_sleep_off = terminated_raw_sleep()
+            rearm = expiry is not None and self.preset_mode == "sleep"
             # The scene may remain Sleep while power goes ON->OFF during the
             # awaited PUT. Capture manual Home/Away intent before any await.
-            exits_raw_sleep = stale_sleep_off or (
+            exits_raw_sleep = rearm or (
                 preset_mode in {"home", "away"}
                 and str(self._device.get("scenary") or "").strip().lower() == "sleep"
             )
-            if self.preset_mode == preset_mode and not (
-                preset_mode == "sleep" and stale_sleep_off
-            ):
+            if self.preset_mode == preset_mode and not rearm:
                 return
-
-            rearm = preset_mode == "sleep" and stale_sleep_off
-            cleared_stale_sleep = False
 
             def request_readback() -> None:
                 request_ambiguous_control_readback(
@@ -392,22 +381,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 # Automatic Sleep expiry must not issue another scene command
                 # before a subsequent backend read confirms convergence.
                 bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
-                    "unverified"
+                    SLEEP_REARM_UNVERIFIED if rearm else "unverified"
                 )
                 request_readback()
-
-            def preserve_partial_home() -> None:
-                if not entry_active():
-                    return
-                # Only the first PUT was accepted. A failed second PUT may
-                # have reached the server: never blindly retry it or claim
-                # that a fresh one-shot Sleep timer has started.
-                optimistic_set(
-                    self.hass, self._entry_id, self._device_id, "scenary", "occupied"
-                )
-                record_preset_write()
-                self.async_write_ha_state()
-                fence_ambiguous_scene()
 
             def check_dispatch() -> None:
                 if (
@@ -417,65 +393,74 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 ):
                     raise CommandSuperseded
 
+            guard = check_dispatch if is_current is not None else None
+            if rearm:
+                power_revision, scene_revision, _ = expiry.revisions
+
+                def check_first_step() -> None:
+                    check_dispatch()
+                    if not expiry.is_current(
+                        self.hass,
+                        self.coordinator,
+                        bucket,
+                        self._device_id,
+                        (power_revision, scene_revision, intent),
+                    ):
+                        raise CommandSuperseded
+
+                confirmed = await async_restore_sleep_home(
+                    self.hass,
+                    self.coordinator,
+                    self._entry_id,
+                    self._device_id,
+                    check_first_step,
+                )
+                if entry_active() and self.preset_mode == "home":
+                    self.async_write_ha_state()
+                if not confirmed:
+                    return
+
+                def check_second_step() -> None:
+                    check_dispatch()
+                    if (
+                        sleep_intent_revisions(bucket, self._device_id)
+                        != (power_revision, scene_revision + 1, intent)
+                        or bucket.get("sleep_tracking", {}).get(self._device_id)
+                        is not expiry.tracking
+                        or expiry.tracking.session_revision != expiry.session
+                        or str(self._device.get("scenary")).strip().lower()
+                        != "occupied"
+                        or str(self._device.get("power")).strip().lower()
+                        not in {"0", "false", "off"}
+                        or power_is_uncertain(bucket, self._device_id)
+                    ):
+                        raise CommandSuperseded
+
+                guard = check_second_step
+
+            rearm_in_flight = False
+
+            def mark_dispatched(value: bool) -> None:
+                nonlocal rearm_in_flight
+                rearm_in_flight = value
+
             try:
-                if rearm:
-                    # Repeating the unchanged backend 'sleep' scene does not
-                    # reliably start a new one-shot timer.
-                    await api.put_device_fields(
-                        self._device_id,
-                        {"device": {"scenary": "occupied"}},
-                        retry=False,
-                    )
-                    cleared_stale_sleep = True
-                    # Confirm occupied before beginning a new timer. An
-                    # ambiguous/stale readback must not silently rearm.
-                    if not entry_active():
-                        return
-                    await self.coordinator.async_request_refresh()
-                    if not entry_active():
-                        return
-                    verified = (
-                        str(
-                            (self.coordinator.data or {})
-                            .get(self._device_id, {})
-                            .get("scenary", "")
-                        )
-                        .strip()
-                        .lower()
-                        == "occupied"
-                    )
-                    if not verified or intents.get(self._device_id) != intent:
-                        preserve_partial_home()
-                        return
-                if exits_raw_sleep:
-                    # Any scene write leaving Sleep (even while power is ON)
-                    # must not retry after a response of unknown outcome.
-                    await api.put_device_fields(
-                        self._device_id,
-                        {"device": {"scenary": scenary}},
-                        retry=False,
-                        **(
-                            {"on_start": check_dispatch}
-                            if is_current is not None
-                            else {}
-                        ),
-                    )
-                else:
-                    await api.put_device_fields(
-                        self._device_id,
-                        {"device": {"scenary": scenary}},
-                        **(
-                            {"on_start": check_dispatch}
-                            if is_current is not None
-                            else {}
-                        ),
-                    )
+                if guard is not None:
+                    guard()
+                # A Sleep exit or rearm must not replay a possibly applied PUT.
+                await api.put_device_fields(
+                    self._device_id,
+                    {"device": {"scenary": scenary}},
+                    **({"retry": False} if exits_raw_sleep else {}),
+                    **({"on_start": guard} if guard is not None else {}),
+                    **({"on_in_flight": mark_dispatched} if rearm else {}),
+                )
             except CommandSuperseded:
                 return
             except asyncio.CancelledError:
-                if cleared_stale_sleep:
-                    preserve_partial_home()
-                elif exits_raw_sleep:
+                if rearm and not rearm_in_flight:
+                    raise
+                if exits_raw_sleep:
                     # A manual Home/Away may have reached the backend even
                     # if power was ON when this command was initiated.
                     fence_ambiguous_scene()
@@ -485,9 +470,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     request_readback()
                 raise
             except Exception as err:
-                if cleared_stale_sleep:
-                    preserve_partial_home()
-                elif exits_raw_sleep and not isinstance(err, CommandNotSentCooldown):
+                if rearm and device_write_rejected(err):
+                    raise
+                if exits_raw_sleep and not isinstance(err, CommandNotSentCooldown):
                     # Fence any ambiguous Sleep exit, even when ON->OFF
                     # telemetry arrived during the PUT. Known-unsent exempt.
                     fence_ambiguous_scene()
@@ -817,7 +802,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self.coordinator,
             self._entry_id,
             self._device_id,
-            delegated_value=1,
+            requested_value=1,
             service_context=self._context,
         )
         if intent is None:
@@ -859,7 +844,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self.coordinator,
             self._entry_id,
             self._device_id,
-            delegated_value=0,
+            requested_value=0,
             service_context=self._context,
         )
         if intent is None:

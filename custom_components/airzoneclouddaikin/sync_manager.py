@@ -8,6 +8,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from copy import deepcopy
+from datetime import datetime
 from itertools import count
 from typing import Any
 
@@ -15,6 +16,7 @@ from aiohttp import ClientResponseError
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.util import dt as dt_util
 
+from .const import SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT
 from .device_state import confirm_power_read
 from .pusher_client import PusherProtocolError
 from .recovery_pool import ReadStart, RecoveryPool
@@ -94,6 +96,8 @@ class SyncManager:
         self.touched: dict[str, set[str]] = {}
         # A single applied GET or one distinct PUSH payload is one observation.
         # The derivation layer may not count a cached maintenance publication.
+        self.replayed_scene_ids: set[str] = set()
+        self._last_scene_push: dict[tuple[str, str], datetime | None] = {}
         self.last_power_evidence: PowerObservation | None = None
         self._get_sequence = get_sequence if get_sequence is not None else count(1)
         self._last_received = dict.fromkeys(initial, clock())
@@ -284,6 +288,7 @@ class SyncManager:
                 or (started is not None and started >= demand)
             )
         }
+        self.replayed_scene_ids.clear()
         self.last_power_evidence = observation
         confirm_power_read(
             self._uncertain_power,
@@ -393,6 +398,22 @@ class SyncManager:
             return
         self.state.event(device, patch, generation)
         self.touched = {device: {k for k, v in patch.items() if v is not None}}
+        self.replayed_scene_ids.clear()
+        scene = str(patch.get("scenary")).strip().lower()
+        if scene in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
+            key = device, scene
+            date = patch.get("update_date")
+            identity = dt_util.parse_datetime(date) if isinstance(date, str) else None
+            identity = dt_util.as_utc(identity) if identity is not None else None
+            previous = self._last_scene_push.get(key)
+            if key in self._last_scene_push and (
+                identity is None or (previous is not None and identity <= previous)
+            ):
+                # Keep applying the patch for display and field precedence.
+                # Only independent scene reports can unlock another write.
+                self.replayed_scene_ids.add(device)
+            else:
+                self._last_scene_push[key] = identity
         if "power" in self.touched[device]:
             # Replayed identical PUSH payloads do not become two independent
             # corroborations, even if the socket delivered them twice.
@@ -556,7 +577,9 @@ class SyncManager:
                     continue
                 self.request_recovery(device)
 
-    def request_recovery(self, device: str, *, require_fresh: bool = False) -> None:
+    def request_recovery(
+        self, device: str, *, require_fresh: bool = False
+    ) -> asyncio.Task | None:
         """Queue readback, optionally requiring a GET started after this call."""
         if self._stopped or self._auth_failed or device not in self.schedulers:
             return
@@ -564,7 +587,7 @@ class SyncManager:
             self._quiet_demands[device] = self._pool.stamp()
         existing = self._quiet_tasks.get(device)
         if existing is not None and not existing.done():
-            return
+            return existing
 
         async def recover():
             try:
@@ -579,7 +602,8 @@ class SyncManager:
             finally:
                 self._quiet_demands.pop(device, None)
 
-        self._quiet_tasks[device] = asyncio.create_task(recover())
+        self._quiet_tasks[device] = task = asyncio.create_task(recover())
+        return task
 
     def maintenance(self) -> None:
         """Notify local listeners without advancing reception timestamps."""

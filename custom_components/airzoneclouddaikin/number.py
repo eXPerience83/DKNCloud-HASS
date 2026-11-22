@@ -15,8 +15,8 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .__init__ import AirzoneConfigEntry, AirzoneCoordinator
-from .airzone_api import AirzoneAPI, CommandNotSentCooldown
-from .const import DOMAIN
+from .airzone_api import AirzoneAPI, CommandNotSentCooldown, device_write_rejected
+from .const import DOMAIN, SCENARY_SLEEP
 from .helpers import (
     acquire_device_lock,
     active_entry_bucket,
@@ -207,9 +207,50 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             current = self.native_value
             if current is not None and current == ivalue:
                 return
+            tracking = (
+                bucket.get("sleep_tracking", {}).get(self._device_id)
+                if self._field_name == "sleep_time"
+                else None
+            )
+            affected_session = (
+                tracking.session_revision
+                if tracking is not None and tracking.last_scenary == SCENARY_SLEEP
+                else None
+            )
+            in_flight = False
+
+            def mark_dispatched(value: bool) -> None:
+                nonlocal in_flight
+                in_flight = value
+
+            def invalidate_duration() -> None:
+                if (
+                    affected_session is not None
+                    and entry_active()
+                    and bucket.get("sleep_tracking", {}).get(self._device_id)
+                    is tracking
+                    and tracking.session_revision == affected_session
+                    and not tracking.duration_invalidated
+                ):
+                    tracking.invalidate_duration()
+                    if save := bucket.get("save_sleep_sessions"):
+                        save()
+
             try:
-                await self._api.put_device_fields(self._device_id, payload)
+                await self._api.put_device_fields(
+                    self._device_id,
+                    payload,
+                    **(
+                        {"on_in_flight": mark_dispatched}
+                        if affected_session is not None
+                        else {}
+                    ),
+                )
             except (Exception, asyncio.CancelledError) as error:
+                if not device_write_rejected(error) and (
+                    not isinstance(error, asyncio.CancelledError) or in_flight
+                ):
+                    invalidate_duration()
                 if not isinstance(error, CommandNotSentCooldown):
                     request_ambiguous_control_readback(
                         self.hass,
@@ -223,6 +264,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             # An accepted late PUT must not publish into an unloaded entry.
             if not entry_active():
                 return
+            invalidate_duration()
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, self._field_name, ivalue
             )

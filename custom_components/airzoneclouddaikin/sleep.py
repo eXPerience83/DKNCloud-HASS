@@ -8,6 +8,7 @@ from typing import Any
 from .const import SCENARY_SLEEP, SLEEP_CLEANUP_SETTLE_SECONDS
 
 type PowerObservation = tuple[int | str, datetime]
+SLEEP_REARM_UNVERIFIED = "rearm_unverified"
 SLEEP_INTENT_KEYS = ("power_intents", "scene_revisions", "scene_preset_intents")
 
 
@@ -42,6 +43,13 @@ class SleepTracking:
     def expiry_verified(self) -> bool:
         """Whether two reports corroborated OFF before checking current state."""
         return self.expiry_off_reports >= 2
+
+    def invalidate_duration(self) -> None:
+        """A duration change makes this session's original bounds unusable."""
+        self.start_known = False
+        self.duration_invalidated = True
+        self.reset_expiry_votes()
+        self.overdue_on_reports = 0
 
     def reset_expiry_votes(self) -> None:
         """Discard votes without allowing observations to be replayed."""
@@ -88,16 +96,23 @@ def sleep_expiry_is_current(
     *,
     now: datetime,
     monotonic: float,
+    evidence_revisions: tuple[int, int, int] | None = None,
 ) -> bool:
     """Validate the same live evidence for projection and dispatch."""
     tracking = bucket.get("sleep_tracking", {}).get(device_id)
     if tracking is None or not tracking.expiry_verified:
         return False
     deadline = sleep_cleanup_due(tracking)
+    try:
+        minutes = int(device.get("sleep_time"))
+    except TypeError, ValueError:
+        return False
     if (
         deadline is None
         or now < deadline
-        or tracking.expiry_revisions != sleep_intent_revisions(bucket, device_id)
+        or minutes != tracking.expected_minutes
+        or tracking.expiry_revisions
+        != (evidence_revisions or sleep_intent_revisions(bucket, device_id))
         or str(device.get("scenary")).strip().lower() != SCENARY_SLEEP
         or str(device.get("power")).strip().lower() not in {"0", "false", "off"}
         or device_id in bucket.get("uncertain_power", {})

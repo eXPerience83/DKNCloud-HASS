@@ -665,7 +665,10 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
-        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
+        async def fetch_devices(
+            self, inst_id: str, *, on_start
+        ) -> list[dict[str, Any]]:
+            on_start()
             if inst_id == "inst-a":
                 return [
                     {
@@ -692,7 +695,10 @@ async def test_async_update_data_preserves_failed_installation_from_previous_sna
         async def fetch_installations(self) -> list[dict[str, Any]]:
             return [{"installation_id": "inst-a"}, {"installation_id": "inst-b"}]
 
-        async def fetch_devices(self, inst_id: str, **_kwargs) -> list[dict[str, Any]]:
+        async def fetch_devices(
+            self, inst_id: str, *, on_start
+        ) -> list[dict[str, Any]]:
+            on_start()
             if inst_id == "inst-a":
                 raise RuntimeError("temporary")
             return [

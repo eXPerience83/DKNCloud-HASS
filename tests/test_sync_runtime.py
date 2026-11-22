@@ -1187,3 +1187,224 @@ async def test_sleep_store_reboot_validates_scene_duration_and_corrupt_record(
         assert result["sleep_estimated_end"] is None
 
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    ("action", "source"),
+    [
+        ("rearm", "get"),
+        ("rearm", "push"),
+        ("rearm", "push_wins"),
+        ("rearm", "replayed_push"),
+        ("rearm", "reload"),
+        ("climate", "get"),
+        ("switch", "get"),
+        ("fallback", "get"),
+        ("climate", "ambiguous"),
+    ],
+)
+async def test_sleep_home_barrier_through_entity_services(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device, action, source
+):
+    """Use the real HA entry, entity services, field merge and RecoveryPool."""
+    initial = {**sample_device, "scenary": "sleep", "power": "0", "sleep_time": 30}
+    home = {**initial, "scenary": "occupied"}
+    old_started, release_old, new_started, release_new, demanded = (
+        asyncio.Event() for _ in range(5)
+    )
+    sequence = []
+    calls = 0
+    api = Mock()
+
+    async def fetch(_installation, *, retry=True, on_start=None):
+        nonlocal calls
+        calls += 1
+        if on_start is not None:
+            on_start()
+        if calls == 1:
+            return [initial]
+        if calls == 2:
+            sequence.append("GET old")
+            old_started.set()
+            await release_old.wait()
+        else:
+            sequence.append("GET fresh")
+            new_started.set()
+            await release_new.wait()
+        return [home]
+
+    async def put(_device, payload, **kwargs):
+        if guard := kwargs.get("on_start"):
+            guard()
+        sequence.append(payload["device"]["scenary"])
+        if source == "ambiguous":
+            raise TimeoutError("Unknown Home PUT outcome")
+
+    async def send(payload, **kwargs):
+        if guard := kwargs.get("on_start"):
+            guard()
+        assert payload["event"]["option"] == "P1"
+        sequence.append("P1")
+
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=fetch)
+    api.put_device_fields = AsyncMock(side_effect=put)
+    api.send_event = AsyncMock(side_effect=send)
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    registry = er.async_get(hass)
+    platform = "climate" if action in {"rearm", "climate"} else "switch"
+    unique_id = "dev1_climate" if platform == "climate" else "dev1_power"
+    entity_id = registry.async_get_entity_id(platform, DOMAIN, unique_id)
+    assert entity_id
+    if action == "fallback":
+        hass.states.async_remove(
+            registry.async_get_entity_id("climate", DOMAIN, "dev1_climate")
+        )
+
+    now = 40.0
+
+    async def sleep(delay):
+        nonlocal now
+        now += delay
+
+    manager._clock = manager._pool._clock = manager._budget._clock = lambda: now
+    manager._budget._sleep = sleep
+    request = manager.request_recovery
+
+    def observe_request(device, *, require_fresh=False):
+        worker = request(device, require_fresh=require_fresh)
+        if require_fresh:
+            demanded.set()
+        return worker
+
+    monkeypatch.setattr(manager, "request_recovery", observe_request)
+    service = None
+    replayed_home = {"scenary": "occupied", "update_date": "2026-11-01T00:00:00Z"}
+    try:
+        if source == "replayed_push":
+            await manager.event("dev1", replayed_home, manager.state.generation)
+            await manager.event("dev1", {"scenary": "sleep"}, manager.state.generation)
+        manager.request_recovery("dev1")
+        await asyncio.wait_for(old_started.wait(), 2)
+        _mark_synthetic_sleep_off(bucket)
+        service = asyncio.create_task(
+            hass.services.async_call(
+                platform,
+                "set_preset_mode" if action == "rearm" else "turn_on",
+                {
+                    "entity_id": entity_id,
+                    **({"preset_mode": "sleep"} if action == "rearm" else {}),
+                },
+                blocking=True,
+            )
+        )
+        await asyncio.wait_for(demanded.wait(), 2)
+        assert sequence == ["GET old", "occupied"]
+        if source == "ambiguous":
+            with pytest.raises(TimeoutError, match="Unknown Home PUT outcome"):
+                await asyncio.wait_for(service, 2)
+            assert "dev1" in bucket["sleep_exit_pending"]
+            assert api.send_event.await_count == 0
+            assert api.put_device_fields.await_count == 1
+            demanded.clear()
+            service = asyncio.create_task(
+                hass.services.async_call(
+                    platform, "turn_on", {"entity_id": entity_id}, blocking=True
+                )
+            )
+            await asyncio.wait_for(demanded.wait(), 2)
+        release_old.set()
+        await asyncio.wait_for(new_started.wait(), 2)
+        assert sequence == ["GET old", "occupied", "GET fresh"]
+        if source == "reload":
+            assert await hass.config_entries.async_unload(entry.entry_id)
+            await asyncio.wait_for(service, 2)
+            release_new.set()
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            new_bucket = hass.data[DOMAIN][entry.entry_id]
+            assert new_bucket is not bucket
+            assert not new_bucket.get("sleep_exit_pending")
+            api.put_device_fields.assert_awaited_once()
+            return
+        if source == "replayed_push":
+            await manager.event("dev1", replayed_home, manager.state.generation)
+            assert not service.done()
+        if source in {"push", "push_wins"}:
+            await manager.event(
+                "dev1",
+                {"scenary": "occupied" if source == "push" else "sleep"},
+                manager.state.generation,
+            )
+        if source != "push":
+            release_new.set()
+        await asyncio.wait_for(service, 2)
+        if source in {"push_wins", "replayed_push"}:
+            assert sequence == ["GET old", "occupied", "GET fresh"]
+            assert "dev1" in bucket["sleep_exit_pending"]
+        else:
+            assert sequence == [
+                "GET old",
+                "occupied",
+                "GET fresh",
+                "sleep" if action == "rearm" else "P1",
+            ]
+    finally:
+        release_old.set()
+        release_new.set()
+        if service is not None and not service.done():
+            service.cancel()
+        if service is not None:
+            await asyncio.gather(service, return_exceptions=True)
+        if entry.state is ConfigEntryState.LOADED:
+            assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_poll_started_before_scene_readback_cannot_confirm_home(
+    hass, dkn_config_entry_factory, sample_device
+):
+    """Legacy polling checks the same dispatch boundary as shared recovery."""
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    initial = {**sample_device, "scenary": "sleep", "power": "0"}
+    arrived, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def fetch(_installation, *, on_start):
+        nonlocal calls
+        calls += 1
+        on_start()
+        if calls == 1:
+            return [initial]
+        if calls == 2:
+            arrived.set()
+            await release.wait()
+        return [{**initial, "scenary": "occupied"}]
+
+    api = Mock(
+        fetch_installations=AsyncMock(return_value=[{"installation_id": "fake"}]),
+        fetch_devices=AsyncMock(side_effect=fetch),
+    )
+    await integration._async_update_data(hass, entry, api)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    old_poll = asyncio.create_task(integration._async_update_data(hass, entry, api))
+    try:
+        await asyncio.wait_for(arrived.wait(), 2)
+        confirmation = hass.loop.create_future()
+        bucket["sleep_exit_pending"] = {"dev1": confirmation}
+        release.set()
+        assert (await asyncio.wait_for(old_poll, 2))["dev1"]["scenary"] == "occupied"
+        assert not confirmation.done()
+        await integration._async_update_data(hass, entry, api)
+        assert confirmation.result() is True
+    finally:
+        release.set()
+        await asyncio.gather(old_poll, return_exceptions=True)

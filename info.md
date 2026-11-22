@@ -117,9 +117,13 @@ permission to change scene or power.
 Automatic rearm is forbidden while a timer may still be active. After verified
 completion with raw Sleep retained, a **new explicit** Sleep request may
 transition `occupied → confirm by readback → sleep`, with non-retried
-PUTs; ambiguous scene writes remain pending until readback. Explicit
-Home/Away may cancel any time. An HA ON from a Sleep with unknown expiry
-preserves the scene.
+PUTs. Confirmation requires a newly applied PUSH scene or a GET that started
+after the readback demand. An older or coalesced read that only returns cached
+state cannot advance the sequence. A newer Home/Away request can supersede
+either pending write. With automatic cleanup enabled, an explicit Climate or
+Switch ON from verified expired Sleep confirms Home before sending P1. A pending
+ambiguous restoration is read back without repeating the PUT. ON during active
+or unverified Sleep preserves the scene and the original deadline.
 
 Home Assistant stores only the minimum accepted Sleep session metadata in its
 per-entry local Store. A restored session must be contrasted against newly
@@ -420,7 +424,10 @@ readback policy to Climate setpoint/fan events (P3/P4/P7/P8) and Number PUTs
 (sleep_time and unoccupied temperature limits). A timeout, cancellation or
 other uncertain write result does not produce an optimistic success; it requests
 an authoritative readback instead. A known-unsent local cooldown needs no
-readback. No uncertain physical command is retried.
+readback. No uncertain physical command is retried. An accepted or possibly
+received `sleep_time` change invalidates the current Sleep session's expiry
+inference under the device lock. Old telemetry cannot reinstate that deadline.
+The integration does not infer a new countdown from a duration edit.
 
 ---
 

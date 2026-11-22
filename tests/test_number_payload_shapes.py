@@ -25,7 +25,9 @@ class DummyAPI:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> None:
+    async def put_device_fields(
+        self, device_id: str, payload: dict[str, Any], **kwargs
+    ) -> None:
         """Record a device-field write."""
         self.calls.append((device_id, payload))
 
@@ -551,3 +553,132 @@ async def test_sleep_timer_keeps_existing_clamp_semantics(
     await entity.async_set_native_value(500)
 
     assert api.calls == [("dev1", {"sleep_time": 120})]
+
+
+@pytest.mark.parametrize("outcome", ["accepted", "ambiguous", "cooldown"])
+async def test_sleep_duration_write_invalidates_old_clock(
+    hass, dummy_coordinator_factory, outcome
+):
+    """An old snapshot must not keep the deadline usable after a possible write."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin.airzone_api import CommandNotSentCooldown
+    from custom_components.airzoneclouddaikin.sleep import SleepTracking
+
+    entity, api = _make_entity(
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data={"sleep_time": 30, "scenary": "sleep", "power": "0"},
+    )
+    now = dt_util.utcnow()
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        sleep_started_at_utc=now,
+        cleanup_started_at_utc=now,
+        start_known=True,
+        expected_minutes=30,
+        expiry_off_reports=2,
+        expiry_revisions=(0, 0, 0),
+    )
+    hass.data[DOMAIN]["entry"]["sleep_tracking"] = {"dev1": tracking}
+    error = {"ambiguous": TimeoutError(), "cooldown": CommandNotSentCooldown(0)}.get(
+        outcome
+    )
+    if error is not None:
+
+        async def rejected(*args, **kwargs):
+            raise error
+
+        api.put_device_fields = rejected
+        with pytest.raises(type(error)):
+            await entity.async_set_native_value(40)
+    else:
+        await entity.async_set_native_value(40)
+
+    assert tracking.duration_invalidated is (outcome != "cooldown")
+    assert tracking.expiry_verified is (outcome == "cooldown")
+
+
+@pytest.mark.parametrize("http_status", [204, 503, 422])
+async def test_sleep_duration_loopback_and_old_get(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    http_status,
+):
+    """A traced mutation and stale telemetry must use the lock-owned deadline."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from aiohttp import ClientResponseError, web
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin import (
+        _derive_state,
+        airzone_api,
+        async_create_runtime_session,
+    )
+    from custom_components.airzoneclouddaikin.sleep import (
+        SleepTracking,
+        sleep_cleanup_due,
+    )
+
+    old_device = {"id": "dev1", "sleep_time": 30, "scenary": "sleep", "power": "0"}
+    entity, _ = _make_entity(
+        hass,
+        dummy_coordinator_factory,
+        DKNSleepTimeNumber,
+        device_data=old_device,
+    )
+    bucket = hass.data[DOMAIN]["entry"]
+    started = dt_util.utcnow() - timedelta(minutes=40)
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        sleep_started_at_utc=started,
+        cleanup_started_at_utc=started,
+        expected_minutes=30,
+        start_known=True,
+        expiry_off_reports=2,
+        expiry_revisions=(0, 0, 0),
+    )
+    bucket["sleep_tracking"] = {"dev1": tracking}
+    writes = []
+
+    async def respond(request):
+        writes.append(await request.json())
+        assert bucket["device_locks"]["dev1"].locked()
+        return web.Response(status=http_status)
+
+    app = web.Application()
+    app.router.add_put("/devices/dev1", respond)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+    entity._api = airzone_api.AirzoneAPI(
+        "synthetic@example.invalid",
+        async_create_runtime_session(hass),
+        token="synthetic",
+    )
+
+    if http_status == 204:
+        await entity.async_set_native_value(40)
+    else:
+        with pytest.raises(ClientResponseError) as error:
+            await entity.async_set_native_value(40)
+        assert error.value.status == http_status
+
+    data = {"dev1": old_device}
+    _derive_state(
+        hass,
+        SimpleNamespace(entry_id="entry", options={}),
+        data,
+        fresh_power_ids={"dev1"},
+        fresh_scenary_ids={"dev1"},
+        power_observations={"dev1": (1, dt_util.utcnow())},
+    )
+    assert writes == [{"sleep_time": 40}]
+    assert tracking.duration_invalidated == (http_status != 422)
+    assert (sleep_cleanup_due(tracking) is None) == (http_status != 422)
+    assert data["dev1"]["sleep_expiry_verified"] == (http_status == 422)

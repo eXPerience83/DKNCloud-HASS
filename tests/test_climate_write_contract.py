@@ -497,7 +497,11 @@ async def test_unload_after_first_rearm_put_prevents_second_put(
 
     await asyncio.wait_for(task, timeout=3)
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": "occupied"}}, retry=False
+        "unit-1",
+        {"device": {"scenary": "occupied"}},
+        retry=False,
+        on_start=ANY,
+        on_in_flight=ANY,
     )
     assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
     entity.async_write_ha_state.assert_not_called()
@@ -516,8 +520,11 @@ async def test_late_second_rearm_failure_does_not_restore_unloaded_entry(
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
     _arm_current_sleep_off_evidence(hass)
-    _confirm_rearm_home_readback(entity)
+    recover = _confirm_rearm_home_readback(entity)
     manager = Mock()
+    manager.request_recovery.side_effect = lambda *args, **kwargs: (
+        recover(*args, **kwargs) if manager.request_recovery.call_count == 1 else None
+    )
     bucket["sync_manager"] = manager
     entered, release = asyncio.Event(), asyncio.Event()
 
@@ -539,13 +546,14 @@ async def test_late_second_rearm_failure_does_not_restore_unloaded_entry(
             bucket["closing"] = True
     finally:
         release.set()
+        await asyncio.gather(task, return_exceptions=True)
 
     with pytest.raises(TimeoutError, match="second response unknown"):
         await asyncio.wait_for(task, timeout=3)
     assert api.put_device_fields.await_count == 2
     assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
-    manager.request_recovery.assert_not_called()
-    entity.async_write_ha_state.assert_not_called()
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    entity.async_write_ha_state.assert_called_once()
     if unload_status == "removed":
         assert "climate-entry" not in hass.data[DOMAIN]
 
@@ -730,12 +738,14 @@ async def test_expired_sleep_rearms_via_occupied_then_sleep(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
+    entity.coordinator.data["unit-1"]["sleep_time"] = 5
     old_start = dt_util.utcnow() - timedelta(hours=2)
     tracking = SleepTracking(
         last_scenary="sleep",
         sleep_started_at_utc=old_start,
         cleanup_started_at_utc=old_start,
         expected_minutes=5,
+        start_known=True,
         expiry_off_reports=2,
         expiry_revisions=(0, 0, 0),
         force_exit_requested=True,
@@ -746,8 +756,14 @@ async def test_expired_sleep_rearms_via_occupied_then_sleep(
     assert [
         (call.args, call.kwargs) for call in api.put_device_fields.await_args_list
     ] == [
-        (("unit-1", {"device": {"scenary": "occupied"}}), {"retry": False}),
-        (("unit-1", {"device": {"scenary": "sleep"}}), {"retry": False}),
+        (
+            ("unit-1", {"device": {"scenary": "occupied"}}),
+            {"retry": False, "on_start": ANY, "on_in_flight": ANY},
+        ),
+        (
+            ("unit-1", {"device": {"scenary": "sleep"}}),
+            {"retry": False, "on_start": ANY, "on_in_flight": ANY},
+        ),
     ]
     assert tracking.sleep_started_at_utc is not None
     assert tracking.sleep_started_at_utc > old_start
@@ -765,24 +781,55 @@ async def test_second_sleep_rearm_failure_preserves_home_and_requests_readback(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
     _arm_current_sleep_off_evidence(hass)
-    _confirm_rearm_home_readback(entity)
+    recover = _confirm_rearm_home_readback(entity)
     manager = Mock()
+    manager.request_recovery.side_effect = lambda *args, **kwargs: (
+        recover(*args, **kwargs) if manager.request_recovery.call_count == 1 else None
+    )
     hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
     api.put_device_fields.side_effect = [None, TimeoutError("ambiguous")]
     with pytest.raises(TimeoutError, match="ambiguous"):
         await entity.async_set_preset_mode("sleep")
     assert api.put_device_fields.await_count == 2
     assert entity.preset_mode == "home"
-    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    assert manager.request_recovery.call_count == 2
+    manager.request_recovery.assert_called_with("unit-1", require_fresh=True)
     assert (
         hass.data[DOMAIN]["climate-entry"]["sleep_exit_pending"]["unit-1"]
-        == "unverified"
+        == "rearm_unverified"
     )
     # Failed second PUT cannot certify a new session. The original record
     # remains pending fresh backend scene confirmation.
     record = hass.data[DOMAIN]["climate-entry"]["sleep_tracking"]["unit-1"]
-    assert record.expiry_verified
+    assert not record.start_known
     assert record.session_revision == 0
+
+    # If the ambiguous second PUT did apply, a fresh scene is an unknown
+    # external session. The failed command cannot supply its original clock.
+    from custom_components.airzoneclouddaikin import _derive_state
+
+    data = entity.coordinator.data
+    data["unit-1"]["scenary"] = "sleep"
+    _derive_state(
+        hass,
+        SimpleNamespace(entry_id="climate-entry", options={}),
+        data,
+        fresh_power_ids=set(),
+        fresh_scenary_ids={"unit-1"},
+        scene_readbacks=set(),
+    )
+    assert record.session_revision == 0
+    _derive_state(
+        hass,
+        SimpleNamespace(entry_id="climate-entry", options={}),
+        data,
+        fresh_power_ids=set(),
+        fresh_scenary_ids={"unit-1"},
+        scene_readbacks={"unit-1"},
+    )
+    assert not hass.data[DOMAIN]["climate-entry"]["sleep_exit_pending"]
+    assert record.session_revision == 1
+    assert not record.start_known
 
 
 async def test_later_queued_preset_runs_after_earlier_write_commits(
@@ -903,16 +950,29 @@ def _arm_current_sleep_off_evidence(hass) -> None:
     }
 
 
-def _confirm_rearm_home_readback(entity) -> None:
-    """Mock an independent occupied GET after the first rearm PUT."""
+def _confirm_rearm_home_readback(entity):
+    """Publish an independent occupied observation after the readback demand."""
+    from custom_components.airzoneclouddaikin import _derive_state
+    from custom_components.airzoneclouddaikin.helpers import confirm_optimistic
 
     async def refresh():
-        entity.coordinator.data["unit-1"]["scenary"] = "occupied"
-        entity.hass.data[DOMAIN]["climate-entry"].get("sleep_exit_pending", {}).pop(
-            "unit-1", None
+        data = entity.coordinator.data
+        data["unit-1"]["scenary"] = "occupied"
+        _derive_state(
+            entity.hass,
+            SimpleNamespace(entry_id="climate-entry", options={}),
+            data,
+            fresh_power_ids=set(),
+            fresh_scenary_ids={"unit-1"},
         )
+        confirm_optimistic(entity.hass, "climate-entry", data, {"unit-1": {"scenary"}})
+
+    def recover(_device, *, require_fresh):
+        assert require_fresh
+        return asyncio.create_task(refresh())
 
     entity.coordinator.async_request_refresh = AsyncMock(side_effect=refresh)
+    return recover
 
 
 async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
@@ -983,9 +1043,13 @@ async def test_ambiguous_first_home_step_blocks_automatic_sleep_cleanup(
         await entity.async_set_preset_mode("sleep")
 
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": "occupied"}}, retry=False
+        "unit-1",
+        {"device": {"scenary": "occupied"}},
+        retry=False,
+        on_start=ANY,
+        on_in_flight=ANY,
     )
-    assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
+    assert "unit-1" in bucket["sleep_exit_pending"]
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     await async_auto_exit_sleep_if_needed(
         hass,
@@ -3128,3 +3192,226 @@ async def test_traced_p1_cancellation_boundaries(
         assert received == [1]
         assert entity._overlay_value("power", "?") == "1"
         manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+
+async def test_rearm_rejects_power_uncertainty(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """Raw OFF after a timed-out ON cannot reuse the previous OFF votes."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+    _confirm_rearm_home_readback(entity)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["power_intents"] = {"unit-1": 1}
+    bucket["uncertain_power"] = {"unit-1": object()}
+
+    await entity.async_set_preset_mode("sleep")
+
+    api.put_device_fields.assert_not_awaited()
+
+
+async def test_rearm_cannot_confirm_home_from_coalesced_refresh(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """A retained Home snapshot cannot confirm the first PUT."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+
+    async def home_waiting_for_ack(*args, **kwargs):
+        entity.coordinator.data["unit-1"]["scenary"] = "occupied"
+
+    api.put_device_fields.side_effect = home_waiting_for_ack
+    await entity.async_set_preset_mode("sleep")
+
+    assert [
+        call.args[1]["device"]["scenary"]
+        for call in api.put_device_fields.await_args_list
+    ] == ["occupied"]
+
+
+async def test_expired_sleep_restores_home_before_explicit_on(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """The ON reservation must carry its own prior expiry eligibility."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+    order = []
+    api.put_device_fields.side_effect = lambda *args, **kwargs: order.append("occupied")
+    api.send_event.side_effect = lambda *args, **kwargs: order.append("P1")
+    _confirm_rearm_home_readback(entity)
+
+    await entity.async_turn_on()
+
+    assert order == ["occupied", "P1"]
+
+
+@pytest.mark.parametrize(
+    "boundary", ["first", "second", "cancel_second", "cancel_sent"]
+)
+async def test_rearm_fences_scene_at_traced_writer(
+    hass,
+    monkeypatch,
+    dummy_coordinator_factory,
+    socket_enabled,
+    aiohttp_server,
+    boundary,
+):
+    """A newer preset must prevent the old request from reaching the HTTP peer."""
+    from aiohttp import web
+
+    from custom_components.airzoneclouddaikin import (
+        airzone_api,
+        async_create_runtime_session,
+    )
+
+    entity, _ = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+    _confirm_rearm_home_readback(entity)
+    requests = []
+    reached, resume, reserved = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def respond(request):
+        requests.append((await request.json())["device"]["scenary"])
+        if boundary == "cancel_sent" and requests[-1] == "sleep":
+            reached.set()
+            await resume.wait()
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_put("/devices/{device}", respond)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+    session = async_create_runtime_session(hass)
+    entity.coordinator.api = airzone_api.AirzoneAPI(
+        "synthetic@example.invalid", session, token="synthetic"
+    )
+    connect = session.connector.connect
+    attempt = 0
+
+    async def blocked_connect(*args, **kwargs):
+        nonlocal attempt
+        attempt += 1
+        if boundary != "cancel_sent" and attempt == (1 if boundary == "first" else 2):
+            reached.set()
+            await resume.wait()
+        return await connect(*args, **kwargs)
+
+    bucket = hass.data[DOMAIN]["climate-entry"]
+
+    class ObservedIntents(dict):
+        def __setitem__(self, device, intent):
+            super().__setitem__(device, intent)
+            if intent == 2:
+                reserved.set()
+
+    bucket["scene_preset_intents"] = ObservedIntents()
+    monkeypatch.setattr(session.connector, "connect", blocked_connect)
+    rearm = asyncio.create_task(entity.async_set_preset_mode("sleep"))
+    away = None
+    try:
+        await asyncio.wait_for(reached.wait(), 2)
+        if boundary in {"cancel_second", "cancel_sent"}:
+            rearm.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(rearm, 2)
+            assert requests == (
+                ["occupied", "sleep"] if boundary == "cancel_sent" else ["occupied"]
+            )
+            assert ("unit-1" in bucket["sleep_exit_pending"]) == (
+                boundary == "cancel_sent"
+            )
+            assert entity.preset_mode == "home"
+        else:
+            away = asyncio.create_task(entity.async_set_preset_mode("away"))
+            await asyncio.wait_for(reserved.wait(), 2)
+            resume.set()
+            await asyncio.wait_for(asyncio.gather(rearm, away), 2)
+            assert requests == ([] if boundary == "first" else ["occupied"]) + [
+                "vacant"
+            ]
+            assert entity.preset_mode == "away"
+    finally:
+        resume.set()
+        tasks = [task for task in (rearm, away) if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "state", ["active", "unknown", "unverified", "cleanup_disabled"]
+)
+async def test_on_preserves_sleep_without_authorized_restoration(
+    hass, dummy_coordinator_factory, monkeypatch, state
+):
+    """Only currently verified expiry with cleanup enabled can require a Home PUT."""
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin.const import CONF_SLEEP_CLEANUP_ENABLED
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+    tracking = hass.data[DOMAIN]["climate-entry"]["sleep_tracking"]["unit-1"]
+    if state == "active":
+        tracking.sleep_started_at_utc = tracking.cleanup_started_at_utc = (
+            dt_util.utcnow()
+        )
+    elif state == "unknown":
+        tracking.start_known = False
+    elif state == "unverified":
+        tracking.expiry_off_reports = 1
+    else:
+        entity.coordinator.config_entry = SimpleNamespace(
+            options={CONF_SLEEP_CLEANUP_ENABLED: False}
+        )
+    start = tracking.sleep_started_at_utc
+    session = tracking.session_revision
+
+    if state != "cleanup_disabled":
+        await entity.async_set_preset_mode("sleep")
+    await entity.async_turn_on()
+
+    api.put_device_fields.assert_not_awaited()
+    api.send_event.assert_awaited_once()
+    assert entity.preset_mode == "sleep"
+    assert tracking.sleep_started_at_utc == start
+    assert tracking.session_revision == session
+
+
+async def test_newer_on_cannot_bypass_expired_sleep_barrier(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """Two reservations cannot turn an old verified expiry into a blind ON."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = manager = Mock()
+    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+    await lock.acquire()
+    tasks = []
+    try:
+        for _ in range(2):
+            tasks.append(asyncio.create_task(entity.async_turn_on()))
+            await asyncio.sleep(0)
+        assert bucket["power_intents"]["unit-1"] == 2
+    finally:
+        lock.release()
+        await asyncio.wait_for(asyncio.gather(*tasks), 2)
+    api.send_event.assert_not_awaited()
+    api.put_device_fields.assert_not_awaited()
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)

@@ -92,6 +92,20 @@ class CommandNotSentCooldown(HomeAssistantError):
         self.retry_at = retry_at
 
 
+def device_write_rejected(error: BaseException) -> bool:
+    """Whether the failed invocation is known not to have applied the write."""
+    return isinstance(
+        error,
+        (
+            CommandNotSentCooldown,
+            ClientConnectorError,
+            ConnectionTimeoutError,
+            ServerFingerprintMismatch,
+            ConfigEntryAuthFailed,
+        ),
+    ) or (isinstance(error, ClientResponseError) and 400 <= error.status < 500)
+
+
 async def prevent_device_put_replay(
     request: ClientRequest, handler: ClientHandlerType
 ) -> ClientResponse:
@@ -728,6 +742,7 @@ class AirzoneAPI:
         *,
         retry: bool = True,
         on_start: Callable[[], None] | None = None,
+        on_in_flight: Callable[[bool], None] | None = None,
     ) -> Any:
         """PUT /devices/{id} with bounded 429 retry; never replay ambiguous 5xx.
 
@@ -745,6 +760,7 @@ class AirzoneAPI:
                 json=payload,
                 retry=retry,
                 **({"on_start": on_start} if on_start is not None else {}),
+                **({"on_in_flight": on_in_flight} if on_in_flight is not None else {}),
             )
         except ClientResponseError as cre:
             if cre.status == 401:
