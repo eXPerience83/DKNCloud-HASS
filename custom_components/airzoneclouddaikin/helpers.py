@@ -371,8 +371,15 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
                 hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
             )
 
+    owner = asyncio.current_task()
     in_flight = False
     cancellation: asyncio.CancelledError | None = None
+
+    def check_dispatch() -> None:
+        # The writer can resume before the owner catches CancelledError.
+        if owner is not None and owner.cancelling():
+            raise CommandSuperseded
+        intent.check_dispatch()
 
     def set_in_flight(value: bool) -> None:
         nonlocal in_flight
@@ -387,7 +394,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     command = asyncio.create_task(
         api.send_event(
             modmaquina_payload(device_id, "P1", value),
-            on_start=intent.check_dispatch,
+            on_start=check_dispatch,
             on_in_flight=set_in_flight,
             on_uncertain=mark_uncertain,
         )

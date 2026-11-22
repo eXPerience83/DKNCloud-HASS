@@ -2915,6 +2915,8 @@ async def test_cancel_before_p1_dispatch_never_claims_acceptance(
     "boundary",
     [
         "connect",
+        "writer_cancel",
+        "retry_cancel",
         "in_flight",
         "in_flight_429",
         "ack",
@@ -2964,7 +2966,7 @@ async def test_traced_p1_cancellation_boundaries(
             if boundary in {"in_flight", "in_flight_429", "unload", "failed_unload"}:
                 reached.set()
                 await release.wait()
-            if boundary in {"backoff", "in_flight_429"}:
+            if boundary in {"backoff", "in_flight_429", "retry_cancel"}:
                 return web.Response(status=429)
         return web.Response(status=204)
 
@@ -3009,8 +3011,12 @@ async def test_traced_p1_cancellation_boundaries(
         return await connect(*args, **kwargs)
 
     async def blocked_backoff(_delay):
-        reached.set()
-        await release.wait()
+        if boundary == "retry_cancel":
+            on.cancel()
+            reached.set()
+        else:
+            reached.set()
+            await release.wait()
         monkeypatch.setattr(api, "_now", lambda: api._cooldown_until)
 
     async def cancel_after_ack(*args, **kwargs):
@@ -3025,11 +3031,24 @@ async def test_traced_p1_cancellation_boundaries(
             settled_on.set()
         return result
 
+    if boundary == "in_flight_429":
+        monkeypatch.setattr(api, "_now", lambda: 0.0)
+
+    write_headers = StreamWriter.write_headers
+
+    async def cancel_at_writer(writer, status_line, headers):
+        if status_line.startswith("POST "):
+            on.cancel()
+            reached.set()
+        await write_headers(writer, status_line, headers)
+
+    if boundary == "writer_cancel":
+        monkeypatch.setattr(StreamWriter, "write_headers", cancel_at_writer)
     if boundary == "in_flight":
         monkeypatch.setattr(api, "_request", track_ack)
     if boundary == "connect":
         monkeypatch.setattr(session.connector, "connect", blocked_connect)
-    elif boundary in {"backoff", "in_flight_429"}:
+    elif boundary in {"backoff", "in_flight_429", "retry_cancel"}:
         monkeypatch.setattr(api, "_sleep", blocked_backoff)
     elif boundary == "ack":
         monkeypatch.setattr(api, "_request", cancel_after_ack)
@@ -3040,7 +3059,7 @@ async def test_traced_p1_cancellation_boundaries(
         async with asyncio.timeout(4):
             await reached.wait()
             pending = tuple(api._pending)
-            if boundary != "ack":
+            if boundary not in {"ack", "writer_cancel", "retry_cancel"}:
                 on.cancel()
                 await asyncio.sleep(0)
             if boundary in {"in_flight", "in_flight_429", "unload", "failed_unload"}:
@@ -3055,7 +3074,7 @@ async def test_traced_p1_cancellation_boundaries(
             if boundary in {"unload", "failed_unload"}:
                 assert await async_unload_entry(hass, entry) == (boundary == "unload")
             if boundary in {"connect", "backoff"}:
-                await asyncio.gather(on, return_exceptions=True)
+                await asyncio.wait({on})
                 uncertainty_before_release = bool(bucket.get("uncertain_power"))
             release.set()
             with pytest.raises(asyncio.CancelledError):
@@ -3076,6 +3095,14 @@ async def test_traced_p1_cancellation_boundaries(
     if boundary in {"connect", "backoff"}:
         assert not uncertainty_before_release
         if boundary == "connect":
+            assert written == []
+            assert received == []
+        else:
+            assert b"".join(written).count(b"POST /events?") == 1
+            assert received == [1]
+        manager.request_recovery.assert_not_called()
+    elif boundary in {"writer_cancel", "retry_cancel"}:
+        if boundary == "writer_cancel":
             assert written == []
             assert received == []
         else:
