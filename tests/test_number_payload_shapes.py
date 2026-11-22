@@ -109,7 +109,9 @@ async def test_failed_number_write_preserves_backend_state(
         device_data={"sleep_time": 30},
     )
 
-    async def reject_write(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def reject_write(
+        _device_id: str, _payload: dict[str, Any], **_kwargs
+    ) -> None:
         raise RuntimeError("Backend write failed")
 
     api.put_device_fields = reject_write
@@ -144,7 +146,9 @@ async def test_number_ambiguous_put_requests_readback_without_optimistic_success
     )
     requests: list[dict[str, Any]] = []
 
-    async def ambiguous_put(_device_id: str, payload: dict[str, Any]) -> None:
+    async def ambiguous_put(
+        _device_id: str, payload: dict[str, Any], **_kwargs
+    ) -> None:
         requests.append(payload)
         raise failure("unknown PUT result")
 
@@ -176,7 +180,7 @@ async def test_number_known_unsent_cooldown_does_not_request_readback(
         device_data={"sleep_time": 30},
     )
 
-    async def unsent(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def unsent(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         raise CommandNotSentCooldown(hass.loop.time() + 60)
 
     api.put_device_fields = unsent
@@ -203,7 +207,9 @@ async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
         device_data={"sleep_time": 30},
     )
 
-    async def unknown_write(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def unknown_write(
+        _device_id: str, _payload: dict[str, Any], **_kwargs
+    ) -> None:
         raise TimeoutError("unknown PUT acceptance")
 
     api.put_device_fields = unknown_write
@@ -248,7 +254,7 @@ async def test_late_successful_number_put_cannot_update_unloaded_entry(
     writes: list[dict[str, Any]] = []
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_put(_device_id: str, payload: dict[str, Any]) -> None:
+    async def held_put(_device_id: str, payload: dict[str, Any], **_kwargs) -> None:
         writes.append(payload)
         entered.set()
         await release.wait()
@@ -292,7 +298,7 @@ async def test_replaced_entry_ignores_late_ambiguous_number_put(
     )
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_error(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def held_error(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         entered.set()
         await release.wait()
         raise TimeoutError("late response lost")
@@ -426,7 +432,7 @@ async def test_concurrent_number_writes_recheck_state_under_lock(
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def paused_put(device_id: str, payload: dict[str, Any]) -> None:
+    async def paused_put(device_id: str, payload: dict[str, Any], **_kwargs) -> None:
         api.calls.append((device_id, payload))
         if len(api.calls) == 1:
             entered.set()
@@ -682,3 +688,68 @@ async def test_sleep_duration_loopback_and_old_get(
     assert tracking.duration_invalidated == (http_status != 422)
     assert (sleep_cleanup_due(tracking) is None) == (http_status != 422)
     assert data["dev1"]["sleep_expiry_verified"] == (http_status == 422)
+
+
+@pytest.mark.parametrize("outcome", ["accepted", "authentication_interrupted"])
+async def test_sleep_begins_during_duration_loopback(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    outcome,
+):
+    """Remote Sleep can begin while the traced edit owns the write lock."""
+    from types import SimpleNamespace
+
+    from aiohttp import web
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    from custom_components.airzoneclouddaikin import (
+        _derive_state,
+        airzone_api,
+        async_create_runtime_session,
+    )
+
+    dev = {"id": "dev1", "scenary": "occupied", "sleep_time": 30, "power": "0"}
+    entity, _ = _make_entity(
+        hass, dummy_coordinator_factory, DKNSleepTimeNumber, device_data=dev
+    )
+    entry = SimpleNamespace(entry_id="entry", options={})
+    data = {"dev1": dev}
+    _derive_state(hass, entry, data, fresh_scenary_ids={"dev1"})
+    arrived, release = asyncio.Event(), asyncio.Event()
+
+    async def put(request):
+        assert await request.json() == {"sleep_time": 40}
+        arrived.set()
+        await release.wait()
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_put("/devices/dev1", put)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+    entity._api = api = airzone_api.AirzoneAPI(
+        "synthetic@example.invalid",
+        async_create_runtime_session(hass),
+        token="synthetic",
+    )
+    task = asyncio.create_task(entity.async_set_native_value(40))
+    try:
+        await asyncio.wait_for(arrived.wait(), 2)
+        dev["scenary"] = "sleep"
+        _derive_state(hass, entry, data, fresh_scenary_ids={"dev1"})
+        tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["dev1"]
+        assert not tracking.duration_invalidated
+        if outcome == "authentication_interrupted":
+            api.suspend()
+            with pytest.raises(ConfigEntryAuthFailed):
+                await asyncio.wait_for(task, 2)
+        else:
+            release.set()
+            await asyncio.wait_for(task, 2)
+        assert tracking.duration_invalidated
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

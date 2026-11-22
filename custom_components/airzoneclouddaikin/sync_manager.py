@@ -61,12 +61,14 @@ class SyncManager:
         on_mode_change: Callable[[], None] | None = None,
         uncertain_power: dict[str, object] | None = None,
         get_sequence: Iterator[int] | None = None,
+        duration_writes: dict[str, object] | None = None,
     ) -> None:
         self.state = SyncState()
         self.state.snapshot(list(initial.values()), self.state.checkpoint())
         self._installations = dict(installations)
         self._request, self._fetch = request, fetch
         self._timed_fetch = timed_fetch
+        self._duration_writes = duration_writes if duration_writes is not None else {}
         self._uncertain_power = uncertain_power if uncertain_power is not None else {}
         self._publish, self._reauth, self._locks = publish, reauth, locks
         self._connect, self._clock = connect, clock
@@ -218,9 +220,10 @@ class SyncManager:
         checkpoint = self.state.checkpoint()
         started: ReadStart | None = None
         uncertain_at_dispatch: dict[str, object] = {}
+        duration_at_dispatch: dict[str, object] = {}
 
         async def read():
-            nonlocal checkpoint, started, uncertain_at_dispatch
+            nonlocal checkpoint, started, uncertain_at_dispatch, duration_at_dispatch
             ready = max(
                 (
                     deadline
@@ -242,16 +245,22 @@ class SyncManager:
                         generation = checkpoint[0]
 
                         def dispatched():
-                            nonlocal checkpoint, started, uncertain_at_dispatch
+                            nonlocal \
+                                checkpoint, \
+                                started, \
+                                uncertain_at_dispatch, \
+                                duration_at_dispatch
                             # Preserve the connection generation across API
                             # cooldown, but compare fields at dispatch.
                             checkpoint = generation, self.state.revision
                             started = on_start()
                             uncertain_at_dispatch = self._uncertain_power.copy()
+                            duration_at_dispatch = self._duration_writes.copy()
 
                         devices = await self._timed_fetch(installation, dispatched)
                         return devices, (next(self._get_sequence), dt_util.utcnow())
                 uncertain_at_dispatch = self._uncertain_power.copy()
+                duration_at_dispatch = self._duration_writes.copy()
                 devices = await self._fetch(installation)
                 return devices, (next(self._get_sequence), dt_util.utcnow())
 
@@ -269,6 +278,8 @@ class SyncManager:
                 device["id"] = str(device["mac"]).strip().lower()
         for device in devices:
             key = str(device.get("id") or "")
+            if duration_at_dispatch.get(key) is not self._duration_writes.get(key):
+                device.pop("sleep_time", None)
             if key in self.schedulers:
                 self._last_http_get[key] = self._clock()
         if checkpoint[0] != self.state.generation:
@@ -396,9 +407,8 @@ class SyncManager:
             return
         if "id" in patch and str(patch["id"]) != device:
             return
-        self.state.event(device, patch, generation)
-        self.touched = {device: {k for k, v in patch.items() if v is not None}}
         self.replayed_scene_ids.clear()
+        applied = patch
         scene = str(patch.get("scenary")).strip().lower()
         if scene in {SCENARY_HOME, SCENARY_SLEEP, SCENARY_VACANT}:
             key = device, scene
@@ -412,8 +422,16 @@ class SyncManager:
                 # Keep applying the patch for display and field precedence.
                 # Only independent scene reports can unlock another write.
                 self.replayed_scene_ids.add(device)
+                if identity is not None:
+                    # A dated replay must not let the scene veto an eligible
+                    # GET. Apply the other fields with their normal precedence.
+                    applied = {
+                        key: value for key, value in patch.items() if key != "scenary"
+                    }
             else:
                 self._last_scene_push[key] = identity
+        self.state.event(device, applied, generation)
+        self.touched = {device: {k for k, v in applied.items() if v is not None}}
         if "power" in self.touched[device]:
             # Replayed identical PUSH payloads do not become two independent
             # corroborations, even if the socket delivered them twice.

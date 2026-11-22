@@ -3204,12 +3204,16 @@ async def test_rearm_rejects_power_uncertainty(
     _arm_current_sleep_off_evidence(hass)
     _confirm_rearm_home_readback(entity)
     bucket = hass.data[DOMAIN]["climate-entry"]
-    bucket["power_intents"] = {"unit-1": 1}
     bucket["uncertain_power"] = {"unit-1": object()}
 
     await entity.async_set_preset_mode("sleep")
-
     api.put_device_fields.assert_not_awaited()
+    bucket["uncertain_power"].clear()
+    await entity.async_set_preset_mode("sleep")
+    assert [
+        call.args[1]["device"]["scenary"]
+        for call in api.put_device_fields.await_args_list
+    ] == ["occupied", "sleep"]
 
 
 async def test_rearm_cannot_confirm_home_from_coalesced_refresh(
@@ -3415,3 +3419,18 @@ async def test_newer_on_cannot_bypass_expired_sleep_barrier(
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+
+async def test_rejected_sleep_cleanup_reports_why_wake_stopped(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sleep_exit_pending"] = {"unit-1": "rejected"}
+    with pytest.raises(HomeAssistantError, match="Confirm Home"):
+        await entity.async_turn_on()
+    api.put_device_fields.assert_not_awaited()
+    api.send_event.assert_not_awaited()

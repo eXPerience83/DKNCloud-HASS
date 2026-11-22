@@ -448,3 +448,14 @@ async def test_saturated_push_history_keeps_votes_and_can_use_get(
     freezer.tick(timedelta(seconds=331))
     assert not _observe(hass, entry, data, "0", "push:early")
     assert _observe(hass, entry, data, "0", "push:eligible")
+
+
+async def test_accepted_duration_and_new_sleep_ignore_cached_minutes(hass):
+    """A maintenance publication must not contradict the accepted new duration."""
+    entry, coordinator, data, tracking, _ = _new_session(hass, "0")
+    optimistic_set(hass, entry.entry_id, "device", "sleep_time", 10)
+    optimistic_set(hass, entry.entry_id, "device", "scenary", "sleep")
+    assert tracking.expected_minutes == 10
+    _derive_state(hass, entry, data, fresh_power_ids=set(), fresh_scenary_ids=set())
+    assert not tracking.duration_invalidated
+    assert tracking.start_known

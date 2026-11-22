@@ -92,8 +92,14 @@ class CommandNotSentCooldown(HomeAssistantError):
         self.retry_at = retry_at
 
 
-def device_write_rejected(error: BaseException) -> bool:
+class _PutInterruptedByReauth(ConfigEntryAuthFailed):
+    """Another request suspended the runtime while this PUT was pending."""
+
+
+def device_write_rejected(error: BaseException, *, in_flight: bool = False) -> bool:
     """Whether the failed invocation is known not to have applied the write."""
+    if isinstance(error, (asyncio.CancelledError, _PutInterruptedByReauth)):
+        return not in_flight
     return isinstance(
         error,
         (
@@ -394,7 +400,12 @@ class AirzoneAPI:
                     )
                 )
             ):
-                raise ConfigEntryAuthFailed("Entry authentication suspended") from None
+                error_type = (
+                    _PutInterruptedByReauth
+                    if args[0] == "PUT"
+                    else ConfigEntryAuthFailed
+                )
+                raise error_type("Entry authentication suspended") from None
             raise
         finally:
             self._pending.discard(task)

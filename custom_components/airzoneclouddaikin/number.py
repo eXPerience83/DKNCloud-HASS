@@ -207,16 +207,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             current = self.native_value
             if current is not None and current == ivalue:
                 return
-            tracking = (
-                bucket.get("sleep_tracking", {}).get(self._device_id)
-                if self._field_name == "sleep_time"
-                else None
-            )
-            affected_session = (
-                tracking.session_revision
-                if tracking is not None and tracking.last_scenary == SCENARY_SLEEP
-                else None
-            )
+            changes_duration = self._field_name == "sleep_time"
             in_flight = False
 
             def mark_dispatched(value: bool) -> None:
@@ -224,12 +215,15 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
                 in_flight = value
 
             def invalidate_duration() -> None:
+                if not changes_duration or not entry_active():
+                    return
+                bucket.setdefault("sleep_duration_writes", {})[self._device_id] = (
+                    object()
+                )
+                tracking = bucket.get("sleep_tracking", {}).get(self._device_id)
                 if (
-                    affected_session is not None
-                    and entry_active()
-                    and bucket.get("sleep_tracking", {}).get(self._device_id)
-                    is tracking
-                    and tracking.session_revision == affected_session
+                    tracking is not None
+                    and tracking.last_scenary == SCENARY_SLEEP
                     and not tracking.duration_invalidated
                 ):
                     tracking.invalidate_duration()
@@ -240,16 +234,10 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
                 await self._api.put_device_fields(
                     self._device_id,
                     payload,
-                    **(
-                        {"on_in_flight": mark_dispatched}
-                        if affected_session is not None
-                        else {}
-                    ),
+                    **({"on_in_flight": mark_dispatched} if changes_duration else {}),
                 )
             except (Exception, asyncio.CancelledError) as error:
-                if not device_write_rejected(error) and (
-                    not isinstance(error, asyncio.CancelledError) or in_flight
-                ):
+                if not device_write_rejected(error, in_flight=in_flight):
                     invalidate_duration()
                 if not isinstance(error, CommandNotSentCooldown):
                     request_ambiguous_control_readback(

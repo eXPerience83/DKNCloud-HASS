@@ -32,6 +32,7 @@ from aiohttp import (
     ServerFingerprintMismatch,
 )
 from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -460,6 +461,10 @@ async def async_restore_sleep_home(
     if bucket is None:
         return False
     pending = bucket.setdefault("sleep_exit_pending", {})
+    if pending.get(device_id) == "rejected":
+        raise HomeAssistantError(
+            "Sleep restoration was rejected. Confirm Home before turning on the device."
+        )
     if pending.get(device_id) == SLEEP_REARM_UNVERIFIED:
         request_ambiguous_control_readback(
             hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
@@ -485,11 +490,9 @@ async def async_restore_sleep_home(
         except CommandSuperseded:
             return False
         except (Exception, asyncio.CancelledError) as error:
-            if (
-                active_entry_bucket(hass, entry_id, coordinator) is bucket
-                and not device_write_rejected(error)
-                and (not isinstance(error, asyncio.CancelledError) or in_flight)
-            ):
+            if active_entry_bucket(
+                hass, entry_id, coordinator
+            ) is bucket and not device_write_rejected(error, in_flight=in_flight):
                 pending[device_id] = hass.loop.create_future()
                 request_ambiguous_control_readback(
                     hass,

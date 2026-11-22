@@ -122,8 +122,9 @@ after the readback demand. An older or coalesced read that only returns cached
 state cannot advance the sequence. A newer Home/Away request can supersede
 either pending write. With automatic cleanup enabled, an explicit Climate or
 Switch ON from verified expired Sleep confirms Home before sending P1. A pending
-ambiguous restoration is read back without repeating the PUT. ON during active
-or unverified Sleep preserves the scene and the original deadline.
+ambiguous restoration is read back without repeating the PUT. A rejected
+automatic restoration surfaces an error on explicit ON until Home is verifiable.
+ON during active or unverified Sleep preserves the scene and the original deadline.
 
 Home Assistant stores only the minimum accepted Sleep session metadata in its
 per-entry local Store. A restored session must be contrasted against newly
@@ -426,8 +427,10 @@ other uncertain write result does not produce an optimistic success; it requests
 an authoritative readback instead. A known-unsent local cooldown needs no
 readback. No uncertain physical command is retried. An accepted or possibly
 received `sleep_time` change invalidates the current Sleep session's expiry
-inference under the device lock. Old telemetry cannot reinstate that deadline.
-The integration does not infer a new countdown from a duration edit.
+inference under the device lock, including a session that started during the PUT.
+Old telemetry cannot reinstate that deadline or invalidate a newly accepted
+Sleep selection. A GET must start after the duration write to contradict that
+selection. The integration does not infer a new countdown from a duration edit.
 
 ---
 

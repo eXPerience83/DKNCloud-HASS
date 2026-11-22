@@ -470,7 +470,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     request_readback()
                 raise
             except Exception as err:
-                if rearm and device_write_rejected(err):
+                if rearm and device_write_rejected(err, in_flight=rearm_in_flight):
                     raise
                 if exits_raw_sleep and not isinstance(err, CommandNotSentCooldown):
                     # Fence any ambiguous Sleep exit, even when ON->OFF

@@ -1244,6 +1244,7 @@ async def test_sleep_home_barrier_through_entity_services(
         if guard := kwargs.get("on_start"):
             guard()
         assert payload["event"]["option"] == "P1"
+        assert payload["event"]["value"] == 1
         sequence.append("P1")
 
     api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
@@ -1347,7 +1348,7 @@ async def test_sleep_home_barrier_through_entity_services(
         if source != "push":
             release_new.set()
         await asyncio.wait_for(service, 2)
-        if source in {"push_wins", "replayed_push"}:
+        if source == "push_wins":
             assert sequence == ["GET old", "occupied", "GET fresh"]
             assert "dev1" in bucket["sleep_exit_pending"]
         else:
@@ -1408,3 +1409,85 @@ async def test_poll_started_before_scene_readback_cannot_confirm_home(
     finally:
         release.set()
         await asyncio.gather(old_poll, return_exceptions=True)
+
+
+@pytest.mark.parametrize("uses_push_manager", [False, True])
+async def test_duration_get_predating_edit_cannot_invalidate_new_sleep(
+    hass,
+    dkn_config_entry_factory,
+    sample_device,
+    monkeypatch,
+    uses_push_manager,
+):
+    """An otherwise fresh response can carry duration older than the edit."""
+    from custom_components.airzoneclouddaikin.helpers import optimistic_set
+
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    initial = {**sample_device, "power": "0", "scenary": "sleep", "sleep_time": 30}
+    arrived, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def fetch(_installation, *, retry=True, on_start=None):
+        nonlocal calls
+        calls += 1
+        if on_start is not None:
+            on_start()
+        if calls == 2:
+            arrived.set()
+            await release.wait()
+        return [{**initial, "sleep_time": 40 if calls == 3 else 30}]
+
+    api = Mock(
+        fetch_installations=AsyncMock(return_value=[{"installation_id": "fake"}]),
+        fetch_devices=AsyncMock(side_effect=fetch),
+    )
+    if uses_push_manager:
+        monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+        monkeypatch.setattr(
+            integration, "build_verified_adapter", Mock(connect=AsyncMock())
+        )
+        monkeypatch.setattr(integration.SyncManager, "start", Mock())
+        assert await hass.config_entries.async_setup(entry.entry_id)
+    else:
+        await integration._async_update_data(hass, entry, api)
+
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    if uses_push_manager:
+        manager = bucket["sync_manager"]
+        now = 40.0
+
+        async def sleep(delay):
+            nonlocal now
+            now += delay
+
+        manager._clock = manager._pool._clock = manager._budget._clock = lambda: now
+        manager._budget._sleep = sleep
+
+        async def refresh():
+            await manager.recover("dev1")
+    else:
+
+        async def refresh():
+            data = await integration._async_update_data(hass, entry, api)
+            bucket["coordinator"] = Mock(data=data)
+
+    old = asyncio.create_task(refresh())
+    try:
+        await asyncio.wait_for(arrived.wait(), 2)
+        bucket.setdefault("sleep_duration_writes", {})["dev1"] = object()
+        optimistic_set(hass, entry.entry_id, "dev1", "sleep_time", 40)
+        optimistic_set(hass, entry.entry_id, "dev1", "scenary", "sleep")
+        tracking = bucket["sleep_tracking"]["dev1"]
+        assert tracking.expected_minutes == 40
+        release.set()
+        await asyncio.wait_for(old, 2)
+        assert not tracking.duration_invalidated
+        await refresh()
+        assert tracking.start_known
+        assert tracking.expected_minutes == 40
+    finally:
+        release.set()
+        await asyncio.gather(old, return_exceptions=True)
+        if uses_push_manager:
+            assert await hass.config_entries.async_unload(entry.entry_id)

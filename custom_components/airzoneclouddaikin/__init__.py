@@ -279,6 +279,8 @@ async def _async_update_data(
         fresh_power_ids: set[str] = set()
         fresh_scenary_ids: set[str] = set()
         scene_readbacks: set[str] = set()
+        fresh_duration_ids: set[str] = set()
+        duration_writes = domain_bucket.setdefault("sleep_duration_writes", {})
         power_observations: dict[str, PowerObservation] = {}
         get_sequence = domain_bucket.setdefault("sleep_get_sequence", count(1))
         relations = await api.fetch_installations()
@@ -326,11 +328,13 @@ async def _async_update_data(
         async def fetch_devices(installation: str):
             markers: dict[str, object] = {}
             pending_scenes: dict[str, object] = {}
+            duration_at_dispatch: dict[str, object] = {}
 
             def dispatched() -> None:
-                nonlocal markers, pending_scenes
+                nonlocal markers, pending_scenes, duration_at_dispatch
                 markers = uncertain_power.copy()
                 pending_scenes = domain_bucket.get("sleep_exit_pending", {}).copy()
+                duration_at_dispatch = duration_writes.copy()
 
             devices = await api.fetch_devices(installation, on_start=dispatched)
             observation = (next(get_sequence), dt_util.utcnow())
@@ -338,7 +342,14 @@ async def _async_update_data(
             intent_snapshot = {
                 key: domain_bucket.get(key, {}).copy() for key in SLEEP_INTENT_KEYS
             }
-            return devices, markers, observation, intent_snapshot, pending_scenes
+            return (
+                devices,
+                markers,
+                observation,
+                intent_snapshot,
+                pending_scenes,
+                duration_at_dispatch,
+            )
 
         fetches = [fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
@@ -380,7 +391,14 @@ async def _async_update_data(
                 )
                 continue
 
-            devices, markers, observation, intent_snapshot, pending_scenes = result
+            (
+                devices,
+                markers,
+                observation,
+                intent_snapshot,
+                pending_scenes,
+                duration_at_dispatch,
+            ) = result
             # None indicates an invalid HTTP 200 device payload, not zero
             # devices. Handle it like an installation fetch failure so an
             # existing snapshot is retained and initial setup fails safely.
@@ -410,6 +428,10 @@ async def _async_update_data(
                         domain_bucket, dev_id_str
                     ) == sleep_intent_revisions(intent_snapshot, dev_id_str):
                         power_observations[dev_id_str] = observation
+                if dev.get("sleep_time") is not None and duration_at_dispatch.get(
+                    dev_id_str
+                ) is duration_writes.get(dev_id_str):
+                    fresh_duration_ids.add(dev_id_str)
                 if dev.get("scenary") is not None:
                     fresh_scenary_ids.add(dev_id_str)
                     if pending_scenes.get(dev_id_str) is domain_bucket.get(
@@ -460,6 +482,7 @@ async def _async_update_data(
             fresh_power_ids=fresh_power_ids,
             fresh_scenary_ids=fresh_scenary_ids,
             scene_readbacks=scene_readbacks,
+            fresh_duration_ids=fresh_duration_ids,
             power_observations=power_observations,
         )
 
@@ -490,6 +513,7 @@ def _derive_state(
     fresh_power_ids: set[str] | None = None,
     fresh_scenary_ids: set[str] | None = None,
     scene_readbacks: set[str] | None = None,
+    fresh_duration_ids: set[str] | None = None,
     power_observations: dict[str, PowerObservation] | None = None,
 ):
     """Recompute local scene state without treating maintenance as new evidence."""
@@ -580,7 +604,14 @@ def _derive_state(
             and tracking.sleep_started_at_utc is not None
         )
         sleep_time_minutes = _parse_sleep_time_minutes(dev)
-        if active_sleep and sleep_time_minutes is not None:
+        supplied_durations = (
+            fresh_power_ids if fresh_duration_ids is None else fresh_duration_ids
+        )
+        if (
+            active_sleep
+            and sleep_time_minutes is not None
+            and (supplied_durations is None or dev_id in supplied_durations)
+        ):
             if tracking.expected_minutes is None:
                 tracking.expected_minutes = sleep_time_minutes
             elif tracking.expected_minutes != sleep_time_minutes:
@@ -1362,8 +1393,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 entry,
                 data,
                 fresh_power_ids=fresh_power_ids,
-                fresh_scenary_ids=fresh_scenary_ids,
-                scene_readbacks=fresh_scenary_ids - manager.replayed_scene_ids,
+                fresh_scenary_ids=fresh_scenary_ids - manager.replayed_scene_ids,
+                fresh_duration_ids={
+                    device
+                    for device, keys in manager.touched.items()
+                    if "sleep_time" in keys and device not in manager.replayed_scene_ids
+                }
+                if remote
+                else set(),
                 power_observations={
                     dev_id: manager.last_power_evidence
                     for dev_id in fresh_power_ids
@@ -1455,6 +1492,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             on_mode_change=sync_mode_changed,
             uncertain_power=bucket.setdefault("uncertain_power", {}),
             get_sequence=bucket.setdefault("sleep_get_sequence", count(1)),
+            duration_writes=bucket.setdefault("sleep_duration_writes", {}),
         )
         bucket["sync_manager"] = manager
 
