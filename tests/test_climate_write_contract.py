@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 from homeassistant.components.climate.const import HVACMode
@@ -208,7 +208,7 @@ async def test_mode_change_supersedes_queued_setpoint_and_fan_route(
     release = asyncio.Event()
     sent: list[str] = []
 
-    async def held_p2(payload: dict[str, Any]) -> None:
+    async def held_p2(payload: dict[str, Any], **_kwargs) -> None:
         option = payload["event"]["option"]
         sent.append(option)
         if option == "P2":
@@ -1296,7 +1296,12 @@ async def test_ambiguous_climate_p1_requests_readback_without_overlay(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, power=initial_power
     )
-    api.send_event.side_effect = failure("unconfirmed P1")
+
+    async def ambiguous(_payload, *, on_uncertain, **_kwargs):
+        on_uncertain()
+        raise failure("unconfirmed P1")
+
+    api.send_event.side_effect = ambiguous
     manager = Mock()
     hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
 
@@ -1322,7 +1327,12 @@ async def test_uncertain_implicit_hvac_p1_requests_refresh_without_p2_replay(
         "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         climate_module.schedule_post_write_refresh,
     )
-    api.send_event.side_effect = TimeoutError("P1 outcome unknown")
+
+    async def ambiguous(_payload, *, on_uncertain, **_kwargs):
+        on_uncertain()
+        raise TimeoutError("P1 outcome unknown")
+
+    api.send_event.side_effect = ambiguous
 
     with pytest.raises(TimeoutError):
         await entity.async_set_hvac_mode(HVACMode.HEAT)
@@ -1382,7 +1392,7 @@ async def test_climate_concurrent_power_intents_are_serialized(
     release = asyncio.Event()
     commands: list[int] = []
 
-    async def paused_send(payload: dict[str, Any]) -> None:
+    async def paused_send(payload: dict[str, Any], **_kwargs) -> None:
         event = payload["event"]
         assert event["option"] == "P1"
         commands.append(event["value"])
@@ -1415,7 +1425,7 @@ async def test_climate_newer_off_supersedes_on_during_scene_preparation(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def paused_preparation(_reason: str) -> None:
+    async def paused_preparation(_reason: str, **_kwargs) -> None:
         started.set()
         await release.wait()
 
@@ -1446,7 +1456,7 @@ async def test_climate_wake_preparation_does_not_hold_power_lock(
     lock = acquire_device_lock(hass, "climate-entry", "unit-1")
     prepared: list[bool] = []
 
-    async def prepare(_reason: str) -> None:
+    async def prepare(_reason: str, **_kwargs) -> None:
         async with lock:
             prepared.append(True)
 
@@ -1477,7 +1487,7 @@ async def test_climate_and_switch_fallback_share_power_intent_order(
     release = asyncio.Event()
     values: list[int] = []
 
-    async def paused_send(payload: dict[str, Any]) -> None:
+    async def paused_send(payload: dict[str, Any], **_kwargs) -> None:
         values.append(payload["event"]["value"])
         if len(values) == 1:
             entered.set()
@@ -1510,7 +1520,7 @@ async def test_hvac_active_mode_is_fenced_by_newer_turn_off_during_preparation(
     entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def wait_for_scene(_reason: str) -> None:
+    async def wait_for_scene(_reason: str, **_kwargs) -> None:
         entered.set()
         await release.wait()
 
@@ -1547,7 +1557,7 @@ async def test_hvac_off_supersedes_delayed_climate_or_switch_wake(
     monkeypatch.setattr(switch, "async_write_ha_state", Mock())
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def wait_for_scene(_reason: str) -> None:
+    async def wait_for_scene(_reason: str, **_kwargs) -> None:
         entered.set()
         await release.wait()
 
@@ -1590,7 +1600,7 @@ async def test_hvac_mode_and_power_commands_serialize_opposite_intents(
     entered, release = asyncio.Event(), asyncio.Event()
     calls: list[tuple[str, Any]] = []
 
-    async def paused_p1(payload: dict[str, Any]) -> None:
+    async def paused_p1(payload: dict[str, Any], **_kwargs) -> None:
         event = payload["event"]
         calls.append((event["option"], event["value"]))
         if len(calls) == 1:
@@ -1622,7 +1632,7 @@ async def test_hvac_mode_and_power_commands_serialize_opposite_intents(
         assert calls == [("P1", 0), ("P1", 1), ("P2", "2")]
         assert entity._overlay_value("power", initial) == "1"
     else:
-        assert calls == [("P1", 1), ("P2", "2"), ("P1", 0)]
+        assert calls == [("P1", 1), ("P1", 0)]
         assert entity._overlay_value("power", initial) == "0"
 
 
@@ -1643,7 +1653,7 @@ async def test_hvac_off_avoids_duplicate_p1_after_pending_power_off(
     first_entered = asyncio.Event()
     release_first = asyncio.Event()
 
-    async def blocked_send(payload: dict[str, Any]) -> None:
+    async def blocked_send(payload: dict[str, Any], **_kwargs) -> None:
         assert payload["event"]["option"] == "P1"
         first_entered.set()
         await release_first.wait()
@@ -1717,7 +1727,7 @@ async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p
     await entity.async_set_hvac_mode(HVACMode.COOL)
 
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": "occupied"}}
+        "unit-1", {"device": {"scenary": "occupied"}}, on_start=ANY
     )
     api.send_event.assert_not_awaited()
     assert entity.preset_mode == "home"
@@ -1750,7 +1760,7 @@ async def test_turn_on_already_on_exits_away_without_duplicate_p1(
     await entity.async_turn_on()
 
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": "occupied"}}
+        "unit-1", {"device": {"scenary": "occupied"}}, on_start=ANY
     )
     api.send_event.assert_not_awaited()
     assert entity.preset_mode == "home"
@@ -1775,7 +1785,10 @@ async def test_power_on_from_off_uses_p1_before_cooling_mode(
                 "option": "P1",
                 "value": 1,
             }
-        }
+        },
+        on_start=ANY,
+        on_in_flight=ANY,
+        on_uncertain=ANY,
     )
 
 
@@ -2006,7 +2019,8 @@ async def test_ventilation_selection_normalizes_reported_eight_to_three(
                 "option": "P2",
                 "value": "3",
             }
-        }
+        },
+        on_start=ANY,
     )
 
 
@@ -2192,7 +2206,7 @@ async def test_late_accepted_command_cannot_write_into_successor(
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def transport(payload):
+    async def transport(payload, **_kwargs):
         started.set()
         await release.wait()
 
@@ -2223,3 +2237,420 @@ async def test_late_accepted_command_cannot_write_into_successor(
     entity.async_write_ha_state.assert_not_called()
     assert set(successor) == {"coordinator", "sync_manager"}
     successor["sync_manager"].request_recovery.assert_not_called()
+
+
+async def test_latest_power_survives_ambiguous_p1(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+):
+    """A lost ON response cannot cause the next explicit OFF to be skipped."""
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    monkeypatch.setattr(switch, "async_write_ha_state", Mock())
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        Mock(),
+    )
+    manager = Mock()
+    hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+    commands = []
+
+    async def send(payload, **callbacks):
+        commands.append(payload["event"]["value"])
+        if len(commands) == 1:
+            if on_uncertain := callbacks.get("on_uncertain"):
+                on_uncertain()
+            raise TimeoutError("P1 response lost")
+
+    api.send_event.side_effect = send
+    with pytest.raises(TimeoutError, match="P1 response lost"):
+        await entity.async_turn_on()
+    await switch.async_turn_off()
+
+    assert commands == [1, 0]
+    assert entity._overlay_value("power", "?") == "0"
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+
+@pytest.mark.parametrize("replace_entry", [False, True])
+async def test_delayed_switch_delegation_keeps_original_intent_order(
+    hass, dummy_coordinator_factory, monkeypatch, replace_entry
+):
+    """Entering the delegated Climate handler late cannot reorder user intent."""
+    from homeassistant.helpers.service import entity_service_call
+
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    entity.entity_id = "climate.unit"
+    switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    monkeypatch.setattr(switch, "_resolve_climate_entity_id", lambda: "climate.unit")
+    hass.states.async_set("climate.unit", "off")
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def on(call):
+        entered.set()
+        await release.wait()
+        await entity_service_call(
+            hass, {entity.entity_id: entity}, "async_turn_on", call
+        )
+
+    hass.services.async_register("climate", "turn_on", on)
+    old = asyncio.create_task(switch.async_turn_on())
+    try:
+        async with asyncio.timeout(3):
+            await entered.wait()
+            if replace_entry:
+                hass.data[DOMAIN].pop("climate-entry")
+                entity, successor_api = _climate(
+                    hass, dummy_coordinator_factory, monkeypatch, power="0"
+                )
+                entity.entity_id = "climate.unit"
+            else:
+                await entity.async_turn_off()
+            release.set()
+            await old
+    finally:
+        release.set()
+        old.cancel()
+        await asyncio.gather(old, return_exceptions=True)
+    api.send_event.assert_not_awaited()
+    if replace_entry:
+        successor_api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "connect",
+        "writer_cancel",
+        "retry_cancel",
+        "in_flight",
+        "in_flight_429",
+        "ack",
+        "backoff",
+        "unload",
+        "failed_unload",
+    ],
+)
+async def test_traced_p1_cancellation_boundaries(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    boundary,
+):
+    """Exercise cancellation against the actual runtime session and HTTP peer."""
+    from aiohttp import web
+    from aiohttp.client_proto import ResponseHandler
+    from aiohttp.http_writer import StreamWriter
+    from pytest_homeassistant.common import MockConfigEntry
+
+    from custom_components.airzoneclouddaikin import (
+        airzone_api,
+        async_create_runtime_session,
+        async_unload_entry,
+    )
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, _ = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    entry = MockConfigEntry(domain=DOMAIN, entry_id=entity._entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = Mock(close=AsyncMock())
+    lock = acquire_device_lock(hass, entry.entry_id, "unit-1")
+    reached, release = asyncio.Event(), asyncio.Event()
+    received = []
+    written = []
+    settled_on = asyncio.Event()
+
+    async def handler(request):
+        value = (await request.json())["event"]["value"]
+        received.append(value)
+        if value == 0:
+            assert settled_on.is_set()
+            assert entity._overlay_value("power", "?") == "1"
+        if len(received) == 1:
+            if boundary in {"in_flight", "in_flight_429", "unload", "failed_unload"}:
+                reached.set()
+                await release.wait()
+            if boundary in {"backoff", "in_flight_429", "retry_cancel"}:
+                return web.Response(status=429)
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_post(airzone_api.API_EVENTS, handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    write = StreamWriter._write
+
+    def observe_write(writer, chunk):
+        write(writer, chunk)
+        if isinstance(writer._protocol, ResponseHandler):
+            written.append(bytes(chunk))
+
+    writelines = StreamWriter._writelines
+
+    def observe_writelines(writer, chunks):
+        chunks = tuple(chunks)
+        writelines(writer, chunks)
+        if isinstance(writer._protocol, ResponseHandler):
+            written.extend(map(bytes, chunks))
+
+    monkeypatch.setattr(StreamWriter, "_write", observe_write)
+    monkeypatch.setattr(StreamWriter, "_writelines", observe_writelines)
+    monkeypatch.setattr(
+        hass.config_entries,
+        "async_unload_platforms",
+        AsyncMock(return_value=boundary == "unload"),
+    )
+    session = async_create_runtime_session(hass)
+    api = entity.coordinator.api = airzone_api.AirzoneAPI(
+        "synthetic@example.invalid", session
+    )
+    bucket.update(api=api, sync_manager=manager)
+    connect = session.connector.connect
+    request = api._request
+
+    async def blocked_connect(*args, **kwargs):
+        reached.set()
+        await release.wait()
+        return await connect(*args, **kwargs)
+
+    async def blocked_backoff(_delay):
+        if boundary == "retry_cancel":
+            on.cancel()
+            reached.set()
+        else:
+            reached.set()
+            await release.wait()
+        monkeypatch.setattr(api, "_now", lambda: api._cooldown_until)
+
+    async def cancel_after_ack(*args, **kwargs):
+        result = await request(*args, **kwargs)
+        on.cancel()
+        reached.set()
+        return result
+
+    async def track_ack(*args, **kwargs):
+        result = await request(*args, **kwargs)
+        if kwargs["json"]["event"]["value"] == 1:
+            settled_on.set()
+        return result
+
+    if boundary == "in_flight_429":
+        monkeypatch.setattr(api, "_now", lambda: 0.0)
+
+    write_headers = StreamWriter.write_headers
+
+    async def cancel_at_writer(writer, status_line, headers):
+        if status_line.startswith("POST "):
+            on.cancel()
+            reached.set()
+        await write_headers(writer, status_line, headers)
+
+    if boundary == "writer_cancel":
+        monkeypatch.setattr(StreamWriter, "write_headers", cancel_at_writer)
+    if boundary == "in_flight":
+        monkeypatch.setattr(api, "_request", track_ack)
+    if boundary == "connect":
+        monkeypatch.setattr(session.connector, "connect", blocked_connect)
+    elif boundary in {"backoff", "in_flight_429", "retry_cancel"}:
+        monkeypatch.setattr(api, "_sleep", blocked_backoff)
+    elif boundary == "ack":
+        monkeypatch.setattr(api, "_request", cancel_after_ack)
+
+    on = asyncio.create_task(entity.async_turn_on())
+    tasks = [on]
+    try:
+        async with asyncio.timeout(4):
+            await reached.wait()
+            pending = tuple(api._pending)
+            if boundary not in {"ack", "writer_cancel", "retry_cancel"}:
+                on.cancel()
+                await asyncio.sleep(0)
+            if boundary in {"in_flight", "in_flight_429", "unload", "failed_unload"}:
+                on.cancel()
+                await asyncio.sleep(0)
+                retained_lock = lock.locked() and not on.done()
+            if boundary == "in_flight":
+                off = asyncio.create_task(entity.async_turn_off())
+                tasks.append(off)
+                await asyncio.sleep(0)
+                assert received == [1]
+            if boundary in {"unload", "failed_unload"}:
+                assert await async_unload_entry(hass, entry) == (boundary == "unload")
+            if boundary in {"connect", "backoff"}:
+                await asyncio.wait({on})
+                uncertainty_before_release = bool(bucket.get("uncertain_power"))
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await on
+            await asyncio.gather(*pending, return_exceptions=True)
+            if boundary == "in_flight":
+                await off
+    finally:
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tuple(api._pending), return_exceptions=True)
+
+    assert not api._pending
+    assert not lock.locked()
+    assert not bucket.get("uncertain_power")
+    if boundary in {"connect", "backoff"}:
+        assert not uncertainty_before_release
+        if boundary == "connect":
+            assert written == []
+            assert received == []
+        else:
+            assert b"".join(written).count(b"POST /events?") == 1
+            assert received == [1]
+        manager.request_recovery.assert_not_called()
+    elif boundary in {"writer_cancel", "retry_cancel"}:
+        if boundary == "writer_cancel":
+            assert written == []
+            assert received == []
+        else:
+            assert b"".join(written).count(b"POST /events?") == 1
+            assert received == [1]
+        manager.request_recovery.assert_not_called()
+    elif boundary == "in_flight":
+        assert retained_lock
+        assert received == [1, 0]
+        assert entity._overlay_value("power", "?") == "0"
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    elif boundary == "in_flight_429":
+        assert retained_lock
+        assert received == [1]
+        assert api._cooldown_until > api._now()
+        manager.request_recovery.assert_not_called()
+    elif boundary == "unload":
+        assert retained_lock
+        assert received == [1]
+        assert entry.entry_id not in hass.data.get(DOMAIN, {})
+        manager.request_recovery.assert_not_called()
+    else:
+        if boundary == "failed_unload":
+            assert retained_lock
+        assert received == [1]
+        assert entity._overlay_value("power", "?") == "1"
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+
+async def test_independent_climate_service_cannot_inherit_switch_reservation(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """A call_service listener runs in its own task and must reserve its own ON."""
+    from homeassistant.const import EVENT_CALL_SERVICE
+    from homeassistant.core import Context
+    from homeassistant.helpers.service import entity_service_call
+
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    entity.entity_id = "climate.unit"
+    switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    origin = Context()
+    switch.async_set_context(origin)
+    monkeypatch.setattr(switch, "_resolve_climate_entity_id", lambda: "climate.unit")
+    hass.states.async_set("climate.unit", "off")
+    delegated, finish_delegated, run_listener, listener_done = (
+        asyncio.Event() for _ in range(4)
+    )
+
+    async def on(call):
+        if not delegated.is_set():
+            delegated.set()
+            await finish_delegated.wait()
+        await entity_service_call(
+            hass, {entity.entity_id: entity}, "async_turn_on", call
+        )
+
+    listener_started = False
+
+    async def listener(event):
+        nonlocal listener_started
+        if not listener_started and event.context.id == origin.id:
+            listener_started = True
+            await run_listener.wait()
+            await hass.services.async_call(
+                "climate",
+                "turn_on",
+                {"entity_id": "climate.unit"},
+                blocking=True,
+                context=event.context,
+            )
+            listener_done.set()
+
+    hass.services.async_register("climate", "turn_on", on)
+    unsub = hass.bus.async_listen(EVENT_CALL_SERVICE, listener)
+    old_on = asyncio.create_task(switch.async_turn_on())
+    try:
+        async with asyncio.timeout(3):
+            await delegated.wait()
+            await entity.async_turn_off()
+            run_listener.set()
+            await listener_done.wait()
+            api.send_event.assert_awaited_once()
+            assert api.send_event.await_args.args[0]["event"]["value"] == 1
+            finish_delegated.set()
+            await old_on
+    finally:
+        unsub()
+        run_listener.set()
+        finish_delegated.set()
+        old_on.cancel()
+        await asyncio.gather(old_on, return_exceptions=True)
+    api.send_event.assert_awaited_once()
+
+
+async def test_superseded_p2_keeps_readback_if_newer_off_never_dispatches(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+):
+    """An accepted partial wake still needs its normal managed readback."""
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    manager = Mock()
+    hass.data[DOMAIN][entity._entry_id]["sync_manager"] = manager
+    started, release, queued = (asyncio.Event() for _ in range(3))
+    lock = acquire_device_lock(hass, entity._entry_id, "unit-1")
+    acquire = lock.acquire
+
+    async def signal_queued():
+        if lock.locked():
+            queued.set()
+        return await acquire()
+
+    async def send(payload, **_kwargs):
+        assert payload["event"]["option"] == "P1"
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(lock, "acquire", signal_queued)
+    api.send_event.side_effect = send
+    async with asyncio.timeout(3):
+        activation = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.HEAT))
+        await started.wait()
+        off = asyncio.create_task(entity.async_turn_off())
+        await queued.wait()
+        off.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await off
+        release.set()
+        await activation
+    api.send_event.assert_awaited_once()
+    entity.async_write_ha_state.assert_called_once()
+    assert entity._overlay_value("power", "0") == "1"
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
