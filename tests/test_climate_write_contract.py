@@ -717,7 +717,7 @@ async def test_expired_sleep_home_writes_real_backend_cleanup(
     assert entity.preset_mode == "sleep"
     await entity.async_set_preset_mode("home")
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": "occupied"}}, retry=False
+        "unit-1", {"device": {"scenary": "occupied"}}, retry=False, on_in_flight=ANY
     )
     # An accepted optimistic Home should not trigger a redundant second PUT.
     await entity.async_set_preset_mode("home")
@@ -1079,14 +1079,19 @@ async def test_ambiguous_explicit_home_away_blocks_old_sleep_cleanup(
     api.async_set_scenary = AsyncMock()
     manager = Mock()
     bucket["sync_manager"] = manager
-    api.put_device_fields.side_effect = failure()
+
+    async def fail_after_dispatch(_identity, _payload, *, on_in_flight, **_kwargs):
+        on_in_flight(True)
+        raise failure()
+
+    api.put_device_fields.side_effect = fail_after_dispatch
 
     with pytest.raises(failure):
         await entity.async_set_preset_mode(preset)
 
     expected = "occupied" if preset == "home" else "vacant"
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": expected}}, retry=False
+        "unit-1", {"device": {"scenary": expected}}, retry=False, on_in_flight=ANY
     )
     assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
@@ -1163,7 +1168,8 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
     release_write = asyncio.Event()
     cleanup_queued = asyncio.Event()
 
-    async def pending_scene_put(_identity, _payload, **_kwargs):
+    async def pending_scene_put(_identity, _payload, *, on_in_flight, **_kwargs):
+        on_in_flight(True)
         write_entered.set()
         await release_write.wait()
         raise failure("unknown outcome")
@@ -1218,6 +1224,7 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
         "unit-1",
         {"device": {"scenary": "occupied" if preset == "home" else "vacant"}},
         retry=False,
+        on_in_flight=ANY,
     )
     assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
     api.async_set_scenary.assert_not_awaited()
@@ -3428,3 +3435,93 @@ async def test_rejected_sleep_cleanup_reports_why_wake_stopped(
         await entity.async_turn_on()
     api.put_device_fields.assert_not_awaited()
     api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize("preset", ["home", "away"])
+@pytest.mark.parametrize(
+    "outcome", ["connect_timeout", "cancel_before", "cancel_after", "rejected"]
+)
+async def test_manual_sleep_exit_dispatch_outcomes(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    preset,
+    outcome,
+):
+    from aiohttp import ClientResponseError, ConnectionTimeoutError, web
+
+    from custom_components.airzoneclouddaikin import (
+        airzone_api,
+        async_create_runtime_session,
+    )
+
+    entity, _ = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    recovery = bucket["sync_manager"] = Mock()
+    previous = object()
+    if outcome == "rejected":
+        bucket["sleep_exit_pending"] = {"unit-1": previous}
+    arrived, release = asyncio.Event(), asyncio.Event()
+    requests = []
+
+    async def put(request):
+        requests.append(await request.json())
+        arrived.set()
+        if outcome == "cancel_after":
+            await release.wait()
+        return web.Response(status=422)
+
+    app = web.Application()
+    app.router.add_put("/devices/unit-1", put)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+    session = async_create_runtime_session(hass)
+    entity.coordinator.api = airzone_api.AirzoneAPI(
+        "synthetic@example.invalid", session, token="synthetic"
+    )
+
+    async def hold_connection(*_args, **_kwargs):
+        if outcome == "connect_timeout":
+            raise ConnectionTimeoutError("connector timed out")
+        arrived.set()
+        await release.wait()
+        pytest.fail("Cancelled connection reached the writer")
+
+    if outcome in {"connect_timeout", "cancel_before"}:
+        monkeypatch.setattr(session.connector, "connect", hold_connection)
+    task = asyncio.create_task(entity.async_set_preset_mode(preset))
+    try:
+        if outcome.startswith("cancel"):
+            await asyncio.wait_for(arrived.wait(), 2)
+            task.cancel()
+            expected = asyncio.CancelledError
+        else:
+            expected = (
+                ConnectionTimeoutError
+                if outcome == "connect_timeout"
+                else ClientResponseError
+            )
+        with pytest.raises(expected):
+            await asyncio.wait_for(task, 2)
+        if outcome in {"cancel_after", "rejected"}:
+            assert requests == [
+                {"device": {"scenary": "occupied" if preset == "home" else "vacant"}}
+            ]
+        else:
+            assert requests == []
+        pending = bucket.get("sleep_exit_pending", {}).get("unit-1")
+        if outcome == "cancel_after":
+            assert pending == "unverified"
+            recovery.request_recovery.assert_called_once_with(
+                "unit-1", require_fresh=True
+            )
+        else:
+            assert pending is (previous if outcome == "rejected" else None)
+            recovery.request_recovery.assert_not_called()
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)

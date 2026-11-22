@@ -691,7 +691,15 @@ async def test_sleep_duration_loopback_and_old_get(
 
 
 @pytest.mark.parametrize(
-    "outcome", ["accepted", "get_401_before_dispatch", "get_401_in_flight", "put_401"]
+    "outcome",
+    [
+        "accepted",
+        "get_401_before_dispatch",
+        "get_401_in_flight",
+        "put_401",
+        "cancel_before",
+        "cancel_after",
+    ],
 )
 async def test_sleep_begins_during_duration_loopback(
     hass,
@@ -754,7 +762,7 @@ async def test_sleep_begins_during_duration_loopback(
             await release.wait()
         return await connect(request, *args, **kwargs)
 
-    if outcome == "get_401_before_dispatch":
+    if outcome in {"get_401_before_dispatch", "cancel_before"}:
         monkeypatch.setattr(session.connector, "connect", hold_put_connection)
     task = asyncio.create_task(entity.async_set_native_value(40))
     try:
@@ -763,7 +771,12 @@ async def test_sleep_begins_during_duration_loopback(
         _derive_state(hass, entry, data, fresh_scenary_ids={"dev1"})
         tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["dev1"]
         assert not tracking.duration_invalidated
-        if outcome.startswith("get_401"):
+        if outcome.startswith("cancel"):
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 2)
+            assert requests == (["PUT"] if outcome == "cancel_after" else [])
+        elif outcome.startswith("get_401"):
             with pytest.raises(ClientResponseError) as get_error:
                 await api.fetch_devices("fake", retry=False)
             assert get_error.value.status == 401
@@ -788,7 +801,13 @@ async def test_sleep_begins_during_duration_loopback(
                 api.on_write_auth_failure.assert_not_called()
             assert requests == ["PUT"]
         assert tracking.duration_invalidated == (
-            outcome in {"accepted", "get_401_in_flight"}
+            outcome in {"accepted", "get_401_in_flight", "cancel_after"}
+        )
+        _derive_state(
+            hass, entry, data, fresh_scenary_ids={"dev1"}, fresh_duration_ids={"dev1"}
+        )
+        assert tracking.duration_invalidated == (
+            outcome in {"accepted", "get_401_in_flight", "cancel_after"}
         )
     finally:
         release.set()

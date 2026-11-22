@@ -438,11 +438,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
                 guard = check_second_step
 
-            rearm_in_flight = False
+            scene_in_flight = False
 
             def mark_dispatched(value: bool) -> None:
-                nonlocal rearm_in_flight
-                rearm_in_flight = value
+                nonlocal scene_in_flight
+                scene_in_flight = value
 
             try:
                 if guard is not None:
@@ -453,12 +453,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     {"device": {"scenary": scenary}},
                     **({"retry": False} if exits_raw_sleep else {}),
                     **({"on_start": guard} if guard is not None else {}),
-                    **({"on_in_flight": mark_dispatched} if rearm else {}),
+                    **({"on_in_flight": mark_dispatched} if exits_raw_sleep else {}),
                 )
             except CommandSuperseded:
                 return
-            except asyncio.CancelledError:
-                if rearm and not rearm_in_flight:
+            except asyncio.CancelledError as error:
+                if exits_raw_sleep and device_write_rejected(
+                    error, in_flight=scene_in_flight
+                ):
                     raise
                 if exits_raw_sleep:
                     # A manual Home/Away may have reached the backend even
@@ -470,15 +472,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                     request_readback()
                 raise
             except Exception as err:
-                if rearm and device_write_rejected(err, in_flight=rearm_in_flight):
+                if exits_raw_sleep and device_write_rejected(
+                    err, in_flight=scene_in_flight
+                ):
                     raise
-                if exits_raw_sleep and not isinstance(err, CommandNotSentCooldown):
+                if exits_raw_sleep:
                     # Fence any ambiguous Sleep exit, even when ON->OFF
                     # telemetry arrived during the PUT. Known-unsent exempt.
                     fence_ambiguous_scene()
-                elif not exits_raw_sleep and not isinstance(
-                    err, CommandNotSentCooldown
-                ):
+                elif not isinstance(err, CommandNotSentCooldown):
                     request_readback()
                 _LOGGER.warning(
                     "Failed to set preset/scenary=%s: %s",
