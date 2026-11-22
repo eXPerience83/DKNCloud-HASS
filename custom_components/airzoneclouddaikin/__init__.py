@@ -523,7 +523,9 @@ def _derive_state(
     for dev_id, dev in data.items():
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
         pending_scenes = bucket.get("sleep_exit_pending", {})
-        scene_after_demand = scene_readbacks is None or dev_id in scene_readbacks
+        scene_after_demand = pending_scenes.get(dev_id) != "writing" and (
+            scene_readbacks is None or dev_id in scene_readbacks
+        )
         can_update_scene = dev_id not in pending_scenes or scene_after_demand
         if (
             (
@@ -1429,7 +1431,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 entry,
                 data,
                 fresh_power_ids=fresh_power_ids,
-                fresh_scenary_ids=fresh_scenary_ids - manager.replayed_scene_ids,
+                fresh_scenary_ids=fresh_scenary_ids,
+                scene_readbacks=manager.scene_readbacks,
                 fresh_duration_ids={
                     device
                     for device, keys in manager.touched.items()
@@ -1525,6 +1528,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             uncertain_power=bucket.setdefault("uncertain_power", {}),
             get_sequence=bucket.setdefault("sleep_get_sequence", count(1)),
             duration_writes=bucket.setdefault("sleep_duration_writes", {}),
+            pending_scenes=lambda: bucket.get("sleep_exit_pending", {}),
             intent_revisions=lambda device: sleep_intent_revisions(bucket, device),
         )
         bucket["sync_manager"] = manager

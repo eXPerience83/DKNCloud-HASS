@@ -565,6 +565,10 @@ class AirzoneAPI:
                 raise
 
             except TimeoutError:
+                if method == "PUT" and trace_dispatch and not dispatched:
+                    raise ConnectionTimeoutError(
+                        "Cloud request timed out before dispatch"
+                    ) from None
                 # ONE gentle retry on timeout with short backoff
                 if is_device_write or not retry or attempt >= 1:
                     raise

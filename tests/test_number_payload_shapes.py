@@ -699,6 +699,7 @@ async def test_sleep_duration_loopback_and_old_get(
         "put_401",
         "cancel_before",
         "cancel_after",
+        "total_timeout",
     ],
 )
 async def test_sleep_begins_during_duration_loopback(
@@ -762,8 +763,10 @@ async def test_sleep_begins_during_duration_loopback(
             await release.wait()
         return await connect(request, *args, **kwargs)
 
-    if outcome in {"get_401_before_dispatch", "cancel_before"}:
+    if outcome in {"get_401_before_dispatch", "cancel_before", "total_timeout"}:
         monkeypatch.setattr(session.connector, "connect", hold_put_connection)
+    if outcome == "total_timeout":
+        monkeypatch.setattr(airzone_api, "REQUEST_TIMEOUT", 0.1)
     task = asyncio.create_task(entity.async_set_native_value(40))
     try:
         await asyncio.wait_for(arrived.wait(), 2)
@@ -771,7 +774,11 @@ async def test_sleep_begins_during_duration_loopback(
         _derive_state(hass, entry, data, fresh_scenary_ids={"dev1"})
         tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["dev1"]
         assert not tracking.duration_invalidated
-        if outcome.startswith("cancel"):
+        if outcome == "total_timeout":
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(task, 2)
+            assert requests == []
+        elif outcome.startswith("cancel"):
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(task, 2)

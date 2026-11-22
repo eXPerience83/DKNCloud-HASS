@@ -49,7 +49,7 @@ from .helpers import (
     reserve_power_intent,
     schedule_post_write_refresh,
 )
-from .sleep import SLEEP_REARM_UNVERIFIED, sleep_intent_revisions
+from .sleep import SLEEP_REARM_UNVERIFIED, SleepExitStatus, sleep_intent_revisions
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -295,8 +295,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         bucket = self._active_entry_bucket()
         if bucket is None:
             return
-        # An unchanged Sleep selection is not a new intent: no network,
-        # session revision or Store write, including while power is OFF.
+        pending_presets = bucket.setdefault("pending_presets", {})
+        # A repeated Sleep selection can fence a queued preset without
+        # restarting the session or sending another scene write.
         expiry = None
         if preset_mode == "sleep" and self.preset_mode == "sleep":
             expiry = SleepExpiryFence.capture(
@@ -305,6 +306,10 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             if expiry is None or self._device_id in bucket.get(
                 "sleep_exit_pending", {}
             ):
+                if self._device_id in pending_presets:
+                    intents = bucket["scene_preset_intents"]
+                    intents[self._device_id] += 1
+                    pending_presets.pop(self._device_id)
                 return
 
         def entry_active() -> bool:
@@ -316,202 +321,213 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         intent = intents.get(self._device_id, 0) + 1
         intents[self._device_id] = intent
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
-        async with lock:
-            if (
-                not entry_active()
-                or intents.get(self._device_id) != intent
-                or (is_current is not None and not is_current())
-            ):
-                # Discard superseded preset requests and power preparations.
-                return
-            current_revision = revisions.get(self._device_id, 0)
-            previous_write = bucket.get("scene_preset_last_write", {}).get(
-                self._device_id
-            )
-            if current_revision != revision and not (
-                previous_write is not None
-                and previous_write[0] == current_revision
-                and previous_write[1] < intent
-            ):
-                # A write outside this preset command path changed the scene
-                # after the request was queued; do not overwrite it.
-                return
-            if preset_mode == "sleep" and self._device_id in bucket.get(
-                "sleep_exit_pending", {}
-            ):
-                # A previous Home PUT may have been accepted but not read back.
-                # Never let the next Sleep selection skip the occupied barrier.
-                await self.coordinator.async_request_refresh()
-                if (
-                    not entry_active()
-                    or self._device_id in bucket.get("sleep_exit_pending", {})
-                    or intents.get(self._device_id) != intent
-                ):
-                    return
-
-            rearm = expiry is not None and self.preset_mode == "sleep"
-            # The scene may remain Sleep while power goes ON->OFF during the
-            # awaited PUT. Capture manual Home/Away intent before any await.
-            exits_raw_sleep = rearm or (
-                preset_mode in {"home", "away"}
-                and str(self._device.get("scenary") or "").strip().lower() == "sleep"
-            )
-            if self.preset_mode == preset_mode and not rearm:
-                return
-
-            def request_readback() -> None:
-                request_ambiguous_control_readback(
-                    self.hass,
-                    self.coordinator,
-                    entry_id=self._entry_id,
-                    device_id=self._device_id,
-                    bucket=bucket,
-                )
-
-            def record_preset_write() -> None:
-                bucket.setdefault("scene_preset_last_write", {})[self._device_id] = (
-                    revisions.get(self._device_id, 0),
-                    intent,
-                )
-
-            def fence_ambiguous_scene() -> None:
-                if not entry_active():
-                    return
-                # An accepted server-side write may have lost its HTTP reply.
-                # Automatic Sleep expiry must not issue another scene command
-                # before a subsequent backend read confirms convergence.
-                bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
-                    SLEEP_REARM_UNVERIFIED if rearm else "unverified"
-                )
-                request_readback()
-
-            def check_dispatch() -> None:
+        pending_presets[self._device_id] = intent
+        try:
+            async with lock:
                 if (
                     not entry_active()
                     or intents.get(self._device_id) != intent
                     or (is_current is not None and not is_current())
                 ):
-                    raise CommandSuperseded
-
-            guard = check_dispatch if is_current is not None else None
-            if rearm:
-                power_revision, scene_revision, _ = expiry.revisions
-
-                def check_first_step() -> None:
-                    check_dispatch()
-                    if not expiry.is_current(
-                        self.hass,
-                        self.coordinator,
-                        bucket,
-                        self._device_id,
-                        (power_revision, scene_revision, intent),
-                    ):
-                        raise CommandSuperseded
-
-                confirmed = await async_restore_sleep_home(
-                    self.hass,
-                    self.coordinator,
-                    self._entry_id,
-                    self._device_id,
-                    check_first_step,
+                    # Discard superseded preset requests and power preparations.
+                    return
+                current_revision = revisions.get(self._device_id, 0)
+                previous_write = bucket.get("scene_preset_last_write", {}).get(
+                    self._device_id
                 )
-                if entry_active() and self.preset_mode == "home":
-                    self.async_write_ha_state()
-                if not confirmed:
+                if current_revision != revision and not (
+                    previous_write is not None
+                    and previous_write[0] == current_revision
+                    and previous_write[1] < intent
+                ):
+                    # A write outside this preset command path changed the scene
+                    # after the request was queued; do not overwrite it.
+                    return
+                if preset_mode == "sleep" and self._device_id in bucket.get(
+                    "sleep_exit_pending", {}
+                ):
+                    # A previous Home PUT may have been accepted but not read back.
+                    # Never let the next Sleep selection skip the occupied barrier.
+                    await self.coordinator.async_request_refresh()
+                    if (
+                        not entry_active()
+                        or self._device_id in bucket.get("sleep_exit_pending", {})
+                        or intents.get(self._device_id) != intent
+                    ):
+                        return
+
+                rearm = expiry is not None and self.preset_mode == "sleep"
+                # The scene may remain Sleep while power goes ON->OFF during the
+                # awaited PUT. Capture manual Home/Away intent before any await.
+                exits_raw_sleep = rearm or (
+                    preset_mode in {"home", "away"}
+                    and str(self._device.get("scenary") or "").strip().lower()
+                    == "sleep"
+                )
+                if self.preset_mode == preset_mode and not rearm:
                     return
 
-                def check_second_step() -> None:
-                    check_dispatch()
+                def request_readback() -> None:
+                    request_ambiguous_control_readback(
+                        self.hass,
+                        self.coordinator,
+                        entry_id=self._entry_id,
+                        device_id=self._device_id,
+                        bucket=bucket,
+                    )
+
+                def record_preset_write() -> None:
+                    bucket.setdefault("scene_preset_last_write", {})[
+                        self._device_id
+                    ] = (
+                        revisions.get(self._device_id, 0),
+                        intent,
+                    )
+
+                def fence_ambiguous_scene() -> None:
+                    if not entry_active():
+                        return
+                    # An accepted server-side write may have lost its HTTP reply.
+                    # Automatic Sleep expiry must not issue another scene command
+                    # before a subsequent backend read confirms convergence.
+                    bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
+                        SleepExitStatus(
+                            SLEEP_REARM_UNVERIFIED if rearm else "unverified"
+                        )
+                    )
+                    request_readback()
+
+                def check_dispatch() -> None:
                     if (
-                        sleep_intent_revisions(bucket, self._device_id)
-                        != (power_revision, scene_revision + 1, intent)
-                        or bucket.get("sleep_tracking", {}).get(self._device_id)
-                        is not expiry.tracking
-                        or expiry.tracking.session_revision != expiry.session
-                        or str(self._device.get("scenary")).strip().lower()
-                        != "occupied"
-                        or str(self._device.get("power")).strip().lower()
-                        not in {"0", "false", "off"}
-                        or power_is_uncertain(bucket, self._device_id)
+                        not entry_active()
+                        or intents.get(self._device_id) != intent
+                        or (is_current is not None and not is_current())
                     ):
                         raise CommandSuperseded
 
-                guard = check_second_step
+                guard = check_dispatch
+                if rearm:
+                    power_revision, scene_revision, _ = expiry.revisions
 
-            scene_in_flight = False
+                    def check_first_step() -> None:
+                        check_dispatch()
+                        if not expiry.is_current(
+                            self.hass,
+                            self.coordinator,
+                            bucket,
+                            self._device_id,
+                            (power_revision, scene_revision, intent),
+                        ):
+                            raise CommandSuperseded
 
-            def mark_dispatched(value: bool) -> None:
-                nonlocal scene_in_flight
-                scene_in_flight = value
-
-            try:
-                if guard is not None:
-                    guard()
-                # A Sleep exit or rearm must not replay a possibly applied PUT.
-                await api.put_device_fields(
-                    self._device_id,
-                    {"device": {"scenary": scenary}},
-                    **({"retry": False} if exits_raw_sleep else {}),
-                    **({"on_start": guard} if guard is not None else {}),
-                    **({"on_in_flight": mark_dispatched} if exits_raw_sleep else {}),
-                )
-            except CommandSuperseded:
-                return
-            except asyncio.CancelledError as error:
-                if exits_raw_sleep and device_write_rejected(
-                    error, in_flight=scene_in_flight
-                ):
-                    raise
-                if exits_raw_sleep:
-                    # A manual Home/Away may have reached the backend even
-                    # if power was ON when this command was initiated.
-                    fence_ambiguous_scene()
-                else:
-                    # Home/Away and Sleep-entry PUTs may also have been accepted.
-                    # Recover their actual state; no Sleep-exit fence is needed.
-                    request_readback()
-                raise
-            except Exception as err:
-                if exits_raw_sleep and device_write_rejected(
-                    err, in_flight=scene_in_flight
-                ):
-                    raise
-                if exits_raw_sleep:
-                    # Fence any ambiguous Sleep exit, even when ON->OFF
-                    # telemetry arrived during the PUT. Known-unsent exempt.
-                    fence_ambiguous_scene()
-                elif not isinstance(err, CommandNotSentCooldown):
-                    request_readback()
-                _LOGGER.warning(
-                    "Failed to set preset/scenary=%s: %s",
-                    scenary,
-                    err,
-                    exc_info=True,
-                )
-                raise
-
-            # A late successful PUT must not recreate a removed entry bucket.
-            if not entry_active():
-                return
-
-            # optimistic_set('sleep') also starts a new local session revision
-            # even if a backend snapshot did not expose the short Home step.
-            optimistic_set(
-                self.hass, self._entry_id, self._device_id, "scenary", scenary
-            )
-            record_preset_write()
-            self.async_write_ha_state()
-            if exits_raw_sleep:
-                if not rearm and scenary == "occupied":
-                    # Successful explicit cleanup still needs remote readback.
-                    bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
-                        "accepted"
+                    confirmed = await async_restore_sleep_home(
+                        self.hass,
+                        self.coordinator,
+                        self._entry_id,
+                        self._device_id,
+                        check_first_step,
                     )
-                request_readback()
-            else:
-                schedule_post_write_refresh(
-                    self.hass, self.coordinator, entry_id=self._entry_id
+                    if entry_active() and self.preset_mode == "home":
+                        self.async_write_ha_state()
+                    if not confirmed:
+                        return
+
+                    def check_second_step() -> None:
+                        check_dispatch()
+                        if (
+                            sleep_intent_revisions(bucket, self._device_id)
+                            != (power_revision, scene_revision + 1, intent)
+                            or bucket.get("sleep_tracking", {}).get(self._device_id)
+                            is not expiry.tracking
+                            or expiry.tracking.session_revision != expiry.session
+                            or str(self._device.get("scenary")).strip().lower()
+                            != "occupied"
+                            or str(self._device.get("power")).strip().lower()
+                            not in {"0", "false", "off"}
+                            or power_is_uncertain(bucket, self._device_id)
+                        ):
+                            raise CommandSuperseded
+
+                    guard = check_second_step
+
+                scene_in_flight = False
+
+                def mark_dispatched(value: bool) -> None:
+                    nonlocal scene_in_flight
+                    scene_in_flight = value
+
+                try:
+                    guard()
+                    # A Sleep exit or rearm must not replay a possibly applied PUT.
+                    await api.put_device_fields(
+                        self._device_id,
+                        {"device": {"scenary": scenary}},
+                        **({"retry": False} if exits_raw_sleep else {}),
+                        on_start=guard,
+                        **(
+                            {"on_in_flight": mark_dispatched} if exits_raw_sleep else {}
+                        ),
+                    )
+                except CommandSuperseded:
+                    return
+                except asyncio.CancelledError as error:
+                    if exits_raw_sleep and device_write_rejected(
+                        error, in_flight=scene_in_flight
+                    ):
+                        raise
+                    if exits_raw_sleep:
+                        # A manual Home/Away may have reached the backend even
+                        # if power was ON when this command was initiated.
+                        fence_ambiguous_scene()
+                    else:
+                        # Home/Away and Sleep-entry PUTs may also have been accepted.
+                        # Recover their actual state; no Sleep-exit fence is needed.
+                        request_readback()
+                    raise
+                except Exception as err:
+                    if exits_raw_sleep and device_write_rejected(
+                        err, in_flight=scene_in_flight
+                    ):
+                        raise
+                    if exits_raw_sleep:
+                        # Fence any ambiguous Sleep exit, even when ON->OFF
+                        # telemetry arrived during the PUT. Known-unsent exempt.
+                        fence_ambiguous_scene()
+                    elif not isinstance(err, CommandNotSentCooldown):
+                        request_readback()
+                    _LOGGER.warning(
+                        "Failed to set preset/scenary=%s: %s",
+                        scenary,
+                        err,
+                        exc_info=True,
+                    )
+                    raise
+
+                # A late successful PUT must not recreate a removed entry bucket.
+                if not entry_active():
+                    return
+
+                # optimistic_set('sleep') also starts a new local session revision
+                # even if a backend snapshot did not expose the short Home step.
+                optimistic_set(
+                    self.hass, self._entry_id, self._device_id, "scenary", scenary
                 )
+                record_preset_write()
+                self.async_write_ha_state()
+                if exits_raw_sleep:
+                    if not rearm and scenary == "occupied":
+                        # Successful explicit cleanup still needs remote readback.
+                        bucket.setdefault("sleep_exit_pending", {})[self._device_id] = (
+                            SleepExitStatus("accepted")
+                        )
+                    request_readback()
+                else:
+                    schedule_post_write_refresh(
+                        self.hass, self.coordinator, entry_id=self._entry_id
+                    )
+        finally:
+            if pending_presets.get(self._device_id) == intent:
+                pending_presets.pop(self._device_id)
 
     # ---- Auto-exit AWAY on active commands -------------------------------
 

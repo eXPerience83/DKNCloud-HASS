@@ -288,7 +288,7 @@ async def test_presets_are_device_put_requests_not_event_commands(
     await entity.async_set_preset_mode(target)
 
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": scenary}}
+        "unit-1", {"device": {"scenary": scenary}}, on_start=ANY
     )
     api.send_event.assert_not_awaited()
 
@@ -328,7 +328,7 @@ async def test_ambiguous_ordinary_preset_requests_readback_without_claiming_succ
         await entity.async_set_preset_mode(preset)
 
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": expected_scenary}}
+        "unit-1", {"device": {"scenary": expected_scenary}}, on_start=ANY
     )
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
     assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
@@ -391,7 +391,10 @@ async def test_late_ordinary_preset_failure_does_not_recreate_unloaded_entry(
     bucket = hass.data[DOMAIN]["climate-entry"]
     bucket["sync_manager"] = manager
 
-    async def delayed_put(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def delayed_put(
+        _device_id: str, _payload: dict[str, Any], *, on_start
+    ) -> None:
+        on_start()
         started.set()
         await release.wait()
         raise TimeoutError("PUT response lost after unload")
@@ -432,7 +435,8 @@ async def test_late_successful_ordinary_preset_does_not_publish_after_unload(
     bucket["sync_manager"] = manager
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_put(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def held_put(_device_id: str, _payload: dict[str, Any], *, on_start) -> None:
+        on_start()
         entered.set()
         await release.wait()
 
@@ -717,7 +721,11 @@ async def test_expired_sleep_home_writes_real_backend_cleanup(
     assert entity.preset_mode == "sleep"
     await entity.async_set_preset_mode("home")
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": "occupied"}}, retry=False, on_in_flight=ANY
+        "unit-1",
+        {"device": {"scenary": "occupied"}},
+        retry=False,
+        on_start=ANY,
+        on_in_flight=ANY,
     )
     # An accepted optimistic Home should not trigger a redundant second PUT.
     await entity.async_set_preset_mode("home")
@@ -1093,7 +1101,11 @@ async def test_ambiguous_explicit_home_away_blocks_old_sleep_cleanup(
 
     expected = "occupied" if preset == "home" else "vacant"
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": expected}}, retry=False, on_in_flight=ANY
+        "unit-1",
+        {"device": {"scenary": expected}},
+        retry=False,
+        on_start=ANY,
+        on_in_flight=ANY,
     )
     assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
     manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
@@ -1226,6 +1238,7 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
         "unit-1",
         {"device": {"scenary": "occupied" if preset == "home" else "vacant"}},
         retry=False,
+        on_start=ANY,
         on_in_flight=ANY,
     )
     assert bucket["sleep_exit_pending"]["unit-1"] == "unverified"
@@ -3273,7 +3286,7 @@ async def test_expired_sleep_restores_home_before_explicit_on(
 
 
 @pytest.mark.parametrize(
-    "boundary", ["first", "second", "cancel_second", "cancel_sent"]
+    "boundary", ["first", "second", "cancel_second", "cancel_sent", "ordinary"]
 )
 async def test_rearm_fences_scene_at_traced_writer(
     hass,
@@ -3292,10 +3305,15 @@ async def test_rearm_fences_scene_at_traced_writer(
     )
 
     entity, _ = _climate(
-        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        scenary="occupied" if boundary == "ordinary" else "sleep",
+        power="0",
     )
-    _arm_current_sleep_off_evidence(hass)
-    _confirm_rearm_home_readback(entity)
+    if boundary != "ordinary":
+        _arm_current_sleep_off_evidence(hass)
+        _confirm_rearm_home_readback(entity)
     requests = []
     reached, resume, reserved = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
@@ -3320,7 +3338,9 @@ async def test_rearm_fences_scene_at_traced_writer(
     async def blocked_connect(*args, **kwargs):
         nonlocal attempt
         attempt += 1
-        if boundary != "cancel_sent" and attempt == (1 if boundary == "first" else 2):
+        if boundary != "cancel_sent" and attempt == (
+            1 if boundary in {"first", "ordinary"} else 2
+        ):
             reached.set()
             await resume.wait()
         return await connect(*args, **kwargs)
@@ -3355,9 +3375,9 @@ async def test_rearm_fences_scene_at_traced_writer(
             await asyncio.wait_for(reserved.wait(), 2)
             resume.set()
             await asyncio.wait_for(asyncio.gather(rearm, away), 2)
-            assert requests == ([] if boundary == "first" else ["occupied"]) + [
-                "vacant"
-            ]
+            assert requests == (
+                [] if boundary in {"first", "ordinary"} else ["occupied"]
+            ) + ["vacant"]
             assert entity.preset_mode == "away"
     finally:
         resume.set()
@@ -3546,3 +3566,53 @@ async def test_manual_sleep_exit_dispatch_outcomes(
     finally:
         release.set()
         await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_reselected_sleep_supersedes_queued_away(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+    async with lock:
+        away = asyncio.create_task(entity.async_set_preset_mode("away"))
+        try:
+            async with asyncio.timeout(2):
+                while not bucket.get("scene_preset_intents"):
+                    await asyncio.sleep(0)
+            await entity.async_set_preset_mode("sleep")
+        finally:
+            if not bucket.get("scene_preset_intents"):
+                away.cancel()
+    await asyncio.wait_for(away, 2)
+    api.put_device_fields.assert_not_awaited()
+
+
+async def test_on_checks_sleep_expiry_verified_while_waiting_for_lock(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    _arm_current_sleep_off_evidence(hass)
+    tracking = bucket["sleep_tracking"]["unit-1"]
+    tracking.reset_expiry_votes()
+    _confirm_rearm_home_readback(entity)
+    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
+    async with lock:
+        on = asyncio.create_task(entity.async_turn_on())
+        async with asyncio.timeout(2):
+            while not bucket.get("power_intents"):
+                await asyncio.sleep(0)
+        tracking.expiry_revisions = (1, 0, 0)
+        tracking.expiry_off_reports = 2
+    await asyncio.wait_for(on, 2)
+    api.put_device_fields.assert_awaited_once()
+    api.send_event.assert_awaited_once()

@@ -124,7 +124,7 @@ state cannot advance the sequence. A newer Home/Away request can supersede
 either pending write. With automatic cleanup enabled, an explicit Climate or
 Switch ON from verified expired Sleep confirms Home before sending P1. A Climate
 mode selection that needs P1 ON uses the same barrier before P1 and P2. A mode
-selection that only needs P2 preserves the current scene. A pending
+selection that only needs P2 preserves Sleep. Climate can still exit Away when preparing a mode change. A pending
 ambiguous restoration is read back without repeating the PUT. A rejected
 automatic restoration or an unresolved Home readback surfaces an actionable error
 for a current wake request. No pending ON is replayed in the background.
@@ -688,7 +688,11 @@ Home Assistant policy:
   PUSH+PUSH, GET+GET or PUSH+GET may qualify; duplicated PUSH, one GET delivered
   twice, cached maintenance and stale snapshots do not. Sleep started while OFF
   and never turned ON follows the same rule. GET receipt is recorded per response
-  before batching, independently of the GET dispatch timestamp. A Sleep session
+  before batching, independently of the GET dispatch timestamp. A scene readback
+  must match the pending operation at dispatch and application. Exact power-only
+  OFF PUSH identities are retained across sessions for the runtime. After 256
+  identities per device, new power-only PUSH reports cannot vote, while GET
+  and eligible scene-bearing PUSH reports can still corroborate OFF. A Sleep session
   remembers OFF PUSH identities from before and after the boundary. When the
   256-identity limit is reached, additional PUSH cannot vote in that session,
   while independent GETs can still corroborate OFF.

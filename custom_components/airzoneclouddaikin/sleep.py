@@ -12,6 +12,10 @@ SLEEP_REARM_UNVERIFIED = "rearm_unverified"
 SLEEP_INTENT_KEYS = ("power_intents", "scene_revisions", "scene_preset_intents")
 
 
+class SleepExitStatus(str):
+    """Give each pending scene outcome its own identity for readback."""
+
+
 @dataclass(slots=True)
 class SleepTracking:
     """Track sleep scenary sessions per device."""

@@ -58,6 +58,7 @@ from .const import (
 )
 from .sleep import (
     SLEEP_REARM_UNVERIFIED,
+    SleepExitStatus,
     SleepTracking,
     sleep_expiry_is_current,
     sleep_intent_revisions,
@@ -545,8 +546,10 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     home_required = "Confirm Home before turning on the device. Select Home or wait for readback, then retry."
     home_revisions = None
     pending = bucket.get("sleep_exit_pending", {})
-    if value == 1 and (intent.sleep_expiry is not None or device_id in pending):
-        expiry = intent.sleep_expiry
+    expiry = intent.sleep_expiry
+    if value == 1 and expiry is None and _sleep_cleanup_enabled(coordinator):
+        expiry = SleepExpiryFence.capture(hass, coordinator, bucket, device_id)
+    if value == 1 and (expiry is not None or device_id in pending):
         revisions = sleep_intent_revisions(bucket, device_id)
         scene_before = revisions[1]
         device = (coordinator.data or {}).get(device_id, {})
@@ -563,7 +566,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
             if (
                 not already_pending
                 and expiry is not None
-                and expiry.revisions[0] + 1 != intent.number
+                and expiry.revisions[0] not in {intent.number - 1, intent.number}
             ):
                 request_ambiguous_control_readback(
                     hass,
@@ -870,7 +873,7 @@ async def async_auto_exit_sleep_if_needed(
         ):
             return False
         deadlines.pop(device_id, None)
-        pending[device_id] = "unverified"
+        pending[device_id] = SleepExitStatus("writing")
         attempted = True
         try:
             # No retries: a transport failure may follow acceptance by the server.
@@ -898,13 +901,13 @@ async def async_auto_exit_sleep_if_needed(
                 400 <= error.status < 500
                 and active_entry_bucket(hass, entry_id, coordinator) is bucket
             ):
-                pending[device_id] = "rejected"
+                pending[device_id] = SleepExitStatus("rejected")
             _LOGGER.warning("Sleep exit not confirmed (HTTP %s)", error.status)
         except Exception as error:  # noqa: BLE001
             _LOGGER.warning("Sleep exit remains unverified (%s)", type(error).__name__)
         else:
             if active_entry_bucket(hass, entry_id, coordinator) is bucket:
-                pending[device_id] = "accepted"
+                pending[device_id] = SleepExitStatus("accepted")
                 _record_accepted_sleep_home(
                     hass, entry_id, device_id, bucket, revisions[2]
                 )
@@ -912,6 +915,11 @@ async def async_auto_exit_sleep_if_needed(
                     on_success()
         finally:
             if attempted:
+                if (
+                    pending.get(device_id) == "writing"
+                    and active_entry_bucket(hass, entry_id, coordinator) is bucket
+                ):
+                    pending[device_id] = SleepExitStatus("unverified")
                 request_ambiguous_control_readback(
                     hass,
                     coordinator,

@@ -62,6 +62,7 @@ class SyncManager:
         uncertain_power: dict[str, object] | None = None,
         get_sequence: Iterator[int] | None = None,
         duration_writes: dict[str, object] | None = None,
+        pending_scenes: Callable[[], dict[str, object]] = dict,
         intent_revisions: Callable[[str], tuple[int, int, int]] | None = None,
     ) -> None:
         self.state = SyncState()
@@ -69,6 +70,9 @@ class SyncManager:
         self._installations = dict(installations)
         self._request, self._fetch = request, fetch
         self._timed_fetch = timed_fetch
+        self._pending_scenes = pending_scenes
+        self._seen_power_only_off: dict[str, set[str]] = {}
+        self.scene_readbacks: set[str] = set()
         self._intent_revisions = intent_revisions
         self._duration_writes = duration_writes if duration_writes is not None else {}
         self._uncertain_power = uncertain_power if uncertain_power is not None else {}
@@ -223,6 +227,7 @@ class SyncManager:
         started: ReadStart | None = None
         uncertain_at_dispatch: dict[str, object] = {}
         duration_at_dispatch: dict[str, object] = {}
+        scenes_at_dispatch: dict[str, object] = {}
         intents_at_dispatch: dict[str, tuple[int, int, int]] = {}
 
         async def read():
@@ -254,6 +259,8 @@ class SyncManager:
                     checkpoint = generation, self.state.revision
                     if on_start is not None:
                         started = on_start()
+                    scenes_at_dispatch.clear()
+                    scenes_at_dispatch.update(self._pending_scenes())
                     uncertain_at_dispatch = self._uncertain_power.copy()
                     duration_at_dispatch = self._duration_writes.copy()
                     if revisions := self._intent_revisions:
@@ -307,6 +314,13 @@ class SyncManager:
             )
         }
         self.replayed_scene_ids.clear()
+        pending_scenes = self._pending_scenes()
+        self.scene_readbacks = {
+            device
+            for device, keys in self.touched.items()
+            if "scenary" in keys
+            and scenes_at_dispatch.get(device) is pending_scenes.get(device)
+        }
         revisions = self._intent_revisions
         self.power_observations = {
             device: observation
@@ -448,26 +462,36 @@ class SyncManager:
                     }
             else:
                 self._last_scene_push[key] = identity
+        fingerprint = f"push:{
+            tuple(
+                (key, repr(patch[key]))
+                for key in ('power', 'update_date', 'scenary', 'connection_date')
+                if patch.get(key) is not None
+            )!r
+        }"
+        off = str(patch.get("power")).strip().lower() in {"0", "false", "off"}
+        replayed_off = dated_replay and off
+        if off and patch.get("scenary") is None:
+            # Keep exact identities across sessions. At capacity, GET can
+            # still verify expiry without admitting an evicted PUSH again.
+            seen = self._seen_power_only_off.setdefault(device, set())
+            replayed_off = fingerprint in seen
+            if not replayed_off and len(seen) < 256:
+                seen.add(fingerprint)
+                eligible_off = True
+            else:
+                eligible_off = False
+        else:
+            eligible_off = not replayed_off
+        if replayed_off and patch.get("update_date") is not None:
+            applied = {key: value for key, value in applied.items() if key != "power"}
+
         self.state.event(device, applied, generation)
         self.touched = {device: {k for k, v in applied.items() if v is not None}}
+        self.scene_readbacks = {device} - self.replayed_scene_ids
         self.power_observations = {}
-        replayed_off = dated_replay and str(patch.get("power")).strip().lower() in {
-            "0",
-            "false",
-            "off",
-        }
-        if "power" in self.touched[device] and not replayed_off:
-            # Replayed identical PUSH payloads do not become two independent
-            # corroborations, even if the socket delivered them twice.
-            fingerprint = (
-                (key, repr(patch[key]))
-                for key in ("power", "update_date", "scenary", "connection_date")
-                if key in patch and patch[key] is not None
-            )
-            self.power_observations[device] = (
-                f"push:{tuple(fingerprint)!r}",
-                dt_util.utcnow(),
-            )
+        if "power" in self.touched[device] and eligible_off:
+            self.power_observations[device] = (fingerprint, dt_util.utcnow())
         self._last_event[device] = self._last_received[device] = self._clock()
         self._publish(deepcopy(self.state.data), True)
 

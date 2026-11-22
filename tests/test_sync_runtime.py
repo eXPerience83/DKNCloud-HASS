@@ -847,6 +847,15 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
 
     lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
+    from custom_components.airzoneclouddaikin import helpers
+
+    reached_lock = asyncio.Event()
+
+    def observe_lock(*args):
+        reached_lock.set()
+        return lock
+
+    monkeypatch.setattr(helpers, "acquire_device_lock", observe_lock)
     await lock.acquire()
     try:
         coordinator.data["dev1"].update(
@@ -856,8 +865,7 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
         )
         _mark_synthetic_sleep_off(bucket)
         coordinator.async_update_listeners()
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        await asyncio.wait_for(reached_lock.wait(), 2)
         first_task = bucket["sleep_expiry_task"]
         assert not first_task.done()
         if invalidation == "power_intents":
@@ -1601,7 +1609,18 @@ async def test_cleanup_http_422_surfaces_actionable_wake_error(
         assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-@pytest.mark.parametrize("source", ["old_get", "current_get", "old_push"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "old_get",
+        "current_get",
+        "old_push",
+        "old_power_only",
+        "replayed_get_power",
+        "old_scene_get",
+        "undated_transition",
+    ],
+)
 async def test_sleep_votes_require_current_dispatch_or_nonreplayed_push(
     hass, monkeypatch, dkn_config_entry_factory, sample_device, source
 ):
@@ -1636,7 +1655,46 @@ async def test_sleep_votes_require_current_dispatch_or_nonreplayed_push(
 
     task = None
     try:
-        if source == "old_push":
+        if source == "undated_transition":
+            await manager.event("dev1", {"scenary": "occupied"}, generation)
+            await manager.event(
+                "dev1",
+                {"scenary": "sleep", "update_date": "2026-11-01T00:00:02Z"},
+                generation,
+            )
+            assert tracking.last_scenary == "sleep"
+            await manager.event("dev1", {"scenary": "occupied"}, generation)
+            assert tracking.last_scenary == "occupied"
+            return
+        if source in {"old_scene_get", "replayed_get_power"}:
+            if source == "old_scene_get":
+                initial["scenary"] = "occupied"
+            else:
+                replay = {
+                    "scenary": "sleep",
+                    "power": "0",
+                    "update_date": "2026-11-01T00:00:01Z",
+                }
+                await manager.event("dev1", replay, generation)
+                bucket["uncertain_power"]["dev1"] = object()
+                initial["power"] = "1"
+            api.fetch_devices.side_effect = fetch
+            task = asyncio.create_task(manager.recover("dev1"))
+            writer.set()
+            await asyncio.wait_for(dispatched.wait(), 3)
+            if source == "old_scene_get":
+                bucket["sleep_exit_pending"] = {"dev1": "unverified"}
+            else:
+                await manager.event("dev1", replay, generation)
+            reply.set()
+            await asyncio.wait_for(task, 3)
+            if source == "old_scene_get":
+                assert bucket["sleep_exit_pending"] == {"dev1": "unverified"}
+            else:
+                assert "dev1" not in bucket["uncertain_power"]
+                assert manager.state.data["dev1"]["power"] == "1"
+            return
+        if source in {"old_push", "old_power_only"}:
             replays = [
                 {
                     "power": "0",
@@ -1645,6 +1703,9 @@ async def test_sleep_votes_require_current_dispatch_or_nonreplayed_push(
                 }
                 for i in range(2)
             ]
+            if source == "old_power_only":
+                for patch in replays:
+                    patch.pop("scenary")
             for patch in replays:
                 await manager.event("dev1", patch, generation)
             await manager.event("dev1", {"scenary": "occupied"}, generation)
