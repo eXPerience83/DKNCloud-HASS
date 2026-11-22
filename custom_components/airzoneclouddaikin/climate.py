@@ -948,23 +948,30 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 await self._send_p_event(
                     "P2", selected_mode, on_start=intent.check_dispatch
                 )
-            except CommandSuperseded:
-                if powered_on and entry_active():
-                    self.async_write_ha_state()
-                    request_ambiguous_control_readback(
-                        self.hass,
-                        self.coordinator,
-                        entry_id=self._entry_id,
-                        device_id=self._device_id,
-                        bucket=bucket,
-                    )
-                return
             except (Exception, asyncio.CancelledError) as error:
                 if entry_active():
                     if powered_on:
-                        # P1 was accepted; keep its ON overlay when P2 fails.
+                        overlay = (
+                            bucket.get("optimistic", {})
+                            .get(self._device_id, {})
+                            .get("power", {})
+                        )
+                        expires = overlay.get("expires", 0)
+                        if expires <= self.hass.loop.time() and not power_is_on(
+                            self._device.get("power")
+                        ):
+                            # The ON was acknowledged, but cached power
+                            # can no longer justify skipping the next P1.
+                            bucket.setdefault("uncertain_power", {})[
+                                self._device_id
+                            ] = object()
+                            optimistic_invalidate(
+                                self.hass, self._entry_id, self._device_id, "power"
+                            )
                         self.async_write_ha_state()
-                    if powered_on or not isinstance(error, CommandNotSentCooldown):
+                    if powered_on or not isinstance(
+                        error, (CommandSuperseded, CommandNotSentCooldown)
+                    ):
                         request_ambiguous_control_readback(
                             self.hass,
                             self.coordinator,
@@ -972,6 +979,8 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                             device_id=self._device_id,
                             bucket=bucket,
                         )
+                if isinstance(error, CommandSuperseded):
+                    return
                 raise
 
             if not entry_active():
