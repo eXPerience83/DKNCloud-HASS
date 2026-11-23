@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import timedelta
 
 import pytest
 from aiohttp import ClientSession, web
@@ -135,8 +136,13 @@ async def test_real_entry_loopback_and_control_barrier(
             "dev1"
         ]
         tracking.last_scenary = "sleep"
-        tracking.sleep_started_at_utc = integration.dt_util.utcnow()
-        tracking.observed_on = True
+        tracking.sleep_started_at_utc = integration.dt_util.utcnow() - timedelta(
+            minutes=6
+        )
+        tracking.start_known = True
+        tracking.expected_minutes = 5
+        bucket = hass.data[integration.DOMAIN][entry.entry_id]
+        tracking.off_get_scope = integration.sleep_scope(bucket, "dev1")
         tracking.consecutive_off_reports = 2
         coordinator.data["dev1"].update(
             scenary="sleep", power="0", sleep_off_confirmed=True
