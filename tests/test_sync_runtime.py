@@ -566,6 +566,8 @@ async def test_cleanup_requires_two_late_gets_even_when_sleep_starts_off(
     hass, monkeypatch, dkn_config_entry_factory, sample_device
 ):
     """OFF-only sessions require local start and two independent late GETs."""
+    now = integration.dt_util.utcnow()
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: now)
     api = Mock()
     api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
     api.fetch_devices = AsyncMock(return_value=[sample_device])
@@ -581,14 +583,21 @@ async def test_cleanup_requires_two_late_gets_even_when_sleep_starts_off(
     assert await hass.config_entries.async_setup(entry.entry_id)
     bucket = hass.data[DOMAIN][entry.entry_id]
     manager = bucket["sync_manager"]
-    recovery = Mock()
-    monkeypatch.setattr(manager, "request_recovery", recovery)
     generation = manager.state.generation
 
     off = {**sample_device, "scenary": "sleep", "power": "0", "sleep_time": 5}
     manager.state.data["dev1"]["sleep_time"] = 5
 
+    reads = [asyncio.Event(), asyncio.Event()]
+    release = [asyncio.Event(), asyncio.Event()]
+    pending_reads = iter(zip(reads, release, strict=True))
+    hold_reads = False
+
     async def fetch(_installation, *, retry=True, on_start=None):
+        if hold_reads and (barrier := next(pending_reads, None)) is not None:
+            started, proceed = barrier
+            started.set()
+            await proceed.wait()
         if on_start:
             on_start()
         return [off]
@@ -598,10 +607,11 @@ async def test_cleanup_requires_two_late_gets_even_when_sleep_starts_off(
     budget_now = 0.0
 
     async def elapse(delay):
-        nonlocal budget_now
+        nonlocal budget_now, now
         budget_now += delay
+        now += timedelta(seconds=delay)
 
-    manager._budget._clock = lambda: budget_now
+    manager._clock = manager._pool._clock = manager._budget._clock = lambda: budget_now
     manager._budget._sleep = elapse
     await manager._read("fake")
     assert bucket["sleep_tracking"]["dev1"].end is None
@@ -618,16 +628,37 @@ async def test_cleanup_requires_two_late_gets_even_when_sleep_starts_off(
     await manager._read("fake")
     assert track.consecutive_off_reports == 0
     assert hass.states.get(remaining).state == "5"
-    track.sleep_started_at_utc -= timedelta(minutes=6)
+    now = track.end + timedelta(seconds=29)
     await manager.event("dev1", {"power": "0"}, generation)
-    await manager.event("dev1", {"power": "0"}, generation)
-    await manager._read("fake")
+    assert "dev1" not in manager._quiet_demands
+    hold_reads = True
+    now += timedelta(seconds=2)
     manager.maintenance()
+    try:
+        assert "dev1" in manager._quiet_demands
+        worker = manager._quiet_tasks["dev1"]
+        await asyncio.wait_for(reads[0].wait(), 2)
+        initial_demand = manager._quiet_demands["dev1"]
+        await manager.event("dev1", {"power": "0"}, generation)
+        manager.maintenance()
+        assert manager._quiet_demands["dev1"] == initial_demand
+        assert track.consecutive_off_reports == 0
+        assert not reads[1].is_set()
+        api.async_set_scenary.assert_not_awaited()
+
+        release[0].set()
+        await asyncio.wait_for(reads[1].wait(), 2)
+        assert track.consecutive_off_reports == 1
+        assert manager._quiet_demands["dev1"] > initial_demand
+        api.async_set_scenary.assert_not_awaited()
+    finally:
+        for proceed in release:
+            proceed.set()
+        if worker := manager._quiet_tasks.get("dev1"):
+            await asyncio.wait_for(worker, 2)
+
     await hass.async_block_till_done()
-    api.async_set_scenary.assert_not_awaited()
-    assert track.consecutive_off_reports == 1
-    await manager._read("fake")
-    await hass.async_block_till_done()
+    assert track.consecutive_off_reports == 2
     api.async_set_scenary.assert_awaited_once_with(
         "dev1", "occupied", retry=False, on_start=ANY, on_in_flight=ANY
     )
@@ -635,7 +666,7 @@ async def test_cleanup_requires_two_late_gets_even_when_sleep_starts_off(
     await manager.event("dev1", {"scenary": "occupied"}, generation)
     assert bucket["sleep_exit_pending"]["dev1"] == "accepted"
     off["scenary"] = "occupied"
-    await manager._read("fake")
+    await manager.refresh()
     assert "dev1" not in bucket["sleep_exit_pending"]
     api.async_set_scenary.assert_awaited_once()
     assert await hass.config_entries.async_unload(entry.entry_id)

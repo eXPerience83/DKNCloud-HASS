@@ -102,6 +102,7 @@ class SleepTracking:
     session_revision: int = 0
     evidence_revision: int = 0
     last_off_get: datetime | None = None
+    initial_off_get_requested: bool = False
     off_get_scope: tuple | None = None
     consecutive_off_reports: int = 0
     start_known: bool = False
@@ -132,6 +133,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
             tracking.force_exit_requested = False
+            tracking.initial_off_get_requested = False
             tracking.last_off_get = None
             tracking.off_get_scope = None
             tracking.consecutive_off_reports = 0
@@ -142,6 +144,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.overdue_recorded = False
     else:
         tracking.sleep_started_at_utc = None
+        tracking.initial_off_get_requested = False
         tracking.last_off_get = None
         tracking.off_get_scope = None
         tracking.consecutive_off_reports = 0
@@ -554,9 +557,7 @@ def _derive_state(
             # erase a new, still-pending manual Sleep/scene selection.
             _update_sleep_tracking_for_device(tracking, raw_scenary)
 
-        # OFF must belong to this session. The first newly received OFF
-        # triggers a bounded readback; a second OFF report confirms the
-        # transition without trusting retained startup/maintenance values.
+        # Only independently dispatched and applied GETs count as OFF evidence.
         active_sleep = (
             tracking.last_scenary == SCENARY_SLEEP
             and tracking.sleep_started_at_utc is not None
@@ -654,6 +655,31 @@ def _derive_state(
         )
         end = tracking.end
         dev["sleep_estimated_end"] = end.isoformat() if end else None
+        if (
+            context is None
+            and end is not None
+            and now > end + timedelta(seconds=30)
+            and entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True)
+            and raw_scenary == SCENARY_SLEEP
+            and overlay_value in {None, SCENARY_SLEEP}
+            and _backend_power_is_off(dev)
+            and sleep_off_power_is_certain(bucket, dev_id)
+            and not tracking.consecutive_off_reports
+            and not tracking.initial_off_get_requested
+            and not tracking.force_exit_requested
+            and dev_id not in pending
+            and (
+                (lock := bucket.get("device_locks", {}).get(dev_id)) is None
+                or not lock.locked()
+            )
+            and (manager := bucket.get("sync_manager")) is not None
+            and active_entry_bucket(hass, entry.entry_id, bucket.get("coordinator"))
+            is bucket
+        ):
+            # Cached OFF can trigger verification but cannot count as a vote.
+            # Mark before requesting so later PUSH and ticks cannot move the demand.
+            tracking.initial_off_get_requested = True
+            manager.request_recovery(dev_id, require_fresh=True)
         dev["sleep_remaining_estimated"] = (
             max(0, ceil((end - now).total_seconds() / 60)) if end else None
         )

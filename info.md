@@ -321,7 +321,10 @@ curl -sS --compressed \
 Cleanup requires a known local start and two distinct GET requests dispatched
 after the estimated deadline plus 30 seconds. Both must apply valid OFF to the
 same current raw Sleep session. PUSH may invalidate a candidate and update the
-display. PUSH OFF is not a vote. Home/Away and newer power intents supersede
+display. With cleanup enabled, a PUSH update or local maintenance tick can
+request one initial verification when the deadline has passed and the current
+state indicates OFF. Only the first valid GET requests the second. Home/Away
+and newer power intents supersede
 stale candidates at the device lock and at dispatch. HA uses existing readback
 and request budgets and never sends an automatic P1 from the Sleep clock.
 

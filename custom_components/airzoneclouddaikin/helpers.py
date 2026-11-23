@@ -122,6 +122,7 @@ def optimistic_set(
                 tracking.sleep_started_at_utc = dt_util.utcnow()
                 tracking.last_scenary = SCENARY_SLEEP
                 tracking.force_exit_requested = False
+                tracking.initial_off_get_requested = False
                 tracking.last_off_get = None
                 tracking.off_get_scope = None
                 tracking.consecutive_off_reports = 0
