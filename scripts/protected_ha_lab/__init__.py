@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
@@ -242,21 +243,34 @@ async def async_setup(hass, config):
                 report["push_recovered"] = (
                     observations["device_applied"] > before_events
                 )
-            if case == "sleep":
-                # Inject the post-confirmation state, not merely a timed-out
-                # Sleep scene. The write barrier must reject the resulting
-                # automatic Home command even when OFF was corroborated.
-                tracking = hass.data[entry.domain][entry.entry_id]["sleep_tracking"][
-                    device
-                ]
+            if case == "sleep" and not real:
+                request = gateway.request
+
+                def observe_cleanup(method, url, **kwargs):
+                    if method == "PUT" and kwargs.get("json") == {
+                        "device": {"scenary": "occupied"}
+                    }:
+                        report["sleep_cleanup_attempted"] = True
+                    return request(method, url, **kwargs)
+
+                gateway.request = observe_cleanup
+                # Publish a synthetic OFF for an established Sleep cycle
+                # through the same route used by device PUSH.
+                bucket = hass.data[entry.domain][entry.entry_id]
+                manager = bucket["sync_manager"]
+                tracking = bucket["sleep_tracking"][device]
                 tracking.last_scenary = "sleep"
-                tracking.sleep_started_at_utc = integration.dt_util.utcnow()
-                tracking.observed_on = True
-                tracking.consecutive_off_reports = 2
-                coordinator.data[device].update(
-                    scenary="sleep", power="0", sleep_off_confirmed=True
+                tracking.sleep_started_at_utc = (
+                    integration.dt_util.utcnow() - timedelta(minutes=6)
                 )
-                coordinator.async_update_listeners()
+                tracking.start_known = True
+                tracking.expected_minutes = 5
+                await manager.event(
+                    device,
+                    {"scenary": "sleep", "power": "1", "sleep_time": 5},
+                    manager.state.generation,
+                )
+                await manager.event(device, {"power": "0"}, manager.state.generation)
                 await supervisor.stopped.wait()
                 return
             if real:

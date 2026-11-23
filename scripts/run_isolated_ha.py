@@ -185,6 +185,14 @@ with tempfile.TemporaryDirectory(prefix="dkn-ha-", dir=temporary_root) as tempor
                 if result.returncode == 0
                 and summary.get("error") != "cleanup_failed"
                 and summary.get("reason") == expected[args.protected_case]
+                and (
+                    args.protected_case != "sleep"
+                    or (
+                        summary.get("sleep_cleanup_attempted")
+                        and summary["observations"]["blocked_control_attempts"] == 1
+                        and summary["pending_http_tasks"] == 0
+                    )
+                )
                 and summary.get("backend_control_writes") == 0
                 and summary.get("session_closed")
                 and summary.get("server_closed")

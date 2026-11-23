@@ -6,6 +6,7 @@ import asyncio
 import math
 from typing import Any
 
+from aiohttp import ClientResponseError
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
@@ -207,10 +208,35 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             current = self.native_value
             if current is not None and current == ivalue:
                 return
+
+            tracking = (
+                bucket.get("sleep_tracking", {}).get(self._device_id)
+                if self._field_name == "sleep_time"
+                else None
+            )
+            dispatched = False
+
+            def dispatch(value: bool) -> None:
+                nonlocal dispatched
+                dispatched = value
+
+            def invalidate_sleep_estimate() -> None:
+                if tracking is not None and entry_active():
+                    tracking.start_known = False
+
             try:
-                await self._api.put_device_fields(self._device_id, payload)
+                await self._api.put_device_fields(
+                    self._device_id,
+                    payload,
+                    **({"on_in_flight": dispatch} if tracking is not None else {}),
+                )
             except (Exception, asyncio.CancelledError) as error:
                 if not isinstance(error, CommandNotSentCooldown):
+                    if dispatched and not (
+                        isinstance(error, ClientResponseError)
+                        and 400 <= error.status < 500
+                    ):
+                        invalidate_sleep_estimate()
                     request_ambiguous_control_readback(
                         self.hass,
                         self.coordinator,
@@ -223,6 +249,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             # An accepted late PUT must not publish into an unloaded entry.
             if not entry_active():
                 return
+            invalidate_sleep_estimate()
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, self._field_name, ivalue
             )

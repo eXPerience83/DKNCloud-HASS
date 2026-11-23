@@ -56,12 +56,15 @@ class SyncManager:
         on_topology_change=None,
         on_mode_change: Callable[[], None] | None = None,
         uncertain_power: dict[str, object] | None = None,
+        get_context: Callable[[], Any] | None = None,
     ) -> None:
         self.state = SyncState()
         self.state.snapshot(list(initial.values()), self.state.checkpoint())
         self._installations = dict(installations)
         self._request, self._fetch = request, fetch
         self._timed_fetch = timed_fetch
+        self._get_context = get_context
+        self.applied_get_context = None
         self._uncertain_power = uncertain_power if uncertain_power is not None else {}
         self._publish, self._reauth, self._locks = publish, reauth, locks
         self._connect, self._clock = connect, clock
@@ -207,9 +210,10 @@ class SyncManager:
         checkpoint = self.state.checkpoint()
         started: ReadStart | None = None
         uncertain_at_dispatch: dict[str, object] = {}
+        context = None
 
         async def read():
-            nonlocal checkpoint, started, uncertain_at_dispatch
+            nonlocal checkpoint, started, uncertain_at_dispatch, context
             ready = max(
                 (
                     deadline
@@ -227,18 +231,21 @@ class SyncManager:
                 checkpoint = self.state.checkpoint()
                 if on_start is not None:
                     started = on_start()
-                    if self._timed_fetch is not None:
-                        generation = checkpoint[0]
+                if self._timed_fetch is not None and (
+                    on_start is not None or self._get_context
+                ):
+                    generation = checkpoint[0]
 
-                        def dispatched():
-                            nonlocal checkpoint, started, uncertain_at_dispatch
-                            # Preserve the connection generation across API
-                            # cooldown, but compare fields at dispatch.
-                            checkpoint = generation, self.state.revision
+                    def dispatched():
+                        nonlocal checkpoint, started, uncertain_at_dispatch, context
+                        checkpoint = generation, self.state.revision
+                        if on_start is not None:
                             started = on_start()
-                            uncertain_at_dispatch = self._uncertain_power.copy()
+                        uncertain_at_dispatch = self._uncertain_power.copy()
+                        if self._get_context is not None:
+                            context = self._get_context()
 
-                        return await self._timed_fetch(installation, dispatched)
+                    return await self._timed_fetch(installation, dispatched)
                 uncertain_at_dispatch = self._uncertain_power.copy()
                 return await self._fetch(installation)
 
@@ -291,7 +298,12 @@ class SyncManager:
                 if applied_fields.get(key, set()) - {"id", "mac"}:
                     self._last_get[key] = now
                 self._last_received[key] = now
-        self._publish(deepcopy(self.state.data), True)
+        # Distinguish a GET without dispatch context from a PUSH publication.
+        self.applied_get_context = context if context is not None else ()
+        try:
+            self._publish(deepcopy(self.state.data), True)
+        finally:
+            self.applied_get_context = None
         return devices
 
     async def recover(
@@ -558,6 +570,10 @@ class SyncManager:
                 self._quiet_demands.pop(device, None)
 
         self._quiet_tasks[device] = asyncio.create_task(recover())
+
+    def pending_recovery(self, device: str) -> asyncio.Task | None:
+        """Return the existing readback worker for a caller awaiting the result."""
+        return self._quiet_tasks.get(device)
 
     def maintenance(self) -> None:
         """Notify local listeners without advancing reception timestamps."""
