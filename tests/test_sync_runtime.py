@@ -1293,3 +1293,159 @@ async def test_sleep_scene_ordering(
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.fixture
+async def sleep_session_runtime(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """Set up the actual HA entry and SyncManager with an offline transport."""
+    remote = {**sample_device, "sleep_time": 5}
+
+    async def fetch(_installation, *, retry=True, on_start=None):
+        if on_start:
+            on_start()
+        return [dict(remote)]
+
+    api = Mock(
+        fetch_installations=AsyncMock(return_value=[{"installation_id": "fake"}]),
+        fetch_devices=AsyncMock(side_effect=fetch),
+        async_set_scenary=AsyncMock(),
+        put_device_fields=AsyncMock(),
+        send_event=AsyncMock(),
+    )
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    budget_now = 0.0
+
+    async def elapse(delay):
+        nonlocal budget_now
+        budget_now += delay
+
+    manager._clock = manager._pool._clock = manager._budget._clock = lambda: budget_now
+    manager._budget._sleep = elapse
+    try:
+        yield api, remote, bucket, manager
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_old_sleep_cleanup_cannot_consume_new_session(
+    hass, sleep_session_runtime
+):
+    """An old ACK still gets readback, while the next Sleep can clean up itself."""
+    api, remote, bucket, manager = sleep_session_runtime
+    dispatched = asyncio.Event()
+    release = asyncio.Event()
+    home_writes = []
+
+    async def write_scene(_device, scene, *, on_start, on_in_flight=None, **_kwargs):
+        on_start()
+        if on_in_flight:
+            on_in_flight(True)
+        remote["scenary"] = scene
+        if scene == "occupied":
+            home_writes.append(scene)
+            if len(home_writes) == 1:
+                dispatched.set()
+                await release.wait()
+
+    api.async_set_scenary.side_effect = write_scene
+    climate = er.async_get(hass).async_get_entity_id("climate", DOMAIN, "dev1_climate")
+
+    async def push(**fields):
+        remote.update(fields)
+        await manager.event("dev1", fields, manager.state.generation)
+
+    try:
+        await hass.services.async_call(
+            "climate",
+            "set_preset_mode",
+            {"entity_id": climate, "preset_mode": "sleep"},
+            blocking=True,
+        )
+        await push(scenary="sleep", power="1")
+        tracking = bucket["sleep_tracking"]["dev1"]
+        session_a = tracking.session_revision
+        await push(power="0")
+        await asyncio.wait_for(dispatched.wait(), 2)
+        await push(scenary="vacant")
+        await push(scenary="sleep", power="1")
+        assert tracking.session_revision != session_a
+        reads = api.fetch_devices.await_count
+        release.set()
+        await asyncio.wait_for(bucket["sleep_expiry_task"], 2)
+        if readback := manager.pending_recovery("dev1"):
+            await asyncio.wait_for(readback, 2)
+        assert api.fetch_devices.await_count == reads + 1
+        assert home_writes == ["occupied"]
+
+        await push(power="0")
+        await hass.async_block_till_done()
+        assert home_writes == ["occupied", "occupied"]
+        manager.maintenance()
+        await hass.async_block_till_done()
+        assert home_writes == ["occupied", "occupied"]
+        api.send_event.assert_not_awaited()
+    finally:
+        release.set()
+        if cleanup := bucket.get("sleep_expiry_task"):
+            await asyncio.wait_for(cleanup, 2)
+
+
+async def test_old_get_on_cannot_start_new_sleep_diagnostic(
+    hass, monkeypatch, sleep_session_runtime
+):
+    """An applied ON field cannot start diagnostics for a different Sleep session."""
+    api, remote, bucket, manager = sleep_session_runtime
+    original_fetch = api.fetch_devices.side_effect
+    dispatched = asyncio.Event()
+    release = asyncio.Event()
+    now = integration.dt_util.utcnow()
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: now)
+
+    async def slow_fetch(*args, **kwargs):
+        snapshot = await original_fetch(*args, **kwargs)
+        dispatched.set()
+        await release.wait()
+        return snapshot
+
+    async def push(**fields):
+        remote.update(fields)
+        await manager.event("dev1", fields, manager.state.generation)
+
+    await push(scenary="sleep", power="1")
+    api.fetch_devices.side_effect = slow_fetch
+    old_read = asyncio.create_task(manager._read("fake"))
+    try:
+        await asyncio.wait_for(dispatched.wait(), 2)
+        # Scene-only patches leave the older GET's power field applicable.
+        await push(scenary="vacant")
+        await push(scenary="sleep")
+        tracking = bucket["sleep_tracking"]["dev1"]
+        release.set()
+        await asyncio.wait_for(old_read, 2)
+        assert bucket["coordinator"].data["dev1"]["power"] == "1"
+        first_on_after_old_get = tracking.first_on_observation
+
+        now += timedelta(minutes=10, seconds=1)
+        await push(power="1")
+        assert bucket["coordinator"].data["dev1"]["sleep_overdue"] is False
+        await push(power="1")
+        assert bucket["coordinator"].data["dev1"]["sleep_overdue"] is False
+        assert tracking.first_on_observation == now
+        assert first_on_after_old_get is None
+        api.async_set_scenary.assert_not_awaited()
+        api.put_device_fields.assert_not_awaited()
+        api.send_event.assert_not_awaited()
+    finally:
+        release.set()
+        await asyncio.wait_for(old_read, 2)

@@ -586,12 +586,22 @@ async def test_sleep_overdue_uses_known_start_or_observation_and_two_on_reports(
     sleep = {"device": {"scenary": "sleep", "power": "1", "sleep_time": 30}}
 
     _derive_state(
-        hass, entry, home, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+        hass,
+        entry,
+        home,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids={"device"},
+        from_push=True,
     )
     hass.data[DOMAIN]["known"]["coordinator"] = SimpleNamespace(data=home)
     optimistic_set(hass, "known", "device", "scenary", "sleep")
     _derive_state(
-        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+        hass,
+        entry,
+        sleep,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids={"device"},
+        from_push=True,
     )
     tracking = hass.data[DOMAIN]["known"]["sleep_tracking"]["device"]
     assert tracking.start_known
@@ -609,11 +619,21 @@ async def test_sleep_overdue_uses_known_start_or_observation_and_two_on_reports(
 
     # Two new power reports after +5, not repeated local maintenance data.
     _derive_state(
-        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+        hass,
+        entry,
+        sleep,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids=set(),
+        from_push=True,
     )
     assert sleep["device"]["sleep_overdue"] is False
     _derive_state(
-        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+        hass,
+        entry,
+        sleep,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids=set(),
+        from_push=True,
     )
     assert sleep["device"]["sleep_overdue"] is True
     assert hass.data[DOMAIN]["known"]["sleep_overdue_sessions"] == 1
@@ -625,11 +645,21 @@ async def test_sleep_overdue_uses_known_start_or_observation_and_two_on_reports(
 
     # A single new ON after the gap cannot reuse the previous two reports.
     _derive_state(
-        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+        hass,
+        entry,
+        sleep,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids=set(),
+        from_push=True,
     )
     assert sleep["device"]["sleep_overdue"] is False
     _derive_state(
-        hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+        hass,
+        entry,
+        sleep,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids=set(),
+        from_push=True,
     )
     assert sleep["device"]["sleep_overdue"] is True
     assert hass.data[DOMAIN]["known"]["sleep_overdue_sessions"] == 1
@@ -638,7 +668,12 @@ async def test_sleep_overdue_uses_known_start_or_observation_and_two_on_reports(
     unknown = SimpleNamespace(entry_id="unknown", options={})
     hass.data[DOMAIN]["unknown"] = {"sync_manager": Mock()}
     _derive_state(
-        hass, unknown, sleep, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
+        hass,
+        unknown,
+        sleep,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids={"device"},
+        from_push=True,
     )
     other = hass.data[DOMAIN]["unknown"]["sleep_tracking"]["device"]
     assert not other.start_known
@@ -646,7 +681,12 @@ async def test_sleep_overdue_uses_known_start_or_observation_and_two_on_reports(
     freezer.tick(timedelta(minutes=35, seconds=1))
     for _ in range(2):
         _derive_state(
-            hass, unknown, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+            hass,
+            unknown,
+            sleep,
+            fresh_power_ids={"device"},
+            fresh_scenary_ids=set(),
+            from_push=True,
         )
     assert sleep["device"]["sleep_overdue"] is True
     assert sleep["device"]["sleep_remaining_estimated"] is None

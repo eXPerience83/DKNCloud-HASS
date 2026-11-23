@@ -761,7 +761,9 @@ async def async_auto_exit_sleep_if_needed(
 async def async_write_sleep_home(
     hass, entry_id, device_id, coordinator, bucket, check_dispatch, *, automatic=False
 ) -> None:
+    check_dispatch()
     tracking = bucket.get("sleep_tracking", {}).get(device_id)
+    session_revision = tracking.session_revision if automatic else None
     sent = False
     status = "unverified"
 
@@ -770,7 +772,6 @@ async def async_write_sleep_home(
         sent = value
 
     try:
-        check_dispatch()
         await coordinator.api.async_set_scenary(
             device_id,
             SCENARY_HOME,
@@ -788,11 +789,15 @@ async def async_write_sleep_home(
         raise
     finally:
         if sent and active_entry_bucket(hass, entry_id, coordinator) is bucket:
-            if automatic:
-                tracking.force_exit_requested = True
-            bucket.setdefault("sleep_exit_pending", {})[device_id] = SleepExitStatus(
-                status
-            )
+            if not automatic or (
+                bucket.get("sleep_tracking", {}).get(device_id) is tracking
+                and tracking.session_revision == session_revision
+            ):
+                if automatic:
+                    tracking.force_exit_requested = True
+                bucket.setdefault("sleep_exit_pending", {})[device_id] = (
+                    SleepExitStatus(status)
+                )
             if automatic or status != "accepted" or bucket.get("sync_manager"):
                 request_ambiguous_control_readback(
                     hass,
