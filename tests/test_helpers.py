@@ -358,7 +358,7 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     # A new manual Sleep resets tracking before a coordinator refresh.
     optimistic_set(hass, "entry", "device", "scenary", "sleep")
     assert device["sleep_off_confirmed"]
-    assert tracking.off_observation_scope is None
+    assert tracking.off_observed
     await async_auto_exit_sleep_if_needed(
         hass,
         entry_id="entry",
@@ -407,9 +407,7 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
         "coordinator": coordinator,
         "sleep_tracking": {"device": tracking},
     }
-    tracking.off_observation_scope = helpers.sleep_scope(
-        hass.data[DOMAIN]["entry"], "device"
-    )
+    tracking.off_observed = True
     lock = helpers.acquire_device_lock(hass, "entry", "device")
     await lock.acquire()
     lock_reached = asyncio.Event()
@@ -570,7 +568,7 @@ async def test_local_sleep_survives_retained_scene_on_maintenance_and_partial_pu
     assert tracking.last_scenary == "occupied"
 
 
-async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
+async def test_sleep_overdue_uses_known_start_or_observation_and_two_on_reports(
     hass,
     freezer,
 ):
@@ -606,7 +604,7 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
 
     freezer.tick(timedelta(seconds=2))
     _derive_state(hass, entry, sleep, fresh_power_ids=set(), fresh_scenary_ids=set())
-    manager.request_recovery.assert_called_once_with("device")
+    manager.request_recovery.assert_not_called()
     assert sleep["device"]["sleep_overdue"] is False
 
     # Two new power reports after +5, not repeated local maintenance data.
@@ -645,6 +643,15 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
     other = hass.data[DOMAIN]["unknown"]["sleep_tracking"]["device"]
     assert not other.start_known
     assert sleep["device"]["sleep_overdue"] is False
+    freezer.tick(timedelta(minutes=35, seconds=1))
+    for _ in range(2):
+        _derive_state(
+            hass, unknown, sleep, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+        )
+    assert sleep["device"]["sleep_overdue"] is True
+    assert sleep["device"]["sleep_remaining_estimated"] is None
+    assert sleep["device"]["sleep_estimated_end"] is None
+    hass.data[DOMAIN]["unknown"]["sync_manager"].request_recovery.assert_not_called()
 
 
 async def test_sleep_overdue_does_not_survive_timer_edit_or_confirmed_off(
@@ -672,7 +679,13 @@ async def test_sleep_overdue_does_not_survive_timer_edit_or_confirmed_off(
 
     state["device"]["sleep_time"] = 40
     _derive_state(
-        hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids=set()
+        hass,
+        entry,
+        state,
+        fresh_power_ids={"device"},
+        fresh_scenary_ids=set(),
+        fresh_duration_ids={"device"},
+        from_push=True,
     )
     tracking = hass.data[DOMAIN]["entry"]["sleep_tracking"]["device"]
     assert tracking.start_known is False
@@ -682,7 +695,6 @@ async def test_sleep_overdue_does_not_survive_timer_edit_or_confirmed_off(
         hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids=set()
     )
     assert state["device"]["sleep_overdue"] is False
-    assert not tracking.overdue_probe_requested
     state["device"]["power"] = "0"
     _derive_state(
         hass, entry, state, fresh_power_ids={"device"}, fresh_scenary_ids=set()
@@ -739,9 +751,7 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
         "coordinator": coordinator,
         "sleep_tracking": {"device": tracking},
     }
-    tracking.off_observation_scope = helpers.sleep_scope(
-        hass.data[DOMAIN]["entry"], "device"
-    )
+    tracking.off_observed = True
     for _ in range(2):
         await async_auto_exit_sleep_if_needed(
             hass,

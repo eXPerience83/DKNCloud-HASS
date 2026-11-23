@@ -254,7 +254,7 @@ async def async_setup(hass, config):
                     return request(method, url, **kwargs)
 
                 gateway.request = observe_cleanup
-                # Publish a synthetic, complete post-deadline observation
+                # Publish a synthetic OFF for an established Sleep cycle
                 # through the same route used by device PUSH.
                 bucket = hass.data[entry.domain][entry.entry_id]
                 manager = bucket["sync_manager"]
@@ -267,9 +267,10 @@ async def async_setup(hass, config):
                 tracking.expected_minutes = 5
                 await manager.event(
                     device,
-                    {"scenary": "sleep", "power": "0", "sleep_time": 5},
+                    {"scenary": "sleep", "power": "1", "sleep_time": 5},
                     manager.state.generation,
                 )
+                await manager.event(device, {"power": "0"}, manager.state.generation)
                 await supervisor.stopped.wait()
                 return
             if real:

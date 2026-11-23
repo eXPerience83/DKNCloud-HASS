@@ -571,6 +571,10 @@ class SyncManager:
 
         self._quiet_tasks[device] = asyncio.create_task(recover())
 
+    def pending_recovery(self, device: str) -> asyncio.Task | None:
+        """Return the existing readback worker for a caller awaiting the result."""
+        return self._quiet_tasks.get(device)
+
     def maintenance(self) -> None:
         """Notify local listeners without advancing reception timestamps."""
         if not self._stopped:

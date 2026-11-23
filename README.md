@@ -14,7 +14,7 @@
 
 - **Climate control:** Power, cooling, heating, ventilation, dehumidification, target temperature and supported fan speeds.
 - **Native presets:** `home`, `away` and `sleep` on each climate entity. No separate `select.scenary` entity.
-- **Sleep and away settings:** Configurable Sleep duration and unoccupied limits. Intermediate OFF and ON preserve Sleep. Home Assistant can restore Home after the estimated deadline when fresh telemetry explicitly reports OFF and Sleep.
+- **Sleep and away settings:** Configurable Sleep duration and unoccupied limits. Sleep uses the native shutoff timer. Home Assistant can restore Home when a device that has been ON in Sleep reports OFF.
 - **Status and diagnostics:** Room temperature, device power, connection status, last connection, and (starting with 0.6.0b1) a per-device cloud PUSH/REST synchronization-mode sensor. Connection monitoring is passive (no additional pings).
 - **Privacy by default:** Identifiers such as MAC, PIN and installation/location are only exposed by opting in; those entities remain disabled by default.
 - **Localized UI:** English, Spanish, French, German, Italian and Portuguese.
@@ -81,7 +81,7 @@ Optional settings in the Home Assistant UI:
 - **Automatic synchronization:** The integration owns its fixed nominal cadence and recovery; no scan interval option is exposed.
 - **Expose PII identifiers:** Add sensitive identifier entities (off by default; the entities themselves are disabled by default).
 - **Experimental HEAT_COOL:** Only when the device advertises support; this mode is not broadly validated on hardware.
-- **Automatic Sleep cleanup:** Enabled by default and configurable. A locally started session can request Home once after its estimated deadline, a 30-second settling period and one applied OFF/Sleep observation from PUSH or an existing GET. Home and Away remain available manually. An ON anomaly after the expected timer plus five minutes is read-only and included in sanitized diagnostics.
+- **Automatic Sleep cleanup:** Enabled by default and configurable. An OFF report ends a running Sleep cycle for Home Assistant. Selecting Sleep while OFF gives you one minute to turn the device on. Cleanup requests Home without changing power.
 
 ## Available entities
 
@@ -122,7 +122,7 @@ For the API commands, device modes, capabilities and detailed backend behavior, 
 
 **How do I change Home/Away/Sleep?** Use the climate entity's presets or the Home Assistant `climate.set_preset_mode` service. The old `select.scenary` entity was removed.
 
-**Why does Sleep sometimes remain active after the unit turns off?** The backend can retain the Sleep scene. With automatic cleanup enabled, Home Assistant waits until the estimated deadline plus 30 seconds and requires a PUSH or an existing GET that explicitly supplies both OFF and Sleep. Incomplete PUSH patches may leave Sleep selected. If evidence is missing, select Home manually. To restart Sleep, wait for Home to be confirmed before selecting Sleep again. After restart, a session with an unknown start has no estimated countdown or automatic cleanup. Session persistence is tracked in [#243](https://github.com/eXPerience83/DKNCloud-HASS/issues/243).
+**How does Sleep end?** The unit uses its native timer. With automatic cleanup enabled, an applied OFF report after the unit has been ON restores Home. Selecting Sleep while OFF gives you one minute to turn it on. Outside that window, a manual ON from OFF/Sleep confirms Home before turning the device on, even with automatic cleanup disabled. The countdown is a local estimate and can be unknown after restart. If the device still reports ON past the diagnostic window, Home Assistant records a possible anomaly without issuing a command. Session persistence is tracked in [#243](https://github.com/eXPerience83/DKNCloud-HASS/issues/243).
 
 **Why can't I select HEAT_COOL?** Both the device capability bit and the **Enable experimental HEAT_COOL mode** option are required. Even then, its physical behavior is not fully validated across devices.
 

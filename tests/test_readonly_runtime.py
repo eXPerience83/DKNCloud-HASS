@@ -141,8 +141,7 @@ async def test_real_entry_loopback_and_control_barrier(
         )
         tracking.start_known = True
         tracking.expected_minutes = 5
-        bucket = hass.data[integration.DOMAIN][entry.entry_id]
-        tracking.off_observation_scope = integration.sleep_scope(bucket, "dev1")
+        tracking.off_observed = True
         coordinator.data["dev1"].update(
             scenary="sleep", power="0", sleep_off_confirmed=True
         )

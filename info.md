@@ -94,13 +94,11 @@ config-entry identifiers remain unchanged.
 
 ### Sleep session and manual restart
 
-A newly accepted local Sleep selection starts an estimated countdown when its
-duration is known. Selecting Sleep while OFF does not turn the device on.
-Reselecting Sleep preserves the current cycle. Intermediate OFF and ON do not
-change the scene or its estimate. To restart a cycle, select Home, wait for
-applied confirmation, then select Sleep again. Home and Away remain explicit
-manual overrides. A rejected (HTTP 422) exit leaves the prior scene fence intact.
-A cached duration cannot invalidate a newly accepted local estimate.
+A locally accepted Sleep selection uses its ACK as the estimated start. The
+device controls power through its native timer. A repeated Sleep request and
+compatible active controls preserve the cycle. To restart a cycle, select
+Home, wait for applied confirmation, then select Sleep again. Home and Away
+remain explicit manual overrides.
 
 
 ### Automatic synchronization policy (not a backend contract)
@@ -319,23 +317,26 @@ curl -sS --compressed \
 
 ### Sleep exit coordination (integration policy)
 
-Cleanup requires a known local start and a single observation with both
-`power=OFF` and `scenary=sleep` explicitly supplied and applied to the current
-session. The PUSH must arrive after the estimated deadline plus 30 seconds.
-An existing GET may supply the observation if it was dispatched after that
-limit and both fields are applied. A partial patch or a cached OFF does not
-supply both fields. Receipt and dispatch times are local and do not establish
-when the device measured its state. Normal synchronization uses INFO and PUSH.
-GET remains available for fallback, recovery, resynchronization, explicit
-refresh and readback. Home/Away and newer power intents supersede stale
-candidates at the device lock and at dispatch. The Sleep clock never sends
-automatic P1. Session persistence is tracked in #243.
+An applied OFF report ends a Sleep cycle that has been ON. The power update
+can be a PUSH patch for an established Sleep session or an existing GET
+whose power field is applied. An old snapshot or local tick cannot establish
+a new OFF report.
 
-The runtime permits at most one potentially received automatic scene PUT
-(`scenary=occupied`) per session. An ACK requests a fresh readback. An applied
-Home observation from a GET dispatched after the write is required before
-assuming convergence. Select Home manually if cleanup is disabled or cannot
-be confirmed and a corroborated finished session still blocks an explicit wake.
+A new local OFF/Sleep selection gives the user one minute to turn the device
+on, measured from the accepted scene write. A newly observed external
+transition into Sleep has the same local opportunity, measured from its first
+observation. Startup or resynchronization that finds OFF/Sleep can clean up
+after valid remote state is applied. An ON reserved during the minute keeps
+priority while pending. After the minute, maintenance can act on reliable
+OFF already observed in that session.
+
+The option `sleep_cleanup_enabled` governs automatic Home writes. An explicit
+wake outside the activation window can request Home with either option value.
+Applied Home confirmation after the write is required before sending P1.
+The runtime uses the device lock and dispatch checks and allows at most one
+potentially received automatic scene PUT per session. Ambiguous writes are
+reconciled through the existing readback. The Sleep clock sends no P1.
+INFO/PUSH and existing GET recovery supply all observations.
 
 ## 3) Event Model (Px options) — Consolidated Table
 
@@ -618,20 +619,20 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 
 ### Sleep estimates and evidence limits
 
-`sleep_cleanup_enabled` defaults to true and honors a stored false. Without an eligible
-OFF/Sleep observation, Sleep may remain selected until manual intervention.
-The remaining minutes and optional end timestamp are local estimates. Zero
-does not imply physical OFF or Home. After reload or an uncertain duration
-change, the timer is unknown and cannot authorize automatic cleanup. Timer
-tracking is runtime-local (persistent storage is tracked in #243).
-The five-minute diagnostic margin for `sleep_overdue` is independent of cleanup.
+The remaining minutes and end timestamp are local estimates. After reload or
+an uncertain duration change the estimate is unknown. Persistence is tracked
+in #243. For a known start, a possible ON anomaly follows the estimated end
+plus five minutes and pertinent ON reports. For an unknown start with known
+duration, the diagnostic window starts at the first valid ON/Sleep observation
+and adds the duration plus five minutes. It neither predicts the end time nor
+emits control commands.
 
-Supervised trials A, C and revised B used one unit in ventilation with a
-five-minute timer. The observations support an original deadline across an
-early OFF/ON. They do not establish exact physical timing, behavior after
-natural expiry with the Sleep scene retained, or what a unit does when it
-stays OFF throughout. The same conservative cleanup rule applies to a
-locally started OFF-only session by integration policy. See the
+The supervised trials used one unit in ventilation mode and a five-minute
+timer. In revised B the native timer appeared to survive OFF and ON when
+there was no intervening Home. The integration now treats OFF as the end of
+an active Sleep cycle. Home cancelling the earlier native timer is a product
+assumption tracked by nonblocking QA issue #245. Backend schedules are outside
+this integration policy. See the
 [supervised trial report](https://github.com/eXPerience83/DKNCloud-HASS/blob/2e91d01/docs/lab-evidence/236-sleep-live-results.md).
 
 ---

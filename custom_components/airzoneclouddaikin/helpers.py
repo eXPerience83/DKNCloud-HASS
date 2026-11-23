@@ -23,6 +23,7 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from aiohttp import ClientResponseError
@@ -103,27 +104,37 @@ def optimistic_set(
 ) -> None:
     """Store an optimistic value for a device field with expiration."""
 
-    optimistic = _optimistic_bucket(hass, entry_id)
+    bucket = _entry_bucket(hass, entry_id)
+    optimistic = bucket.setdefault("optimistic", {})
     if key == "scenary":
         if value == SCENARY_SLEEP:
-            _entry_bucket(hass, entry_id).get("sleep_exit_retry_after", {}).pop(
-                device_id, None
-            )
-            _entry_bucket(hass, entry_id).get("sleep_exit_pending", {}).pop(
-                device_id, None
-            )
-            if (
-                tracking := _entry_bucket(hass, entry_id)
-                .get("sleep_tracking", {})
-                .get(device_id)
-            ):
+            bucket.get("sleep_exit_retry_after", {}).pop(device_id, None)
+            bucket.get("sleep_exit_pending", {}).pop(device_id, None)
+            if tracking := bucket.get("sleep_tracking", {}).get(device_id):
                 # A new explicit command starts a local observation, not a physical clock.
                 tracking.session_revision += 1
                 tracking.sleep_started_at_utc = dt_util.utcnow()
                 tracking.last_scenary = SCENARY_SLEEP
                 tracking.force_exit_requested = False
-                tracking.off_observation_scope = None
-                coordinator = _entry_bucket(hass, entry_id).get("coordinator")
+                raw = (getattr(bucket.get("coordinator"), "data", None) or {}).get(
+                    device_id, {}
+                )
+                power = optimistic_get(
+                    hass, entry_id, device_id, "power", raw.get("power")
+                )
+                tracking.off_observed = str(power).strip().lower() in {
+                    "0",
+                    "false",
+                    "off",
+                } and sleep_off_power_is_certain(bucket, device_id)
+                tracking.activation_until = (
+                    tracking.sleep_started_at_utc + timedelta(seconds=60)
+                    if tracking.off_observed
+                    else None
+                )
+                tracking.activation_wake = None
+                tracking.first_on_observation = None
+                coordinator = bucket.get("coordinator")
                 duration_at_selection = (
                     (getattr(coordinator, "data", None) or {})
                     .get(device_id, {})
@@ -145,9 +156,10 @@ def optimistic_set(
                 tracking.start_known = tracking.expected_minutes is not None
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
-                tracking.overdue_probe_requested = False
                 tracking.overdue_recorded = False
-        revisions = _entry_bucket(hass, entry_id).setdefault("scene_revisions", {})
+        elif tracking := bucket.get("sleep_tracking", {}).get(device_id):
+            tracking.off_observed = False
+        revisions = bucket.setdefault("scene_revisions", {})
         revisions[device_id] = revisions.get(device_id, 0) + 1
     device_overlay = optimistic.setdefault(device_id, {})
 
@@ -342,15 +354,15 @@ def reserve_power_intent(
     intents: dict[str, int] = bucket.setdefault("power_intents", {})
     number = intents.get(device_id, 0) + 1
     tracking = bucket.get("sleep_tracking", {}).get(device_id)
-    # A wake still requires Home if its own reservation is the only change.
-    carry_sleep_observation = (
+    intents[device_id] = number
+    if (
         value == 1
         and tracking is not None
-        and tracking.off_observation_scope == sleep_scope(bucket, device_id)
-    )
-    intents[device_id] = number
-    if carry_sleep_observation:
-        tracking.off_observation_scope = sleep_scope(bucket, device_id)
+        and tracking.activation_until is not None
+        and dt_util.utcnow() < tracking.activation_until
+        and (caller := asyncio.current_task()) is not None
+    ):
+        tracking.activation_wake = number, caller
     return PowerIntent(hass, coordinator, entry_id, device_id, bucket, number)
 
 
@@ -388,23 +400,30 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     in_flight = False
     cancellation: asyncio.CancelledError | None = None
 
+    scene_intent = bucket.get("scene_preset_intents", {}).get(device_id, 0)
+    needs_home = value == 1 and sleep_wake_needs_home(intent)
+    tracking = bucket.get("sleep_tracking", {}).get(device_id)
+    sleep_wake = value == 1 and (
+        needs_home
+        or (
+            tracking is not None
+            and tracking.activation_wake is not None
+            and tracking.activation_wake[0] == intent.number
+        )
+    )
+
     def check_dispatch() -> None:
         # The writer can resume before the owner catches CancelledError.
         if owner is not None and owner.cancelling():
             raise CommandSuperseded
         intent.check_dispatch()
-        if value == 1:
-            tracking = bucket.get("sleep_tracking", {}).get(device_id)
-            pending = bucket.get("sleep_exit_pending", {}).get(device_id)
-            raw = (coordinator.data or {}).get(device_id, {}).get("scenary")
-            if pending in {"accepted", "unverified", "rejected"} or (
-                str(raw).strip().lower() == SCENARY_SLEEP
-                and tracking
-                and tracking.end
-                and tracking.off_observation_scope == sleep_scope(bucket, device_id)
-                and device_id not in bucket.get("uncertain_power", {})
-            ):
-                raise HomeAssistantError("Confirm Home before turning on the device.")
+        if (
+            sleep_wake
+            and bucket.get("scene_preset_intents", {}).get(device_id, 0) != scene_intent
+        ):
+            raise CommandSuperseded
+        if value == 1 and sleep_wake_needs_home(intent):
+            raise HomeAssistantError("Confirm Home before turning on the device.")
 
     def set_in_flight(value: bool) -> None:
         nonlocal in_flight
@@ -416,6 +435,9 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
 
     if not intent.is_current():
         return False
+    if needs_home:
+        if not await async_prepare_sleep_wake(intent):
+            return False
     command = asyncio.create_task(
         api.send_event(
             modmaquina_payload(device_id, "P1", value),
@@ -447,8 +469,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
         bucket.get("uncertain_power", {}).pop(device_id, None)
         optimistic_set(hass, entry_id, device_id, "power", str(value))
         if value == 1 and (tracking := bucket.get("sleep_tracking", {}).get(device_id)):
-            tracking.evidence_revision += 1
-            tracking.off_observation_scope = None
+            tracking.off_observed = False
         if cancellation is not None:
             request_ambiguous_control_readback(
                 hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
@@ -581,7 +602,6 @@ def sleep_scope(bucket: dict[str, Any], device: str) -> tuple:
     return (
         getattr(tracking, "session_revision", None),
         getattr(tracking, "sleep_started_at_utc", None),
-        getattr(tracking, "evidence_revision", None),
         getattr(tracking, "expected_minutes", None),
         *(
             bucket.get(key, {}).get(device, 0)
@@ -603,9 +623,19 @@ def sleep_cleanup_candidate(
     tracking = bucket.get("sleep_tracking", {}).get(device)
     return bool(
         tracking
-        and tracking.end
         and not tracking.force_exit_requested
-        and tracking.off_observation_scope == sleep_scope(bucket, device)
+        and tracking.off_observed
+        and (
+            tracking.activation_until is None
+            or dt_util.utcnow() >= tracking.activation_until
+        )
+        and not (
+            (wake := tracking.activation_wake) is not None
+            and wake[0] == bucket.get("power_intents", {}).get(device)
+            and not wake[1].done()
+        )
+        and bucket.get("optimistic", {}).get(device, {}).get("scenary", {}).get("value")
+        in {None, SCENARY_SLEEP}
         and str(state.get("scenary")).strip().lower() == SCENARY_SLEEP
         and str(state.get("power")).strip().lower() in {"0", "false", "off"}
         and sleep_off_power_is_certain(bucket, device)
@@ -615,6 +645,68 @@ def sleep_cleanup_candidate(
 
 class SleepExitStatus(str):
     """Identify the specific scene write a subsequent GET may confirm."""
+
+
+def sleep_wake_needs_home(intent: PowerIntent) -> bool:
+    bucket, device = intent.bucket, intent.device_id
+    if bucket.get("sleep_exit_pending", {}).get(device) in {
+        "accepted",
+        "unverified",
+        "rejected",
+        "sleep",
+    }:
+        return True
+    state = (intent.coordinator.data or {}).get(device, {})
+    tracking = bucket.get("sleep_tracking", {}).get(device)
+    if str(state.get("scenary")).strip().lower() != SCENARY_SLEEP and (
+        tracking is None or tracking.last_scenary != SCENARY_SLEEP
+    ):
+        return False
+    wake = tracking.activation_wake if tracking is not None else None
+    return wake is None or wake[0] != intent.number
+
+
+async def async_prepare_sleep_wake(intent: PowerIntent) -> bool:
+    """Confirm Home under the caller's device lock before waking from Sleep."""
+    bucket, device, coordinator = intent.bucket, intent.device_id, intent.coordinator
+    pending = bucket.setdefault("sleep_exit_pending", {})
+    revisions = bucket.get("scene_preset_intents", {})
+    scene_intent = revisions.get(device, 0)
+
+    def check_dispatch() -> None:
+        intent.check_dispatch()
+        if bucket.get("scene_preset_intents", {}).get(device, 0) != scene_intent:
+            raise CommandSuperseded
+
+    if pending.get(device) not in {"accepted", "unverified", "sleep"}:
+        try:
+            await async_write_sleep_home(
+                intent.hass,
+                intent.entry_id,
+                device,
+                coordinator,
+                bucket,
+                check_dispatch,
+            )
+        except CommandSuperseded:
+            return False
+    if not intent.is_current():
+        return False
+    if manager := bucket.get("sync_manager"):
+        if readback := manager.pending_recovery(device):
+            await asyncio.shield(readback)
+    else:
+        await coordinator.async_refresh()
+    try:
+        check_dispatch()
+    except CommandSuperseded:
+        return False
+    if (
+        sleep_wake_needs_home(intent)
+        or (coordinator.data or {}).get(device, {}).get("scenary") != SCENARY_HOME
+    ):
+        raise HomeAssistantError("Confirm Home before turning on the device.")
+    return True
 
 
 async def async_auto_exit_sleep_if_needed(
@@ -628,13 +720,8 @@ async def async_auto_exit_sleep_if_needed(
     allow_away_handling: bool,
     auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
     is_current: Callable[[], bool] | None = None,
-) -> bool | None:
-    """Distinguish a no-longer-due recheck from an attempted scene exit.
-
-    Return True if the locked recheck is no longer due or a newer manual
-    scene request superseded it. Return False if cooldown prevented any
-    send, and None for other handled outcomes.
-    Never replay an ambiguous scene write."""
+) -> None:
+    """Leave Away on request, or clean up eligible OFF Sleep under the device lock."""
     # Never recreate an unloaded entry during a queued Sleep/wake recheck.
     bucket = active_entry_bucket(hass, entry_id, coordinator)
     if bucket is None:
@@ -647,7 +734,6 @@ async def async_auto_exit_sleep_if_needed(
     if reason != "expiry":
         return
     scope = sleep_scope(bucket, device_id)
-    pending = bucket.setdefault("sleep_exit_pending", {})
     deadlines = bucket.setdefault("sleep_exit_retry_after", {})
 
     def check_dispatch() -> None:
@@ -667,43 +753,62 @@ async def async_auto_exit_sleep_if_needed(
     async with acquire_device_lock(hass, entry_id, device_id):
         api = getattr(coordinator, "api", None)
         if api is None or hass.loop.time() < deadlines.get(device_id, 0):
-            return False
-        tracking = bucket.get("sleep_tracking", {}).get(device_id)
-        sent = False
-        status = "unverified"
-
-        def dispatched(value: bool) -> None:
-            nonlocal sent
-            sent = value
-
+            return
         try:
-            check_dispatch()
-            await api.async_set_scenary(
+            await async_write_sleep_home(
+                hass,
+                entry_id,
                 device_id,
-                SCENARY_HOME,
-                retry=False,
-                on_start=check_dispatch,
-                on_in_flight=dispatched,
+                coordinator,
+                bucket,
+                check_dispatch,
+                automatic=True,
             )
-            sent = True
-            status = "accepted"
         except CommandSuperseded:
-            return True
+            return
         except CommandNotSentCooldown as error:
             deadlines[device_id] = error.retry_at
-            return False
-        except asyncio.CancelledError:
-            raise
-        except ClientResponseError as error:
-            if 400 <= error.status < 500:
-                status = "rejected"
-            _LOGGER.warning("Sleep exit not confirmed (HTTP %s)", error.status)
+            return
         except Exception as error:  # noqa: BLE001
-            _LOGGER.warning("Sleep exit remains unverified (%s)", type(error).__name__)
-        finally:
-            if sent and active_entry_bucket(hass, entry_id, coordinator) is bucket:
+            _LOGGER.warning("Sleep exit not confirmed (%s)", type(error).__name__)
+
+
+async def async_write_sleep_home(
+    hass, entry_id, device_id, coordinator, bucket, check_dispatch, *, automatic=False
+) -> None:
+    tracking = bucket.get("sleep_tracking", {}).get(device_id)
+    sent = False
+    status = "unverified"
+
+    def dispatched(value: bool) -> None:
+        nonlocal sent
+        sent = value
+
+    try:
+        check_dispatch()
+        await coordinator.api.async_set_scenary(
+            device_id,
+            SCENARY_HOME,
+            retry=False,
+            on_start=check_dispatch,
+            on_in_flight=dispatched,
+        )
+        sent = True
+        status = "accepted"
+    except ClientResponseError as error:
+        if error.status == 422 and not automatic:
+            sent = False
+        if 400 <= error.status < 500:
+            status = "rejected"
+        raise
+    finally:
+        if sent and active_entry_bucket(hass, entry_id, coordinator) is bucket:
+            if automatic:
                 tracking.force_exit_requested = True
-                pending[device_id] = SleepExitStatus(status)
+            bucket.setdefault("sleep_exit_pending", {})[device_id] = SleepExitStatus(
+                status
+            )
+            if automatic or status != "accepted" or bucket.get("sync_manager"):
                 request_ambiguous_control_readback(
                     hass,
                     coordinator,
@@ -711,7 +816,6 @@ async def async_auto_exit_sleep_if_needed(
                     device_id=device_id,
                     bucket=bucket,
                 )
-        return None if sent else True
 
 
 def parse_float(value: Any, *, precision: int | None = None) -> float | None:

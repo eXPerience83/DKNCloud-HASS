@@ -36,7 +36,7 @@
     "step": {
       "init": {
         "title": "Optionen",
-        "description": "Der experimentelle HEAT_COOL-Modus ist optional und erfordert ein kompatibles Gerät. Die automatische Sleep-Bereinigung erfolgt erst nach Ablauf des ursprünglichen Timers, einer Sicherheitsfrist und einer neuen Meldung, die AUS und Sleep ausdrücklich bestätigt. Zwischenzeitliches AUS/EIN bricht Sleep nicht ab. Deaktivieren bewahrt die Backend-Szene.",
+        "description": "Der experimentelle HEAT_COOL-Modus ist optional und erfordert ein kompatibles Gerät. Die automatische Sleep-Bereinigung stellt Home nach einer AUS-Meldung im laufenden Sleep-Zyklus wieder her. Wer Sleep bei ausgeschaltetem Gerät wählt, hat eine Minute zum Einschalten.",
         "data": {
           "expose_pii_identifiers": "PII-Kennungen anzeigen (erweitert)",
           "enable_heat_cool_mode": "Experimentellen HEAT_COOL-Modus aktivieren (erfordert kompatible Installation; nutzt P7/P3-Routing)",

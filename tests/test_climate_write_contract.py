@@ -675,12 +675,9 @@ def _arm_current_sleep_off_evidence(hass) -> None:
             expected_minutes=5,
         )
     }
-    from custom_components.airzoneclouddaikin.helpers import sleep_scope
 
     bucket = hass.data[DOMAIN]["climate-entry"]
-    bucket["sleep_tracking"]["unit-1"].off_observation_scope = sleep_scope(
-        bucket, "unit-1"
-    )
+    bucket["sleep_tracking"]["unit-1"].off_observed = True
 
 
 async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
@@ -856,7 +853,7 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
             sleep_gets={"unit-1": climate_get_context(bucket)},
             fresh_scenary_ids={"unit-1"},
         )
-        assert entity.coordinator.data["unit-1"]["sleep_off_confirmed"]
+        assert bucket["sleep_tracking"]["unit-1"].off_observed
         manager.request_recovery.reset_mock()
 
         original_acquire = helpers.acquire_device_lock
@@ -2469,7 +2466,7 @@ async def test_sleep_reselection_requires_applied_home_before_new_cycle(
     tracking = bucket["sleep_tracking"]["unit-1"]
     end = tracking.end
     assert end is not None
-    for action in (entity.async_turn_on, entity.async_turn_off, entity.async_turn_on):
+    for action in (entity.async_turn_on, entity.async_turn_off):
         await action()
         assert tracking.end == end
     await entity.async_set_preset_mode("sleep")
@@ -2478,30 +2475,49 @@ async def test_sleep_reselection_requires_applied_home_before_new_cycle(
     assert [c.args[0]["event"]["value"] for c in api.send_event.await_args_list] == [
         1,
         0,
-        1,
     ]
 
 
-async def test_on_requires_current_sleep_evidence(
+async def test_on_confirms_home_before_power(
     hass, dummy_coordinator_factory, monkeypatch
 ):
+    from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
+
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    entry = SimpleNamespace(
+        entry_id="climate-entry", options={"sleep_cleanup_enabled": False}
+    )
     _arm_current_sleep_off_evidence(hass)
-    dispatched = []
+    commands = []
+
+    async def exit_sleep(_device, scene, **callbacks):
+        callbacks["on_start"]()
+        commands.append(scene)
+
+    async def refresh():
+        api.send_event.assert_not_awaited()
+        context = _sleep_get_context(bucket)
+        entity._device["scenary"] = "occupied"
+        _derive_state(
+            hass,
+            entry,
+            entity.coordinator.data,
+            fresh_scenary_ids={"unit-1"},
+            sleep_gets={"unit-1": context},
+        )
 
     async def send(payload, **callbacks):
         callbacks["on_start"]()
-        dispatched.append(payload["event"]["value"])
+        commands.append(payload["event"]["value"])
 
+    api.async_set_scenary = AsyncMock(side_effect=exit_sleep)
     api.send_event.side_effect = send
-    for _ in range(2):
-        with pytest.raises(HomeAssistantError, match="Confirm Home"):
-            await entity.async_turn_on()
-    await entity.async_turn_off()
+    monkeypatch.setattr(entity.coordinator, "async_refresh", refresh, raising=False)
     await entity.async_turn_on()
-    assert dispatched == [1]
+    assert commands == ["occupied", 1]
 
 
 async def test_manual_sleep_exit_422_preserves_prior_pending(
