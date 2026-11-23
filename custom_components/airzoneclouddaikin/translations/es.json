@@ -36,7 +36,7 @@
     "step": {
       "init": {
         "title": "Opciones",
-        "description": "HEAT_COOL experimental es opcional y requiere un equipo compatible. La limpieza automática de Sleep está activada por defecto: cuando se confirma el apagado de una sesión, restaura Home sin encender el equipo. Desactívala para conservar la escena del backend.",
+        "description": "HEAT_COOL experimental es opcional y requiere un equipo compatible. La limpieza automática de Sleep está activada por defecto: solo restaura Home tras el vencimiento del temporizador original, el margen de seguridad y dos observaciones OFF nuevas e independientes. Un OFF/ON intermedio no cancela Sleep. Desactívala para conservar la escena del backend.",
         "data": {
           "expose_pii_identifiers": "Exponer identificadores PII (avanzado)",
           "enable_heat_cool_mode": "Activar modo HEAT_COOL experimental/beta (requiere instalación compatible; usa ruteo P7/P3)",
@@ -84,6 +84,12 @@
           "auth_required": "Reautenticación necesaria",
           "stopped": "Detenido"
         }
+      },
+      "sleep_remaining_estimated": {
+        "name": "Tiempo restante de Sleep (estimado)"
+      },
+      "sleep_estimated_end": {
+        "name": "Fin estimado de Sleep"
       }
     }
   }

@@ -44,6 +44,7 @@ from .const import (
     SCENARY_SLEEP,
     SCENARY_VACANT,
 )
+from .device_state import power_is_on
 
 OptimisticEntry = dict[str, dict[str, dict[str, Any]]]
 
@@ -438,6 +439,9 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     if active:
         bucket.get("uncertain_power", {}).pop(device_id, None)
         optimistic_set(hass, entry_id, device_id, "power", str(value))
+        if value == 1 and (tracking := bucket.get("sleep_tracking", {}).get(device_id)):
+            tracking.evidence_revision += 1
+            tracking.consecutive_off_reports = 0
         if cancellation is not None:
             request_ambiguous_control_readback(
                 hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
@@ -579,6 +583,13 @@ def sleep_scope(bucket: dict[str, Any], device: str) -> tuple:
     )
 
 
+def sleep_off_power_is_certain(bucket: dict[str, Any], device: str) -> bool:
+    overlay = bucket.get("optimistic", {}).get(device, {}).get("power", {})
+    return device not in bucket.get("uncertain_power", {}) and not power_is_on(
+        overlay.get("value")
+    )
+
+
 def sleep_cleanup_candidate(
     bucket: dict[str, Any], device: str, state: Mapping
 ) -> bool:
@@ -591,7 +602,7 @@ def sleep_cleanup_candidate(
         and tracking.off_get_scope == sleep_scope(bucket, device)
         and str(state.get("scenary")).strip().lower() == SCENARY_SLEEP
         and str(state.get("power")).strip().lower() in {"0", "false", "off"}
-        and device not in bucket.get("uncertain_power", {})
+        and sleep_off_power_is_certain(bucket, device)
         and device not in bucket.get("sleep_exit_pending", {})
     )
 

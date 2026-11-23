@@ -36,7 +36,7 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Experimental HEAT_COOL is opt-in and applies only to compatible devices. Automatic Sleep cleanup is enabled by default: when an active session's OFF is independently confirmed, it restores Home without turning the unit on. Disable it to keep the backend scene unchanged.",
+        "description": "Experimental HEAT_COOL is opt-in and applies only to compatible devices. Automatic Sleep cleanup is enabled by default: Home is restored only after the original timer has expired, a settling period has elapsed, and two independent fresh OFF reports agree. Intermediate OFF/ON never cancels Sleep. Disable to keep the backend scene unchanged.",
         "data": {
           "expose_pii_identifiers": "Expose PII identifiers (advanced)",
           "enable_heat_cool_mode": "Enable experimental/beta HEAT_COOL mode (requires compatible installation; uses P7/P3 routing)",
@@ -84,6 +84,12 @@
           "auth_required": "Authentication required",
           "stopped": "Stopped"
         }
+      },
+      "sleep_remaining_estimated": {
+        "name": "Sleep Time Remaining (Estimated)"
+      },
+      "sleep_estimated_end": {
+        "name": "Sleep Expected End"
       }
     }
   }

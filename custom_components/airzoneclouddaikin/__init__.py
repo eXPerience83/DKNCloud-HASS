@@ -57,6 +57,7 @@ from .helpers import (
     expire_optimistic,
     optimistic_set as optimistic_set,
     sleep_cleanup_candidate,
+    sleep_off_power_is_certain,
     sleep_scope,
 )
 from .push_adapter import build_verified_adapter
@@ -627,7 +628,7 @@ def _derive_state(
                     and tracking.end is not None
                     and context[0] > tracking.end + timedelta(seconds=30)
                     and context[1].get(dev_id) == (scope := sleep_scope(bucket, dev_id))
-                    and dev_id not in bucket.get("uncertain_power", {})
+                    and sleep_off_power_is_certain(bucket, dev_id)
                     and dev_id not in pending
                     and (
                         tracking.last_off_get is None
