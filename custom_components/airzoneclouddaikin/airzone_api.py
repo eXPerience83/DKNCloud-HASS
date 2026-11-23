@@ -725,6 +725,7 @@ class AirzoneAPI:
         *,
         retry: bool = True,
         on_start: Callable[[], None] | None = None,
+        on_in_flight: Callable[[bool], None] | None = None,
     ) -> Any:
         """PUT /devices/{id} with bounded 429 retry; never replay ambiguous 5xx.
 
@@ -742,6 +743,7 @@ class AirzoneAPI:
                 json=payload,
                 retry=retry,
                 **({"on_start": on_start} if on_start is not None else {}),
+                **({"on_in_flight": on_in_flight} if on_in_flight is not None else {}),
             )
         except ClientResponseError as cre:
             if cre.status == 401:
@@ -755,6 +757,7 @@ class AirzoneAPI:
         *,
         retry: bool = True,
         on_start: Callable[[], None] | None = None,
+        on_in_flight: Callable[[bool], None] | None = None,
     ) -> Any:
         """Set device scenary using the canonical device fields endpoint."""
 
@@ -763,4 +766,5 @@ class AirzoneAPI:
             {"device": {"scenary": scenary}},
             retry=retry,
             **({"on_start": on_start} if on_start is not None else {}),
+            **({"on_in_flight": on_in_flight} if on_in_flight is not None else {}),
         )

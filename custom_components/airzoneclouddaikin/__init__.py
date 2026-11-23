@@ -16,6 +16,7 @@ import logging
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from math import ceil
 from typing import Any
 
 from aiohttp import ClientResponseError, ClientSession
@@ -46,6 +47,7 @@ from .const import (
 )
 from .device_state import confirm_power_read
 from .helpers import (
+    SleepExitStatus,
     acquire_device_lock,
     active_entry_bucket,
     async_auto_exit_sleep_if_needed,
@@ -54,6 +56,8 @@ from .helpers import (
     device_supports_heat_cool,
     expire_optimistic,
     optimistic_set as optimistic_set,
+    sleep_cleanup_candidate,
+    sleep_scope,
 )
 from .push_adapter import build_verified_adapter
 from .sync_manager import SyncManager
@@ -95,7 +99,9 @@ class SleepTracking:
     sleep_started_at_utc: datetime | None = None
     force_exit_requested: bool = False
     session_revision: int = 0
-    observed_on: bool = False
+    evidence_revision: int = 0
+    last_off_get: datetime | None = None
+    off_get_scope: tuple | None = None
     consecutive_off_reports: int = 0
     start_known: bool = False
     expected_minutes: int | None = None
@@ -103,6 +109,12 @@ class SleepTracking:
     last_confirmed_on_utc: datetime | None = None
     overdue_probe_requested: bool = False
     overdue_recorded: bool = False
+
+    @property
+    def end(self) -> datetime | None:
+        if self.start_known and self.sleep_started_at_utc and self.expected_minutes:
+            return self.sleep_started_at_utc + timedelta(minutes=self.expected_minutes)
+        return None
 
 
 def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> None:
@@ -115,14 +127,12 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.sleep_started_at_utc is None
             or tracking.last_scenary != SCENARY_SLEEP
         ):
-            tracking.start_known = tracking.last_scenary in {
-                SCENARY_HOME,
-                SCENARY_VACANT,
-            }
+            tracking.start_known = False
             tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
             tracking.force_exit_requested = False
-            tracking.observed_on = False
+            tracking.last_off_get = None
+            tracking.off_get_scope = None
             tracking.consecutive_off_reports = 0
             tracking.expected_minutes = None
             tracking.overdue_on_reports = 0
@@ -131,7 +141,8 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.overdue_recorded = False
     else:
         tracking.sleep_started_at_utc = None
-        tracking.observed_on = False
+        tracking.last_off_get = None
+        tracking.off_get_scope = None
         tracking.consecutive_off_reports = 0
         tracking.start_known = False
         tracking.expected_minutes = None
@@ -257,6 +268,17 @@ async def async_migrate_entry(
     return True
 
 
+def _sleep_get_context(bucket):
+    return (
+        dt_util.utcnow(),
+        {
+            device: sleep_scope(bucket, device)
+            for device in bucket.get("sleep_tracking", {})
+        },
+        bucket.get("sleep_exit_pending", {}).copy(),
+    )
+
+
 async def _async_update_data(
     hass: HomeAssistant, entry: ConfigEntry, api: AirzoneAPI
 ) -> dict[str, dict[str, Any]]:
@@ -321,15 +343,19 @@ async def _async_update_data(
             "uncertain_power", {}
         )
 
+        sleep_gets = {}
+
         async def fetch_devices(installation: str):
             markers: dict[str, object] = {}
+            context = None
 
             def dispatched() -> None:
-                nonlocal markers
+                nonlocal markers, context
+                context = _sleep_get_context(domain_bucket)
                 markers = uncertain_power.copy()
 
             devices = await api.fetch_devices(installation, on_start=dispatched)
-            return devices, markers
+            return devices, markers, context
 
         fetches = [fetch_devices(inst_id) for inst_id in installation_ids]
         fetch_results = await asyncio.gather(*fetches, return_exceptions=True)
@@ -371,7 +397,7 @@ async def _async_update_data(
                 )
                 continue
 
-            devices, markers = result
+            devices, markers, context = result
             # None indicates an invalid HTTP 200 device payload, not zero
             # devices. Handle it like an installation fetch failure so an
             # existing snapshot is retained and initial setup fails safely.
@@ -395,6 +421,8 @@ async def _async_update_data(
 
                 dev_id_str = str(dev_id)
                 data[dev_id_str] = dev
+                if context is not None:
+                    sleep_gets[dev_id_str] = context
                 if dev.get("power") is not None:
                     fresh_power_ids.add(dev_id_str)
                 if dev.get("scenary") is not None:
@@ -442,6 +470,7 @@ async def _async_update_data(
             had_non_auth_install_errors,
             fresh_power_ids=fresh_power_ids,
             fresh_scenary_ids=fresh_scenary_ids,
+            sleep_gets=sleep_gets,
         )
 
         return data
@@ -470,6 +499,7 @@ def _derive_state(
     *,
     fresh_power_ids: set[str] | None = None,
     fresh_scenary_ids: set[str] | None = None,
+    sleep_gets=None,
 ):
     """Recompute local scene state for snapshots, push and maintenance ticks."""
     bucket = hass.data[DOMAIN][entry.entry_id]
@@ -481,9 +511,24 @@ def _derive_state(
         for stale_id in tracked_ids - active_ids:
             sleep_tracking.pop(stale_id, None)
     for dev_id, dev in data.items():
+        failed_sites = bucket.get("failed_installations_last_update", ())
+        if bucket.get("device_installation_map", {}).get(dev_id) in failed_sites:
+            if (interrupted := sleep_tracking.get(dev_id)) is not None:
+                interrupted.start_known = False
+                interrupted.consecutive_off_reports = 0
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
+        context = (sleep_gets or {}).get(dev_id)
+        pending = bucket.get("sleep_exit_pending", {})
+        pending_scene = pending.get(dev_id)
         if (
-            raw_scenary in {SCENARY_HOME, SCENARY_VACANT}
+            (
+                not isinstance(pending_scene, SleepExitStatus)
+                or (context is not None and context[2].get(dev_id) is pending_scene)
+            )
+            and (
+                raw_scenary in {SCENARY_HOME, SCENARY_VACANT}
+                or (pending_scene == "sleep" and raw_scenary == SCENARY_SLEEP)
+            )
             and fresh_scenary_ids is not None
             and dev_id in fresh_scenary_ids
         ):
@@ -562,7 +607,9 @@ def _derive_state(
                     # A long telemetry gap starts a new corroboration window;
                     # one resumed ON report cannot reuse an old pair.
                     tracking.overdue_on_reports = 0
-                tracking.observed_on = True
+                tracking.evidence_revision += 1
+                tracking.last_off_get = None
+                tracking.off_get_scope = None
                 tracking.consecutive_off_reports = 0
                 tracking.last_confirmed_on_utc = now
                 if due is not None and now >= due:
@@ -574,16 +621,40 @@ def _derive_state(
             elif power_value in {"0", "false", "off"}:
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
-                if tracking.observed_on and tracking.consecutive_off_reports < 2:
-                    tracking.consecutive_off_reports += 1
+                if (
+                    context is not None
+                    and raw_scenary == SCENARY_SLEEP
+                    and tracking.end is not None
+                    and context[0] > tracking.end + timedelta(seconds=30)
+                    and context[1].get(dev_id) == (scope := sleep_scope(bucket, dev_id))
+                    and dev_id not in bucket.get("uncertain_power", {})
+                    and dev_id not in pending
+                    and (
+                        tracking.last_off_get is None
+                        or context[0] > tracking.last_off_get
+                    )
+                ):
+                    if tracking.off_get_scope != scope:
+                        tracking.consecutive_off_reports = 0
+                    tracking.off_get_scope = scope
+                    tracking.last_off_get = context[0]
+                    tracking.consecutive_off_reports = min(
+                        2, tracking.consecutive_off_reports + 1
+                    )
                     if tracking.consecutive_off_reports == 1:
                         if manager := bucket.get("sync_manager"):
                             manager.request_recovery(dev_id, require_fresh=True)
         dev["sleep_off_confirmed"] = bool(
             active_sleep
-            and tracking.observed_on
+            and tracking.start_known
             and tracking.consecutive_off_reports >= 2
+            and raw_scenary == SCENARY_SLEEP
             and _backend_power_is_off(dev)
+        )
+        end = tracking.end
+        dev["sleep_estimated_end"] = end.isoformat() if end else None
+        dev["sleep_remaining_estimated"] = (
+            max(0, ceil((end - now).total_seconds() / 60)) if end else None
         )
         dev["sleep_start_known"] = bool(active_sleep and tracking.start_known)
 
@@ -884,8 +955,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 if tracking is None or tracking.force_exit_requested:
                     continue
 
-                raw_scenary = str(dev.get("scenary") or "").strip().lower()
-                if raw_scenary != SCENARY_SLEEP or not dev.get("sleep_off_confirmed"):
+                if not sleep_cleanup_candidate(bucket, dev_id, dev):
                     # Only a session-consistent OFF authorizes cleanup.
                     continue
 
@@ -907,7 +977,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     device=dev,
                     coordinator=coordinator,
                     reason="expiry",
-                    is_device_on=lambda: True,
                     allow_away_handling=False,
                 )
                 if not entry_active():
@@ -940,8 +1009,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 dev_id, 0
             ):
                 continue
-            raw_scenary = str(dev.get("scenary") or "").strip().lower()
-            if raw_scenary == SCENARY_SLEEP and dev.get("sleep_off_confirmed"):
+            if sleep_cleanup_candidate(bucket, dev_id, dev):
                 has_candidate = True
                 break
         if not has_candidate:
@@ -1152,12 +1220,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 if remote
                 else set()
             )
+            context = manager.applied_get_context if remote else None
             _derive_state(
                 hass,
                 entry,
                 data,
                 fresh_power_ids=fresh_power_ids,
                 fresh_scenary_ids=fresh_scenary_ids,
+                sleep_gets=dict.fromkeys(manager.touched, context) if context else None,
             )
             bucket["last_data"] = data
             if remote:
@@ -1224,9 +1294,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             if entry_active():
                 hass.config_entries.async_schedule_reload(entry.entry_id)
 
+        observed_generation = 0
+
         @callback
         def sync_mode_changed():
+            nonlocal observed_generation
             if entry_active():
+                if manager.state.generation != observed_generation:
+                    observed_generation = manager.state.generation
+                    for tracking in bucket["sleep_tracking"].values():
+                        tracking.start_known = False
+                        tracking.consecutive_off_reports = 0
                 coordinator.async_update_listeners()
 
         manager = SyncManager(
@@ -1243,6 +1321,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             on_topology_change=topology_changed,
             on_mode_change=sync_mode_changed,
             uncertain_power=bucket.setdefault("uncertain_power", {}),
+            get_context=lambda: _sleep_get_context(bucket),
         )
         bucket["sync_manager"] = manager
 

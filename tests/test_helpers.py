@@ -112,9 +112,19 @@ class DummyApi:
         self.calls: list[tuple[str, str]] = []
 
     async def async_set_scenary(
-        self, device_id: str, scenary: str, *, retry=True
+        self,
+        device_id: str,
+        scenary: str,
+        *,
+        retry=True,
+        on_start=None,
+        on_in_flight=None,
     ) -> None:
         """Record a scenary write."""
+        if on_start:
+            on_start()
+        if on_in_flight:
+            on_in_flight(True)
         self.calls.append((device_id, scenary))
 
 
@@ -148,7 +158,6 @@ async def test_sleep_exit_after_unload_does_not_recreate_entry_or_write(
         device={"scenary": "sleep", "power": "0"},
         coordinator=coordinator,
         reason="turn_on",
-        is_device_on=lambda: False,
         allow_away_handling=False,
     )
     assert api.calls == []
@@ -162,10 +171,10 @@ async def test_sleep_exit_after_unload_does_not_recreate_entry_or_write(
 
 
 @pytest.mark.asyncio
-async def test_auto_exit_sleep_when_expired(
+async def test_wake_preparation_alone_does_not_exit_sleep(
     hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Expired sleep scenary should auto-exit to occupied and schedule refresh."""
+    """An elapsed clock alone must not authorize a scene write."""
     scheduled: list[Callable[[], None]] = []
 
     def _schedule_stub(_hass: Any, _delay: float, _callback: Any) -> Callable[[], None]:
@@ -192,16 +201,11 @@ async def test_auto_exit_sleep_when_expired(
         device=device,
         coordinator=coordinator,
         reason="test",
-        is_device_on=lambda: False,
         allow_away_handling=False,
     )
 
-    assert api.calls == [(device_id, "occupied")]
-    optimistic_bucket = hass.data[DOMAIN][entry_id]["optimistic"]
-    overlay = optimistic_bucket[device_id]["scenary"]["value"]
-    assert overlay == "occupied"
-    assert callable(hass.data[DOMAIN][entry_id]["pending_refresh"])
-    assert scheduled
+    assert api.calls == []
+    assert not scheduled
 
 
 @pytest.mark.asyncio
@@ -234,7 +238,6 @@ async def test_auto_exit_sleep_skips_active_session(
         device=device,
         coordinator=coordinator,
         reason="test",
-        is_device_on=lambda: True,
         allow_away_handling=False,
     )
 
@@ -345,7 +348,7 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     tracking = SleepTracking(
         last_scenary="sleep",
         sleep_started_at_utc=dt_util.utcnow(),
-        observed_on=True,
+        start_known=True,
         consecutive_off_reports=2,
     )
     hass.data.setdefault(DOMAIN, {})["entry"] = {
@@ -356,7 +359,7 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     # A new manual Sleep resets tracking before a coordinator refresh.
     optimistic_set(hass, "entry", "device", "scenary", "sleep")
     assert device["sleep_off_confirmed"]
-    assert not tracking.observed_on
+    assert tracking.consecutive_off_reports == 0
     await async_auto_exit_sleep_if_needed(
         hass,
         entry_id="entry",
@@ -364,7 +367,6 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
         device=device,
         coordinator=coordinator,
         reason="expiry",
-        is_device_on=lambda: True,
         allow_away_handling=False,
     )
     api.async_set_scenary.assert_not_awaited()
@@ -380,11 +382,34 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
     from unittest.mock import AsyncMock
 
     device = {"scenary": "sleep", "sleep_expired": True}
+
+    async def reject(*args, on_start, on_in_flight, **kwargs):
+        on_start()
+        on_in_flight(True)
+        raise TimeoutError
+
     api = DummyApi()
-    api.async_set_scenary = AsyncMock(side_effect=TimeoutError)
+    api.async_set_scenary = AsyncMock(side_effect=reject)
     coordinator = DummyCoordinator(api)
-    coordinator.data = {"device": device}
-    hass.data.setdefault(DOMAIN, {})["entry"] = {"coordinator": coordinator}
+    from datetime import timedelta
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    coordinator.data = {"device": {"scenary": "sleep", "power": "0"}}
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        start_known=True,
+        expected_minutes=5,
+        sleep_started_at_utc=helpers.dt_util.utcnow() - timedelta(minutes=6),
+        consecutive_off_reports=2,
+    )
+
+    coordinator.data = {"device": {**device, "power": "0"}}
+    hass.data.setdefault(DOMAIN, {})["entry"] = {
+        "coordinator": coordinator,
+        "sleep_tracking": {"device": tracking},
+    }
+    tracking.off_get_scope = helpers.sleep_scope(hass.data[DOMAIN]["entry"], "device")
     lock = helpers.acquire_device_lock(hass, "entry", "device")
     await lock.acquire()
     lock_reached = asyncio.Event()
@@ -404,8 +429,7 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
             device_id="device",
             device=device,
             coordinator=coordinator,
-            reason="test",
-            is_device_on=lambda: False,
+            reason="expiry",
             allow_away_handling=False,
         )
 
@@ -422,9 +446,8 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
         # Old GET scene plus unrelated partial push must not replay HOME.
         device["local_temp"] = "23"
         await exit_sleep()
-        api.async_set_scenary.assert_awaited_once_with(
-            "device", "occupied", retry=False
-        )
+        api.async_set_scenary.assert_awaited_once()
+        assert api.async_set_scenary.await_args.args == ("device", "occupied")
         assert (
             hass.data[DOMAIN]["entry"]["sleep_exit_pending"]["device"] == "unverified"
         )
@@ -567,6 +590,7 @@ async def test_sleep_overdue_requires_known_start_and_two_current_on_reports(
     _derive_state(
         hass, entry, home, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
     )
+    hass.data[DOMAIN]["known"]["coordinator"] = SimpleNamespace(data=home)
     optimistic_set(hass, "known", "device", "scenary", "sleep")
     _derive_state(
         hass, entry, sleep, fresh_power_ids={"device"}, fresh_scenary_ids={"device"}
@@ -691,12 +715,32 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
 
     from aiohttp import ClientResponseError
 
+    async def reject(*args, on_start, on_in_flight, **kwargs):
+        on_start()
+        on_in_flight(True)
+        raise ClientResponseError(None, (), status=422)
+
     api = DummyApi()
-    api.async_set_scenary = AsyncMock(
-        side_effect=ClientResponseError(None, (), status=422)
-    )
+    api.async_set_scenary = AsyncMock(side_effect=reject)
     coordinator = DummyCoordinator(api)
-    hass.data.setdefault(DOMAIN, {})["entry"] = {"coordinator": coordinator}
+    from datetime import timedelta
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    coordinator.data = {"device": {"scenary": "sleep", "power": "0"}}
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        start_known=True,
+        expected_minutes=5,
+        sleep_started_at_utc=helpers.dt_util.utcnow() - timedelta(minutes=6),
+        consecutive_off_reports=2,
+    )
+
+    hass.data.setdefault(DOMAIN, {})["entry"] = {
+        "coordinator": coordinator,
+        "sleep_tracking": {"device": tracking},
+    }
+    tracking.off_get_scope = helpers.sleep_scope(hass.data[DOMAIN]["entry"], "device")
     for _ in range(2):
         await async_auto_exit_sleep_if_needed(
             hass,
@@ -704,8 +748,7 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
             device_id="device",
             device={"scenary": "sleep", "sleep_expired": True},
             coordinator=coordinator,
-            reason="test",
-            is_device_on=lambda: False,
+            reason="expiry",
             allow_away_handling=False,
         )
     assert hass.data[DOMAIN]["entry"]["sleep_exit_pending"]["device"] == "rejected"

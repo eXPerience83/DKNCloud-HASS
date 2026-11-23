@@ -25,7 +25,9 @@ class DummyAPI:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    async def put_device_fields(self, device_id: str, payload: dict[str, Any]) -> None:
+    async def put_device_fields(
+        self, device_id: str, payload: dict[str, Any], **_kwargs
+    ) -> None:
         """Record a device-field write."""
         self.calls.append((device_id, payload))
 
@@ -358,9 +360,22 @@ async def test_sleep_time_payload_is_root_level(
         device_data={"sleep_time": 30},
     )
 
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.airzoneclouddaikin import SleepTracking
+
+    tracking = SleepTracking(
+        last_scenary="sleep",
+        start_known=True,
+        expected_minutes=30,
+        sleep_started_at_utc=dt_util.utcnow(),
+    )
+    hass.data[DOMAIN]["entry"]["sleep_tracking"] = {"dev1": tracking}
+    assert tracking.end is not None
     await entity.async_set_native_value(40)
 
     assert api.calls == [("dev1", {"sleep_time": 40})]
+    assert tracking.end is None
 
 
 @pytest.mark.asyncio
