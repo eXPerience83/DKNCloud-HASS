@@ -319,8 +319,9 @@ curl -sS --compressed \
 
 An applied OFF report ends a Sleep cycle that has been ON. The power update
 can be a PUSH patch for an established Sleep session or an existing GET
-whose power field is applied. An old snapshot or local tick cannot establish
-a new OFF report.
+whose power field is applied. After a local Sleep ACK, a power-only PUSH
+can record OFF before Sleep is reported. Cleanup waits for the remote Sleep
+scene. An old snapshot or local tick cannot establish a new OFF report.
 
 A new local OFF/Sleep selection gives the user one minute to turn the device
 on, measured from the accepted scene write. A newly observed external
@@ -333,6 +334,8 @@ OFF already observed in that session.
 The option `sleep_cleanup_enabled` governs automatic Home writes. An explicit
 wake outside the activation window can request Home with either option value.
 Applied Home confirmation after the write is required before sending P1.
+A later manual preset selection supersedes an earlier pending ON, including
+its Home preparation and any dependent HVAC mode write.
 The runtime uses the device lock and dispatch checks and allows at most one
 potentially received automatic scene PUT per session. Ambiguous writes are
 reconciled through the existing readback. The Sleep clock sends no P1.

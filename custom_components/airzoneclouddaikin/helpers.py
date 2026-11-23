@@ -290,6 +290,7 @@ class PowerIntent:
     device_id: str
     bucket: dict[str, Any]
     number: int
+    preset_intent: int | None
 
     def is_active(self) -> bool:
         return (
@@ -301,6 +302,11 @@ class PowerIntent:
         return (
             self.is_active()
             and self.bucket["power_intents"].get(self.device_id) == self.number
+            and (
+                self.preset_intent is None
+                or self.bucket.get("scene_preset_intents", {}).get(self.device_id, 0)
+                == self.preset_intent
+            )
         )
 
     def check_dispatch(self) -> None:
@@ -363,7 +369,12 @@ def reserve_power_intent(
         and (caller := asyncio.current_task()) is not None
     ):
         tracking.activation_wake = number, caller
-    return PowerIntent(hass, coordinator, entry_id, device_id, bucket, number)
+    preset_intent = (
+        bucket.get("scene_preset_intents", {}).get(device_id, 0) if value == 1 else None
+    )
+    return PowerIntent(
+        hass, coordinator, entry_id, device_id, bucket, number, preset_intent
+    )
 
 
 def power_is_uncertain(intent: PowerIntent) -> bool:
@@ -400,28 +411,11 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     in_flight = False
     cancellation: asyncio.CancelledError | None = None
 
-    scene_intent = bucket.get("scene_preset_intents", {}).get(device_id, 0)
-    needs_home = value == 1 and sleep_wake_needs_home(intent)
-    tracking = bucket.get("sleep_tracking", {}).get(device_id)
-    sleep_wake = value == 1 and (
-        needs_home
-        or (
-            tracking is not None
-            and tracking.activation_wake is not None
-            and tracking.activation_wake[0] == intent.number
-        )
-    )
-
     def check_dispatch() -> None:
         # The writer can resume before the owner catches CancelledError.
         if owner is not None and owner.cancelling():
             raise CommandSuperseded
         intent.check_dispatch()
-        if (
-            sleep_wake
-            and bucket.get("scene_preset_intents", {}).get(device_id, 0) != scene_intent
-        ):
-            raise CommandSuperseded
         if value == 1 and sleep_wake_needs_home(intent):
             raise HomeAssistantError("Confirm Home before turning on the device.")
 
@@ -435,7 +429,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
 
     if not intent.is_current():
         return False
-    if needs_home:
+    if value == 1 and sleep_wake_needs_home(intent):
         if not await async_prepare_sleep_wake(intent):
             return False
     command = asyncio.create_task(
@@ -670,13 +664,6 @@ async def async_prepare_sleep_wake(intent: PowerIntent) -> bool:
     """Confirm Home under the caller's device lock before waking from Sleep."""
     bucket, device, coordinator = intent.bucket, intent.device_id, intent.coordinator
     pending = bucket.setdefault("sleep_exit_pending", {})
-    revisions = bucket.get("scene_preset_intents", {})
-    scene_intent = revisions.get(device, 0)
-
-    def check_dispatch() -> None:
-        intent.check_dispatch()
-        if bucket.get("scene_preset_intents", {}).get(device, 0) != scene_intent:
-            raise CommandSuperseded
 
     if pending.get(device) not in {"accepted", "unverified", "sleep"}:
         try:
@@ -686,7 +673,7 @@ async def async_prepare_sleep_wake(intent: PowerIntent) -> bool:
                 device,
                 coordinator,
                 bucket,
-                check_dispatch,
+                intent.check_dispatch,
             )
         except CommandSuperseded:
             return False
@@ -697,9 +684,7 @@ async def async_prepare_sleep_wake(intent: PowerIntent) -> bool:
             await asyncio.shield(readback)
     else:
         await coordinator.async_refresh()
-    try:
-        check_dispatch()
-    except CommandSuperseded:
+    if not intent.is_current():
         return False
     if (
         sleep_wake_needs_home(intent)

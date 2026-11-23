@@ -1197,3 +1197,99 @@ async def test_startup_sleep_uses_applied_power(
         api.send_event.assert_not_called()
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize("newer_away", [True, False], ids=["away-wins", "split-push"])
+async def test_sleep_scene_ordering(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device, newer_away
+):
+    """Keep scene and power ordered across partial reports and queued HA commands."""
+    remote = dict(sample_device)
+    if newer_away:
+        remote.update(scenary="sleep", power="0")
+    api = Mock()
+
+    async def fetch(_installation, *, retry=True, on_start=None):
+        if on_start:
+            on_start()
+        return [dict(remote)]
+
+    async def write_scene(_device, scene, **callbacks):
+        callbacks["on_start"]()
+        remote["scenary"] = scene
+
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=fetch)
+    api.async_set_scenary = AsyncMock(side_effect=write_scene)
+    api.put_device_fields = AsyncMock()
+    api.send_event = AsyncMock()
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory(options={"sleep_cleanup_enabled": not newer_away})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    tasks = []
+    try:
+        bucket = hass.data[DOMAIN][entry.entry_id]
+        manager = bucket["sync_manager"]
+        budget_now = 0.0
+
+        async def elapse(delay):
+            nonlocal budget_now
+            budget_now += delay
+
+        manager._clock = manager._pool._clock = manager._budget._clock = lambda: (
+            budget_now
+        )
+        manager._budget._sleep = elapse
+        climate = er.async_get(hass).async_get_entity_id(
+            "climate", DOMAIN, "dev1_climate"
+        )
+
+        async def service(name, **data):
+            await hass.services.async_call(
+                "climate", name, {"entity_id": climate, **data}, blocking=True
+            )
+
+        if newer_away:
+            async with integration.acquire_device_lock(hass, entry.entry_id, "dev1"):
+                tasks.append(
+                    asyncio.create_task(service("set_hvac_mode", hvac_mode="cool"))
+                )
+                async with asyncio.timeout(2):
+                    while not bucket.get("power_intents", {}).get("dev1"):
+                        await asyncio.sleep(0)
+                tasks.append(
+                    asyncio.create_task(service("set_preset_mode", preset_mode="away"))
+                )
+                async with asyncio.timeout(2):
+                    while not bucket.get("scene_preset_intents", {}).get("dev1"):
+                        await asyncio.sleep(0)
+            await asyncio.wait_for(asyncio.gather(*tasks), 2)
+            api.async_set_scenary.assert_not_awaited()
+            api.put_device_fields.assert_awaited_once()
+            assert api.put_device_fields.await_args.args == (
+                "dev1",
+                {"device": {"scenary": "vacant"}},
+            )
+        else:
+            await service("set_preset_mode", preset_mode="sleep")
+            remote["power"] = "0"
+            await manager.event("dev1", {"power": "0"}, manager.state.generation)
+            api.async_set_scenary.assert_not_awaited()
+            remote["scenary"] = "sleep"
+            await manager.event("dev1", {"scenary": "sleep"}, manager.state.generation)
+            await hass.async_block_till_done()
+            api.async_set_scenary.assert_awaited_once_with(
+                "dev1", "occupied", retry=False, on_start=ANY, on_in_flight=ANY
+            )
+        api.send_event.assert_not_awaited()
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        assert await hass.config_entries.async_unload(entry.entry_id)

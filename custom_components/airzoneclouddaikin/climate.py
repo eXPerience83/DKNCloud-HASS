@@ -266,10 +266,14 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Write an explicitly selected scene."""
-        await self._async_set_preset_mode(preset_mode)
+        await self._async_set_preset_mode(preset_mode, manual=True)
 
     async def _async_set_preset_mode(
-        self, preset_mode: str, *, is_current: Callable[[], bool] | None = None
+        self,
+        preset_mode: str,
+        *,
+        manual: bool,
+        is_current: Callable[[], bool] | None = None,
     ) -> None:
         if preset_mode not in (self.preset_modes or []):
             _LOGGER.debug(
@@ -297,13 +301,16 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         revisions = bucket.setdefault("scene_revisions", {})
         revision = revisions.get(self._device_id, 0)
         intents = bucket.setdefault("scene_preset_intents", {})
-        intent = intents.get(self._device_id, 0) + 1
-        intents[self._device_id] = intent
+        intent = intents.get(self._device_id, 0)
+        # Automatic Home preparation honors the last explicit preset selection.
+        if manual:
+            intent += 1
+            intents[self._device_id] = intent
         lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         async with lock:
             if (
                 not entry_active()
-                or intents.get(self._device_id) != intent
+                or intents.get(self._device_id, 0) != intent
                 or (is_current is not None and not is_current())
             ):
                 # Discard superseded preset requests and power preparations.
@@ -370,7 +377,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             def check_dispatch() -> None:
                 if (
                     not entry_active()
-                    or intents.get(self._device_id) != intent
+                    or intents.get(self._device_id, 0) != intent
                     or (is_current is not None and not is_current())
                 ):
                     raise CommandSuperseded
@@ -426,7 +433,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     ) -> None:
         if self.preset_mode == "away" and (is_current is None or is_current()):
             try:
-                await self._async_set_preset_mode("home", is_current=is_current)
+                await self._async_set_preset_mode(
+                    "home", manual=False, is_current=is_current
+                )
             except Exception as err:
                 _LOGGER.debug("Auto-exit away skipped (%s): %s", reason, err)
 

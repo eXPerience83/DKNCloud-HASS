@@ -678,7 +678,11 @@ def _derive_state(
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
                 if (
-                    raw_scenary == SCENARY_SLEEP
+                    (
+                        raw_scenary == SCENARY_SLEEP
+                        # A local Sleep ACK can precede a separate scene report.
+                        or (from_push and overlay_value == SCENARY_SLEEP)
+                    )
                     and sleep_off_power_is_certain(bucket, dev_id)
                     and current_power_observation
                 ):
