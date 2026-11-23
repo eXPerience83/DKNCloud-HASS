@@ -223,7 +223,7 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             def invalidate_sleep_estimate() -> None:
                 if tracking is not None and entry_active():
                     tracking.start_known = False
-                    tracking.consecutive_off_reports = 0
+                    tracking.off_observation_scope = None
 
             try:
                 await self._api.put_device_fields(

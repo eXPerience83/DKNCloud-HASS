@@ -36,7 +36,7 @@
     "step": {
       "init": {
         "title": "Opções",
-        "description": "O modo HEAT_COOL experimental é opcional e requer um dispositivo compatível. A limpeza automática do Sleep só restaura Home após o fim do temporizador original, uma margem de segurança e duas observações OFF novas e independentes. Desligar e ligar durante a contagem não cancela Sleep. Desative para manter o cenário do servidor.",
+        "description": "O modo HEAT_COOL experimental é opcional e requer um dispositivo compatível. A limpeza automática do Sleep só restaura Home após o fim do temporizador original, uma margem de segurança e uma nova observação que indique explicitamente OFF e Sleep. Desligar e ligar durante a contagem não cancela Sleep. Desative para manter o cenário do servidor.",
         "data": {
           "expose_pii_identifiers": "Expor identificadores PII (avançado)",
           "enable_heat_cool_mode": "Ativar modo HEAT_COOL experimental (requer instalação compatível; utiliza encaminhamento P7/P3)",

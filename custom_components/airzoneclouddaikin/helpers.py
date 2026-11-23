@@ -122,10 +122,7 @@ def optimistic_set(
                 tracking.sleep_started_at_utc = dt_util.utcnow()
                 tracking.last_scenary = SCENARY_SLEEP
                 tracking.force_exit_requested = False
-                tracking.initial_off_get_requested = False
-                tracking.last_off_get = None
-                tracking.off_get_scope = None
-                tracking.consecutive_off_reports = 0
+                tracking.off_observation_scope = None
                 coordinator = _entry_bucket(hass, entry_id).get("coordinator")
                 duration_at_selection = (
                     (getattr(coordinator, "data", None) or {})
@@ -395,7 +392,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
                 str(raw).strip().lower() == SCENARY_SLEEP
                 and tracking
                 and tracking.end
-                and tracking.consecutive_off_reports >= 2
+                and tracking.off_observation_scope is not None
                 and device_id not in bucket.get("uncertain_power", {})
             ):
                 raise HomeAssistantError("Confirm Home before turning on the device.")
@@ -442,7 +439,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
         optimistic_set(hass, entry_id, device_id, "power", str(value))
         if value == 1 and (tracking := bucket.get("sleep_tracking", {}).get(device_id)):
             tracking.evidence_revision += 1
-            tracking.consecutive_off_reports = 0
+            tracking.off_observation_scope = None
         if cancellation is not None:
             request_ambiguous_control_readback(
                 hass, coordinator, entry_id=entry_id, device_id=device_id, bucket=bucket
@@ -599,8 +596,7 @@ def sleep_cleanup_candidate(
         tracking
         and tracking.end
         and not tracking.force_exit_requested
-        and tracking.consecutive_off_reports >= 2
-        and tracking.off_get_scope == sleep_scope(bucket, device)
+        and tracking.off_observation_scope == sleep_scope(bucket, device)
         and str(state.get("scenary")).strip().lower() == SCENARY_SLEEP
         and str(state.get("power")).strip().lower() in {"0", "false", "off"}
         and sleep_off_power_is_certain(bucket, device)

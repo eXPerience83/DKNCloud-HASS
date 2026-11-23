@@ -298,7 +298,8 @@ class SyncManager:
                 if applied_fields.get(key, set()) - {"id", "mac"}:
                     self._last_get[key] = now
                 self._last_received[key] = now
-        self.applied_get_context = context
+        # Distinguish a GET without dispatch context from a PUSH publication.
+        self.applied_get_context = context if context is not None else ()
         try:
             self._publish(deepcopy(self.state.data), True)
         finally:

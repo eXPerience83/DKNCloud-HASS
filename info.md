@@ -318,15 +318,17 @@ curl -sS --compressed \
 
 ### Sleep exit coordination (integration policy)
 
-Cleanup requires a known local start and two distinct GET requests dispatched
-after the estimated deadline plus 30 seconds. Both must apply valid OFF to the
-same current raw Sleep session. PUSH may invalidate a candidate and update the
-display. With cleanup enabled, a PUSH update or local maintenance tick can
-request one initial verification when the deadline has passed and the current
-state indicates OFF. Only the first valid GET requests the second. Home/Away
-and newer power intents supersede
-stale candidates at the device lock and at dispatch. HA uses existing readback
-and request budgets and never sends an automatic P1 from the Sleep clock.
+Cleanup requires a known local start and a single observation with both
+`power=OFF` and `scenary=sleep` explicitly supplied and applied to the current
+session. The PUSH must arrive after the estimated deadline plus 30 seconds.
+An existing GET may supply the observation if it was dispatched after that
+limit and both fields are applied. A partial patch or a cached OFF does not
+supply both fields. Receipt and dispatch times are local and do not establish
+when the device measured its state. Normal synchronization uses INFO and PUSH.
+GET remains available for fallback, recovery, resynchronization, explicit
+refresh and readback. Home/Away and newer power intents supersede stale
+candidates at the device lock and at dispatch. The Sleep clock never sends
+automatic P1. Session persistence is tracked in #243.
 
 The runtime permits at most one potentially received automatic scene PUT
 (`scenary=occupied`) per session. An ACK requests a fresh readback. An applied
@@ -584,9 +586,8 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 - `/events` may return 423 when the device/machine is not ready.
 - Updates are asynchronous. HTTP success acknowledges backend receipt, not physical convergence; recovery snapshots may contain cached state.
 - Automatic synchronization uses a fixed nominal cadence with recovery and backoff. There is no user-selectable refresh interval.
-- In PUSH mode, readbacks after uncertain writes and corroboration of a first
-  Sleep OFF report require a device GET dispatched after the corresponding
-  request for evidence. Quiet-channel watchdog reads can share an in-flight GET.
+- In PUSH mode, readbacks after uncertain writes require a device GET
+  dispatched after the corresponding request for evidence. Quiet-channel watchdog reads can share an in-flight GET.
   A GET waiting on the entry budget, API cooldown or the runtime session's
   connection can serve newer requests once dispatched. A transport without
   writer tracing uses the conservative pre-request boundary. Demands that arrive
@@ -616,8 +617,8 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 
 ### Sleep estimates and evidence limits
 
-`sleep_cleanup_enabled` defaults to true and honors a stored false. When two
-eligible GETs never arrive, Sleep may remain selected until manual intervention.
+`sleep_cleanup_enabled` defaults to true and honors a stored false. Without an eligible
+OFF/Sleep observation, Sleep may remain selected until manual intervention.
 The remaining minutes and optional end timestamp are local estimates. Zero
 does not imply physical OFF or Home. After reload or an uncertain duration
 change, the timer is unknown and cannot authorize automatic cleanup. Timer

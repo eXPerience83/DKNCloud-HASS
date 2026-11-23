@@ -254,25 +254,22 @@ async def async_setup(hass, config):
                     return request(method, url, **kwargs)
 
                 gateway.request = observe_cleanup
-                # Inject the post-confirmation state, not merely a timed-out
-                # Sleep scene. The write barrier must reject the resulting
-                # automatic Home command even when OFF was corroborated.
-                tracking = hass.data[entry.domain][entry.entry_id]["sleep_tracking"][
-                    device
-                ]
+                # Publish a synthetic, complete post-deadline observation
+                # through the same route used by device PUSH.
+                bucket = hass.data[entry.domain][entry.entry_id]
+                manager = bucket["sync_manager"]
+                tracking = bucket["sleep_tracking"][device]
                 tracking.last_scenary = "sleep"
                 tracking.sleep_started_at_utc = (
                     integration.dt_util.utcnow() - timedelta(minutes=6)
                 )
                 tracking.start_known = True
                 tracking.expected_minutes = 5
-                bucket = hass.data[entry.domain][entry.entry_id]
-                tracking.off_get_scope = integration.sleep_scope(bucket, device)
-                tracking.consecutive_off_reports = 2
-                coordinator.data[device].update(
-                    scenary="sleep", power="0", sleep_off_confirmed=True
+                await manager.event(
+                    device,
+                    {"scenary": "sleep", "power": "0", "sleep_time": 5},
+                    manager.state.generation,
                 )
-                coordinator.async_update_listeners()
                 await supervisor.stopped.wait()
                 return
             if real:

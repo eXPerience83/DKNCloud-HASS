@@ -673,13 +673,14 @@ def _arm_current_sleep_off_evidence(hass) -> None:
             sleep_started_at_utc=dt_util.utcnow() - timedelta(minutes=6),
             start_known=True,
             expected_minutes=5,
-            consecutive_off_reports=2,
         )
     }
     from custom_components.airzoneclouddaikin.helpers import sleep_scope
 
     bucket = hass.data[DOMAIN]["climate-entry"]
-    bucket["sleep_tracking"]["unit-1"].off_get_scope = sleep_scope(bucket, "unit-1")
+    bucket["sleep_tracking"]["unit-1"].off_observation_scope = sleep_scope(
+        bucket, "unit-1"
+    )
 
 
 async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
@@ -840,22 +841,21 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
     try:
         await asyncio.wait_for(write_entered.wait(), timeout=2)
         # Realistic OFF telemetry arrives while the manual PUT remains pending.
-        # Two distinct fresh observations satisfy the active-session gate.
+        # One complete applied observation satisfies the active-session gate.
         entity.coordinator.data["unit-1"]["power"] = "0"
         entry = SimpleNamespace(entry_id="climate-entry", options={})
         from custom_components.airzoneclouddaikin import (
             _sleep_get_context as climate_get_context,
         )
 
-        for _ in range(2):
-            _derive_state(
-                hass,
-                entry,
-                entity.coordinator.data,
-                fresh_power_ids={"unit-1"},
-                sleep_gets={"unit-1": climate_get_context(bucket)},
-                fresh_scenary_ids=set(),
-            )
+        _derive_state(
+            hass,
+            entry,
+            entity.coordinator.data,
+            fresh_power_ids={"unit-1"},
+            sleep_gets={"unit-1": climate_get_context(bucket)},
+            fresh_scenary_ids={"unit-1"},
+        )
         assert entity.coordinator.data["unit-1"]["sleep_off_confirmed"]
         manager.request_recovery.reset_mock()
 

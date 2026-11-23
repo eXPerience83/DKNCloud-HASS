@@ -349,7 +349,6 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
         last_scenary="sleep",
         sleep_started_at_utc=dt_util.utcnow(),
         start_known=True,
-        consecutive_off_reports=2,
     )
     hass.data.setdefault(DOMAIN, {})["entry"] = {
         "sleep_tracking": {"device": tracking},
@@ -359,7 +358,7 @@ async def test_rearmed_sleep_ignores_cached_previous_session_off(hass):
     # A new manual Sleep resets tracking before a coordinator refresh.
     optimistic_set(hass, "entry", "device", "scenary", "sleep")
     assert device["sleep_off_confirmed"]
-    assert tracking.consecutive_off_reports == 0
+    assert tracking.off_observation_scope is None
     await async_auto_exit_sleep_if_needed(
         hass,
         entry_id="entry",
@@ -401,7 +400,6 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
         start_known=True,
         expected_minutes=5,
         sleep_started_at_utc=helpers.dt_util.utcnow() - timedelta(minutes=6),
-        consecutive_off_reports=2,
     )
 
     coordinator.data = {"device": {**device, "power": "0"}}
@@ -409,7 +407,9 @@ async def test_sleep_exit_serializes_pending_and_manual_scene(
         "coordinator": coordinator,
         "sleep_tracking": {"device": tracking},
     }
-    tracking.off_get_scope = helpers.sleep_scope(hass.data[DOMAIN]["entry"], "device")
+    tracking.off_observation_scope = helpers.sleep_scope(
+        hass.data[DOMAIN]["entry"], "device"
+    )
     lock = helpers.acquire_device_lock(hass, "entry", "device")
     await lock.acquire()
     lock_reached = asyncio.Event()
@@ -733,14 +733,15 @@ async def test_sleep_rejection_is_distinct_and_not_replayed(hass):
         start_known=True,
         expected_minutes=5,
         sleep_started_at_utc=helpers.dt_util.utcnow() - timedelta(minutes=6),
-        consecutive_off_reports=2,
     )
 
     hass.data.setdefault(DOMAIN, {})["entry"] = {
         "coordinator": coordinator,
         "sleep_tracking": {"device": tracking},
     }
-    tracking.off_get_scope = helpers.sleep_scope(hass.data[DOMAIN]["entry"], "device")
+    tracking.off_observation_scope = helpers.sleep_scope(
+        hass.data[DOMAIN]["entry"], "device"
+    )
     for _ in range(2):
         await async_auto_exit_sleep_if_needed(
             hass,

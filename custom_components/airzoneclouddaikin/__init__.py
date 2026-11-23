@@ -101,10 +101,7 @@ class SleepTracking:
     force_exit_requested: bool = False
     session_revision: int = 0
     evidence_revision: int = 0
-    last_off_get: datetime | None = None
-    initial_off_get_requested: bool = False
-    off_get_scope: tuple | None = None
-    consecutive_off_reports: int = 0
+    off_observation_scope: tuple | None = None
     start_known: bool = False
     expected_minutes: int | None = None
     overdue_on_reports: int = 0
@@ -133,10 +130,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.session_revision += 1
             tracking.sleep_started_at_utc = now
             tracking.force_exit_requested = False
-            tracking.initial_off_get_requested = False
-            tracking.last_off_get = None
-            tracking.off_get_scope = None
-            tracking.consecutive_off_reports = 0
+            tracking.off_observation_scope = None
             tracking.expected_minutes = None
             tracking.overdue_on_reports = 0
             tracking.last_confirmed_on_utc = None
@@ -144,10 +138,7 @@ def _update_sleep_tracking_for_device(tracking: SleepTracking, scenary: str) -> 
             tracking.overdue_recorded = False
     else:
         tracking.sleep_started_at_utc = None
-        tracking.initial_off_get_requested = False
-        tracking.last_off_get = None
-        tracking.off_get_scope = None
-        tracking.consecutive_off_reports = 0
+        tracking.off_observation_scope = None
         tracking.start_known = False
         tracking.expected_minutes = None
         tracking.overdue_on_reports = 0
@@ -504,6 +495,7 @@ def _derive_state(
     fresh_power_ids: set[str] | None = None,
     fresh_scenary_ids: set[str] | None = None,
     sleep_gets=None,
+    from_push: bool = False,
 ):
     """Recompute local scene state for snapshots, push and maintenance ticks."""
     bucket = hass.data[DOMAIN][entry.entry_id]
@@ -519,7 +511,7 @@ def _derive_state(
         if bucket.get("device_installation_map", {}).get(dev_id) in failed_sites:
             if (interrupted := sleep_tracking.get(dev_id)) is not None:
                 interrupted.start_known = False
-                interrupted.consecutive_off_reports = 0
+                interrupted.off_observation_scope = None
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
         context = (sleep_gets or {}).get(dev_id)
         pending = bucket.get("sleep_exit_pending", {})
@@ -610,9 +602,7 @@ def _derive_state(
                     # one resumed ON report cannot reuse an old pair.
                     tracking.overdue_on_reports = 0
                 tracking.evidence_revision += 1
-                tracking.last_off_get = None
-                tracking.off_get_scope = None
-                tracking.consecutive_off_reports = 0
+                tracking.off_observation_scope = None
                 tracking.last_confirmed_on_utc = now
                 if due is not None and now >= due:
                     tracking.overdue_on_reports = min(
@@ -623,63 +613,32 @@ def _derive_state(
             elif power_value in {"0", "false", "off"}:
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
+                end = tracking.end
                 if (
-                    context is not None
+                    end is not None
+                    and fresh_scenary_ids is not None
+                    and dev_id in fresh_scenary_ids
                     and raw_scenary == SCENARY_SLEEP
-                    and tracking.end is not None
-                    and context[0] > tracking.end + timedelta(seconds=30)
-                    and context[1].get(dev_id) == (scope := sleep_scope(bucket, dev_id))
                     and sleep_off_power_is_certain(bucket, dev_id)
                     and dev_id not in pending
-                    and (
-                        tracking.last_off_get is None
-                        or context[0] > tracking.last_off_get
-                    )
                 ):
-                    if tracking.off_get_scope != scope:
-                        tracking.consecutive_off_reports = 0
-                    tracking.off_get_scope = scope
-                    tracking.last_off_get = context[0]
-                    tracking.consecutive_off_reports = min(
-                        2, tracking.consecutive_off_reports + 1
-                    )
-                    if tracking.consecutive_off_reports == 1:
-                        if manager := bucket.get("sync_manager"):
-                            manager.request_recovery(dev_id, require_fresh=True)
-        dev["sleep_off_confirmed"] = bool(
-            active_sleep
-            and tracking.start_known
-            and tracking.consecutive_off_reports >= 2
+                    scope = sleep_scope(bucket, dev_id)
+                    deadline = end + timedelta(seconds=30)
+                    if (from_push and now > deadline) or (
+                        context is not None
+                        and context[0] > deadline
+                        and context[1].get(dev_id) == scope
+                    ):
+                        tracking.off_observation_scope = scope
+        dev["sleep_off_confirmed"] = (
+            tracking.off_observation_scope == sleep_scope(bucket, dev_id)
+            and tracking.end is not None
             and raw_scenary == SCENARY_SLEEP
             and _backend_power_is_off(dev)
+            and sleep_off_power_is_certain(bucket, dev_id)
         )
         end = tracking.end
         dev["sleep_estimated_end"] = end.isoformat() if end else None
-        if (
-            context is None
-            and end is not None
-            and now > end + timedelta(seconds=30)
-            and entry.options.get(CONF_SLEEP_CLEANUP_ENABLED, True)
-            and raw_scenary == SCENARY_SLEEP
-            and overlay_value in {None, SCENARY_SLEEP}
-            and _backend_power_is_off(dev)
-            and sleep_off_power_is_certain(bucket, dev_id)
-            and not tracking.consecutive_off_reports
-            and not tracking.initial_off_get_requested
-            and not tracking.force_exit_requested
-            and dev_id not in pending
-            and (
-                (lock := bucket.get("device_locks", {}).get(dev_id)) is None
-                or not lock.locked()
-            )
-            and (manager := bucket.get("sync_manager")) is not None
-            and active_entry_bucket(hass, entry.entry_id, bucket.get("coordinator"))
-            is bucket
-        ):
-            # Cached OFF can trigger verification but cannot count as a vote.
-            # Mark before requesting so later PUSH and ticks cannot move the demand.
-            tracking.initial_off_get_requested = True
-            manager.request_recovery(dev_id, require_fresh=True)
         dev["sleep_remaining_estimated"] = (
             max(0, ceil((end - now).total_seconds() / 60)) if end else None
         )
@@ -1255,6 +1214,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 fresh_power_ids=fresh_power_ids,
                 fresh_scenary_ids=fresh_scenary_ids,
                 sleep_gets=dict.fromkeys(manager.touched, context) if context else None,
+                from_push=remote and context is None,
             )
             bucket["last_data"] = data
             if remote:
@@ -1331,7 +1291,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     observed_generation = manager.state.generation
                     for tracking in bucket["sleep_tracking"].values():
                         tracking.start_known = False
-                        tracking.consecutive_off_reports = 0
+                        tracking.off_observation_scope = None
                 coordinator.async_update_listeners()
 
         manager = SyncManager(
@@ -1360,10 +1320,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         coordinator.update_interval = None
 
         async def refresh_sync():
-            # The manager publishes and derives each successful GET exactly
-            # once. Deriving the same touched fields again here would count
-            # one OFF as two independent observations, authorizing unsafe
-            # Sleep cleanup. Return the already derived publication instead.
+            # Reuse the publication derived with the GET's dispatch context.
             if not entry_active():
                 raise asyncio.CancelledError
             data = await manager.refresh()
