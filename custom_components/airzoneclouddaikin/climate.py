@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+from aiohttp import ClientResponseError
 from homeassistant.components.climate import ClimateEntity
 from homeassistant.components.climate.const import ClimateEntityFeature, HVACMode
 from homeassistant.const import ATTR_TEMPERATURE, PRECISION_WHOLE, UnitOfTemperature
@@ -320,19 +321,25 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 # after the request was queued; do not overwrite it.
                 return
             raw_sleep = str(self._device.get("scenary") or "").lower() == "sleep"
+            tracking = bucket.get("sleep_tracking", {}).get(self._device_id)
+            in_sleep = raw_sleep or (
+                tracking is not None and tracking.last_scenary == "sleep"
+            )
             pending = bucket.setdefault("sleep_exit_pending", {})
             if preset_mode == "sleep":
                 if self._device_id in pending:
                     raise HomeAssistantError(
                         "Confirm the current scene before selecting Sleep."
                     )
-                if raw_sleep or self.preset_mode == "sleep":
+                if in_sleep or self.preset_mode == "sleep":
                     return
             elif self.preset_mode == preset_mode:
                 status = pending.get(self._device_id)
-                if status == "accepted" or (status is None and not raw_sleep):
+                if status == "accepted" or (status is None and not in_sleep):
                     return
-            exits_raw_sleep = raw_sleep and preset_mode in {"home", "away"}
+            exits_sleep = preset_mode in {"home", "away"} and (
+                in_sleep or self._device_id in pending
+            )
 
             def request_readback() -> None:
                 request_ambiguous_control_readback(
@@ -372,14 +379,20 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 await api.put_device_fields(
                     self._device_id,
                     {"device": {"scenary": scenary}},
-                    **({"retry": False} if exits_raw_sleep else {}),
+                    **({"retry": False} if exits_sleep else {}),
                     on_start=check_dispatch,
                 )
             except CommandSuperseded:
                 return
             except (Exception, asyncio.CancelledError) as error:
+                if (
+                    exits_sleep
+                    and isinstance(error, ClientResponseError)
+                    and error.status == 422
+                ):
+                    raise
                 if entry_active() and not isinstance(error, CommandNotSentCooldown):
-                    if exits_raw_sleep:
+                    if exits_sleep:
                         fence_ambiguous_scene()
                     elif preset_mode == "sleep":
                         pending[self._device_id] = SleepExitStatus("sleep")
@@ -397,7 +410,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             )
             record_preset_write()
             self.async_write_ha_state()
-            if exits_raw_sleep:
+            if exits_sleep:
                 # A scene ACK still needs applied remote readback.
                 pending[self._device_id] = SleepExitStatus("accepted")
                 request_readback()
@@ -695,7 +708,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self.coordinator,
             self._entry_id,
             self._device_id,
-            delegated_value=1,
+            value=1,
             service_context=self._context,
         )
         if intent is None:
@@ -736,7 +749,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             self.coordinator,
             self._entry_id,
             self._device_id,
-            delegated_value=0,
+            value=0,
             service_context=self._context,
         )
         if intent is None:
@@ -771,7 +784,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
         if hvac_mode == HVACMode.OFF:
             intent = reserve_power_intent(
-                self.hass, self.coordinator, self._entry_id, self._device_id
+                self.hass, self.coordinator, self._entry_id, self._device_id, value=0
             )
             if intent is None:
                 return
@@ -827,7 +840,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         # A mode selection may implicitly power on the unit. Fence this P1
         # against newer direct power commands before scene preparation awaits.
         intent = reserve_power_intent(
-            self.hass, self.coordinator, self._entry_id, self._device_id
+            self.hass, self.coordinator, self._entry_id, self._device_id, value=1
         )
         if intent is None:
             return

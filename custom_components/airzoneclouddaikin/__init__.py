@@ -296,6 +296,7 @@ async def _async_update_data(
         data: dict[str, dict[str, Any]] = {}
         fresh_power_ids: set[str] = set()
         fresh_scenary_ids: set[str] = set()
+        fresh_duration_ids: set[str] = set()
         relations = await api.fetch_installations()
         check_owner()
         # Malformed installation responses are transient failures, not an
@@ -420,6 +421,8 @@ async def _async_update_data(
                     sleep_gets[dev_id_str] = context
                 if dev.get("power") is not None:
                     fresh_power_ids.add(dev_id_str)
+                if dev.get("sleep_time") is not None:
+                    fresh_duration_ids.add(dev_id_str)
                 if dev.get("scenary") is not None:
                     fresh_scenary_ids.add(dev_id_str)
                 inst_device_ids.add(dev_id_str)
@@ -466,6 +469,7 @@ async def _async_update_data(
             fresh_power_ids=fresh_power_ids,
             fresh_scenary_ids=fresh_scenary_ids,
             sleep_gets=sleep_gets,
+            fresh_duration_ids=fresh_duration_ids,
         )
 
         return data
@@ -494,6 +498,7 @@ def _derive_state(
     *,
     fresh_power_ids: set[str] | None = None,
     fresh_scenary_ids: set[str] | None = None,
+    fresh_duration_ids: set[str] | None = None,
     sleep_gets=None,
     from_push: bool = False,
 ):
@@ -522,7 +527,14 @@ def _derive_state(
                 or (context is not None and context[2].get(dev_id) is pending_scene)
             )
             and (
-                raw_scenary in {SCENARY_HOME, SCENARY_VACANT}
+                raw_scenary == SCENARY_HOME
+                or (
+                    raw_scenary == SCENARY_VACANT
+                    and (
+                        pending_scene == "sleep"
+                        or not isinstance(pending_scene, SleepExitStatus)
+                    )
+                )
                 or (pending_scene == "sleep" and raw_scenary == SCENARY_SLEEP)
             )
             and fresh_scenary_ids is not None
@@ -549,7 +561,7 @@ def _derive_state(
             # erase a new, still-pending manual Sleep/scene selection.
             _update_sleep_tracking_for_device(tracking, raw_scenary)
 
-        # Only independently dispatched and applied GETs count as OFF evidence.
+        # A complete applied PUSH or eligible GET can establish OFF evidence.
         active_sleep = (
             tracking.last_scenary == SCENARY_SLEEP
             and tracking.sleep_started_at_utc is not None
@@ -558,7 +570,19 @@ def _derive_state(
         if active_sleep and sleep_time_minutes is not None:
             if tracking.expected_minutes is None:
                 tracking.expected_minutes = sleep_time_minutes
-            elif tracking.expected_minutes != sleep_time_minutes:
+            elif (
+                tracking.expected_minutes != sleep_time_minutes
+                and fresh_duration_ids is not None
+                and dev_id in fresh_duration_ids
+                and (
+                    from_push
+                    or (
+                        context is not None
+                        and (at_dispatch := context[1].get(dev_id)) is not None
+                        and at_dispatch[0] == tracking.session_revision
+                    )
+                )
+            ):
                 # A changed timer may or may not reschedule the physical unit.
                 # Do not infer an overdue physical timer from such a session.
                 tracking.start_known = False
@@ -1192,28 +1216,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
         def publish_sync(data, remote):
             if not entry_active():
                 return
-            fresh_power_ids = (
-                {device for device, keys in manager.touched.items() if "power" in keys}
-                if remote
-                else set()
-            )
-            fresh_scenary_ids = (
-                {
-                    device
-                    for device, keys in manager.touched.items()
-                    if "scenary" in keys
-                }
-                if remote
-                else set()
-            )
+            touched = manager.touched if remote else {}
             context = manager.applied_get_context if remote else None
             _derive_state(
                 hass,
                 entry,
                 data,
-                fresh_power_ids=fresh_power_ids,
-                fresh_scenary_ids=fresh_scenary_ids,
-                sleep_gets=dict.fromkeys(manager.touched, context) if context else None,
+                fresh_power_ids={
+                    dev for dev, keys in touched.items() if "power" in keys
+                },
+                fresh_scenary_ids={
+                    dev for dev, keys in touched.items() if "scenary" in keys
+                },
+                fresh_duration_ids={
+                    dev for dev, keys in touched.items() if "sleep_time" in keys
+                },
+                sleep_gets=dict.fromkeys(touched, context) if context else None,
                 from_push=remote and context is None,
             )
             bucket["last_data"] = data

@@ -99,7 +99,8 @@ duration is known. Selecting Sleep while OFF does not turn the device on.
 Reselecting Sleep preserves the current cycle. Intermediate OFF and ON do not
 change the scene or its estimate. To restart a cycle, select Home, wait for
 applied confirmation, then select Sleep again. Home and Away remain explicit
-manual overrides.
+manual overrides. A rejected (HTTP 422) exit leaves the prior scene fence intact.
+A cached duration cannot invalidate a newly accepted local estimate.
 
 
 ### Automatic synchronization policy (not a backend contract)

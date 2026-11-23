@@ -2435,7 +2435,7 @@ async def test_sleep_reselection_requires_applied_home_before_new_cycle(
     from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
 
     entity, api = _climate(
-        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+        hass, dummy_coordinator_factory, monkeypatch, scenary="occupied", power="0"
     )
     bucket = hass.data[DOMAIN]["climate-entry"]
     data = entity.coordinator.data
@@ -2443,9 +2443,11 @@ async def test_sleep_reselection_requires_applied_home_before_new_cycle(
     entry = SimpleNamespace(entry_id="climate-entry", options={})
     _derive_state(hass, entry, data)
     await entity.async_set_preset_mode("sleep")
-    api.put_device_fields.assert_not_awaited()
+    api.put_device_fields.assert_awaited_once()
     old = _sleep_get_context(bucket)
     await entity.async_set_preset_mode("home")
+    with pytest.raises(HomeAssistantError, match="Confirm"):
+        await entity.async_set_preset_mode("sleep")
     data["unit-1"]["scenary"] = "occupied"
     _derive_state(
         hass, entry, data, fresh_scenary_ids={"unit-1"}, sleep_gets={"unit-1": old}
@@ -2462,7 +2464,7 @@ async def test_sleep_reselection_requires_applied_home_before_new_cycle(
     await entity.async_set_preset_mode("sleep")
     assert [
         c.args[1]["device"]["scenary"] for c in api.put_device_fields.await_args_list
-    ] == ["occupied", "sleep"]
+    ] == ["sleep", "occupied", "sleep"]
     api.send_event.assert_not_awaited()
     tracking = bucket["sleep_tracking"]["unit-1"]
     end = tracking.end
@@ -2472,9 +2474,54 @@ async def test_sleep_reselection_requires_applied_home_before_new_cycle(
         assert tracking.end == end
     await entity.async_set_preset_mode("sleep")
     assert tracking.end == end
-    assert api.put_device_fields.await_count == 2
+    assert api.put_device_fields.await_count == 3
     assert [c.args[0]["event"]["value"] for c in api.send_event.await_args_list] == [
         1,
         0,
         1,
     ]
+
+
+async def test_on_requires_current_sleep_evidence(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    _arm_current_sleep_off_evidence(hass)
+    dispatched = []
+
+    async def send(payload, **callbacks):
+        callbacks["on_start"]()
+        dispatched.append(payload["event"]["value"])
+
+    api.send_event.side_effect = send
+    for _ in range(2):
+        with pytest.raises(HomeAssistantError, match="Confirm Home"):
+            await entity.async_turn_on()
+    await entity.async_turn_off()
+    await entity.async_turn_on()
+    assert dispatched == [1]
+
+
+async def test_manual_sleep_exit_422_preserves_prior_pending(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    from aiohttp import ClientResponseError
+
+    from custom_components.airzoneclouddaikin.helpers import SleepExitStatus
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    api.put_device_fields.side_effect = ClientResponseError(Mock(), (), status=422)
+    with pytest.raises(ClientResponseError):
+        await entity.async_set_preset_mode("home")
+    pending = bucket["sleep_exit_pending"]
+    assert not pending
+    previous = SleepExitStatus("unverified")
+    pending["unit-1"] = previous
+    with pytest.raises(ClientResponseError):
+        await entity.async_set_preset_mode("home")
+    assert pending["unit-1"] is previous

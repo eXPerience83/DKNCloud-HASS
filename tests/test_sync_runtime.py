@@ -580,8 +580,8 @@ async def test_complete_late_push_authorizes_cleanup_when_sleep_starts_off(
     manager = bucket["sync_manager"]
     generation = manager.state.generation
 
-    off = {**sample_device, "scenary": "sleep", "power": "0", "sleep_time": 5}
-    manager.state.data["dev1"]["sleep_time"] = 5
+    off = {**sample_device, "scenary": "sleep", "power": "0", "sleep_time": 30}
+    manager.state.data["dev1"]["sleep_time"] = 30
 
     async def fetch(_installation, *, retry=True, on_start=None):
         if on_start:
@@ -608,11 +608,35 @@ async def test_complete_late_push_authorizes_cleanup_when_sleep_starts_off(
     assert remaining is not None and hass.states.get(remaining).state == "unknown"
     assert end is not None and registry.async_get(end).disabled
 
-    integration.optimistic_set(hass, entry.entry_id, "dev1", "scenary", "sleep")
+    await manager.event("dev1", {"scenary": "occupied"}, generation)
+    old_get = integration._sleep_get_context(bucket)
+    api.put_device_fields = AsyncMock(return_value={})
+    number_id = registry.async_get_entity_id("number", DOMAIN, "dev1_sleep_time")
+    await hass.services.async_call(
+        "number", "set_value", {"entity_id": number_id, "value": 40}, blocking=True
+    )
+    climate_id = registry.async_get_entity_id("climate", DOMAIN, "dev1_climate")
+    await hass.services.async_call(
+        "climate",
+        "set_preset_mode",
+        {"entity_id": climate_id, "preset_mode": "sleep"},
+        blocking=True,
+    )
     track = bucket["sleep_tracking"]["dev1"]
+    manager.maintenance()
+    assert track.start_known and track.expected_minutes == 40
+    integration._derive_state(
+        hass,
+        entry,
+        manager.state.data,
+        fresh_duration_ids={"dev1"},
+        sleep_gets={"dev1": old_get},
+    )
+    assert track.start_known
+    off["sleep_time"] = 40
     await manager._read("fake")
     assert track.off_observation_scope is None
-    assert hass.states.get(remaining).state == "5"
+    assert hass.states.get(remaining).state == "40"
     now = track.end + timedelta(seconds=29)
     await manager.event("dev1", {"power": "0", "scenary": "sleep"}, generation)
     assert track.off_observation_scope is None

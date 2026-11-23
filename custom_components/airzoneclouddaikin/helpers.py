@@ -317,14 +317,14 @@ def reserve_power_intent(
     entry_id: str,
     device_id: str,
     *,
-    delegated_value: int | None = None,
+    value: int,
     service_context: Context | None = None,
 ) -> PowerIntent | None:
     """Record the request before waiting for a device lock or scene preparation."""
     if (
         (delegated := delegated_power_intent.get()) is not None
         and delegated.caller is None
-        and delegated.value == delegated_value
+        and delegated.value == value
         and delegated.context is service_context
         and delegated.intent.entry_id == entry_id
         and delegated.intent.device_id == device_id
@@ -341,7 +341,16 @@ def reserve_power_intent(
         return None
     intents: dict[str, int] = bucket.setdefault("power_intents", {})
     number = intents.get(device_id, 0) + 1
+    tracking = bucket.get("sleep_tracking", {}).get(device_id)
+    # A wake still requires Home if its own reservation is the only change.
+    carry_sleep_observation = (
+        value == 1
+        and tracking is not None
+        and tracking.off_observation_scope == sleep_scope(bucket, device_id)
+    )
     intents[device_id] = number
+    if carry_sleep_observation:
+        tracking.off_observation_scope = sleep_scope(bucket, device_id)
     return PowerIntent(hass, coordinator, entry_id, device_id, bucket, number)
 
 
@@ -392,7 +401,7 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
                 str(raw).strip().lower() == SCENARY_SLEEP
                 and tracking
                 and tracking.end
-                and tracking.off_observation_scope is not None
+                and tracking.off_observation_scope == sleep_scope(bucket, device_id)
                 and device_id not in bucket.get("uncertain_power", {})
             ):
                 raise HomeAssistantError("Confirm Home before turning on the device.")
