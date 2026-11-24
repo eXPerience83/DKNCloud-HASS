@@ -2804,9 +2804,7 @@ async def test_ambiguous_away_exit_preserves_sleep_entry_readback(
     ]
 
     device["scenary"] = "vacant"
-    _derive_state(
-        hass, entry, data, fresh_scenary_ids={"unit-1"}, from_push=True
-    )
+    _derive_state(hass, entry, data, fresh_scenary_ids={"unit-1"}, from_push=True)
     _derive_state(
         hass,
         entry,
