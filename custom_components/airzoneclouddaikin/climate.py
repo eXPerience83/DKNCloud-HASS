@@ -412,13 +412,6 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         async with lock:
             if not can_adjust():
                 return
-            temp = clamp_temperature(
-                requested,
-                min_temp=self.min_temp,
-                max_temp=self.max_temp,
-                step=1,
-            )
-            temp_int = int(round(float(temp)))
             if await async_exit_away(
                 self.hass,
                 self.coordinator,
@@ -431,6 +424,13 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 self.async_write_ha_state()
             if not can_adjust():
                 return
+            temp = clamp_temperature(
+                requested,
+                min_temp=self.min_temp,
+                max_temp=self.max_temp,
+                step=1,
+            )
+            temp_int = int(round(float(temp)))
             if mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
                 await self._send_p_event("P7", f"{temp_int}.0")
                 if self._active_entry_bucket() is not bucket:
@@ -621,15 +621,16 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             self.async_write_ha_state()
 
+        def power_matches() -> bool:
+            if hvac_off:
+                return not self._device_power_on()
+            power = self._overlay_value("power", self._device.get("power"))
+            matching = {"1", "true", "on"} if value else {"0", "false", "off", ""}
+            return str(power or "").strip().lower() in matching
+
         async with acquire_device_lock(self.hass, self._entry_id, self._device_id):
             if not intent.is_current():
                 return
-            if hvac_off:
-                power_matches = not self._device_power_on()
-            else:
-                power = self._overlay_value("power", self._device.get("power"))
-                matching = {"1", "true", "on"} if value else {"0", "false", "off", ""}
-                power_matches = str(power or "").strip().lower() in matching
             changed = await async_set_manual_power(
                 intent, value, power_matches=power_matches, on_write=publish_power_state
             )
