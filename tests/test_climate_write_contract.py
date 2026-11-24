@@ -1571,8 +1571,8 @@ async def test_on_rechecks_power_after_away_ack(
 
     api.put_device_fields.side_effect = home
     api.send_event.side_effect = power
-    climate_module.schedule_post_write_refresh.side_effect = (
-        lambda *_args, **_kwargs: order.append("refresh")
+    climate_module.schedule_post_write_refresh.side_effect = lambda *_args, **_kwargs: (
+        order.append("refresh")
     )
     if platform == "climate":
         await climate.async_turn_on()
@@ -1594,7 +1594,9 @@ async def test_temperature_clamps_after_away_ack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A remote limit update during Home preparation constrains the setpoint."""
-    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, scenary="vacant")
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="vacant"
+    )
 
     async def home(_device_id, payload, *, on_start, **_kwargs):
         on_start()
