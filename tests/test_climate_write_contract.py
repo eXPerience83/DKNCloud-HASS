@@ -1605,6 +1605,83 @@ async def test_reselect_active_mode_waits_for_inflight_away_ack(
     assert entity.preset_mode == "home"
 
 
+@pytest.mark.parametrize(
+    ("action", "target_power"),
+    [
+        ("climate_off", 0),
+        ("hvac_off", 0),
+        ("switch_off", 0),
+        ("switch_on", 1),
+    ],
+)
+@pytest.mark.parametrize("initial_power", ["0", "1"])
+async def test_manual_power_controls_leave_away(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    target_power: int,
+    initial_power: str,
+) -> None:
+    """Every supported manual power path cancels Away, even without a P1."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        power=initial_power,
+        scenary="vacant",
+    )
+    monkeypatch.setattr(
+        climate_module,
+        "async_auto_exit_sleep_if_needed",
+        async_auto_exit_sleep_if_needed,
+    )
+    switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    monkeypatch.setattr(switch, "_resolve_climate_entity_id", lambda: None)
+    monkeypatch.setattr(switch, "async_write_ha_state", Mock())
+    monkeypatch.setattr(
+        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        Mock(),
+    )
+
+    async def accept_write(_payload, *, on_start, **_kwargs):
+        on_start()
+
+    async def accept_scene(_device_id, _payload, *, on_start, **_kwargs):
+        on_start()
+
+    api.send_event.side_effect = accept_write
+    api.put_device_fields.side_effect = accept_scene
+    if action == "climate_off":
+        await entity.async_turn_off()
+    elif action == "hvac_off":
+        await entity.async_set_hvac_mode(HVACMode.OFF)
+    elif action == "switch_off":
+        await switch.async_turn_off()
+    else:
+        await switch.async_turn_on()
+
+    commands = [
+        (event["option"], event["value"])
+        for c in api.send_event.await_args_list
+        if (event := c.args[0]["event"])
+    ]
+    expected = [] if initial_power == str(target_power) else [("P1", target_power)]
+    assert commands == expected
+    assert [
+        c.args[1] for c in api.put_device_fields.await_args_list
+    ] == [{"device": {"scenary": "occupied"}}]
+    assert entity.preset_mode == "home"
+    assert entity._device_power_on() is bool(target_power)
+    assert switch.is_on is bool(target_power)
+
+
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
