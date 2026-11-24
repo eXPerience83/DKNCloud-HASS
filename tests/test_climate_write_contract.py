@@ -1685,6 +1685,65 @@ async def test_off_takes_priority_over_away_exit(
     assert not switch.is_on
 
 
+@pytest.mark.parametrize("platform", ["climate", "hvac_off", "switch"])
+@pytest.mark.parametrize("home_fails", [False, True])
+async def test_off_publishes_power_before_away_ack(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    home_fails: bool,
+) -> None:
+    """Publish acknowledged OFF without waiting for the Home PUT outcome."""
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    climate, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="1", scenary="vacant"
+    )
+    switch = AirzonePowerSwitch(climate.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    monkeypatch.setattr(switch, "async_write_ha_state", Mock())
+    publisher = switch if platform == "switch" else climate
+    published = []
+    before_home_ack = []
+
+    def publish():
+        published.append((climate._device_power_on(), climate.preset_mode))
+
+    publisher.async_write_ha_state.side_effect = publish
+
+    async def off(payload, *, on_start, **_kwargs):
+        on_start()
+
+    async def home(_device_id, payload, *, on_start, **_kwargs):
+        on_start()
+        before_home_ack.extend(published)
+        if home_fails:
+            raise TimeoutError("Home acceptance unknown")
+
+    api.send_event.side_effect = off
+    api.put_device_fields.side_effect = home
+    if platform == "switch":
+        await switch._fallback_turn_off()
+    elif platform == "hvac_off":
+        await climate.async_set_hvac_mode(HVACMode.OFF)
+    else:
+        await climate.async_turn_off()
+
+    assert before_home_ack == [(False, "away")]
+    expected = [(False, "away")]
+    if not home_fails:
+        expected.append((False, "home"))
+    assert published == expected
+    api.send_event.assert_awaited_once()
+    assert api.send_event.await_args.args[0]["event"]["value"] == 0
+    api.put_device_fields.assert_awaited_once()
+    assert api.put_device_fields.await_args.args[1] == {
+        "device": {"scenary": "occupied"}
+    }
+    assert not switch.is_on
+
+
 @pytest.mark.parametrize("adjustment", ["temperature", "fan"])
 @pytest.mark.parametrize("later_away", [False, True])
 async def test_adjustment_uses_away_ack_and_respects_later_preset(
