@@ -16,6 +16,7 @@ from homeassistant.exceptions import HomeAssistantError
 import custom_components.airzoneclouddaikin.climate as climate_module
 from custom_components.airzoneclouddaikin.climate import AirzoneClimate
 from custom_components.airzoneclouddaikin.const import DOMAIN
+from custom_components.airzoneclouddaikin.helpers import async_auto_exit_sleep_if_needed
 
 
 def _climate(
@@ -63,7 +64,6 @@ def _climate(
         "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         refresh,
     )
-    monkeypatch.setattr(climate_module, "async_auto_exit_sleep_if_needed", AsyncMock())
     return entity, api
 
 
@@ -477,16 +477,10 @@ async def test_queued_wake_does_not_resurrect_unloaded_entry(
     """A queued wake must not create a bucket or command an old HA entity."""
     from custom_components.airzoneclouddaikin.helpers import (
         acquire_device_lock,
-        async_auto_exit_sleep_if_needed,
     )
 
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
-    )
-    monkeypatch.setattr(
-        climate_module,
-        "async_auto_exit_sleep_if_needed",
-        async_auto_exit_sleep_if_needed,
     )
     domain_bucket = hass.data[DOMAIN]
     original_bucket = domain_bucket["climate-entry"]
@@ -548,10 +542,6 @@ async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
     unload_status: str,
 ) -> None:
     """An awaited automatic Sleep exit cannot revive an unloaded entry."""
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
-
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
     )
@@ -575,7 +565,6 @@ async def test_late_auto_sleep_cleanup_success_does_not_publish_after_unload(
             device=entity._device,
             coordinator=entity.coordinator,
             reason="expiry",
-            allow_away_handling=False,
         )
     )
     try:
@@ -686,7 +675,6 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
     """The cleanup must not send Home after a newer preset has queued."""
     from custom_components.airzoneclouddaikin.helpers import (
         acquire_device_lock,
-        async_auto_exit_sleep_if_needed,
     )
 
     entity, api = _climate(
@@ -708,7 +696,6 @@ async def test_newer_manual_intent_cancels_queued_automatic_cleanup(
                 device=entity._device,
                 coordinator=entity.coordinator,
                 reason="expiry",
-                allow_away_handling=False,
             )
         )
         await asyncio.sleep(0)
@@ -728,9 +715,6 @@ async def test_ambiguous_explicit_home_away_blocks_old_sleep_cleanup(
     hass, dummy_coordinator_factory, monkeypatch, preset, failure
 ):
     """A timed-out or cancelled explicit scene must fence later automatic Home."""
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
 
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, scenary="sleep", power="0"
@@ -761,7 +745,6 @@ async def test_ambiguous_explicit_home_away_blocks_old_sleep_cleanup(
         device=entity._device,
         coordinator=entity.coordinator,
         reason="expiry",
-        allow_away_handling=False,
     )
     api.async_set_scenary.assert_not_awaited()
 
@@ -803,9 +786,6 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
         SleepTracking,
         _derive_state,
         helpers,
-    )
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
     )
 
     entity, api = _climate(
@@ -871,7 +851,6 @@ async def test_sleep_on_to_off_during_ambiguous_manual_exit(
                 device=entity._device,
                 coordinator=entity.coordinator,
                 reason="expiry",
-                allow_away_handling=False,
             )
         )
         await asyncio.wait_for(cleanup_queued.wait(), timeout=2)
@@ -944,10 +923,6 @@ async def test_active_sleep_hvac_mode_change_preserves_scene(
     hass, dummy_coordinator_factory, monkeypatch
 ):
     """The actual ON/Sleep guard must not clear an active session."""
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
-
     entity, api = _climate(
         hass,
         dummy_coordinator_factory,
@@ -955,11 +930,6 @@ async def test_active_sleep_hvac_mode_change_preserves_scene(
         mode="2",
         scenary="sleep",
         power="1",
-    )
-    monkeypatch.setattr(
-        climate_module,
-        "async_auto_exit_sleep_if_needed",
-        async_auto_exit_sleep_if_needed,
     )
     await entity.async_set_hvac_mode(HVACMode.COOL)
     api.put_device_fields.assert_not_awaited()
@@ -1148,58 +1118,6 @@ async def test_climate_concurrent_power_intents_are_serialized(
     assert entity._overlay_value("power", initial) == final
 
 
-async def test_climate_newer_off_supersedes_on_during_scene_preparation(
-    hass: HomeAssistant,
-    dummy_coordinator_factory: Callable[..., Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A later OFF still wins if an older ON waits outside the device lock."""
-    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def paused_preparation(_reason: str, **_kwargs) -> None:
-        started.set()
-        await release.wait()
-
-    monkeypatch.setattr(
-        entity, "_ensure_occupied_before_active_action", paused_preparation
-    )
-    old_on = asyncio.create_task(entity.async_turn_on())
-    try:
-        await asyncio.wait_for(started.wait(), timeout=2)
-        await entity.async_turn_off()
-    finally:
-        release.set()
-    await asyncio.wait_for(old_on, timeout=3)
-
-    api.send_event.assert_not_awaited()
-    assert entity._overlay_value("power", "0") == "0"
-
-
-async def test_climate_wake_preparation_does_not_hold_power_lock(
-    hass: HomeAssistant,
-    dummy_coordinator_factory: Callable[..., Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Sleep/Away preparation can use the shared lock without deadlocking ON."""
-    from custom_components.airzoneclouddaikin.helpers import acquire_device_lock
-
-    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
-    lock = acquire_device_lock(hass, "climate-entry", "unit-1")
-    prepared: list[bool] = []
-
-    async def prepare(_reason: str, **_kwargs) -> None:
-        async with lock:
-            prepared.append(True)
-
-    monkeypatch.setattr(entity, "_ensure_occupied_before_active_action", prepare)
-    await asyncio.wait_for(entity.async_turn_on(), timeout=3)
-
-    assert prepared == [True]
-    assert api.send_event.await_count == 1
-
-
 async def test_climate_and_switch_fallback_share_power_intent_order(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
@@ -1213,7 +1131,7 @@ async def test_climate_and_switch_fallback_share_power_intent_order(
     switch.hass = hass
     monkeypatch.setattr(switch, "async_write_ha_state", Mock())
     monkeypatch.setattr(
-        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         Mock(),
     )
     entered = asyncio.Event()
@@ -1242,79 +1160,60 @@ async def test_climate_and_switch_fallback_share_power_intent_order(
     assert switch.is_on
 
 
+@pytest.mark.parametrize("first", ["climate", "active_mode", "switch"])
 @pytest.mark.parametrize("next_request", ["turn_off", "hvac_off"])
-async def test_hvac_active_mode_is_fenced_by_newer_turn_off_during_preparation(
-    hass: HomeAssistant,
-    dummy_coordinator_factory: Callable[..., Any],
-    monkeypatch: pytest.MonkeyPatch,
-    next_request: str,
-) -> None:
-    """A delayed mode selection cannot power on after a newer explicit OFF."""
-    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
-    entered, release = asyncio.Event(), asyncio.Event()
-
-    async def wait_for_scene(_reason: str, **_kwargs) -> None:
-        entered.set()
-        await release.wait()
-
-    monkeypatch.setattr(entity, "_ensure_occupied_before_active_action", wait_for_scene)
-    pending_mode = asyncio.create_task(entity.async_set_hvac_mode(HVACMode.HEAT))
-    try:
-        await asyncio.wait_for(entered.wait(), timeout=2)
-        if next_request == "hvac_off":
-            await entity.async_set_hvac_mode(HVACMode.OFF)
-        else:
-            await entity.async_turn_off()
-    finally:
-        release.set()
-    await asyncio.wait_for(pending_mode, timeout=3)
-
-    events = [c.args[0]["event"] for c in api.send_event.await_args_list]
-    assert [(event["option"], event["value"]) for event in events] == []
-    assert entity._overlay_value("power", "0") == "0"
-
-
-@pytest.mark.parametrize("first", ["climate", "switch"])
-async def test_hvac_off_supersedes_delayed_climate_or_switch_wake(
+async def test_newer_off_supersedes_wake_at_away_dispatch(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
     monkeypatch: pytest.MonkeyPatch,
     first: str,
+    next_request: str,
 ) -> None:
-    """HVAC OFF and switch fallback share the generation across entry/device."""
+    """A queued Home for ON loses to OFF at dispatch across all power paths."""
     from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
 
-    climate, api = _climate(hass, dummy_coordinator_factory, monkeypatch, power="0")
+    climate, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="0", scenary="vacant"
+    )
     switch = AirzonePowerSwitch(climate.coordinator, "climate-entry", "unit-1")
     switch.hass = hass
     monkeypatch.setattr(switch, "async_write_ha_state", Mock())
     entered, release = asyncio.Event(), asyncio.Event()
+    dispatched = []
 
-    async def wait_for_scene(_reason: str, **_kwargs) -> None:
-        entered.set()
-        await release.wait()
+    async def put_scene(_device_id, payload, *, on_start, **_kwargs):
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        on_start()
+        dispatched.append(payload["device"]["scenary"])
 
+    api.put_device_fields.side_effect = put_scene
     if first == "switch":
-        monkeypatch.setattr(
-            switch, "_ensure_occupied_before_active_action", wait_for_scene
-        )
-        older = switch._fallback_turn_on
+        wake = switch._fallback_turn_on()
+    elif first == "active_mode":
+        wake = climate.async_set_hvac_mode(HVACMode.HEAT)
     else:
-        monkeypatch.setattr(
-            climate, "_ensure_occupied_before_active_action", wait_for_scene
-        )
-        older = climate.async_turn_on
-
-    pending_wake = asyncio.create_task(older())
+        wake = climate.async_turn_on()
+    pending_wake = asyncio.create_task(wake)
     try:
         await asyncio.wait_for(entered.wait(), timeout=2)
-        await climate.async_set_hvac_mode(HVACMode.OFF)
+        off = (
+            climate.async_set_hvac_mode(HVACMode.OFF)
+            if next_request == "hvac_off"
+            else climate.async_turn_off()
+        )
+        pending_off = asyncio.create_task(off)
+        await asyncio.sleep(0)
+        assert not pending_off.done()
     finally:
         release.set()
-    await asyncio.wait_for(pending_wake, timeout=3)
+    await asyncio.wait_for(asyncio.gather(pending_wake, pending_off), timeout=3)
 
-    events = [c.args[0]["event"] for c in api.send_event.await_args_list]
-    assert [(e["option"], e["value"]) for e in events] == []
+    assert dispatched == ["occupied"]
+    api.send_event.assert_not_awaited()
+    assert climate.preset_mode == "home"
+    assert not climate._device_power_on()
 
 
 @pytest.mark.parametrize(
@@ -1439,10 +1338,6 @@ async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p
     leaves the vacant scene before any needed P1/P2 commands. The scene exit
     remains intentional when the requested mode is already active.
     """
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
-
     entity, api = _climate(
         hass,
         dummy_coordinator_factory,
@@ -1450,11 +1345,6 @@ async def test_reselecting_active_mode_explicitly_exits_away_without_redundant_p
         mode="1",
         power="1",
         scenary="vacant",
-    )
-    monkeypatch.setattr(
-        climate_module,
-        "async_auto_exit_sleep_if_needed",
-        async_auto_exit_sleep_if_needed,
     )
 
     await entity.async_set_hvac_mode(HVACMode.COOL)
@@ -1472,10 +1362,6 @@ async def test_turn_on_already_on_exits_away_without_duplicate_p1(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Explicit ON in Away must request Home while preserving idempotent P1."""
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
-
     entity, api = _climate(
         hass,
         dummy_coordinator_factory,
@@ -1483,11 +1369,6 @@ async def test_turn_on_already_on_exits_away_without_duplicate_p1(
         mode="1",
         power="1",
         scenary="vacant",
-    )
-    monkeypatch.setattr(
-        climate_module,
-        "async_auto_exit_sleep_if_needed",
-        async_auto_exit_sleep_if_needed,
     )
 
     await entity.async_turn_on()
@@ -1513,10 +1394,6 @@ async def test_active_command_respects_optimistic_scene_before_readback(
     preset: str,
 ) -> None:
     """Use the acknowledged preset while the coordinator snapshot is stale."""
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
-
     entity, api = _climate(
         hass,
         dummy_coordinator_factory,
@@ -1524,11 +1401,6 @@ async def test_active_command_respects_optimistic_scene_before_readback(
         mode="1",
         power="1",
         scenary=raw_scene,
-    )
-    monkeypatch.setattr(
-        climate_module,
-        "async_auto_exit_sleep_if_needed",
-        async_auto_exit_sleep_if_needed,
     )
 
     async def accept_scene(_device_id, _payload, *, on_start, **_kwargs):
@@ -1566,16 +1438,7 @@ async def test_reselect_active_mode_waits_for_inflight_away_ack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A mode request queued behind Away must see its acknowledged scene."""
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
-
     entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
-    monkeypatch.setattr(
-        climate_module,
-        "async_auto_exit_sleep_if_needed",
-        async_auto_exit_sleep_if_needed,
-    )
     started, release = asyncio.Event(), asyncio.Event()
 
     async def accept_scene(_device_id, payload, *, on_start, **_kwargs):
@@ -1624,9 +1487,6 @@ async def test_manual_power_controls_leave_away(
     initial_power: str,
 ) -> None:
     """Every supported manual power path cancels Away, even without a P1."""
-    from custom_components.airzoneclouddaikin.helpers import (
-        async_auto_exit_sleep_if_needed,
-    )
     from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
 
     entity, api = _climate(
@@ -1636,17 +1496,12 @@ async def test_manual_power_controls_leave_away(
         power=initial_power,
         scenary="vacant",
     )
-    monkeypatch.setattr(
-        climate_module,
-        "async_auto_exit_sleep_if_needed",
-        async_auto_exit_sleep_if_needed,
-    )
     switch = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
     switch.hass = hass
     monkeypatch.setattr(switch, "_resolve_climate_entity_id", lambda: None)
     monkeypatch.setattr(switch, "async_write_ha_state", Mock())
     monkeypatch.setattr(
-        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         Mock(),
     )
 
@@ -1675,6 +1530,166 @@ async def test_manual_power_controls_leave_away(
     assert entity.preset_mode == "home"
     assert entity._device_power_on() is bool(target_power)
     assert switch.is_on is bool(target_power)
+
+
+@pytest.mark.parametrize("later_away", [False, True])
+@pytest.mark.parametrize("platform", ["climate", "switch"])
+async def test_off_takes_priority_over_away_exit(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    later_away: bool,
+    platform: str,
+) -> None:
+    """A failed or superseded Home cannot suppress OFF or claim Home success."""
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    climate, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, power="1", scenary="vacant"
+    )
+    switch = AirzonePowerSwitch(climate.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    monkeypatch.setattr(switch, "async_write_ha_state", Mock())
+    manager = Mock()
+    hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
+    power_dispatched, release = asyncio.Event(), asyncio.Event()
+    order = []
+
+    async def off(payload, *, on_start, **_kwargs):
+        on_start()
+        event = payload["event"]
+        order.append((event["option"], event["value"]))
+        power_dispatched.set()
+        await release.wait()
+
+    async def ambiguous_home(_device_id, payload, *, on_start, **_kwargs):
+        on_start()
+        order.append(("scene", payload["device"]["scenary"]))
+        raise TimeoutError("Home acceptance unknown")
+
+    api.send_event.side_effect = off
+    api.put_device_fields.side_effect = ambiguous_home
+    pending_off = asyncio.create_task(
+        switch._fallback_turn_off()
+        if platform == "switch"
+        else climate.async_turn_off()
+    )
+    try:
+        await asyncio.wait_for(power_dispatched.wait(), timeout=2)
+        api.put_device_fields.assert_not_awaited()
+        if later_away:
+            away = asyncio.create_task(climate.async_set_preset_mode("away"))
+            await asyncio.sleep(0)
+            assert not away.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(pending_off, timeout=2)
+    if later_away:
+        await asyncio.wait_for(away, timeout=2)
+        assert order == [("P1", 0)]
+        api.put_device_fields.assert_not_awaited()
+        manager.request_recovery.assert_not_called()
+    else:
+        assert order == [("P1", 0), ("scene", "occupied")]
+        api.put_device_fields.assert_awaited_once()
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    assert climate.preset_mode == "away"
+    assert not switch.is_on
+
+
+@pytest.mark.parametrize("adjustment", ["temperature", "fan"])
+@pytest.mark.parametrize("later_away", [False, True])
+async def test_adjustment_uses_away_ack_and_respects_later_preset(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    adjustment: str,
+    later_away: bool,
+) -> None:
+    """A valid adjustment sees an earlier Away ACK and honors a later manual Away."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    entered, release = asyncio.Event(), asyncio.Event()
+    order = []
+
+    async def put_scene(_device_id, payload, *, on_start, **_kwargs):
+        on_start()
+        scene = payload["device"]["scenary"]
+        order.append(scene)
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+
+    async def send_adjustment(payload, **_kwargs):
+        order.append(payload["event"]["option"])
+
+    api.put_device_fields.side_effect = put_scene
+    api.send_event.side_effect = send_adjustment
+    first_away = asyncio.create_task(entity.async_set_preset_mode("away"))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        adjust = (
+            entity.async_set_temperature(temperature=23)
+            if adjustment == "temperature"
+            else entity.async_set_fan_mode("high")
+        )
+        control = asyncio.create_task(adjust)
+        await asyncio.sleep(0)
+        assert not control.done()
+        tasks = [first_away, control]
+        if later_away:
+            tasks.append(asyncio.create_task(entity.async_set_preset_mode("away")))
+            await asyncio.sleep(0)
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(*tasks), timeout=3)
+    option = "P7" if adjustment == "temperature" else "P3"
+    if later_away:
+        assert order == ["vacant", option]
+        assert entity.preset_mode == "away"
+    else:
+        assert order == ["vacant", "occupied", option]
+        assert entity.preset_mode == "home"
+
+
+@pytest.mark.parametrize("home_dispatched", [False, True])
+async def test_later_manual_away_wins_against_prepared_home(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    home_dispatched: bool,
+) -> None:
+    """Manual Away fences an unsent Home or follows an already dispatched Home."""
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="vacant"
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
+    dispatched = []
+
+    async def put_scene(_device_id, payload, *, on_start, **_kwargs):
+        scene = payload["device"]["scenary"]
+        if scene == "occupied" and not home_dispatched:
+            entered.set()
+            await release.wait()
+        on_start()
+        dispatched.append(scene)
+        if scene == "occupied" and home_dispatched:
+            entered.set()
+            await release.wait()
+
+    api.put_device_fields.side_effect = put_scene
+    turn_on = asyncio.create_task(entity.async_turn_on())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        away = asyncio.create_task(entity.async_set_preset_mode("away"))
+        await asyncio.sleep(0)
+        assert not away.done()
+    finally:
+        release.set()
+    await asyncio.wait_for(asyncio.gather(turn_on, away), timeout=3)
+
+    assert dispatched == (["occupied", "vacant"] if home_dispatched else [])
+    assert entity.preset_mode == "away"
+    api.send_event.assert_not_awaited()
 
 
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
@@ -1824,7 +1839,6 @@ async def test_unsupported_auto_request_never_powers_on_or_exits_away(
 
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
-    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
 
 
 async def test_reported_unapproved_auto_disables_setpoint_and_fan_writes(
@@ -1849,7 +1863,6 @@ async def test_reported_unapproved_auto_disables_setpoint_and_fan_writes(
 
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
-    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -1903,7 +1916,6 @@ async def test_unsupported_fan_only_rejects_before_power_or_away_exit(
     assert exc_info.value.translation_key == "fan_only_unsupported"
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
-    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
 
 
 async def test_ventilation_selection_normalizes_reported_eight_to_three(
@@ -1969,7 +1981,6 @@ async def test_unadvertised_mode_never_writes_or_exits_away(
 
     api.send_event.assert_not_awaited()
     api.put_device_fields.assert_not_awaited()
-    climate_module.async_auto_exit_sleep_if_needed.assert_not_awaited()
 
 
 @pytest.mark.parametrize(
@@ -2162,7 +2173,7 @@ async def test_latest_power_survives_ambiguous_p1(
     switch.hass = hass
     monkeypatch.setattr(switch, "async_write_ha_state", Mock())
     monkeypatch.setattr(
-        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         Mock(),
     )
     manager = Mock()
