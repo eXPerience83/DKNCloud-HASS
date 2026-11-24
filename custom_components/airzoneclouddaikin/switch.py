@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -22,14 +21,11 @@ from .helpers import (
     PowerDelegation,
     acquire_device_lock,
     active_entry_bucket,
-    async_auto_exit_sleep_if_needed,
-    async_send_power,
+    async_set_manual_power,
     build_device_info,
     delegated_power_intent,
     optimistic_get,
-    power_is_uncertain,
     reserve_power_intent,
-    schedule_post_write_refresh,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,20 +103,6 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         )
         self._climate_entity_id = entity_id
         return entity_id
-
-    async def _ensure_occupied_before_active_action(
-        self, reason: str, *, is_current: Callable[[], bool]
-    ) -> None:
-        await async_auto_exit_sleep_if_needed(
-            self.hass,
-            entry_id=self._entry_id,
-            device_id=self._device_id,
-            device=self._device,
-            coordinator=self.coordinator,
-            reason=reason,
-            allow_away_handling=False,
-            is_current=is_current,
-        )
 
     # -----------------------------
     # Coordinator hook
@@ -267,25 +249,15 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
         if intent is None:
             return
 
-        lock = acquire_device_lock(self.hass, self._entry_id, self._device_id)
         matching = {"1", "true", "on"} if value else {"0", "false", "off", ""}
-        prepared = not value
-        while True:
-            async with lock:
-                if not intent.is_current():
-                    return
-                current = str(self._overlay_power() or "").strip().lower()
-                if current in matching and not power_is_uncertain(intent):
-                    return
-                if prepared:
-                    if await async_send_power(intent, value):
-                        self.async_write_ha_state()
-                        schedule_post_write_refresh(
-                            self.hass, self.coordinator, entry_id=self._entry_id
-                        )
-                    return
-            # Sleep exit may acquire the same lock.
-            await self._ensure_occupied_before_active_action(
-                "switch.turn_on", is_current=intent.is_current
+
+        def power_matches() -> bool:
+            return str(self._overlay_power() or "").strip().lower() in matching
+
+        async with acquire_device_lock(self.hass, self._entry_id, self._device_id):
+            await async_set_manual_power(
+                intent,
+                value,
+                power_matches=power_matches,
+                on_write=self.async_write_ha_state,
             )
-            prepared = True

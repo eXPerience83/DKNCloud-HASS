@@ -983,7 +983,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     device=dev,
                     coordinator=coordinator,
                     reason="expiry",
-                    allow_away_handling=False,
                 )
 
     def _on_sleep_candidate() -> None:

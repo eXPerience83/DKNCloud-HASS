@@ -87,7 +87,7 @@ async def test_switch_fallback_power_intent_wins_over_stale_get(
     )
     entity.coordinator.api = AsyncMock()
     monkeypatch.setattr(
-        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         lambda *_args, **_kwargs: None,
     )
     optimistic_set(hass, "entry", "dev1", "power", previous_overlay)
@@ -130,7 +130,7 @@ async def test_switch_fallback_concurrent_power_intents_are_serialized(
     )
     entity.coordinator.api = AsyncMock()
     monkeypatch.setattr(
-        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         lambda *_args, **_kwargs: None,
     )
     entered = asyncio.Event()
@@ -158,39 +158,6 @@ async def test_switch_fallback_concurrent_power_intents_are_serialized(
 
     assert commands == expected
     assert entity.is_on is final
-
-
-async def test_switch_newer_off_supersedes_on_during_sleep_preparation(
-    hass: HomeAssistant,
-    dummy_coordinator_factory: Callable[..., Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A newer OFF prevents an older delayed fallback wake from sending P1."""
-    entity = _make_switch(
-        hass,
-        dummy_coordinator_factory,
-        {"id": "dev1", "name": "Zone", "power": "0"},
-        climate_entity_id=None,
-    )
-    entity.coordinator.api = AsyncMock()
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def paused_prepare(_reason: str, **_kwargs) -> None:
-        started.set()
-        await release.wait()
-
-    monkeypatch.setattr(entity, "_ensure_occupied_before_active_action", paused_prepare)
-    old_on = asyncio.create_task(entity._fallback_turn_on())
-    try:
-        await asyncio.wait_for(started.wait(), timeout=2)
-        await entity._fallback_turn_off()
-    finally:
-        release.set()
-    await asyncio.wait_for(old_on, timeout=3)
-
-    entity.coordinator.api.send_event.assert_not_awaited()
-    assert not entity.is_on
 
 
 @pytest.mark.parametrize(
@@ -255,7 +222,7 @@ async def test_inactive_climate_entity_uses_real_p1_fallback(
     )
     entity.coordinator.api = AsyncMock()
     monkeypatch.setattr(
-        "custom_components.airzoneclouddaikin.switch.schedule_post_write_refresh",
+        "custom_components.airzoneclouddaikin.helpers.schedule_post_write_refresh",
         lambda *_args, **_kwargs: None,
     )
     if climate_state is not None:

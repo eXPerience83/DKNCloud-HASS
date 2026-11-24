@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import timedelta
@@ -45,7 +45,7 @@ from .const import (
     SCENARY_SLEEP,
     SCENARY_VACANT,
 )
-from .device_state import power_is_on
+from .device_state import power_is_on, preset_to_scenary, scenary_to_preset
 
 OptimisticEntry = dict[str, dict[str, dict[str, Any]]]
 
@@ -290,7 +290,8 @@ class PowerIntent:
     device_id: str
     bucket: dict[str, Any]
     number: int
-    preset_intent: int | None
+    preset_intent: int
+    wakes: bool
 
     def is_active(self) -> bool:
         return (
@@ -303,7 +304,7 @@ class PowerIntent:
             self.is_active()
             and self.bucket["power_intents"].get(self.device_id) == self.number
             and (
-                self.preset_intent is None
+                not self.wakes
                 or self.bucket.get("scene_preset_intents", {}).get(self.device_id, 0)
                 == self.preset_intent
             )
@@ -369,11 +370,17 @@ def reserve_power_intent(
         and (caller := asyncio.current_task()) is not None
     ):
         tracking.activation_wake = number, caller
-    preset_intent = (
-        bucket.get("scene_preset_intents", {}).get(device_id, 0) if value == 1 else None
-    )
+    # OFF remains independent of preset selection, but its Home PUT does not.
+    preset_intent = bucket.get("scene_preset_intents", {}).get(device_id, 0)
     return PowerIntent(
-        hass, coordinator, entry_id, device_id, bucket, number, preset_intent
+        hass,
+        coordinator,
+        entry_id,
+        device_id,
+        bucket,
+        number,
+        preset_intent,
+        value == 1,
     )
 
 
@@ -471,6 +478,226 @@ async def async_send_power(intent: PowerIntent, value: int) -> bool:
     if cancellation is not None:
         raise cancellation
     return active
+
+
+def effective_preset(
+    hass: HomeAssistant,
+    coordinator: DataUpdateCoordinator[Any],
+    entry_id: str,
+    device_id: str,
+) -> str | None:
+    """Resolve the scene from an acknowledged overlay or the current snapshot."""
+    device = (coordinator.data or {}).get(device_id, {})
+    scene = optimistic_get(
+        hass,
+        entry_id,
+        device_id,
+        "scenary",
+        device.get("scenary"),
+        coordinator=coordinator,
+    )
+    return scenary_to_preset(str(scene) if scene is not None else None)
+
+
+async def async_exit_away(
+    hass: HomeAssistant,
+    coordinator: DataUpdateCoordinator[Any],
+    entry_id: str,
+    device_id: str,
+    bucket: dict[str, Any],
+    preset_intent: int,
+    is_current: Callable[[], bool],
+) -> bool:
+    """Clear effective Away under the device lock while the scene choice is current."""
+
+    def can_clear_away() -> bool:
+        return (
+            is_current()
+            and bucket.get("scene_preset_intents", {}).get(device_id, 0)
+            == preset_intent
+            and effective_preset(hass, coordinator, entry_id, device_id) == "away"
+        )
+
+    try:
+        return await async_write_preset(
+            hass,
+            coordinator,
+            entry_id,
+            device_id,
+            "home",
+            bucket,
+            preset_intent,
+            can_clear_away,
+            automatic_away=True,
+        )
+    except Exception as error:  # noqa: BLE001
+        _LOGGER.debug("Automatic Away exit failed (%s)", type(error).__name__)
+        return False
+
+
+async def async_set_manual_power(
+    intent: PowerIntent,
+    value: int,
+    *,
+    power_matches: Callable[[], bool],
+    on_write: Callable[[], None],
+) -> bool | None:
+    """Apply manual power and Away under lock. None means the request was stopped."""
+    if not intent.is_current():
+        return None
+
+    power_written = False
+    scene_written = False
+    try:
+        # A necessary OFF takes priority over any attempt to clear Away.
+        if not value and (not power_matches() or power_is_uncertain(intent)):
+            power_written = await async_send_power(intent, 0)
+            if not power_written:
+                return None
+            on_write()
+        scene_written = await async_exit_away(
+            intent.hass,
+            intent.coordinator,
+            intent.entry_id,
+            intent.device_id,
+            intent.bucket,
+            intent.preset_intent,
+            intent.is_current,
+        )
+        if (
+            value
+            and intent.is_current()
+            and (not power_matches() or power_is_uncertain(intent))
+        ):
+            power_written = await async_send_power(intent, 1)
+        return power_written or scene_written
+    finally:
+        if intent.is_active() and (power_written or scene_written):
+            if scene_written or value:
+                on_write()
+            if power_written and (value or not scene_written):
+                schedule_post_write_refresh(
+                    intent.hass, intent.coordinator, entry_id=intent.entry_id
+                )
+
+
+async def async_write_preset(
+    hass: HomeAssistant,
+    coordinator: DataUpdateCoordinator[Any],
+    entry_id: str,
+    device_id: str,
+    preset_mode: str,
+    bucket: dict[str, Any],
+    intent: int,
+    is_current: Callable[[], bool],
+    *,
+    automatic_away: bool = False,
+) -> bool:
+    """Write a preset under the device lock and publish its acknowledged overlay."""
+
+    def entry_active() -> bool:
+        return active_entry_bucket(hass, entry_id, coordinator) is bucket
+
+    api = getattr(coordinator, "api", None)
+    scenary = preset_to_scenary(preset_mode)
+    if api is None or scenary is None or not entry_active() or not is_current():
+        return False
+
+    def sleep_observed() -> bool:
+        device = (coordinator.data or {}).get(device_id, {})
+        raw_sleep = str(device.get("scenary") or "").lower() == "sleep"
+        tracking = bucket.get("sleep_tracking", {}).get(device_id)
+        return raw_sleep or (tracking is not None and tracking.last_scenary == "sleep")
+
+    current_preset = effective_preset(hass, coordinator, entry_id, device_id)
+    revisions = bucket.setdefault("scene_revisions", {})
+    in_sleep = sleep_observed()
+    pending = bucket.setdefault("sleep_exit_pending", {})
+    entry_pending = pending.get(device_id) == "sleep"
+    if preset_mode == "sleep":
+        if device_id in pending:
+            raise HomeAssistantError(
+                "Confirm the current scene before selecting Sleep."
+            )
+        if in_sleep or current_preset == "sleep":
+            return False
+    elif current_preset == preset_mode:
+        status = pending.get(device_id)
+        if status == "accepted" or (status is None and not in_sleep):
+            return False
+    exits_sleep = preset_mode in {"home", "away"} and (in_sleep or device_id in pending)
+
+    def request_readback() -> None:
+        request_ambiguous_control_readback(
+            hass,
+            coordinator,
+            entry_id=entry_id,
+            device_id=device_id,
+            bucket=bucket,
+        )
+
+    def fence_ambiguous_scene() -> None:
+        if not entry_active():
+            return
+        # An accepted server-side write may have lost its HTTP reply.
+        # Automatic Sleep expiry must not issue another scene command
+        # before a subsequent backend read confirms convergence.
+        # An ambiguous automatic Home from Away must not turn an unconfirmed
+        # Sleep entry into a strict exit fence. Renew the readback identity.
+        status = (
+            "sleep"
+            if automatic_away and entry_pending and not (in_sleep or sleep_observed())
+            else "unverified"
+        )
+        pending[device_id] = SleepExitStatus(status)
+        request_readback()
+
+    def check_dispatch() -> None:
+        if not entry_active() or not is_current():
+            raise CommandSuperseded
+
+    try:
+        await api.put_device_fields(
+            device_id,
+            {"device": {"scenary": scenary}},
+            **({"retry": False} if exits_sleep else {}),
+            on_start=check_dispatch,
+        )
+    except CommandSuperseded:
+        return False
+    except (Exception, asyncio.CancelledError) as error:
+        if (
+            exits_sleep
+            and isinstance(error, ClientResponseError)
+            and error.status == 422
+        ):
+            raise
+        if entry_active() and not isinstance(error, CommandNotSentCooldown):
+            if exits_sleep:
+                fence_ambiguous_scene()
+            elif preset_mode == "sleep":
+                pending[device_id] = SleepExitStatus("sleep")
+                request_readback()
+            else:
+                request_readback()
+        raise
+
+    # A late successful PUT must not recreate a removed entry bucket.
+    if not entry_active():
+        return False
+
+    optimistic_set(hass, entry_id, device_id, "scenary", scenary)
+    bucket.setdefault("scene_preset_last_write", {})[device_id] = (
+        revisions.get(device_id, 0),
+        intent,
+    )
+    if exits_sleep:
+        # A scene ACK still needs applied remote readback.
+        pending[device_id] = SleepExitStatus("accepted")
+        request_readback()
+    else:
+        schedule_post_write_refresh(hass, coordinator, entry_id=entry_id)
+    return True
 
 
 def request_ambiguous_control_readback(
@@ -702,21 +929,14 @@ async def async_auto_exit_sleep_if_needed(
     device: Mapping[str, Any] | dict[str, Any],
     coordinator: DataUpdateCoordinator[Any],
     reason: str,
-    allow_away_handling: bool,
-    auto_exit_away: Callable[[str], Awaitable[None]] | None = None,
-    is_current: Callable[[], bool] | None = None,
 ) -> None:
-    """Leave Away on request, or clean up eligible OFF Sleep under the device lock."""
+    """Clean up eligible OFF Sleep under the device lock."""
     # Never recreate an unloaded entry during a queued Sleep/wake recheck.
     bucket = active_entry_bucket(hass, entry_id, coordinator)
     if bucket is None:
         return
     raw = str(device.get("scenary") or "").lower()
-    if raw == SCENARY_VACANT:
-        if allow_away_handling and auto_exit_away:
-            await auto_exit_away(reason)
-        return
-    if reason != "expiry":
+    if raw == SCENARY_VACANT or reason != "expiry":
         return
     scope = sleep_scope(bucket, device_id)
     deadlines = bucket.setdefault("sleep_exit_retry_after", {})

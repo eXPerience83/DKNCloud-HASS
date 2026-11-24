@@ -198,12 +198,16 @@ rate-limit pauses remain authoritative.
   setpoint were restored and verified. This supports an explicit Home PUT
   when integration policy requires leaving Away; it does not establish
   behavior for other event channels or beyond the observed window.
-- **Home Assistant policy.** Climate uses the effective scene, including an
-  acknowledged manual scene still in the optimistic overlay, when preparing
-  explicit ON or an active HVAC mode. It can request Home even when P1 or P2
-  is redundant. Explicit OFF and direct Switch fallback retain their own
-  power behavior. An accepted scene update in the overlay is not GET/PUSH
-  confirmation.
+- **Home Assistant policy.** Explicit Climate ON/OFF, supported HVAC mode,
+  setpoint and fan actions, and Switch ON/OFF (including direct fallback)
+  request Home when the effective scene is Away. The effective scene includes
+  acknowledged scene writes in the optimistic overlay. A redundant P1 or P2
+  is still skipped. If OFF needs P1=0, it is sent first. A failed Home write
+  leaves the scene unconfirmed and does not undo or suppress the OFF.
+  A newer manual scene selection fences the automatic Home write. Away
+  temperature limits and Sleep duration are separate settings and preserve
+  the scene. Sleep retains its own wake and cleanup rules. A scene ACK
+  updates the overlay and still requires GET/PUSH for remote confirmation.
 
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
@@ -278,10 +282,11 @@ state is a display/intent hint, not physical confirmation. Explicit Climate
 and direct-switch P1 commands, including HVAC-mode OFF and implicit power-on,
 share the per-device power-intent generation. The idempotency check, command
 send and optimistic update are serialized under the same device lock. A newer
-power request fences an older request still waiting for the lock or preparing
-an Away exit; scene preparation releases the lock before retrying the
-guarded power send. This prevents queued opposite intents from being dropped
-and duplicate same-direction P1 sends; it does not imply physical confirmation.
+power request fences an older dispatch while the command is waiting for the
+lock or for an Away exit. Away preparation and power dispatch use the same
+device lock. A newer preset fences automatic Home independently of the
+explicit OFF power command. These rules govern dispatch and idempotency;
+they do not imply physical confirmation.
 After a potentially accepted P2 mode write fails, the integration requests
 a backend readback even if power was already ON (and no P1 preceded it);
 it never automatically replays the ambiguous P2. A known-unsent cooldown
