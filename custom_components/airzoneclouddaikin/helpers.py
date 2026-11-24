@@ -538,19 +538,18 @@ async def async_set_manual_power(
     intent: PowerIntent,
     value: int,
     *,
-    power_matches: bool,
+    power_matches: Callable[[], bool],
     on_write: Callable[[], None],
 ) -> bool | None:
     """Apply manual power and Away under lock. None means the request was stopped."""
     if not intent.is_current():
         return None
 
-    needs_power = not power_matches or power_is_uncertain(intent)
     power_written = False
     scene_written = False
     try:
         # A necessary OFF takes priority over any attempt to clear Away.
-        if not value and needs_power:
+        if not value and (not power_matches() or power_is_uncertain(intent)):
             power_written = await async_send_power(intent, 0)
             if not power_written:
                 return None
@@ -563,13 +562,17 @@ async def async_set_manual_power(
             intent.preset_intent,
             intent.is_current,
         )
-        if value and needs_power:
+        if (
+            value
+            and intent.is_current()
+            and (not power_matches() or power_is_uncertain(intent))
+        ):
             power_written = await async_send_power(intent, 1)
         return power_written or scene_written
     finally:
         if intent.is_active() and (power_written or scene_written):
             on_write()
-            if power_written and not scene_written:
+            if power_written and (value or not scene_written):
                 schedule_post_write_refresh(
                     intent.hass, intent.coordinator, entry_id=intent.entry_id
                 )
