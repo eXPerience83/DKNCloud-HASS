@@ -553,6 +553,7 @@ async def async_set_manual_power(
             power_written = await async_send_power(intent, 0)
             if not power_written:
                 return None
+            on_write()
         scene_written = await async_exit_away(
             intent.hass,
             intent.coordinator,
@@ -571,7 +572,8 @@ async def async_set_manual_power(
         return power_written or scene_written
     finally:
         if intent.is_active() and (power_written or scene_written):
-            on_write()
+            if scene_written or value:
+                on_write()
             if power_written and (value or not scene_written):
                 schedule_post_write_refresh(
                     intent.hass, intent.coordinator, entry_id=intent.entry_id
