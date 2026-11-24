@@ -1667,16 +1667,11 @@ async def test_manual_power_controls_leave_away(
     else:
         await switch.async_turn_on()
 
-    commands = [
-        (event["option"], event["value"])
-        for c in api.send_event.await_args_list
-        if (event := c.args[0]["event"])
-    ]
+    events = [c.args[0]["event"] for c in api.send_event.await_args_list]
     expected = [] if initial_power == str(target_power) else [("P1", target_power)]
-    assert commands == expected
-    assert [
-        c.args[1] for c in api.put_device_fields.await_args_list
-    ] == [{"device": {"scenary": "occupied"}}]
+    assert [(event["option"], event["value"]) for event in events] == expected
+    scenes = [c.args[1] for c in api.put_device_fields.await_args_list]
+    assert scenes == [{"device": {"scenary": "occupied"}}]
     assert entity.preset_mode == "home"
     assert entity._device_power_on() is bool(target_power)
     assert switch.is_on is bool(target_power)
