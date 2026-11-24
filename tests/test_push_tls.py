@@ -453,7 +453,6 @@ async def test_tls_auth_ack_reconciliation_and_owner_shutdown(
     try:
         with guard:
             initial = await api.fetch_devices("site", retry=False)
-            locks = {"device": asyncio.Lock()}
             adapter = build_verified_adapter(api, session)
             manager = SyncManager(
                 {"device": initial[0]},
@@ -462,7 +461,6 @@ async def test_tls_auth_ack_reconciliation_and_owner_shutdown(
                 lambda site: api.fetch_devices(site, retry=False),
                 publish,
                 Mock(),
-                locks.__getitem__,
                 connect=adapter.connect,
             )
             task = asyncio.create_task(adapter.connect(manager))

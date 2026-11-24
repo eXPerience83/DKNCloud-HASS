@@ -5,15 +5,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from custom_components.airzoneclouddaikin.airzone_api import (
-    AirzoneAPI,
-    CommandNotSentCooldown,
-)
+from custom_components.airzoneclouddaikin.airzone_api import AirzoneAPI
 from custom_components.airzoneclouddaikin.sync_manager import SyncManager
 
 
 def manager(fetch=None):
-    locks = {}
     publish = Mock()
     request = AsyncMock()
     reauth = Mock()
@@ -30,7 +26,6 @@ def manager(fetch=None):
         fetch or AsyncMock(return_value=[{"id": "fake", "power": "0"}]),
         publish,
         reauth,
-        lambda d: locks.setdefault(d, asyncio.Lock()),
         connect=AsyncMock(),
         clock=lambda: time[0],
         sleep=fast_sleep,
@@ -51,42 +46,6 @@ def manager(fetch=None):
 
     instance._budget = ImmediateBudget()
     return instance, publish, request, reauth
-
-
-async def test_information_cooldown_never_queues_a_delayed_control():
-    """Slow informational cooldown must not own the lock used by HVAC writes."""
-    now = [0.0]
-    waiting, release = asyncio.Event(), asyncio.Event()
-    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
-    api._now = lambda: now[0]
-    api._cooldown_until = 300.0
-    api._request = AsyncMock(return_value={})
-
-    async def sleep_in_cooldown(seconds):
-        waiting.set()
-        await release.wait()
-        now[0] += seconds
-
-    api._sleep = sleep_in_cooldown
-    instance, _, _, _ = manager()
-    instance._request = api.request_information
-    information = asyncio.create_task(instance._information("fake"))
-    try:
-        await asyncio.wait_for(waiting.wait(), timeout=1)
-        # The real climate controls acquire the same per-device lock.
-        async with asyncio.timeout(1):
-            async with instance._locks("fake"):
-                with pytest.raises(CommandNotSentCooldown):
-                    await api.put_device_fields("fake", {"device": {"power": "1"}})
-        api._request.assert_not_awaited()
-    finally:
-        release.set()
-        await asyncio.wait_for(information, timeout=1)
-        await instance.close()
-
-    # The rejected control never reappears when the informational wait ends.
-    api._request.assert_awaited_once()
-    assert api._request.await_args.args[0] == "POST"
 
 
 async def test_event_during_get_wins_and_missing_fields_survive():
@@ -495,7 +454,6 @@ async def test_fallback_devices_batch_one_get_after_all_information_is_ready():
         fetch,
         Mock(),
         Mock(),
-        lambda _: asyncio.Lock(),
         connect=AsyncMock(),
         clock=lambda: now[0],
         sleep=sleep,
@@ -663,7 +621,6 @@ async def test_shared_virtual_clock_real_budget_multiple_installations():
         return [{"id": d} for d, i in relations.items() if i == installation]
 
     relations = {"a": "one", "b": "one", "c": "two"}
-    locks = {d: asyncio.Lock() for d in relations}
     owner = SyncManager(
         {d: {"id": d} for d in relations},
         relations,
@@ -671,7 +628,6 @@ async def test_shared_virtual_clock_real_budget_multiple_installations():
         fetch,
         Mock(),
         Mock(),
-        locks.__getitem__,
         connect=AsyncMock(),
         clock=lambda: now[0],
         sleep=sleep,
@@ -840,7 +796,6 @@ async def test_transport_mode_transitions_are_per_device_and_do_not_fake_receipt
         return_value=[{"id": "a", "power": "1"}, {"id": "b", "power": "0"}]
     )
     request, publish, reauth = AsyncMock(), Mock(), Mock()
-    locks = {}
     observations = []
 
     instance = SyncManager(
@@ -850,7 +805,6 @@ async def test_transport_mode_transitions_are_per_device_and_do_not_fake_receipt
         fetch,
         publish,
         reauth,
-        lambda d: locks.setdefault(d, asyncio.Lock()),
         connect=AsyncMock(),
         on_mode_change=lambda: observations.append(
             (instance.mode("a"), instance.mode("b"))
@@ -964,7 +918,6 @@ async def test_command_readback_freshness(demands, advance, devices, expected_re
         fetch,
         publish,
         Mock(),
-        lambda _: asyncio.Lock(),
         connect=AsyncMock(),
         clock=lambda: now,
         sleep=sleep,
@@ -1037,7 +990,6 @@ async def test_demand_during_api_cooldown_shares_the_get():
         api.fetch_devices,
         Mock(),
         Mock(),
-        lambda _: asyncio.Lock(),
         connect=AsyncMock(),
         clock=lambda: now,
         sleep=reserved_wait,
@@ -1094,7 +1046,6 @@ async def test_late_recovery_respects_auth_and_backoff(status, monkeypatch):
         fetch,
         publish,
         reauth,
-        lambda _: asyncio.Lock(),
         connect=AsyncMock(),
         clock=lambda: now,
         sleep=sleep,
@@ -1160,7 +1111,6 @@ async def test_close_cancels_fresh_followup_waiting_for_request_budget():
             fetch,
             publish,
             Mock(),
-            lambda _: asyncio.Lock(),
             connect=AsyncMock(),
             clock=lambda: now,
             sleep=wait_for_budget,
@@ -1228,7 +1178,6 @@ async def test_only_applied_fresh_get_resolves_power_uncertainty(invalid_evidenc
         fetch,
         publish,
         Mock(),
-        lambda _: asyncio.Lock(),
         connect=AsyncMock(),
         clock=lambda: clock,
         sleep=sleep,

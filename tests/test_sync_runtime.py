@@ -13,7 +13,10 @@ from homeassistant.helpers import entity_registry as er
 import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin import push_adapter
 from custom_components.airzoneclouddaikin.const import API_EVENTS, DOMAIN
-from custom_components.airzoneclouddaikin.helpers import optimistic_set
+from custom_components.airzoneclouddaikin.helpers import (
+    acquire_device_lock,
+    optimistic_set,
+)
 
 
 def _mark_synthetic_sleep_off(bucket, dev_id="dev1") -> None:
@@ -450,7 +453,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
     )
     _mark_synthetic_sleep_off(bucket)
     if stop in {"race", "race_expired", "race_new_sleep"}:
-        lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
+        lock = acquire_device_lock(hass, entry.entry_id, "dev1")
         await lock.acquire()
         coordinator.async_update_listeners()
         await asyncio.sleep(0)
@@ -640,7 +643,7 @@ async def test_sleep_started_off_closes_after_activation_minute(
     if wake:
         api.send_event = AsyncMock()
         start = track.sleep_started_at_utc
-        lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
+        lock = acquire_device_lock(hass, entry.entry_id, "dev1")
         async with lock:
             task = asyncio.create_task(
                 hass.services.async_call(
@@ -866,7 +869,7 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     recovery = Mock()
     monkeypatch.setattr(bucket["sync_manager"], "request_recovery", recovery)
 
-    lock = integration.acquire_device_lock(hass, entry.entry_id, "dev1")
+    lock = acquire_device_lock(hass, entry.entry_id, "dev1")
     await lock.acquire()
     try:
         coordinator.data["dev1"].update(
@@ -1336,7 +1339,7 @@ async def test_sleep_scene_ordering(
             )
 
         if newer_away:
-            async with integration.acquire_device_lock(hass, entry.entry_id, "dev1"):
+            async with acquire_device_lock(hass, entry.entry_id, "dev1"):
                 tasks.append(
                     asyncio.create_task(service("set_hvac_mode", hvac_mode="cool"))
                 )

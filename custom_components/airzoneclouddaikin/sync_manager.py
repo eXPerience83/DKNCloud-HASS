@@ -43,7 +43,6 @@ class SyncManager:
         fetch: Callable[[str], Awaitable[list[dict[str, Any]]]],
         publish: Callable[[dict[str, dict[str, Any]], bool], None],
         reauth: Callable[[], None],
-        locks: Callable[[str], asyncio.Lock],
         *,
         connect: Callable[[SyncManager], Awaitable[None]],
         clock: Callable[[], float] = time.monotonic,
@@ -66,7 +65,7 @@ class SyncManager:
         self._get_context = get_context
         self.applied_get_context = None
         self._uncertain_power = uncertain_power if uncertain_power is not None else {}
-        self._publish, self._reauth, self._locks = publish, reauth, locks
+        self._publish, self._reauth = publish, reauth
         self._connect, self._clock = connect, clock
         self._sleep = sleep
         self._information_ready: dict[str, float] = {}
