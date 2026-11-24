@@ -857,6 +857,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         )
         if intent is None:
             return
+        # Let earlier in-flight scene writes finish before deciding whether
+        # Away needs to be cleared. Preparation may acquire this same lock.
+        async with lock:
+            if not intent.is_current():
+                return
         await self._ensure_occupied_before_active_action(
             "set_hvac_mode", is_current=intent.is_current
         )
