@@ -81,7 +81,7 @@ Optional settings in the Home Assistant UI:
 - **Automatic synchronization:** The integration owns its fixed nominal cadence and recovery; no scan interval option is exposed.
 - **Expose PII identifiers:** Add sensitive identifier entities (off by default; the entities themselves are disabled by default).
 - **Experimental HEAT_COOL:** Only when the device advertises support; this mode is not broadly validated on hardware.
-- **Automatic Sleep cleanup:** Enabled by default and configurable. An OFF report ends a running Sleep cycle for Home Assistant. Selecting Sleep while OFF gives you one minute to turn the device on. Cleanup requests Home without changing power.
+- **Automatic Sleep cleanup:** Enabled by default and configurable. Cleanup requests Home without changing power. **Unreleased behavior on `main` (after 0.6.0b1):** An OFF report after ON in the same Sleep session ends the running Sleep cycle for Home Assistant. Selecting Sleep while OFF gives you one minute to turn the device on.
 
 ## Available entities
 
