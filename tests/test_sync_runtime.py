@@ -12,7 +12,8 @@ from homeassistant.helpers import entity_registry as er
 
 import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin import push_adapter
-from custom_components.airzoneclouddaikin.const import DOMAIN
+from custom_components.airzoneclouddaikin.const import API_EVENTS, DOMAIN
+from custom_components.airzoneclouddaikin.helpers import optimistic_set
 
 
 def _mark_synthetic_sleep_off(bucket, dev_id="dev1") -> None:
@@ -453,7 +454,7 @@ async def test_sleep_cleanup_is_joined_and_cannot_reenter_on_close(
         await lock.acquire()
         coordinator.async_update_listeners()
         await asyncio.sleep(0)
-        integration.optimistic_set(
+        optimistic_set(
             hass,
             entry.entry_id,
             "dev1",
@@ -702,7 +703,7 @@ async def test_rejected_scene_power_cannot_auto_cleanup_new_sleep(
     bucket = hass.data[DOMAIN][entry.entry_id]
     manager = bucket["sync_manager"]
     generation = manager.state.generation
-    integration.optimistic_set(hass, entry.entry_id, "dev1", "scenary", "sleep")
+    optimistic_set(hass, entry.entry_id, "dev1", "scenary", "sleep")
     tracking = bucket["sleep_tracking"]["dev1"]
 
     for power in ("1", "0", "0"):
@@ -890,7 +891,7 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
 
     # Evidence from the same raw OFF snapshot cannot override an accepted ON
     # whose overlay still disagrees with that snapshot.
-    integration.optimistic_set(hass, entry.entry_id, "dev1", "power", "1")
+    optimistic_set(hass, entry.entry_id, "dev1", "power", "1")
     _mark_synthetic_sleep_off(bucket)
     coordinator.async_update_listeners()
     await hass.async_block_till_done()
@@ -908,6 +909,88 @@ async def test_sleep_expiry_recheck_clears_before_lock_then_remains_eligible(
     assert bucket["sleep_exit_pending"]["dev1"] == "accepted"
     recovery.assert_called_once_with("dev1", require_fresh=True)
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_information_cooldown_does_not_queue_climate_control(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """A real Climate service rejects a control before the waiting INFO is sent."""
+    from custom_components.airzoneclouddaikin.airzone_api import (
+        AirzoneAPI,
+        CommandNotSentCooldown,
+    )
+
+    api = AirzoneAPI("synthetic@example.invalid", Mock(), token="synthetic")
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(return_value=[sample_device])
+    api._request = AsyncMock(return_value={})
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    # Drive one actual INFO operation explicitly, without background cycles.
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    try:
+        manager = hass.data[DOMAIN][entry.entry_id]["sync_manager"]
+        climate_id = er.async_get(hass).async_get_entity_id(
+            "climate", DOMAIN, "dev1_climate"
+        )
+        assert climate_id is not None
+        assert hass.states.get(climate_id).state == "cool"
+        original_temperature = hass.states.get(climate_id).attributes["temperature"]
+        reads = api.fetch_devices.await_count
+        now = 0.0
+        waiting, release = asyncio.Event(), asyncio.Event()
+
+        async def sleep_in_cooldown(delay):
+            nonlocal now
+            waiting.set()
+            await release.wait()
+            now += delay
+
+        api._now = lambda: now
+        api._cooldown_until = 300.0
+        api._sleep = sleep_in_cooldown
+        information = asyncio.create_task(manager._information("dev1"))
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            with pytest.raises(CommandNotSentCooldown):
+                await asyncio.wait_for(
+                    hass.services.async_call(
+                        "climate",
+                        "set_temperature",
+                        {"entity_id": climate_id, "temperature": 23},
+                        blocking=True,
+                    ),
+                    2,
+                )
+            assert not information.done()
+            api._request.assert_not_awaited()
+        finally:
+            release.set()
+            await asyncio.wait_for(information, 2)
+
+        await hass.async_block_till_done()
+        api._request.assert_awaited_once()
+        assert api._request.await_args.args == ("POST", API_EVENTS)
+        assert api._request.await_args.kwargs["json"] == {
+            "event": {
+                "cgi": "infomaquina",
+                "device_id": "dev1",
+                "option": "",
+                "value": "",
+            }
+        }
+        assert manager.pending_recovery("dev1") is None
+        assert api.fetch_devices.await_count == reads
+        assert hass.states.get(climate_id).attributes["temperature"] == (
+            original_temperature
+        )
+    finally:
+        assert await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.mark.parametrize("next_action", ["retry", "rearm", "manual", "stop"])
@@ -956,7 +1039,7 @@ async def test_unsent_sleep_cleanup_waits_for_cooldown_then_remains_eligible(
         return
     if next_action in {"rearm", "manual"}:
         previous = tracking.session_revision
-        integration.optimistic_set(
+        optimistic_set(
             hass,
             entry.entry_id,
             "dev1",

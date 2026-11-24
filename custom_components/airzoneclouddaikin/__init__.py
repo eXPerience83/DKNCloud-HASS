@@ -55,7 +55,6 @@ from .helpers import (
     confirm_optimistic,
     device_supports_heat_cool,
     expire_optimistic,
-    optimistic_set as optimistic_set,
     sleep_cleanup_candidate,
     sleep_off_power_is_certain,
     sleep_scope,
