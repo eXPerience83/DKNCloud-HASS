@@ -935,9 +935,8 @@ async def test_information_cooldown_does_not_queue_climate_control(
     assert await hass.config_entries.async_setup(entry.entry_id)
     try:
         manager = hass.data[DOMAIN][entry.entry_id]["sync_manager"]
-        climate_id = er.async_get(hass).async_get_entity_id(
-            "climate", DOMAIN, "dev1_climate"
-        )
+        registry = er.async_get(hass)
+        climate_id = registry.async_get_entity_id("climate", DOMAIN, "dev1_climate")
         assert climate_id is not None
         assert hass.states.get(climate_id).state == "cool"
         original_temperature = hass.states.get(climate_id).attributes["temperature"]
@@ -986,9 +985,8 @@ async def test_information_cooldown_does_not_queue_climate_control(
         }
         assert manager.pending_recovery("dev1") is None
         assert api.fetch_devices.await_count == reads
-        assert hass.states.get(climate_id).attributes["temperature"] == (
-            original_temperature
-        )
+        temperature = hass.states.get(climate_id).attributes["temperature"]
+        assert temperature == original_temperature
     finally:
         assert await hass.config_entries.async_unload(entry.entry_id)
 
