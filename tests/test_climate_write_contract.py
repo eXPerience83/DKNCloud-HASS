@@ -2759,6 +2759,94 @@ async def test_explicit_off_after_p2_timeout_and_power_overlay_expiry(
     assert not bucket.get("uncertain_power")
 
 
+@pytest.mark.parametrize("observed_sleep", [False, True])
+async def test_ambiguous_away_exit_preserves_sleep_entry_readback(
+    hass, dummy_coordinator_factory, monkeypatch, observed_sleep
+):
+    """Only an observed Sleep exit needs the strict Home confirmation fence."""
+    from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="vacant", power="0"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    data = entity.coordinator.data
+    device = data["unit-1"]
+    device["sleep_time"] = 30
+    entry = SimpleNamespace(entry_id="climate-entry", options={})
+    _derive_state(hass, entry, data)
+
+    async def ambiguous_put(_device_id, payload, *, on_start, **_kwargs):
+        on_start()
+        if payload["device"]["scenary"] == "occupied" and observed_sleep:
+            device["scenary"] = "sleep"
+            _derive_state(
+                hass, entry, data, fresh_scenary_ids={"unit-1"}, from_push=True
+            )
+        raise TimeoutError("Scene acceptance unknown")
+
+    api.put_device_fields.side_effect = ambiguous_put
+    with pytest.raises(TimeoutError):
+        await entity.async_set_preset_mode("sleep")
+    pending = bucket["sleep_exit_pending"]
+    first_marker = pending["unit-1"]
+    assert first_marker == "sleep"
+    old_context = _sleep_get_context(bucket)
+
+    await entity.async_turn_off()
+    marker = pending["unit-1"]
+    assert marker is not first_marker
+    assert marker == ("unverified" if observed_sleep else "sleep")
+    assert manager.request_recovery.call_args_list == [
+        call("unit-1", require_fresh=True),
+        call("unit-1", require_fresh=True),
+    ]
+
+    device["scenary"] = "vacant"
+    _derive_state(
+        hass, entry, data, fresh_scenary_ids={"unit-1"}, from_push=True
+    )
+    _derive_state(
+        hass,
+        entry,
+        data,
+        fresh_scenary_ids={"unit-1"},
+        sleep_gets={"unit-1": old_context},
+    )
+    assert pending["unit-1"] is marker
+    with pytest.raises(HomeAssistantError, match="Confirm"):
+        await entity.async_set_preset_mode("sleep")
+    assert api.put_device_fields.await_count == 2
+
+    _derive_state(
+        hass,
+        entry,
+        data,
+        fresh_scenary_ids={"unit-1"},
+        sleep_gets={"unit-1": _sleep_get_context(bucket)},
+    )
+    if observed_sleep:
+        assert pending["unit-1"] is marker
+        with pytest.raises(HomeAssistantError, match="Confirm"):
+            await entity.async_set_preset_mode("sleep")
+        device["scenary"] = "occupied"
+        _derive_state(
+            hass,
+            entry,
+            data,
+            fresh_scenary_ids={"unit-1"},
+            sleep_gets={"unit-1": _sleep_get_context(bucket)},
+        )
+    assert not pending
+    api.put_device_fields.side_effect = None
+    await entity.async_set_preset_mode("sleep")
+    assert [
+        c.args[1]["device"]["scenary"] for c in api.put_device_fields.await_args_list
+    ] == ["sleep", "occupied", "sleep"]
+    api.send_event.assert_not_awaited()
+
+
 async def test_sleep_reselection_requires_applied_home_before_new_cycle(
     hass, dummy_coordinator_factory, monkeypatch
 ):
