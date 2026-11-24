@@ -1186,7 +1186,7 @@ async def test_newer_off_supersedes_wake_at_away_dispatch(
             entered.set()
             await release.wait()
         on_start()
-        dispatched.append(payload["device"]["scenary"])
+        dispatched.append((asyncio.current_task(), payload["device"]["scenary"]))
 
     api.put_device_fields.side_effect = put_scene
     if first == "switch":
@@ -1210,7 +1210,7 @@ async def test_newer_off_supersedes_wake_at_away_dispatch(
         release.set()
     await asyncio.wait_for(asyncio.gather(pending_wake, pending_off), timeout=3)
 
-    assert dispatched == ["occupied"]
+    assert dispatched == [(pending_off, "occupied")]
     api.send_event.assert_not_awaited()
     assert climate.preset_mode == "home"
     assert not climate._device_power_on()
@@ -1530,6 +1530,92 @@ async def test_manual_power_controls_leave_away(
     assert entity.preset_mode == "home"
     assert entity._device_power_on() is bool(target_power)
     assert switch.is_on is bool(target_power)
+
+
+@pytest.mark.parametrize("platform", ["climate", "switch"])
+@pytest.mark.parametrize("initial_power", ["0", "1"])
+async def test_on_rechecks_power_after_away_ack(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    initial_power: str,
+) -> None:
+    """A remote power update during Home preparation changes P1 deduplication."""
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    climate, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        power=initial_power,
+        scenary="vacant",
+    )
+    switch = AirzonePowerSwitch(climate.coordinator, "climate-entry", "unit-1")
+    switch.hass = hass
+    monkeypatch.setattr(switch, "async_write_ha_state", Mock())
+    order = []
+    updated_power = "0" if initial_power == "1" else "1"
+
+    async def home(_device_id, payload, *, on_start, **_kwargs):
+        on_start()
+        assert payload == {"device": {"scenary": "occupied"}}
+        climate.coordinator.data["unit-1"]["power"] = updated_power
+        order.append("home")
+
+    async def power(payload, *, on_start, **_kwargs):
+        on_start()
+        assert payload["event"]["option"] == "P1"
+        assert payload["event"]["value"] == 1
+        order.append("p1")
+
+    api.put_device_fields.side_effect = home
+    api.send_event.side_effect = power
+    climate_module.schedule_post_write_refresh.side_effect = (
+        lambda *_args, **_kwargs: order.append("refresh")
+    )
+    if platform == "climate":
+        await climate.async_turn_on()
+    else:
+        await switch._fallback_turn_on()
+
+    expected = ["home", "refresh"]
+    if updated_power == "0":
+        expected += ["p1", "refresh"]
+    assert order == expected
+    assert api.send_event.await_count == int(updated_power == "0")
+    assert climate.preset_mode == "home"
+    assert switch.is_on
+
+
+async def test_temperature_clamps_after_away_ack(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A remote limit update during Home preparation constrains the setpoint."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch, scenary="vacant")
+
+    async def home(_device_id, payload, *, on_start, **_kwargs):
+        on_start()
+        assert payload == {"device": {"scenary": "occupied"}}
+        entity.coordinator.data["unit-1"]["max_limit_cold"] = 26
+
+    api.put_device_fields.side_effect = home
+    await entity.async_set_temperature(temperature=28)
+
+    api.send_event.assert_awaited_once_with(
+        {
+            "event": {
+                "cgi": "modmaquina",
+                "device_id": "unit-1",
+                "option": "P7",
+                "value": "26.0",
+            }
+        }
+    )
+    assert entity.preset_mode == "home"
+    assert entity.target_temperature == 26
 
 
 @pytest.mark.parametrize("later_away", [False, True])
