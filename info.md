@@ -173,6 +173,21 @@ requests also retain recovery eligibility; authentication and server-directed
 rate-limit pauses remain authoritative.
 
 
+### Away and active controls
+
+- **Official web client, static source and offline simulation.** The device
+  controller calls `checkUnoccupiedScene` for changed power and supported mode
+  values. With a local `vacant` scene it immediately displays `occupied` and
+  starts a separate scene PUT after starting the event POST. The power path
+  includes OFF. These observations establish client behavior only. Whether an
+  isolated event changes the backend scene remains unverified.
+- **Home Assistant policy.** Climate uses the effective scene, including an
+  acknowledged manual scene still in the optimistic overlay, when preparing
+  explicit ON or an active HVAC mode. It can request Home even when P1 or P2
+  is redundant. Explicit OFF and direct Switch fallback retain their own
+  power behavior. An accepted scene update in the overlay is not GET/PUSH
+  confirmation.
+
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
 - Returns a list of relations; **use `installation_id`** (not the relation `id`) to query devices.

@@ -1501,13 +1501,18 @@ async def test_turn_on_already_on_exits_away_without_duplicate_p1(
 
 
 @pytest.mark.parametrize("action", ["turn_on", "set_hvac_mode"])
-async def test_active_command_exits_optimistic_away_before_readback(
+@pytest.mark.parametrize(
+    ("raw_scene", "preset"), [("occupied", "away"), ("vacant", "home")]
+)
+async def test_active_command_respects_optimistic_scene_before_readback(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
     monkeypatch: pytest.MonkeyPatch,
     action: str,
+    raw_scene: str,
+    preset: str,
 ) -> None:
-    """A just-acknowledged Away selection must not hide the required Home PUT."""
+    """Use the acknowledged preset while the coordinator snapshot is stale."""
     from custom_components.airzoneclouddaikin.helpers import (
         async_auto_exit_sleep_if_needed,
     )
@@ -1518,7 +1523,7 @@ async def test_active_command_exits_optimistic_away_before_readback(
         monkeypatch,
         mode="1",
         power="1",
-        scenary="occupied",
+        scenary=raw_scene,
     )
     monkeypatch.setattr(
         climate_module,
@@ -1531,22 +1536,25 @@ async def test_active_command_exits_optimistic_away_before_readback(
 
     api.put_device_fields.side_effect = accept_scene
 
-    await entity.async_set_preset_mode("away")
+    await entity.async_set_preset_mode(preset)
+    selected_scene = "vacant" if preset == "away" else "occupied"
     api.put_device_fields.assert_awaited_once_with(
-        "unit-1", {"device": {"scenary": "vacant"}}, on_start=ANY
+        "unit-1", {"device": {"scenary": selected_scene}}, on_start=ANY
     )
-    assert entity.preset_mode == "away"
-    assert entity.coordinator.data["unit-1"]["scenary"] == "occupied"
+    assert entity.preset_mode == preset
+    assert entity.coordinator.data["unit-1"]["scenary"] == raw_scene
 
     if action == "turn_on":
         await entity.async_turn_on()
     else:
         await entity.async_set_hvac_mode(HVACMode.COOL)
 
-    assert api.put_device_fields.await_args_list == [
-        call("unit-1", {"device": {"scenary": "vacant"}}, on_start=ANY),
-        call("unit-1", {"device": {"scenary": "occupied"}}, on_start=ANY),
-    ]
+    expected = [call("unit-1", {"device": {"scenary": selected_scene}}, on_start=ANY)]
+    if preset == "away":
+        expected.append(
+            call("unit-1", {"device": {"scenary": "occupied"}}, on_start=ANY)
+        )
+    assert api.put_device_fields.await_args_list == expected
     api.send_event.assert_not_awaited()
     assert entity.preset_mode == "home"
     assert entity._device_power_on()

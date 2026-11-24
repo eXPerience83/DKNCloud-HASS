@@ -445,11 +445,15 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         async def exit_away(reason: str) -> None:
             await self._auto_exit_away_if_needed(reason, is_current=is_current)
 
+        device = self._device
         await async_auto_exit_sleep_if_needed(
             self.hass,
             entry_id=self._entry_id,
             device_id=self._device_id,
-            device=self._device,
+            device={
+                **device,
+                "scenary": self._overlay_value("scenary", device.get("scenary")),
+            },
             coordinator=self.coordinator,
             reason=reason,
             allow_away_handling=True,
