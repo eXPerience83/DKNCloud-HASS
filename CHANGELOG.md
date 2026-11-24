@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.6.0b2] - 2026-11-24
+
+> **Experimental second beta; not stable or fully device-certified.**
+> Requires Home Assistant **2026.11.0+** (Python 3.14). No new configuration
+> migration is required from 0.6.0b1; the earlier 0.6.0a1 migration still
+> applies to older installations. Back up Home Assistant and keep a rollback
+> path before upgrading. Publication is a separate manual decision.
+
+### Fixed
+- Do not replay potentially accepted device-field PUTs after ambiguous
+  responses; retain bounded readback recovery (#197).
+- Keep command completions and delayed callbacks scoped to their original
+  config-entry runtime, including unload and reload (#197).
+- Honor fresh GET recovery demands using evidence captured at dispatch,
+  rather than satisfying a new demand with an older in-flight read (#197).
+- Preserve power-command order across Climate and Switch, including
+  cancellation, superseding requests and uncertain partial wakes (#238).
+- End a Sleep session after an eligible OFF observation following ON in
+  that session. Selecting Sleep while OFF allows a one-minute activation
+  window. Outside it, confirm Home before waking from OFF/Sleep, even if
+  automatic cleanup is disabled. Keep the overdue timer diagnostic-only
+  (#244).
+- Use acknowledged Away overlays when deciding whether to request Home;
+  share manual Away exit across Climate and Switch, including direct
+  fallback and redundant power requests. Send a necessary OFF first,
+  publish its accepted state immediately, and respect newer manual scene
+  selections. Preserve independent Away limits and Sleep duration (#246,
+  #248).
+- Revalidate power and setpoint limits after Home preparation. Keep refresh
+  scheduling coalesced and preserve strict Sleep-exit confirmation without
+  indefinitely blocking Sleep entry after ambiguous automatic Away exit
+  (#248).
+
+### Changed
+- Clarify that Away and Sleep are cloud-managed control policies, not
+  physical HVAC modes. Distinguish local countdown estimates, cloud
+  responses and physical-device validation (#247).
+- Remove duplicated control helpers and unused Sleep-helper arguments
+  without changing entity identifiers or synchronization cadence (#197,
+  #248).
+- Update the locked HA/official pytest-homeassistant development baseline
+  to 2026.11.2, uv to 0.13.9 and Ruff to 0.17.6. Update pinned CI actions
+  and security tooling; retain the independent minimum-HA 2026.11.0 suite
+  (#235, #239–#242).
+
+> **Validation boundary:** The integrated functional changes passed 1,050
+> tests in each HA suite (91% coverage), security and package checks, and
+> independent simulated regression audits. These results concern the code
+> before the version-only preparation PR, not an installed beta ZIP.
+> Fresh Marketplace installation, legacy HACS migration, broad physical
+> control acceptance and real password-change reauthentication remain
+> pending (#121, #191). Sleep-session persistence (#243), physical
+> cancellation of an earlier cloud Sleep policy (#245), and the narrow
+> ordinary scene ACK-loss case (#249) remain separate follow-ups.
+> HEAT_COOL remains experimental and opt-in.
+
 ## [0.6.0b1] - 2026-11-17
 
 > **Experimental first beta; not stable or fully device-certified.**

@@ -23,7 +23,7 @@ Some features depend on your device and firmware. Experimental `HEAT_COOL` contr
 
 ## Installation
 
-Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**. Automated checks pass on the locked HA 2026.11 baseline, including a separate hash-locked minimum-version test suite. The owner's installed 0.6.0a1 alpha has shown healthy PUSH after a HA 2026.11.2 restart and Marketplace update, but fresh-install / legacy HACS migration, broad hardware control and the first beta still require their own acceptance. **Neither alpha nor beta is stable-certified.** See the [validation checklist](./docs/ha-2026.11-smoke.md).
+Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**. Automated checks pass on the locked HA 2026.11 baseline, including a separate hash-locked minimum-version test suite. The owner's installed 0.6.0a1 alpha has shown healthy PUSH after a HA 2026.11.2 restart and Marketplace update, but fresh-install / legacy HACS migration, broad hardware control and beta installation still require their own acceptance. **Neither alpha nor beta is stable-certified.** See the [validation checklist](./docs/ha-2026.11-smoke.md).
 
 ### Install with Marketplace
 
@@ -34,6 +34,23 @@ Install through the **built-in Marketplace in Home Assistant 2026.11 or newer**.
 [![Open in Home Assistant Marketplace](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=eXPerience83&repository=DKNCloud-HASS&category=integration)
 
 **Published versions:** Check [GitHub Releases](https://github.com/eXPerience83/DKNCloud-HASS/releases) for the stable release and optional prereleases. Code on `main` can contain changes **not yet published**; passing CI is not a real-device compatibility certification.
+
+### 0.6.0b2 experimental beta candidate — control reliability
+
+The second beta candidate improves manual Away exit across Climate and
+Switch and coordinates Sleep cleanup and safe wake. A necessary OFF is
+sent first; redundant power writes are skipped. Explicit supported
+manual controls request Home from Away, while Away temperature limits
+and Sleep duration remain independent settings. Recovery from ambiguous
+writes uses the existing INFO/PUSH and fresh GET paths.
+
+No new configuration migration from 0.6.0b1 or change to the minimum
+Home Assistant version is required. Back up HA and validate normal
+operation after installing. Publication and real-device acceptance are
+separate gates; see [GitHub Releases](https://github.com/eXPerience83/DKNCloud-HASS/releases)
+and [#191](https://github.com/eXPerience83/DKNCloud-HASS/issues/191).
+The same-value scene selection edge case after a lost ACK remains
+tracked in [#249](https://github.com/eXPerience83/DKNCloud-HASS/issues/249).
 
 ### 0.6.0b1 experimental beta — what changes from the alpha
 
@@ -81,7 +98,7 @@ Optional settings in the Home Assistant UI:
 - **Automatic synchronization:** The integration owns its fixed nominal cadence and recovery; no scan interval option is exposed.
 - **Expose PII identifiers:** Add sensitive identifier entities (off by default; the entities themselves are disabled by default).
 - **Experimental HEAT_COOL:** Only when the device advertises support; this mode is not broadly validated on hardware.
-- **Automatic Sleep cleanup:** Enabled by default and configurable. Cleanup requests Home without changing power. **Unreleased behavior on `main` (after 0.6.0b1):** An OFF report after ON in the same Sleep session ends the running Sleep cycle for Home Assistant. Selecting Sleep while OFF gives you one minute to turn the device on.
+- **Automatic Sleep cleanup:** Enabled by default and configurable. Cleanup requests Home without changing power. **Starting with 0.6.0b2:** An OFF report after ON in the same Sleep session ends the running Sleep cycle for Home Assistant. Selecting Sleep while OFF gives you one minute to turn the device on.
 
 ## Available entities
 
@@ -122,7 +139,7 @@ For the API commands, device modes, capabilities and detailed backend behavior, 
 
 **How do I change Home/Away/Sleep?** Use the climate entity's presets or the Home Assistant `climate.set_preset_mode` service. The old `select.scenary` entity was removed.
 
-**How does Sleep end?** Sleep is a DKN Cloud control policy, not a physical HVAC mode or a Home Assistant shutoff timer. With automatic cleanup enabled, an applied OFF report after the unit has been ON in Sleep can restore Home. **Unreleased behavior on `main` (after 0.6.0b1):** selecting Sleep while OFF gives you one minute to turn it on. Outside that window, a manual ON from OFF/Sleep confirms Home before turning the device on, even with automatic cleanup disabled. The countdown is a local estimate and can be unknown after restart. If the device still reports ON past the diagnostic window, Home Assistant records a possible anomaly without issuing a command. Session persistence is tracked in [#243](https://github.com/eXPerience83/DKNCloud-HASS/issues/243).
+**How does Sleep end?** Sleep is a DKN Cloud control policy, not a physical HVAC mode or a Home Assistant shutoff timer. With automatic cleanup enabled, an applied OFF report after the unit has been ON in Sleep can restore Home. **Starting with 0.6.0b2:** selecting Sleep while OFF gives you one minute to turn it on. Outside that window, a manual ON from OFF/Sleep confirms Home before turning the device on, even with automatic cleanup disabled. The countdown is a local estimate and can be unknown after restart. If the device still reports ON past the diagnostic window, Home Assistant records a possible anomaly without issuing a command. Session persistence is tracked in [#243](https://github.com/eXPerience83/DKNCloud-HASS/issues/243).
 
 **Why can't I select HEAT_COOL?** Both the device capability bit and the **Enable experimental HEAT_COOL mode** option are required. Even then, its physical behavior is not fully validated across devices.
 
