@@ -528,6 +528,7 @@ async def async_exit_away(
             bucket,
             preset_intent,
             can_clear_away,
+            automatic_away=True,
         )
     except Exception as error:  # noqa: BLE001
         _LOGGER.debug("Automatic Away exit failed (%s)", type(error).__name__)
@@ -589,6 +590,8 @@ async def async_write_preset(
     bucket: dict[str, Any],
     intent: int,
     is_current: Callable[[], bool],
+    *,
+    automatic_away: bool = False,
 ) -> bool:
     """Write a preset under the device lock and publish its acknowledged overlay."""
 
@@ -600,13 +603,17 @@ async def async_write_preset(
     if api is None or scenary is None or not entry_active() or not is_current():
         return False
 
-    device = (coordinator.data or {}).get(device_id, {})
+    def sleep_observed() -> bool:
+        device = (coordinator.data or {}).get(device_id, {})
+        raw_sleep = str(device.get("scenary") or "").lower() == "sleep"
+        tracking = bucket.get("sleep_tracking", {}).get(device_id)
+        return raw_sleep or (tracking is not None and tracking.last_scenary == "sleep")
+
     current_preset = effective_preset(hass, coordinator, entry_id, device_id)
     revisions = bucket.setdefault("scene_revisions", {})
-    raw_sleep = str(device.get("scenary") or "").lower() == "sleep"
-    tracking = bucket.get("sleep_tracking", {}).get(device_id)
-    in_sleep = raw_sleep or (tracking is not None and tracking.last_scenary == "sleep")
+    in_sleep = sleep_observed()
     pending = bucket.setdefault("sleep_exit_pending", {})
+    entry_pending = pending.get(device_id) == "sleep"
     if preset_mode == "sleep":
         if device_id in pending:
             raise HomeAssistantError(
@@ -635,9 +642,14 @@ async def async_write_preset(
         # An accepted server-side write may have lost its HTTP reply.
         # Automatic Sleep expiry must not issue another scene command
         # before a subsequent backend read confirms convergence.
-        bucket.setdefault("sleep_exit_pending", {})[device_id] = SleepExitStatus(
-            "unverified"
+        # An ambiguous automatic Home from Away must not turn an unconfirmed
+        # Sleep entry into a strict exit fence. Renew the readback identity.
+        status = (
+            "sleep"
+            if automatic_away and entry_pending and not in_sleep and not sleep_observed()
+            else "unverified"
         )
+        pending[device_id] = SleepExitStatus(status)
         request_readback()
 
     def check_dispatch() -> None:
