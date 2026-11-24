@@ -250,11 +250,14 @@ class AirzonePowerSwitch(CoordinatorEntity[AirzoneCoordinator], SwitchEntity):
             return
 
         matching = {"1", "true", "on"} if value else {"0", "false", "off", ""}
+
+        def power_matches() -> bool:
+            return str(self._overlay_power() or "").strip().lower() in matching
+
         async with acquire_device_lock(self.hass, self._entry_id, self._device_id):
-            current = str(self._overlay_power() or "").strip().lower()
             await async_set_manual_power(
                 intent,
                 value,
-                power_matches=current in matching,
+                power_matches=power_matches,
                 on_write=self.async_write_ha_state,
             )
