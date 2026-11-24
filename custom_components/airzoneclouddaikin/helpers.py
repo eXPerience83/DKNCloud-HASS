@@ -646,7 +646,7 @@ async def async_write_preset(
         # Sleep entry into a strict exit fence. Renew the readback identity.
         status = (
             "sleep"
-            if automatic_away and entry_pending and not in_sleep and not sleep_observed()
+            if automatic_away and entry_pending and not (in_sleep or sleep_observed())
             else "unverified"
         )
         pending[device_id] = SleepExitStatus(status)
