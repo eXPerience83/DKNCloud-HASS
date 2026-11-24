@@ -1500,6 +1500,58 @@ async def test_turn_on_already_on_exits_away_without_duplicate_p1(
     assert entity._device_power_on()
 
 
+@pytest.mark.parametrize("action", ["turn_on", "set_hvac_mode"])
+async def test_active_command_exits_optimistic_away_before_readback(
+    hass: HomeAssistant,
+    dummy_coordinator_factory: Callable[..., Any],
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+) -> None:
+    """A just-acknowledged Away selection must not hide the required Home PUT."""
+    from custom_components.airzoneclouddaikin.helpers import (
+        async_auto_exit_sleep_if_needed,
+    )
+
+    entity, api = _climate(
+        hass,
+        dummy_coordinator_factory,
+        monkeypatch,
+        mode="1",
+        power="1",
+        scenary="occupied",
+    )
+    monkeypatch.setattr(
+        climate_module,
+        "async_auto_exit_sleep_if_needed",
+        async_auto_exit_sleep_if_needed,
+    )
+
+    async def accept_scene(_device_id, _payload, *, on_start, **_kwargs):
+        on_start()
+
+    api.put_device_fields.side_effect = accept_scene
+
+    await entity.async_set_preset_mode("away")
+    api.put_device_fields.assert_awaited_once_with(
+        "unit-1", {"device": {"scenary": "vacant"}}, on_start=ANY
+    )
+    assert entity.preset_mode == "away"
+    assert entity.coordinator.data["unit-1"]["scenary"] == "occupied"
+
+    if action == "turn_on":
+        await entity.async_turn_on()
+    else:
+        await entity.async_set_hvac_mode(HVACMode.COOL)
+
+    assert api.put_device_fields.await_args_list == [
+        call("unit-1", {"device": {"scenary": "vacant"}}, on_start=ANY),
+        call("unit-1", {"device": {"scenary": "occupied"}}, on_start=ANY),
+    ]
+    api.send_event.assert_not_awaited()
+    assert entity.preset_mode == "home"
+    assert entity._device_power_on()
+
+
 async def test_power_on_from_off_uses_p1_before_cooling_mode(
     hass: HomeAssistant,
     dummy_coordinator_factory: Callable[..., Any],
