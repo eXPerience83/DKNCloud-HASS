@@ -94,8 +94,15 @@ config-entry identifiers remain unchanged.
 
 ### Sleep session and manual restart
 
-A locally accepted Sleep selection uses its ACK as the estimated start. The
-device controls power through its native timer. A repeated Sleep request and
+Home, Away and Sleep are DKN Cloud scenes, not physical HVAC modes. Sleep
+is a cloud-managed shutoff policy; Away can request power according to the
+unoccupied temperature limits and heating/cooling mode. Separate local HVAC
+controller settings are not exposed through this cloud interface. This is the
+owner-confirmed functional model; the supervised observations do not identify
+the internal location of a timer or establish every backend transition.
+
+A locally accepted Sleep selection uses its ACK as the estimated start in HA.
+A repeated Sleep request and
 compatible active controls preserve the cycle. To restart a cycle, select
 Home, wait for applied confirmation, then select Sleep again. Home and Away
 remain explicit manual overrides.
@@ -656,10 +663,12 @@ and adds the duration plus five minutes. It neither predicts the end time nor
 emits control commands.
 
 The supervised trials used one unit in ventilation mode and a five-minute
-timer. In revised B the native timer appeared to survive OFF and ON when
-there was no intervening Home. The integration now treats OFF as the end of
-an active Sleep cycle. Home cancelling the earlier native timer is a product
-assumption tracked by nonblocking QA issue #245. Backend schedules are outside
+timer. In revised B the earlier Sleep shutoff appeared to remain effective
+across OFF and ON without an intervening Home. This observation does not
+establish where the timer executes. The integration treats an observed OFF
+following ON in the same Sleep session as the end of that active cycle.
+Whether Home cancels the earlier cloud Sleep policy is a product assumption
+tracked by nonblocking QA issue #245. Backend schedules are outside
 this integration policy. See the
 [supervised trial report](https://github.com/eXPerience83/DKNCloud-HASS/blob/2e91d01/docs/lab-evidence/236-sleep-live-results.md).
 
