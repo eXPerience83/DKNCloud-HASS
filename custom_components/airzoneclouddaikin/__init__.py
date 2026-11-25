@@ -48,14 +48,12 @@ from .const import (
 from .device_state import confirm_power_read
 from .helpers import (
     SleepExitStatus,
-    acquire_device_lock,
     active_entry_bucket,
     async_auto_exit_sleep_if_needed,
     cancel_post_write_refresh,
     confirm_optimistic,
     device_supports_heat_cool,
     expire_optimistic,
-    optimistic_set as optimistic_set,
     sleep_cleanup_candidate,
     sleep_off_power_is_certain,
     sleep_scope,
@@ -1311,7 +1309,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             fetch_sync,
             publish_sync,
             request_write_reauth,
-            lambda device: acquire_device_lock(hass, entry.entry_id, device),
             connect=connector,
             timed_fetch=fetch_sync,
             discover=discover_sync,
