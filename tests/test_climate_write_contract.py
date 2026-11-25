@@ -3157,7 +3157,12 @@ async def test_ordinary_scene_uncertainty_invalidates_previous_overlay(
 
 @pytest.mark.parametrize("outcome", ["connect", "response"])
 async def test_ordinary_scene_timeout_through_real_api_preserves_certainty(
-    hass, dummy_coordinator_factory, monkeypatch, socket_enabled, aiohttp_server, outcome
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    outcome,
 ):
     """A connection timeout is unsent; a lost response remains ambiguous."""
     from aiohttp import (
