@@ -3188,9 +3188,7 @@ async def test_ordinary_scene_timeout_through_real_api_preserves_certainty(
     app = web.Application()
     app.router.add_put(f"{airzone_api.API_DEVICES}/unit-1", handler)
     server = await aiohttp_server(app)
-    monkeypatch.setattr(
-        airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/")
-    )
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
 
     async def timeout_connect(*args, **kwargs):
         raise TimeoutError("synthetic connection timeout")
