@@ -3088,3 +3088,68 @@ async def test_explicit_away_after_ambiguous_manual_home(
     assert entity.preset_mode == "away"
     assert not bucket.get("sleep_exit_pending", {})
     api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize("evidence", ["old-get", "push", "partial-get", "fresh-get"])
+async def test_ordinary_scene_uncertainty_requires_fresh_applied_get(
+    hass, dummy_coordinator_factory, monkeypatch, evidence
+):
+    """Only a GET dispatched for this uncertainty may restore deduplication."""
+    from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = Mock()
+    entry = SimpleNamespace(entry_id="climate-entry", options={})
+    data = entity.coordinator.data
+    old_context = _sleep_get_context(bucket)
+    api.put_device_fields.side_effect = TimeoutError("Scene acceptance unknown")
+    with pytest.raises(TimeoutError):
+        await entity.async_set_preset_mode("away")
+
+    fresh_context = _sleep_get_context(bucket)
+    if evidence == "push":
+        _derive_state(hass, entry, data, fresh_scenary_ids={"unit-1"}, from_push=True)
+    else:
+        _derive_state(
+            hass,
+            entry,
+            data,
+            fresh_scenary_ids=set() if evidence == "partial-get" else {"unit-1"},
+            sleep_gets={
+                "unit-1": old_context if evidence == "old-get" else fresh_context
+            },
+        )
+
+    api.put_device_fields.side_effect = None
+    await entity.async_set_preset_mode("home")
+    expected = 1 if evidence == "fresh-get" else 2
+    assert api.put_device_fields.await_count == expected
+    # A successful explicit write also restores normal deduplication.
+    await entity.async_set_preset_mode("home")
+    assert api.put_device_fields.await_count == expected
+    api.send_event.assert_not_awaited()
+
+
+async def test_ordinary_scene_uncertainty_invalidates_previous_overlay(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """An earlier ACK overlay cannot hide a subsequent uncertain scene change."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = Mock()
+    await entity.async_set_preset_mode("away")
+    assert entity.preset_mode == "away"
+
+    api.put_device_fields.side_effect = TimeoutError("Scene acceptance unknown")
+    with pytest.raises(TimeoutError):
+        await entity.async_set_preset_mode("home")
+    assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+
+    api.put_device_fields.side_effect = None
+    await entity.async_set_preset_mode("home")
+    assert [
+        c.args[1]["device"]["scenary"] for c in api.put_device_fields.await_args_list
+    ] == ["vacant", "occupied", "occupied"]
+    assert entity.preset_mode == "home"
+    api.send_event.assert_not_awaited()

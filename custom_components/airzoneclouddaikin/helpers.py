@@ -26,9 +26,9 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from aiohttp import ClientResponseError
+from aiohttp import ClientConnectorError, ClientResponseError, ConnectionTimeoutError
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -614,6 +614,7 @@ async def async_write_preset(
     in_sleep = sleep_observed()
     pending = bucket.setdefault("sleep_exit_pending", {})
     entry_pending = pending.get(device_id) == "sleep"
+    uncertain_scenes = bucket.setdefault("uncertain_scenes", {})
     if preset_mode == "sleep":
         if device_id in pending:
             raise HomeAssistantError(
@@ -623,7 +624,11 @@ async def async_write_preset(
             return False
     elif current_preset == preset_mode:
         status = pending.get(device_id)
-        if status == "accepted" or (status is None and not in_sleep):
+        if status == "accepted" or (
+            status is None
+            and not in_sleep
+            and (automatic_away or device_id not in uncertain_scenes)
+        ):
             return False
     exits_sleep = preset_mode in {"home", "away"} and (in_sleep or device_id in pending)
 
@@ -679,6 +684,16 @@ async def async_write_preset(
                 pending[device_id] = SleepExitStatus("sleep")
                 request_readback()
             else:
+                # A definitive rejection or connection failure cannot undo
+                # a previous uncertainty, but does not create a new one.
+                if not isinstance(
+                    error,
+                    (ClientConnectorError, ConnectionTimeoutError, ConfigEntryAuthFailed),
+                ) and not (
+                    isinstance(error, ClientResponseError) and 400 <= error.status < 500
+                ):
+                    uncertain_scenes[device_id] = object()
+                    optimistic_invalidate(hass, entry_id, device_id, "scenary")
                 request_readback()
         raise
 
@@ -686,6 +701,7 @@ async def async_write_preset(
     if not entry_active():
         return False
 
+    uncertain_scenes.pop(device_id, None)
     optimistic_set(hass, entry_id, device_id, "scenary", scenary)
     bucket.setdefault("scene_preset_last_write", {})[device_id] = (
         revisions.get(device_id, 0),
