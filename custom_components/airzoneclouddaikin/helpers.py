@@ -688,7 +688,11 @@ async def async_write_preset(
                 # a previous uncertainty, but does not create a new one.
                 if not isinstance(
                     error,
-                    (ClientConnectorError, ConnectionTimeoutError, ConfigEntryAuthFailed),
+                    (
+                        ClientConnectorError,
+                        ConnectionTimeoutError,
+                        ConfigEntryAuthFailed,
+                    ),
                 ) and not (
                     isinstance(error, ClientResponseError) and 400 <= error.status < 500
                 ):
