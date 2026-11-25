@@ -131,8 +131,7 @@ async def test_initial_refresh_and_rediscovery_use_same_installation_ids(
             == initial_entity
         )
         assert (
-            registry.async_get_entity_id("climate", DOMAIN, "dev2_climate")
-            is not None
+            registry.async_get_entity_id("climate", DOMAIN, "dev2_climate") is not None
         ) == (expected is not None)
         reload.assert_not_called()
     finally:

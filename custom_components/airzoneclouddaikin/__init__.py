@@ -277,6 +277,18 @@ def _sleep_get_context(bucket):
     )
 
 
+def _resolve_installation_id(relation: dict[str, Any]) -> str | None:
+    """Resolve the first usable installation ID, retaining the legacy fallback."""
+    installation = relation.get("installation")
+    nested_id = (
+        installation.get("id") or installation.get("installation_id")
+        if isinstance(installation, dict)
+        else None
+    )
+    installation_id = nested_id or relation.get("installation_id") or relation.get("id")
+    return str(installation_id) if installation_id else None
+
+
 async def _async_update_data(
     hass: HomeAssistant, entry: ConfigEntry, api: AirzoneAPI
 ) -> dict[str, dict[str, Any]]:
@@ -308,16 +320,9 @@ async def _async_update_data(
             raise UpdateFailed("Invalid installation relations response")
 
         installation_ids: list[str] = []
-        for rel in relations or []:
-            inst_id: Any | None = None
-            inst = rel.get("installation")
-            if isinstance(inst, dict):
-                inst_id = inst.get("id") or inst.get("installation_id")
-            if inst_id is None:
-                inst_id = rel.get("installation_id") or rel.get("id")
-
-            if inst_id:
-                installation_ids.append(str(inst_id))
+        for relation in relations:
+            if installation_id := _resolve_installation_id(relation):
+                installation_ids.append(installation_id)
 
         last_devices_by_inst: dict[str, set[str]] = domain_bucket.setdefault(
             "last_devices_by_inst", {}
@@ -1254,17 +1259,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                 raise ValueError("Invalid installation discovery")
             mapping = {}
             for relation in relations:
-                installation = relation.get("installation")
-                installation_id = (
-                    (installation.get("id") or installation.get("installation_id"))
-                    if isinstance(installation, dict)
-                    else None
-                )
-                installation_id = (
-                    installation_id
-                    or relation.get("installation_id")
-                    or relation.get("id")
-                )
+                installation_id = _resolve_installation_id(relation)
                 if not installation_id:
                     continue
                 devices = await request(
@@ -1277,7 +1272,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                         device.get("id") or str(device.get("mac") or "").strip().lower()
                     )
                     if device_id:
-                        mapping[str(device_id)] = str(installation_id)
+                        mapping[str(device_id)] = installation_id
             return mapping
 
         @callback
