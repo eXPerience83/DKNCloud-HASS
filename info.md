@@ -212,6 +212,12 @@ rate-limit pauses remain authoritative.
 ### Installations / relations
 - `GET /installation_relations?user_email=...&user_token=...&format=json`
 - Returns a list of relations; **use `installation_id`** (not the relation `id`) to query devices.
+- Integration compatibility: initial refresh and topology rediscovery use the
+  same resolution order: nested `installation.id`, nested
+  `installation.installation_id`, outer `installation_id`, then legacy relation
+  `id` only as a fallback. Empty/falsy candidates are skipped; the chosen ID is
+  converted to a string. Relations without a usable ID are skipped. The legacy
+  fallback is integration compatibility, not a claim about the backend contract.
 
 ### Devices snapshot (preferred)
 - `GET /devices?format=json&installation_id=<installation_id>&user_email=...&user_token=...`
