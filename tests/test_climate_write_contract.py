@@ -2963,6 +2963,7 @@ async def test_manual_sleep_exit_422_preserves_prior_pending(
         await entity.async_set_preset_mode("home")
     assert pending["unit-1"] is previous
 
+
 @pytest.mark.parametrize(
     ("initial_scene", "initial_preset", "other_scene", "other_preset"),
     [
@@ -3030,9 +3031,7 @@ async def test_explicit_preset_after_ordinary_scene_outcome(
     }
     assert dispatched == expected[outcome]
     assert api.put_device_fields.await_count == (2 if outcome == "ambiguous" else 1)
-    assert server_scene == (
-        other_scene if outcome == "acknowledged" else initial_scene
-    )
+    assert server_scene == (other_scene if outcome == "acknowledged" else initial_scene)
     assert entity.preset_mode == requested
     assert not bucket.get("sleep_exit_pending", {})
     api.send_event.assert_not_awaited()
