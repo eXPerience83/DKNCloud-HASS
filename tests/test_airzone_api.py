@@ -655,7 +655,7 @@ async def test_installations_rejects_non_list_envelope(monkeypatch, relations):
 
 async def test_real_aiohttp_connection_timeout_redacts_url(monkeypatch):
     """Exercise aiohttp's URL-bearing connection timeout without network I/O."""
-    from aiohttp import TCPConnector
+    from aiohttp import ConnectionTimeoutError, TCPConnector
 
     async def timeout_connect(*args, **kwargs):
         raise TimeoutError("synthetic transport failure")
@@ -663,7 +663,7 @@ async def test_real_aiohttp_connection_timeout_redacts_url(monkeypatch):
     monkeypatch.setattr(TCPConnector, "connect", timeout_connect)
     async with ClientSession() as session:
         api = AirzoneAPI("hidden@example.com", session, token="hidden-token")
-        with pytest.raises(TimeoutError) as captured:
+        with pytest.raises(ConnectionTimeoutError) as captured:
             await api._request(
                 "GET",
                 API_INSTALLATION_RELATIONS,

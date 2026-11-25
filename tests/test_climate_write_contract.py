@@ -3153,3 +3153,82 @@ async def test_ordinary_scene_uncertainty_invalidates_previous_overlay(
     ] == ["vacant", "occupied", "occupied"]
     assert entity.preset_mode == "home"
     api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize("outcome", ["connect", "response"])
+async def test_ordinary_scene_timeout_through_real_api_preserves_certainty(
+    hass, dummy_coordinator_factory, monkeypatch, socket_enabled, aiohttp_server, outcome
+):
+    """A connection timeout is unsent; a lost response remains ambiguous."""
+    from aiohttp import (
+        ClientSession,
+        ClientTimeout,
+        ConnectionTimeoutError,
+        TCPConnector,
+        web,
+    )
+
+    from custom_components.airzoneclouddaikin import airzone_api
+
+    entity, _ = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    await entity.async_set_preset_mode("away")
+    assert entity.preset_mode == "away"
+    previous_overlay = bucket["optimistic"]["unit-1"]["scenary"]
+
+    received = []
+    release = asyncio.Event()
+
+    async def handler(request):
+        received.append(await request.json())
+        await release.wait()
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_put(f"{airzone_api.API_DEVICES}/unit-1", handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(
+        airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/")
+    )
+
+    async def timeout_connect(*args, **kwargs):
+        raise TimeoutError("synthetic connection timeout")
+
+    if outcome == "connect":
+        monkeypatch.setattr(TCPConnector, "connect", timeout_connect)
+    else:
+        monkeypatch.setattr(
+            airzone_api, "ClientTimeout", lambda **_: ClientTimeout(sock_read=0.5)
+        )
+
+    async with ClientSession() as session:
+        entity.coordinator.api = airzone_api.AirzoneAPI(
+            "hidden@example.invalid", session, token="hidden-token"
+        )
+        try:
+            with pytest.raises(TimeoutError) as captured:
+                await entity.async_set_preset_mode("home")
+        finally:
+            release.set()
+
+    error = captured.value
+    assert "hidden-token" not in str(error)
+    assert "hidden@example.invalid" not in repr(error)
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    assert not bucket.get("sleep_exit_pending", {})
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    if outcome == "connect":
+        assert isinstance(error, ConnectionTimeoutError)
+        assert not received
+        assert not bucket.get("uncertain_scenes")
+        assert bucket["optimistic"]["unit-1"]["scenary"] is previous_overlay
+        assert entity.preset_mode == "away"
+    else:
+        assert type(error) is TimeoutError
+        assert received == [{"device": {"scenary": "occupied"}}]
+        assert bucket["uncertain_scenes"]["unit-1"] is not None
+        assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+        assert entity.preset_mode == "home"
+    assert not entity.coordinator.api._pending
