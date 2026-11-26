@@ -566,3 +566,58 @@ async def test_sleep_timer_keeps_existing_clamp_semantics(
     await entity.async_set_native_value(500)
 
     assert api.calls == [("dev1", {"sleep_time": 120})]
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "changed"),
+    [
+        (DKNSleepTimeNumber, "sleep_time", 30, 60),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 18),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 26, 28),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["timeout", "cancel", "cooldown"])
+async def test_explicit_number_restoration_after_failed_put(
+    hass, dummy_coordinator_factory, entity_cls, field, initial, changed, outcome
+):
+    """A cached Number value must not discard a new explicit restoration."""
+    from custom_components.airzoneclouddaikin.airzone_api import CommandNotSentCooldown
+
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+    bucket = hass.data[DOMAIN]["entry"]
+    manager = bucket["sync_manager"] = Mock()
+    await entity.async_set_native_value(initial)
+    assert not api.calls
+
+    error = {
+        "timeout": TimeoutError("unknown PUT acceptance"),
+        "cancel": asyncio.CancelledError("unknown PUT acceptance"),
+        "cooldown": CommandNotSentCooldown(hass.loop.time() + 60),
+    }[outcome]
+
+    async def fail_once(device_id, payload, **_kwargs):
+        api.calls.append((device_id, payload))
+        raise error
+
+    original_put = api.put_device_fields
+    api.put_device_fields = fail_once
+    with pytest.raises(type(error)):
+        await entity.async_set_native_value(changed)
+
+    assert api.calls == [("dev1", {field: changed})]
+    assert entity.native_value == initial
+    if outcome == "cooldown":
+        manager.request_recovery.assert_not_called()
+    else:
+        manager.request_recovery.assert_called_once_with("dev1", require_fresh=True)
+
+    api.put_device_fields = original_put
+    await entity.async_set_native_value(initial)
+    await entity.async_set_native_value(initial)
+    expected = [("dev1", {field: changed})]
+    if outcome != "cooldown":
+        expected.append(("dev1", {field: initial}))
+    assert api.calls == expected
+    assert entity.native_value == initial

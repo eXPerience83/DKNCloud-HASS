@@ -3235,3 +3235,60 @@ async def test_ordinary_scene_timeout_through_real_api_preserves_certainty(
         assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
         assert entity.preset_mode == "home"
     assert not entity.coordinator.api._pending
+
+
+@pytest.mark.parametrize(
+    ("initial_code", "initial_mode", "changed_code", "changed_mode"),
+    [
+        ("1", HVACMode.COOL, "2", HVACMode.HEAT),
+        ("2", HVACMode.HEAT, "1", HVACMode.COOL),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["timeout", "cancel", "cooldown"])
+async def test_explicit_mode_restoration_after_failed_p2(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    initial_code,
+    initial_mode,
+    changed_code,
+    changed_mode,
+    outcome,
+):
+    """Only a known-unsent P2 permits deduplication against the old mode."""
+    from custom_components.airzoneclouddaikin.airzone_api import CommandNotSentCooldown
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode=initial_code, power="1"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    await entity.async_set_hvac_mode(initial_mode)
+    api.send_event.assert_not_awaited()
+
+    error = {
+        "timeout": TimeoutError("unknown P2 acceptance"),
+        "cancel": asyncio.CancelledError("unknown P2 acceptance"),
+        "cooldown": CommandNotSentCooldown(hass.loop.time() + 60),
+    }[outcome]
+    api.send_event.side_effect = error
+    with pytest.raises(type(error)):
+        await entity.async_set_hvac_mode(changed_mode)
+
+    api.send_event.assert_awaited_once()
+    assert entity.hvac_mode == initial_mode
+    if outcome == "cooldown":
+        manager.request_recovery.assert_not_called()
+    else:
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+    api.send_event.side_effect = None
+    await entity.async_set_hvac_mode(initial_mode)
+    await entity.async_set_hvac_mode(initial_mode)
+    expected = [("P2", changed_code)]
+    if outcome != "cooldown":
+        expected.append(("P2", initial_code))
+    events = [c.args[0]["event"] for c in api.send_event.await_args_list]
+    assert [(event["option"], event["value"]) for event in events] == expected
+    api.put_device_fields.assert_not_awaited()
+    assert entity.hvac_mode == initial_mode
