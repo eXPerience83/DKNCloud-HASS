@@ -70,15 +70,30 @@ jobs:
           touch "$scratch/approved-ignore"
           echo "Historical exception policy: none."
 
+          # Independently exercise the same Git patch traversal and require a
+          # successful exit, since Gitleaks can discard Git subprocess errors.
+          if ! git -C "$audit" log -p -U0 --all --diff-merges=first-parent --text --no-ext-diff --no-textconv >/dev/null 2>&1; then
+            echo "::error::Historical Git traversal failed; no audit result."
+            exit 1
+          fi
+
+          # The pinned scanner may log a fragment error but still exit 0.
+          # Capture error-level diagnostics privately and never print them.
+          diagnostics="$scratch/scanner-diagnostics.log"
           scan_rc=0
           "$(go env GOPATH)/bin/gitleaks" git \
-            --no-banner --redact=100 --exit-code=23 \
+            --no-banner --redact=100 --exit-code=23 --log-level=error \
             --config="$scratch/rules.toml" \
             --gitleaks-ignore-path="$scratch/approved-ignore" \
             --ignore-gitleaks-allow \
             --report-format=json --report-path="$report" \
             --log-opts="--all --diff-merges=first-parent --text --no-ext-diff --no-textconv" \
-            "$audit" >/dev/null 2>&1 || scan_rc=$?
+            "$audit" >"$diagnostics" 2>&1 || scan_rc=$?
+
+          if [[ -s "$diagnostics" ]]; then
+            echo "::error::Historical scanner emitted error diagnostics; no audit result."
+            exit 1
+          fi
 
           case "$scan_rc" in
             0|23) ;;
