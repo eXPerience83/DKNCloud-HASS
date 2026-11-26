@@ -1,3 +1,108 @@
+# Issue #197 — cumulative final audit handoff (2026-11-26)
+
+> Independent final Astra audit **pending**. This checkpoint is documentation,
+> not approval of a release, device acceptance, or live experiments.
+> [#197](https://github.com/eXPerience83/DKNCloud-HASS/issues/197) is the audit record;
+> [#253](https://github.com/eXPerience83/DKNCloud-HASS/issues/253) is the stabilization roadmap.
+> The historical 18 November brief is preserved below.
+
+## Current audit baseline and gates
+
+- Published experimental prerelease: **v0.6.0b2**, 24 November 2026.
+  Its installed HA 2026.11.3 [diagnostic snapshot](https://github.com/eXPerience83/DKNCloud-HASS/issues/191#issuecomment-7145987037)
+  shows healthy PUSH, not verified physical freshness.
+- Compare original v0.6.0a1 source `6ad2c77c7ae48f14d24b9d9fb0cc8b5690a2495d`
+  with the actual final main HEAD after this documentation PR.
+  Current verified runtime baseline: `01b6419026e6ce14c77df699c365a90c6b418bc4`, tree
+  `1c6860d1548e029cebc06b93c1e5ae9f473fdfb9`.
+- #231 (ambiguous PUT replay), #232 (runtime ownership), #233 (fresh GET),
+  #238 (latest power intent; supersedes #234), #244 (simplified Sleep),
+  #246/#248 (Away and Climate/Switch parity), #247 (documentation),
+  #251 (H03/H04), #252 (H05), and #254 (explicit scene intent #249)
+  are integrated. H06/H07 and #58 remain deliberately deferred;
+  H09 CI safeguards retained. #252 metadata was reconciled without repeating
+  the merge; #254 merged normally.
+- #49's historical first-disagreeing-refresh rule is superseded by the
+  bounded overlay policy (matching explicitly received fields, TTL, recovery).
+  [Disposition](https://github.com/eXPerience83/DKNCloud-HASS/issues/49#issuecomment-7184854410).
+  Do not add indiscriminate invalidation or claim physical convergence.
+
+### Exact main CI at 01b6419
+
+| Gate | Evidence |
+| --- | --- |
+| Current HA suite | [1076 passed, 17 warnings](https://github.com/eXPerience83/DKNCloud-HASS/actions/runs/45771026730/job/139743425837) |
+| Hash-locked minimum HA suite | [1076 passed, 17 warnings](https://github.com/eXPerience83/DKNCloud-HASS/actions/runs/45771026808/job/139743425784) |
+| Statement coverage | 3784 statements, 327 missed, 91% rounded in each lane |
+| Isolated smoke and aggregate tests | [passed](https://github.com/eXPerience83/DKNCloud-HASS/actions/runs/45771026730) |
+| CodeQL Python and Actions | [passed](https://github.com/eXPerience83/DKNCloud-HASS/actions/runs/45771027024) |
+| Other checks | Ruff, package, HACS/hassfest, actionlint/zizmor and validation passed |
+
+All 13 check runs succeeded on this SHA, including a separate validation run.
+The earlier scheduled CodeQL SARIF-upload Server Error at `4a6afe7` remains
+historical; the new main passed normal analysis without changing protections.
+#254 reviewed HEAD `cec4713ba41577a52e4b65ce00b252eb0e768525` had 14/14
+checks including full CodeRabbit, with its one valid timeout-classification
+finding corrected and closed. Its squash tree is identical to current main.
+Recheck exact HEAD after any further merge; do not transfer CI status to a
+different commit. Local independent final audit remains pending.
+
+## Archived LAB evidence — do not merge the experimental implementations
+
+- #223: branch `lab/197-bounded-setpoint-implementation`, final HEAD
+  `8aeeb229eb41e65d3a391f3cfd3d4f909e9faa96`; evidence ancestor
+  `859bd094c1c6918690311a46c187a06a8b404b2f`.
+  [Five-trial report](https://github.com/eXPerience83/DKNCloud-HASS/blob/859bd094c1c6918690311a46c187a06a8b404b2f/docs/lab-evidence/197-info-pusher-get.md),
+  [JSON summary](https://github.com/eXPerience83/DKNCloud-HASS/blob/859bd094c1c6918690311a46c187a06a8b404b2f/docs/lab-evidence/197-series-summary.json),
+  [subsequent read-only policy assessment](https://github.com/eXPerience83/DKNCloud-HASS/blob/8aeeb229eb41e65d3a391f3cfd3d4f909e9faa96/docs/lab-evidence/197-sync-policy-assessment.md).
+  Five approved numeric-field trials, ten HTTP 204 PUTs, five corroborated
+  restorations. Matching PUSH followed INFO resumption in each trial; this is
+  association, not causality, a universal timer, or physical-state proof.
+  The separate earlier gate-violation trial remains explicitly limited.
+- #236 / #237: branch `lab/236-sleep-five-minute-probes`, HEAD
+  `2e91d01aee5601321aab420eff3bdbe4cfe280f7`.
+  [A/C/revised B report](https://github.com/eXPerience83/DKNCloud-HASS/blob/2e91d01aee5601321aab420eff3bdbe4cfe280f7/docs/lab-evidence/236-sleep-live-results.md),
+  [consolidated observations](https://github.com/eXPerience83/DKNCloud-HASS/issues/236#issuecomment-7069634138),
+  [sanitized recorder cross-check](https://github.com/eXPerience83/DKNCloud-HASS/issues/236#issuecomment-7069667905).
+  Observations support countdown from Sleep selection, retained Sleep after
+  early OFF, and shutdown near the original deadline after re-wake before
+  expiry. F was not performed or authorized. #245 (whether Home cancels
+  the native timer after manual OFF) remains a separate nonblocking hypothesis.
+  Historical proposed policy is not the final #244 implementation.
+- Preserve both branches and their PR history; do not reuse expired grants,
+  publish raw diagnostics, merge experimental runners, or conduct new traffic.
+  The production policy is `info.md`, not the historical LAB proposals.
+
+## Independent audit assignment and remaining gates
+
+1. Reproduce and review #231/#232/#233/#238, ownership/dispatch/readback,
+   Sleep/Away/Home and latest explicit intent (#254); consider interactions
+   across platforms, fresh GET/PUSH precedence and overlays.
+2. Verify H01–H05/H08/H09, no unnecessary H06/H07 refactoring. Check security,
+   auth, 401/429/5xx, known-unsent connection versus ambiguous response
+   timeout, privacy and the WSS-only TLS exception (#60).
+3. Run exact locked Python 3.14/current HA and independently pinned minimum HA,
+   isolated smoke, lint and release/package/security checks. Prefer targeted
+   deterministic reproductions or reversible mutations to speculative defects.
+   Report SHA, evidence, severity and explicit unverified items.
+4. #243 remains optional display-only persistence: unknown t0 does not prevent
+   cleanup on valid startup OFF/Sleep under #244. #105 real password-change,
+   #101 physical external convergence and #191 final ZIP, install/migration,
+   lifecycle and hardware gates remain open. Reassess #60's lack of forward
+   secrecy before stable. #109/#173 coordinated CI maintenance, #58/H06/H07
+   structural work deferred. No real traffic authorized.
+5. After #197 independent verdict and exact-main gates, prepare b3 separately
+   (version/changelog/package PR, manual release approval); RC1 and stable
+   depend on acceptance, not just passing synthetic suites.
+
+Do not merge, publish, change protection rules, or operate equipment as part
+of the independent audit itself.
+
+---
+
+<details>
+<summary>Historical 18 November handoff — retained for traceability, superseded above</summary>
+
 # Issue #197 — cumulative final audit handoff (2026-11-18)
 
 > **Status: independent final Astra audit is REQUESTED, NOT COMPLETED by this document.**
@@ -118,3 +223,5 @@ recommendation and explicit unverified items. If blockers exist, propose
 focused follow-up PRs; otherwise conclude only that *synthetic/repository*
 gates pass, **not** universal hardware or release-readiness. Do not merge,
 publish, alter main protection or operate equipment as part of this review.
+
+</details>
