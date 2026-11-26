@@ -2962,3 +2962,276 @@ async def test_manual_sleep_exit_422_preserves_prior_pending(
     with pytest.raises(ClientResponseError):
         await entity.async_set_preset_mode("home")
     assert pending["unit-1"] is previous
+
+
+@pytest.mark.parametrize(
+    ("initial_scene", "initial_preset", "other_scene", "other_preset"),
+    [
+        ("occupied", "home", "vacant", "away"),
+        ("vacant", "away", "occupied", "home"),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["ambiguous", "unsent", "acknowledged"])
+async def test_explicit_preset_after_ordinary_scene_outcome(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    initial_scene,
+    initial_preset,
+    other_scene,
+    other_preset,
+    outcome,
+):
+    """A new explicit choice survives ambiguity, but reliable duplicates do not."""
+    from custom_components.airzoneclouddaikin.airzone_api import CommandNotSentCooldown
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary=initial_scene
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    server_scene = initial_scene
+    dispatched = []
+
+    async def put_scene(_device_id, payload, *, on_start, **_kwargs):
+        nonlocal server_scene
+        if not dispatched and outcome == "unsent":
+            raise CommandNotSentCooldown(hass.loop.time() + 60)
+        on_start()
+        server_scene = payload["device"]["scenary"]
+        dispatched.append(server_scene)
+        if len(dispatched) == 1 and outcome == "ambiguous":
+            raise TimeoutError("Scene applied but response lost")
+
+    api.put_device_fields.side_effect = put_scene
+    if outcome == "ambiguous":
+        with pytest.raises(TimeoutError):
+            await entity.async_set_preset_mode(other_preset)
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+        assert entity.preset_mode == initial_preset
+        assert server_scene == other_scene
+    elif outcome == "unsent":
+        with pytest.raises(CommandNotSentCooldown):
+            await entity.async_set_preset_mode(other_preset)
+        manager.request_recovery.assert_not_called()
+        assert server_scene == initial_scene
+    else:
+        await entity.async_set_preset_mode(other_preset)
+        assert entity.preset_mode == other_preset
+
+    # Deliberately withhold remote readback until the second explicit selection.
+    assert entity.coordinator.data["unit-1"]["scenary"] == initial_scene
+    requested = other_preset if outcome == "acknowledged" else initial_preset
+    await entity.async_set_preset_mode(requested)
+
+    expected = {
+        "ambiguous": [other_scene, initial_scene],
+        "unsent": [],
+        "acknowledged": [other_scene],
+    }
+    assert dispatched == expected[outcome]
+    assert api.put_device_fields.await_count == (2 if outcome == "ambiguous" else 1)
+    assert server_scene == (other_scene if outcome == "acknowledged" else initial_scene)
+    assert entity.preset_mode == requested
+    assert not bucket.get("sleep_exit_pending", {})
+    api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize("platform", ["climate", "switch"])
+@pytest.mark.parametrize("power", ["0", "1"])
+async def test_explicit_away_after_ambiguous_manual_home(
+    hass, dummy_coordinator_factory, monkeypatch, platform, power
+):
+    """An explicit Away must survive an ambiguous automatic exit from Away."""
+    from custom_components.airzoneclouddaikin.switch import AirzonePowerSwitch
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, scenary="vacant", power=power
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    server_scene = "vacant"
+    dispatched = []
+
+    async def put_scene(_device_id, payload, *, on_start, **_kwargs):
+        nonlocal server_scene
+        on_start()
+        server_scene = payload["device"]["scenary"]
+        dispatched.append(server_scene)
+        if len(dispatched) == 1:
+            raise TimeoutError("Home applied but response lost")
+
+    api.put_device_fields.side_effect = put_scene
+    target = entity
+    if platform == "switch":
+        target = AirzonePowerSwitch(entity.coordinator, "climate-entry", "unit-1")
+        target.hass = hass
+        monkeypatch.setattr(target, "_resolve_climate_entity_id", lambda: None)
+        monkeypatch.setattr(target, "async_write_ha_state", Mock())
+
+    # Redundant manual power must not emit P1, but does attempt Home.
+    if power == "1":
+        await target.async_turn_on()
+    else:
+        await target.async_turn_off()
+
+    assert dispatched == ["occupied"]
+    assert server_scene == "occupied"
+    assert entity.preset_mode == "away"
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+
+    await entity.async_set_preset_mode("away")
+
+    assert dispatched == ["occupied", "vacant"]
+    assert api.put_device_fields.await_count == 2
+    assert server_scene == "vacant"
+    assert entity.preset_mode == "away"
+    assert not bucket.get("sleep_exit_pending", {})
+    api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize("evidence", ["old-get", "push", "partial-get", "fresh-get"])
+async def test_ordinary_scene_uncertainty_requires_fresh_applied_get(
+    hass, dummy_coordinator_factory, monkeypatch, evidence
+):
+    """Only a GET dispatched for this uncertainty may restore deduplication."""
+    from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
+
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = Mock()
+    entry = SimpleNamespace(entry_id="climate-entry", options={})
+    data = entity.coordinator.data
+    old_context = _sleep_get_context(bucket)
+    api.put_device_fields.side_effect = TimeoutError("Scene acceptance unknown")
+    with pytest.raises(TimeoutError):
+        await entity.async_set_preset_mode("away")
+
+    fresh_context = _sleep_get_context(bucket)
+    if evidence == "push":
+        _derive_state(hass, entry, data, fresh_scenary_ids={"unit-1"}, from_push=True)
+    else:
+        _derive_state(
+            hass,
+            entry,
+            data,
+            fresh_scenary_ids=set() if evidence == "partial-get" else {"unit-1"},
+            sleep_gets={
+                "unit-1": old_context if evidence == "old-get" else fresh_context
+            },
+        )
+
+    api.put_device_fields.side_effect = None
+    await entity.async_set_preset_mode("home")
+    expected = 1 if evidence == "fresh-get" else 2
+    assert api.put_device_fields.await_count == expected
+    # A successful explicit write also restores normal deduplication.
+    await entity.async_set_preset_mode("home")
+    assert api.put_device_fields.await_count == expected
+    api.send_event.assert_not_awaited()
+
+
+async def test_ordinary_scene_uncertainty_invalidates_previous_overlay(
+    hass, dummy_coordinator_factory, monkeypatch
+):
+    """An earlier ACK overlay cannot hide a subsequent uncertain scene change."""
+    entity, api = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = Mock()
+    await entity.async_set_preset_mode("away")
+    assert entity.preset_mode == "away"
+
+    api.put_device_fields.side_effect = TimeoutError("Scene acceptance unknown")
+    with pytest.raises(TimeoutError):
+        await entity.async_set_preset_mode("home")
+    assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+
+    api.put_device_fields.side_effect = None
+    await entity.async_set_preset_mode("home")
+    assert [
+        c.args[1]["device"]["scenary"] for c in api.put_device_fields.await_args_list
+    ] == ["vacant", "occupied", "occupied"]
+    assert entity.preset_mode == "home"
+    api.send_event.assert_not_awaited()
+
+
+@pytest.mark.parametrize("outcome", ["connect", "response"])
+async def test_ordinary_scene_timeout_through_real_api_preserves_certainty(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    outcome,
+):
+    """A connection timeout is unsent; a lost response remains ambiguous."""
+    from aiohttp import (
+        ClientSession,
+        ClientTimeout,
+        ConnectionTimeoutError,
+        TCPConnector,
+        web,
+    )
+
+    from custom_components.airzoneclouddaikin import airzone_api
+
+    entity, _ = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    await entity.async_set_preset_mode("away")
+    assert entity.preset_mode == "away"
+    previous_overlay = bucket["optimistic"]["unit-1"]["scenary"]
+
+    received = []
+    release = asyncio.Event()
+
+    async def handler(request):
+        received.append(await request.json())
+        await release.wait()
+        return web.Response(status=204)
+
+    app = web.Application()
+    app.router.add_put(f"{airzone_api.API_DEVICES}/unit-1", handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    async def timeout_connect(*args, **kwargs):
+        raise TimeoutError("synthetic connection timeout")
+
+    if outcome == "connect":
+        monkeypatch.setattr(TCPConnector, "connect", timeout_connect)
+    else:
+        monkeypatch.setattr(
+            airzone_api, "ClientTimeout", lambda **_: ClientTimeout(sock_read=0.5)
+        )
+
+    async with ClientSession() as session:
+        entity.coordinator.api = airzone_api.AirzoneAPI(
+            "hidden@example.invalid", session, token="hidden-token"
+        )
+        try:
+            with pytest.raises(TimeoutError) as captured:
+                await entity.async_set_preset_mode("home")
+        finally:
+            release.set()
+
+    error = captured.value
+    assert "hidden-token" not in str(error)
+    assert "hidden@example.invalid" not in repr(error)
+    assert error.__context__ is None
+    assert error.__cause__ is None
+    assert not bucket.get("sleep_exit_pending", {})
+    manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+    if outcome == "connect":
+        assert isinstance(error, ConnectionTimeoutError)
+        assert not received
+        assert not bucket.get("uncertain_scenes")
+        assert bucket["optimistic"]["unit-1"]["scenary"] is previous_overlay
+        assert entity.preset_mode == "away"
+    else:
+        assert type(error) is TimeoutError
+        assert received == [{"device": {"scenary": "occupied"}}]
+        assert bucket["uncertain_scenes"]["unit-1"] is not None
+        assert "scenary" not in bucket.get("optimistic", {}).get("unit-1", {})
+        assert entity.preset_mode == "home"
+    assert not entity.coordinator.api._pending

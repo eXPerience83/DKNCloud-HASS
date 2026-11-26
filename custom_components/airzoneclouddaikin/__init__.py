@@ -274,6 +274,7 @@ def _sleep_get_context(bucket):
             for device in bucket.get("sleep_tracking", {})
         },
         bucket.get("sleep_exit_pending", {}).copy(),
+        bucket.get("uncertain_scenes", {}).copy(),
     )
 
 
@@ -527,6 +528,16 @@ def _derive_state(
                 interrupted.off_observed = False
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
         context = (sleep_gets or {}).get(dev_id)
+        uncertain_scenes = bucket.get("uncertain_scenes", {})
+        if (
+            (marker := uncertain_scenes.get(dev_id)) is not None
+            and context is not None
+            and context[3].get(dev_id) is marker
+            and fresh_scenary_ids is not None
+            and dev_id in fresh_scenary_ids
+            and raw_scenary in {SCENARY_HOME, SCENARY_VACANT, SCENARY_SLEEP}
+        ):
+            uncertain_scenes.pop(dev_id, None)
         pending = bucket.get("sleep_exit_pending", {})
         pending_scene = pending.get(dev_id)
         confirmed_home = False

@@ -646,6 +646,14 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
   policies.
 - Do **not** automatically replay an ambiguous scenary write (e.g., `sleep → occupied`): an accepted or timed-out response does not prove whether the backend applied it. Follow the per-device lock, session revision and read-back rules before considering another command.
 - For ordinary Home/Away and Sleep-entry scene PUTs, an ambiguous timeout or cancellation also requests an authoritative readback without optimistic success or replay. Preserve the special Sleep-exit pending fence only where the raw scene was Sleep; an explicitly unsent cooldown does not require readback.
+- After an uncertain ordinary Home/Away PUT, the previous scene overlay is
+  invalidated and a subsequent explicit Home/Away choice must not be discarded
+  solely because the cached scene matches. A new acknowledged scene PUT or an
+  applied valid scene from a GET dispatched with that same uncertainty marker
+  restores normal deduplication. Earlier GETs, partial reports and PUSH alone
+  do not resolve this marker. Definitive rejections and known-unsent connection
+  failures do not create new scene uncertainty. There is no automatic replay
+  or additional request schedule; the existing recovery path is retained.
 - Follow-up writes, optimistic state, publication and readback stay with the
   original runtime and coordinator, even when a replacement reuses the same
   entry ID. Delayed refreshes recheck ownership when they run. A successful
