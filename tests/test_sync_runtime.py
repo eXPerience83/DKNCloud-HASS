@@ -1533,3 +1533,65 @@ async def test_old_get_on_cannot_start_new_sleep_diagnostic(
     finally:
         release.set()
         await asyncio.wait_for(old_read, 2)
+
+
+async def test_applied_get_resolves_only_received_uncertain_fields(
+    hass, monkeypatch, dkn_config_entry_factory, sample_device
+):
+    """The real sync publication must not confirm a GET field superseded by PUSH."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+
+    async def fetch(_installation, **kwargs):
+        nonlocal calls
+        calls += 1
+        if on_start := kwargs.get("on_start"):
+            on_start()
+        if calls == 2:
+            entered.set()
+            await release.wait()
+        return [dict(sample_device)]
+
+    api = Mock()
+    api.fetch_installations = AsyncMock(return_value=[{"installation_id": "fake"}])
+    api.fetch_devices = AsyncMock(side_effect=fetch)
+    monkeypatch.setattr(integration, "AirzoneAPI", Mock(return_value=api))
+    monkeypatch.setattr(
+        integration, "build_verified_adapter", Mock(connect=AsyncMock())
+    )
+    monkeypatch.setattr(integration.SyncManager, "start", Mock())
+    entry = dkn_config_entry_factory()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    coordinator = entry.runtime_data.coordinator
+    bucket = hass.data[DOMAIN][entry.entry_id]
+    manager = bucket["sync_manager"]
+    markers = bucket["uncertain_fields"] = {
+        ("dev1", "mode"): object(),
+        ("dev1", "sleep_time"): object(),
+    }
+    mode_marker = markers["dev1", "mode"]
+    refresh = None
+    try:
+        refresh = asyncio.create_task(coordinator.async_refresh())
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        await manager.event("dev1", {"mode": "2"}, manager.state.generation)
+        assert markers["dev1", "mode"] is mode_marker
+        release.set()
+        await asyncio.wait_for(refresh, timeout=3)
+        assert coordinator.data["dev1"]["mode"] == "2"
+        assert "mode" not in manager.touched["dev1"]
+        assert markers == {("dev1", "mode"): mode_marker}
+
+        # A new applied GET can resolve the surviving mode uncertainty.
+        manager._budget._next = 0
+        await coordinator.async_refresh()
+        assert coordinator.data["dev1"]["mode"] == "1"
+        assert not markers
+        api.send_event.assert_not_called()
+        api.put_device_fields.assert_not_called()
+    finally:
+        release.set()
+        if refresh is not None and not refresh.done():
+            await asyncio.wait_for(refresh, timeout=3)
+        assert await hass.config_entries.async_unload(entry.entry_id)

@@ -310,6 +310,7 @@ async def test_replaced_entry_ignores_late_ambiguous_number_put(
         await asyncio.wait_for(task, timeout=3)
     new_manager.request_recovery.assert_not_called()
     assert "optimistic" not in hass.data[DOMAIN]["entry"]
+    assert "uncertain_fields" not in hass.data[DOMAIN]["entry"]
 
 
 @pytest.mark.parametrize("unload_status", ["removed", "closing"])
