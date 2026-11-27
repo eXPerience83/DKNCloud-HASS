@@ -741,7 +741,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             except (Exception, asyncio.CancelledError) as error:
                 if entry_active():
                     mark_field_write_uncertain(
-                        self.hass, self._entry_id, bucket, self._device_id, "mode", error
+                        self.hass,
+                        self._entry_id,
+                        bucket,
+                        self._device_id,
+                        "mode",
+                        error,
                     )
                     if powered_on:
                         if not power_is_on(self._device.get("power")):
