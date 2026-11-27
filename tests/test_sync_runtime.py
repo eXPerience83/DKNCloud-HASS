@@ -1595,3 +1595,91 @@ async def test_applied_get_resolves_only_received_uncertain_fields(
         if refresh is not None and not refresh.done():
             await asyncio.wait_for(refresh, timeout=3)
         assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.mark.parametrize(
+    ("remote_changes", "elapsed", "restore"),
+    [
+        ({}, 2, True),
+        ({"scenary": "occupied"}, 2, False),
+        ({"sleep_time": 10}, 2, False),
+        ({}, 6, False),
+    ],
+    ids=["matching", "changed-scene", "changed-duration", "expired"],
+)
+async def test_sleep_estimate_after_entry_reload(
+    hass, monkeypatch, sleep_session_runtime, remote_changes, elapsed, restore
+):
+    """A restored estimate must not restore any runtime control evidence."""
+    api, remote, bucket, manager = sleep_session_runtime
+    entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
+    now = integration.dt_util.utcnow()
+    monkeypatch.setattr(integration.dt_util, "utcnow", lambda: now)
+    climate = er.async_get(hass).async_get_entity_id("climate", DOMAIN, "dev1_climate")
+
+    await hass.services.async_call(
+        "climate",
+        "set_preset_mode",
+        {"entity_id": climate, "preset_mode": "sleep"},
+        blocking=True,
+    )
+    remote.update(scenary="sleep", power="1")
+    await manager.event(
+        "dev1", {"scenary": "sleep", "power": "1"}, manager.state.generation
+    )
+    end = now + timedelta(minutes=5)
+    assert bucket["sleep_tracking"]["dev1"].end == end
+    assert bucket["coordinator"].data["dev1"]["sleep_estimated_end"] == end.isoformat()
+    await hass.async_block_till_done()
+    writes = (
+        api.put_device_fields.await_count,
+        api.async_set_scenary.await_count,
+        api.send_event.await_count,
+    )
+
+    now += timedelta(minutes=elapsed)
+    remote.update(remote_changes)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    new_bucket = hass.data[DOMAIN][entry.entry_id]
+    assert new_bucket is not bucket
+    tracking = new_bucket["sleep_tracking"]["dev1"]
+    data = new_bucket["coordinator"].data["dev1"]
+    assert not tracking.start_known
+    assert not tracking.off_observed
+    assert tracking.activation_until is None
+    assert tracking.activation_wake is None
+    assert not tracking.force_exit_requested
+    assert not data["sleep_overdue"]
+    assert (
+        api.put_device_fields.await_count,
+        api.async_set_scenary.await_count,
+        api.send_event.await_count,
+    ) == writes
+    assert data["sleep_estimated_end"] == (end.isoformat() if restore else None)
+    assert data["sleep_remaining_estimated"] == (5 - elapsed if restore else None)
+
+    # The valid display estimate survives another reload; an invalidated
+    # record cannot reappear merely because the remote values match again.
+    remote.update(scenary="sleep", sleep_time=5)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    new_bucket = hass.data[DOMAIN][entry.entry_id]
+    data = new_bucket["coordinator"].data["dev1"]
+    assert data["sleep_estimated_end"] == (end.isoformat() if restore else None)
+    if restore:
+        new_manager = new_bucket["sync_manager"]
+        remote["sleep_time"] = 10
+        await new_manager.event(
+            "dev1", {"sleep_time": 10}, new_manager.state.generation
+        )
+        assert new_bucket["coordinator"].data["dev1"]["sleep_estimated_end"] is None
+        remote["sleep_time"] = 5
+        await new_manager.event("dev1", {"sleep_time": 5}, new_manager.state.generation)
+        assert new_bucket["coordinator"].data["dev1"]["sleep_estimated_end"] is None
+    assert (
+        api.put_device_fields.await_count,
+        api.async_set_scenary.await_count,
+        api.send_event.await_count,
+    ) == writes
