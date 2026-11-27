@@ -1913,6 +1913,7 @@ async def test_ambiguous_hvac_p2_only_failure_requests_readback(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, mode="1", power="1"
     )
+
     async def ambiguous(_payload, *, on_in_flight, **_kwargs):
         on_in_flight(True)
         raise failure("P2 may have been accepted")
@@ -3276,6 +3277,7 @@ async def test_explicit_mode_restoration_after_failed_p2(
         "cancel": asyncio.CancelledError("unknown P2 acceptance"),
         "cooldown": CommandNotSentCooldown(hass.loop.time() + 60),
     }[outcome]
+
     async def fail_once(_payload, *, on_in_flight, **_kwargs):
         if outcome != "cooldown":
             on_in_flight(True)

@@ -109,7 +109,9 @@ async def test_failed_number_write_preserves_backend_state(
         device_data={"sleep_time": 30},
     )
 
-    async def reject_write(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
+    async def reject_write(
+        _device_id: str, _payload: dict[str, Any], **_kwargs
+    ) -> None:
         raise RuntimeError("Backend write failed")
 
     api.put_device_fields = reject_write
@@ -204,7 +206,9 @@ async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
         device_data={"sleep_time": 30},
     )
 
-    async def unknown_write(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
+    async def unknown_write(
+        _device_id: str, _payload: dict[str, Any], **_kwargs
+    ) -> None:
         raise TimeoutError("unknown PUT acceptance")
 
     api.put_device_fields = unknown_write
