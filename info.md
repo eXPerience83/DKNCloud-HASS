@@ -384,6 +384,17 @@ potentially received automatic scene PUT per session. Ambiguous writes are
 reconciled through the existing readback. The Sleep clock sends no P1.
 INFO/PUSH and existing GET recovery supply all observations.
 
+Local Sleep ACK estimates are stored privately per config entry, keyed by
+a digest of the device identity. A reload/restart may restore the estimated
+end and remaining minutes only for a current matching Sleep scene and duration
+with a valid, unexpired timestamp. This does not restore `start_known`, OFF
+observations, activation windows, session fences or overdue evidence. A silent
+external rearm during downtime cannot be detected; restored values are estimates,
+not proof of the physical timer. Scene exit, uncertain writes, duration changes,
+lost continuity and removal invalidate the stored estimate; no new polling or
+control writes are driven by the Store. A missing or unreadable Store leaves
+the existing unknown-start behavior unchanged.
+
 ## 3) Event Model (Px options) — Consolidated Table
 
 > **Value formats:** The backend commonly accepts numeric values as strings. Setpoints are typically sent as strings with one decimal.

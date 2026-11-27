@@ -60,6 +60,7 @@ from .helpers import (
     sleep_scope,
 )
 from .push_adapter import build_verified_adapter
+from .sleep_estimate import SleepEstimateStore, async_remove_estimates
 from .sync_manager import SyncManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -521,9 +522,12 @@ def _derive_state(
     now = dt_util.utcnow()
     tracked_ids = set(sleep_tracking)
     active_ids = set(data)
+    estimates = bucket.get("sleep_estimates")
     if not had_non_auth_install_errors:
         for stale_id in tracked_ids - active_ids:
             sleep_tracking.pop(stale_id, None)
+        if estimates is not None:
+            estimates.retain_devices(active_ids)
     for dev_id, dev in data.items():
         failed_sites = bucket.get("failed_installations_last_update", ())
         if bucket.get("device_installation_map", {}).get(dev_id) in failed_sites:
@@ -713,6 +717,42 @@ def _derive_state(
                 ):
                     tracking.off_observed = True
         end = tracking.end
+        if estimates is not None:
+            # A restored clock is display-only. Never copy it into tracking
+            # or use it for activation, OFF evidence or the overdue diagnostic.
+            valid_scene = (
+                active_sleep
+                and bucket.get("device_installation_map", {}).get(dev_id)
+                not in failed_sites
+                and dev_id not in bucket.get("sleep_exit_pending", {})
+                and dev_id not in bucket.get("uncertain_scenes", {})
+                and (dev_id, "sleep_time") not in bucket.get("uncertain_fields", {})
+                and (
+                    (
+                        raw_scenary == SCENARY_SLEEP
+                        and overlay_value in {None, SCENARY_SLEEP}
+                    )
+                    or (tracking.start_known and overlay_value == SCENARY_SLEEP)
+                )
+                and (
+                    previous_scene is not None
+                    or (
+                        fresh_scenary_ids is not None
+                        and dev_id in fresh_scenary_ids
+                        and fresh_duration_ids is not None
+                        and dev_id in fresh_duration_ids
+                    )
+                )
+            )
+            restored_end = estimates.estimate(
+                dev_id,
+                now,
+                sleep_time_minutes,
+                current_session_known=tracking.start_known,
+                valid_scene=valid_scene,
+            )
+            if end is None:
+                end = restored_end
         dev["sleep_estimated_end"] = end.isoformat() if end else None
         dev["sleep_remaining_estimated"] = (
             max(0, ceil((end - now).total_seconds() / 60)) if end else None
@@ -954,6 +994,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
     )
     coordinator.api = api
     bucket["coordinator"] = coordinator
+    estimates = SleepEstimateStore(hass, entry.entry_id)
+    await estimates.async_load(dt_util.utcnow())
+    if not entry_active():
+        raise asyncio.CancelledError
+    bucket["sleep_estimates"] = estimates
     await coordinator.async_config_entry_first_refresh()
     if not entry_active():
         raise asyncio.CancelledError
@@ -1312,6 +1357,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
             if entry_active():
                 if manager.state.generation != observed_generation:
                     observed_generation = manager.state.generation
+                    estimates.clear()
                     for tracking in bucket["sleep_tracking"].values():
                         tracking.start_known = False
                         tracking.off_observed = False
@@ -1482,6 +1528,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
             persistent_notification.async_dismiss(hass, f"{offline_nid}:online")
 
     if unload_ok:
+        if (
+            hass.data.get(DOMAIN, {}).get(entry.entry_id) is bucket
+            and (estimates := bucket.get("sleep_estimates")) is not None
+        ):
+            await estimates.async_flush()
+        if bucket.get("coordinator") is not coordinator:
+            return unload_ok
         bucket.pop("device_locks", None)
         if uncertain_power := bucket.get("uncertain_power"):
             uncertain_power.clear()
@@ -1493,3 +1546,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
                 _NOTIFY_FMT_FALLBACK_LOGGED.clear()
 
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> None:
+    """Remove persisted Sleep display estimates with the config entry."""
+    await async_remove_estimates(hass, entry.entry_id)

@@ -158,10 +158,22 @@ def optimistic_set(
                 tracking.overdue_on_reports = 0
                 tracking.last_confirmed_on_utc = None
                 tracking.overdue_recorded = False
-        elif tracking := bucket.get("sleep_tracking", {}).get(device_id):
-            tracking.off_observed = False
+                if estimates := bucket.get("sleep_estimates"):
+                    if tracking.start_known:
+                        estimates.remember(
+                            device_id, tracking.sleep_started_at_utc, duration
+                        )
+                    else:
+                        estimates.discard(device_id)
+        else:
+            if tracking := bucket.get("sleep_tracking", {}).get(device_id):
+                tracking.off_observed = False
+            if estimates := bucket.get("sleep_estimates"):
+                estimates.discard(device_id)
         revisions = bucket.setdefault("scene_revisions", {})
         revisions[device_id] = revisions.get(device_id, 0) + 1
+    if key == "sleep_time" and (estimates := bucket.get("sleep_estimates")):
+        estimates.discard(device_id)
     device_overlay = optimistic.setdefault(device_id, {})
 
     expires_in = ttl if ttl is not None else _adaptive_ttl(hass, entry_id)
@@ -244,6 +256,8 @@ def mark_field_write_uncertain(
     ) or (isinstance(error, ClientResponseError) and 400 <= error.status < 500):
         return
     bucket.setdefault("uncertain_fields", {})[device_id, field] = object()
+    if field == "sleep_time" and (estimates := bucket.get("sleep_estimates")):
+        estimates.discard(device_id)
     optimistic_invalidate(hass, entry_id, device_id, field)
 
 
@@ -706,6 +720,8 @@ async def async_write_preset(
             else "unverified"
         )
         pending[device_id] = SleepExitStatus(status)
+        if estimates := bucket.get("sleep_estimates"):
+            estimates.discard(device_id)
         request_readback()
 
     def check_dispatch() -> None:
@@ -733,6 +749,8 @@ async def async_write_preset(
                 fence_ambiguous_scene()
             elif preset_mode == "sleep":
                 pending[device_id] = SleepExitStatus("sleep")
+                if estimates := bucket.get("sleep_estimates"):
+                    estimates.discard(device_id)
                 request_readback()
             else:
                 # A definitive rejection or connection failure cannot undo
@@ -748,6 +766,8 @@ async def async_write_preset(
                     isinstance(error, ClientResponseError) and 400 <= error.status < 500
                 ):
                     uncertain_scenes[device_id] = object()
+                    if estimates := bucket.get("sleep_estimates"):
+                        estimates.discard(device_id)
                     optimistic_invalidate(hass, entry_id, device_id, "scenary")
                 request_readback()
         raise
@@ -1089,6 +1109,10 @@ async def async_write_sleep_home(
                 bucket.setdefault("sleep_exit_pending", {})[device_id] = (
                     SleepExitStatus(status)
                 )
+                if status != "rejected" and (
+                    estimates := bucket.get("sleep_estimates")
+                ):
+                    estimates.discard(device_id)
             if automatic or status != "accepted" or bucket.get("sync_manager"):
                 request_ambiguous_control_readback(
                     hass,

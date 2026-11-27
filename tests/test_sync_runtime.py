@@ -1615,9 +1615,7 @@ async def test_sleep_estimate_after_entry_reload(
     entry = next(iter(hass.config_entries.async_entries(DOMAIN)))
     now = integration.dt_util.utcnow()
     monkeypatch.setattr(integration.dt_util, "utcnow", lambda: now)
-    climate = er.async_get(hass).async_get_entity_id(
-        "climate", DOMAIN, "dev1_climate"
-    )
+    climate = er.async_get(hass).async_get_entity_id("climate", DOMAIN, "dev1_climate")
 
     await hass.services.async_call(
         "climate",
@@ -1631,9 +1629,7 @@ async def test_sleep_estimate_after_entry_reload(
     )
     end = now + timedelta(minutes=5)
     assert bucket["sleep_tracking"]["dev1"].end == end
-    assert (
-        bucket["coordinator"].data["dev1"]["sleep_estimated_end"] == end.isoformat()
-    )
+    assert bucket["coordinator"].data["dev1"]["sleep_estimated_end"] == end.isoformat()
     await hass.async_block_till_done()
     writes = (
         api.put_device_fields.await_count,
