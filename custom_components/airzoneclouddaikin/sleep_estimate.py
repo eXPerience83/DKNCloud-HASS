@@ -60,14 +60,17 @@ class SleepEstimateStore:
         self._records: dict[str, Any] = {}
         self._restored: set[str] = set()
         self._dirty = False
+        self._removed = False
 
     async def async_load(self, now: datetime) -> None:
+        if self._removed:
+            return
         try:
             data = await self._store.async_load()
         except HomeAssistantError, OSError, ValueError, NotImplementedError:
             _LOGGER.warning("Unable to load local Sleep estimates")
             return
-        if isinstance(data, dict):
+        if not self._removed and isinstance(data, dict):
             self._records = {
                 key: {"start": record["start"], "minutes": record["minutes"]}
                 for key, record in data.items()
@@ -83,6 +86,8 @@ class SleepEstimateStore:
 
     def remember(self, device_id: str, start: datetime, minutes: int) -> None:
         """Record only an acknowledged local selection."""
+        if self._removed:
+            return
         key = _key(device_id)
         record = {"start": start.isoformat(), "minutes": minutes}
         self._restored.discard(key)
@@ -139,16 +144,24 @@ class SleepEstimateStore:
 
     async def async_flush(self) -> None:
         """Drain the pending Store write before a normal entry reload."""
-        if self._dirty:
+        if self._dirty and not self._removed:
             try:
                 await self._store.async_save(dict(self._records))
             except HomeAssistantError, OSError:
                 _LOGGER.warning("Unable to save local Sleep estimates")
 
+    async def async_remove(self) -> None:
+        """Fence late updates and remove through the owner of pending writes."""
+        self._removed = True
+        self._records.clear()
+        self._restored.clear()
+        self._dirty = False
+        try:
+            await self._store.async_remove()
+        except HomeAssistantError, OSError:
+            _LOGGER.warning("Unable to remove local Sleep estimates")
+
 
 async def async_remove_estimates(hass: HomeAssistant, entry_id: str) -> None:
-    """Remove only this entry's optional display history."""
-    try:
-        await _store(hass, entry_id).async_remove()
-    except HomeAssistantError, OSError:
-        _LOGGER.warning("Unable to remove local Sleep estimates")
+    """Remove optional history when there is no live entry Store."""
+    await SleepEstimateStore(hass, entry_id).async_remove()

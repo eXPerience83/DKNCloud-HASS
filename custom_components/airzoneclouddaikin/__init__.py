@@ -1550,4 +1550,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> 
 
 async def async_remove_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> None:
     """Remove persisted Sleep display estimates with the config entry."""
-    await async_remove_estimates(hass, entry.entry_id)
+    bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    if (estimates := bucket.get("sleep_estimates")) is not None:
+        await estimates.async_remove()
+    else:
+        await async_remove_estimates(hass, entry.entry_id)

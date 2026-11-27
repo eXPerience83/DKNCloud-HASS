@@ -1,11 +1,14 @@
 """Focused tests for optional Sleep estimate storage."""
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+import custom_components.airzoneclouddaikin as integration
 from custom_components.airzoneclouddaikin import sleep_estimate
+from custom_components.airzoneclouddaikin.const import DOMAIN
 
 
 @pytest.mark.parametrize(
@@ -120,3 +123,60 @@ async def test_restored_estimate_is_entry_and_device_scoped(hass):
     await reloaded.async_flush()
     await sleep_estimate.async_remove_estimates(hass, "entry-one")
     await sleep_estimate.async_remove_estimates(hass, "entry-two")
+
+
+async def test_remove_after_failed_unload_cancels_live_store(
+    hass, monkeypatch, dkn_config_entry_factory
+):
+    """Removal must cancel the live Store's pending save, even on failed unload."""
+    entry = dkn_config_entry_factory()
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    estimates = sleep_estimate.SleepEstimateStore(hass, entry.entry_id)
+    hass.data[DOMAIN] = {
+        entry.entry_id: {"sleep_estimates": estimates, "sync_manager": Mock()}
+    }
+    monkeypatch.setattr(
+        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=False)
+    )
+    estimates.remember("dev1", now, 30)
+    assert estimates._store._delay_handle is not None
+    assert not await integration.async_unload_entry(hass, entry)
+    await integration.async_remove_entry(hass, entry)
+    assert estimates._store._delay_handle is None
+
+    # A callback from the failed-unload runtime must not recreate the file.
+    estimates.remember("dev1", now + timedelta(minutes=1), 30)
+    await estimates.async_flush()
+    assert estimates._store._delay_handle is None
+    assert await sleep_estimate._store(hass, entry.entry_id).async_load() is None
+
+
+async def test_remove_waits_for_live_store_write(hass, monkeypatch):
+    """The original Store lock serializes deletion after a dispatched save."""
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    estimates = sleep_estimate.SleepEstimateStore(hass, "entry")
+    started, release = asyncio.Event(), asyncio.Event()
+    original_write = estimates._store._io.async_write
+
+    async def blocked_write(*args):
+        started.set()
+        await release.wait()
+        await original_write(*args)
+
+    monkeypatch.setattr(estimates._store._io, "async_write", blocked_write)
+    estimates.remember("dev1", now, 30)
+    save = asyncio.create_task(estimates.async_flush())
+    remove = None
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        remove = asyncio.create_task(estimates.async_remove())
+        await asyncio.sleep(0)
+        assert not remove.done()
+        estimates.remember("dev2", now, 30)
+        assert estimates._store._delay_handle is None
+    finally:
+        release.set()
+        await asyncio.wait_for(save, 2)
+        if remove is not None:
+            await asyncio.wait_for(remove, 2)
+    assert await sleep_estimate._store(hass, "entry").async_load() is None
