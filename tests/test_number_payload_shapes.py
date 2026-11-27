@@ -109,7 +109,9 @@ async def test_failed_number_write_preserves_backend_state(
         device_data={"sleep_time": 30},
     )
 
-    async def reject_write(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def reject_write(
+        _device_id: str, _payload: dict[str, Any], **_kwargs
+    ) -> None:
         raise RuntimeError("Backend write failed")
 
     api.put_device_fields = reject_write
@@ -144,7 +146,8 @@ async def test_number_ambiguous_put_requests_readback_without_optimistic_success
     )
     requests: list[dict[str, Any]] = []
 
-    async def ambiguous_put(_device_id: str, payload: dict[str, Any]) -> None:
+    async def ambiguous_put(_device_id: str, payload: dict[str, Any], *, on_in_flight):
+        on_in_flight(True)
         requests.append(payload)
         raise failure("unknown PUT result")
 
@@ -176,7 +179,7 @@ async def test_number_known_unsent_cooldown_does_not_request_readback(
         device_data={"sleep_time": 30},
     )
 
-    async def unsent(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def unsent(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         raise CommandNotSentCooldown(hass.loop.time() + 60)
 
     api.put_device_fields = unsent
@@ -203,7 +206,9 @@ async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
         device_data={"sleep_time": 30},
     )
 
-    async def unknown_write(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def unknown_write(
+        _device_id: str, _payload: dict[str, Any], **_kwargs
+    ) -> None:
         raise TimeoutError("unknown PUT acceptance")
 
     api.put_device_fields = unknown_write
@@ -248,7 +253,7 @@ async def test_late_successful_number_put_cannot_update_unloaded_entry(
     writes: list[dict[str, Any]] = []
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_put(_device_id: str, payload: dict[str, Any]) -> None:
+    async def held_put(_device_id: str, payload: dict[str, Any], **_kwargs) -> None:
         writes.append(payload)
         entered.set()
         await release.wait()
@@ -292,7 +297,7 @@ async def test_replaced_entry_ignores_late_ambiguous_number_put(
     )
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_error(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def held_error(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         entered.set()
         await release.wait()
         raise TimeoutError("late response lost")
@@ -310,6 +315,7 @@ async def test_replaced_entry_ignores_late_ambiguous_number_put(
         await asyncio.wait_for(task, timeout=3)
     new_manager.request_recovery.assert_not_called()
     assert "optimistic" not in hass.data[DOMAIN]["entry"]
+    assert "uncertain_fields" not in hass.data[DOMAIN]["entry"]
 
 
 @pytest.mark.parametrize("unload_status", ["removed", "closing"])
@@ -439,7 +445,7 @@ async def test_concurrent_number_writes_recheck_state_under_lock(
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def paused_put(device_id: str, payload: dict[str, Any]) -> None:
+    async def paused_put(device_id: str, payload: dict[str, Any], **_kwargs) -> None:
         api.calls.append((device_id, payload))
         if len(api.calls) == 1:
             entered.set()
@@ -566,3 +572,120 @@ async def test_sleep_timer_keeps_existing_clamp_semantics(
     await entity.async_set_native_value(500)
 
     assert api.calls == [("dev1", {"sleep_time": 120})]
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "changed"),
+    [
+        (DKNSleepTimeNumber, "sleep_time", 30, 60),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 18),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 26, 28),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["timeout", "cancel", "cooldown"])
+async def test_explicit_number_restoration_after_failed_put(
+    hass, dummy_coordinator_factory, entity_cls, field, initial, changed, outcome
+):
+    """A cached Number value must not discard a new explicit restoration."""
+    from custom_components.airzoneclouddaikin.airzone_api import CommandNotSentCooldown
+
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+    bucket = hass.data[DOMAIN]["entry"]
+    manager = bucket["sync_manager"] = Mock()
+    await entity.async_set_native_value(initial)
+    assert not api.calls
+
+    error = {
+        "timeout": TimeoutError("unknown PUT acceptance"),
+        "cancel": asyncio.CancelledError("unknown PUT acceptance"),
+        "cooldown": CommandNotSentCooldown(hass.loop.time() + 60),
+    }[outcome]
+
+    async def fail_once(device_id, payload, *, on_in_flight):
+        if outcome != "cooldown":
+            on_in_flight(True)
+        api.calls.append((device_id, payload))
+        raise error
+
+    original_put = api.put_device_fields
+    api.put_device_fields = fail_once
+    with pytest.raises(type(error)):
+        await entity.async_set_native_value(changed)
+
+    assert api.calls == [("dev1", {field: changed})]
+    assert entity.native_value == initial
+    if outcome == "cooldown":
+        manager.request_recovery.assert_not_called()
+    else:
+        manager.request_recovery.assert_called_once_with("dev1", require_fresh=True)
+
+    api.put_device_fields = original_put
+    await entity.async_set_native_value(initial)
+    await entity.async_set_native_value(initial)
+    expected = [("dev1", {field: changed})]
+    if outcome != "cooldown":
+        expected.append(("dev1", {field: initial}))
+    assert api.calls == expected
+    assert entity.native_value == initial
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "changed"),
+    [
+        (DKNSleepTimeNumber, "sleep_time", 30, 60),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 18),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 26, 28),
+    ],
+)
+@pytest.mark.parametrize("evidence", ["old-get", "push", "partial-get", "fresh-get"])
+async def test_number_uncertainty_requires_fresh_applied_field(
+    hass,
+    dummy_coordinator_factory,
+    entity_cls,
+    field,
+    initial,
+    changed,
+    evidence,
+):
+    """An unrelated or older observation cannot resolve this field's uncertainty."""
+    from types import SimpleNamespace
+
+    from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
+
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+    bucket = hass.data[DOMAIN]["entry"]
+    bucket["sync_manager"] = Mock()
+    entry = SimpleNamespace(entry_id="entry", options={})
+    old = _sleep_get_context(bucket)
+    original_put = api.put_device_fields
+
+    async def ambiguous(device_id, payload, **_kwargs):
+        api.calls.append((device_id, payload))
+        raise TimeoutError("PUT acceptance unknown")
+
+    api.put_device_fields = ambiguous
+    with pytest.raises(TimeoutError):
+        await entity.async_set_native_value(changed)
+    current = _sleep_get_context(bucket)
+    _derive_state(
+        hass,
+        entry,
+        entity.coordinator.data,
+        sleep_gets=(
+            None
+            if evidence == "push"
+            else {"dev1": old if evidence == "old-get" else current}
+        ),
+        fresh_fields={"dev1": {"power" if evidence == "partial-get" else field}},
+        from_push=evidence == "push",
+    )
+    api.put_device_fields = original_put
+    await entity.async_set_native_value(initial)
+    expected = 1 if evidence == "fresh-get" else 2
+    assert len(api.calls) == expected
+    await entity.async_set_native_value(initial)
+    assert len(api.calls) == expected

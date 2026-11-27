@@ -23,6 +23,7 @@ from .helpers import (
     active_entry_bucket,
     build_device_info,
     clamp_number,
+    mark_field_write_uncertain,
     optimistic_get,
     optimistic_set,
     request_ambiguous_control_readback,
@@ -206,7 +207,12 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             # Another queued number write may have changed the optimistic
             # value while this request waited for the same device lock.
             current = self.native_value
-            if current is not None and current == ivalue:
+            if (
+                current is not None
+                and current == ivalue
+                and (self._device_id, self._field_name)
+                not in bucket.get("uncertain_fields", {})
+            ):
                 return
 
             tracking = (
@@ -228,9 +234,20 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
                 await self._api.put_device_fields(
                     self._device_id,
                     payload,
-                    **({"on_in_flight": dispatch} if tracking is not None else {}),
+                    on_in_flight=dispatch,
                 )
             except (Exception, asyncio.CancelledError) as error:
+                if isinstance(error, asyncio.CancelledError) and not dispatched:
+                    raise
+                if entry_active():
+                    mark_field_write_uncertain(
+                        self.hass,
+                        self._entry_id,
+                        bucket,
+                        self._device_id,
+                        self._field_name,
+                        error,
+                    )
                 if not isinstance(error, CommandNotSentCooldown):
                     if dispatched and not (
                         isinstance(error, ClientResponseError)
@@ -250,6 +267,9 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
             if not entry_active():
                 return
             invalidate_sleep_estimate()
+            bucket.get("uncertain_fields", {}).pop(
+                (self._device_id, self._field_name), None
+            )
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, self._field_name, ivalue
             )

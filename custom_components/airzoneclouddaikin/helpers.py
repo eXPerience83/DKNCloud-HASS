@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -34,7 +35,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import CommandNotSentCooldown, CommandSuperseded
+from .airzone_api import CommandNotSentCooldown, CommandRejected, CommandSuperseded
 from .commands import modmaquina_payload
 from .const import (
     DOMAIN,
@@ -219,6 +220,56 @@ def optimistic_invalidate(
     device_overlay.pop(key, None)
     if not device_overlay:
         optimistic.pop(device_id, None)
+
+
+def mark_field_write_uncertain(
+    hass: HomeAssistant,
+    entry_id: str,
+    bucket: dict[str, Any],
+    device_id: str,
+    field: str,
+    error: BaseException,
+) -> None:
+    """Fence stale deduplication after a possibly accepted field write."""
+    if isinstance(
+        error,
+        (
+            CommandNotSentCooldown,
+            CommandRejected,
+            CommandSuperseded,
+            ClientConnectorError,
+            ConnectionTimeoutError,
+            ConfigEntryAuthFailed,
+        ),
+    ) or (isinstance(error, ClientResponseError) and 400 <= error.status < 500):
+        return
+    bucket.setdefault("uncertain_fields", {})[device_id, field] = object()
+    optimistic_invalidate(hass, entry_id, device_id, field)
+
+
+def confirm_field_read(
+    uncertain: dict[tuple[str, str], object],
+    at_dispatch: dict[tuple[str, str], object],
+    device_id: str,
+    device: dict[str, Any],
+    fields: set[str],
+) -> None:
+    """Resolve only a valid applied field from a GET begun after uncertainty."""
+    for field in fields:
+        key = (device_id, field)
+        marker = at_dispatch.get(key)
+        if marker is None or uncertain.get(key) is not marker:
+            continue
+        value = device.get(field)
+        if field == "mode":
+            valid = str(value) in {"1", "2", "3", "4", "5", "6", "7", "8"}
+        else:
+            try:
+                valid = math.isfinite(float(str(value)))
+            except TypeError, ValueError:
+                valid = False
+        if valid:
+            uncertain.pop(key, None)
 
 
 def schedule_post_write_refresh(

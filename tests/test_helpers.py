@@ -827,3 +827,48 @@ async def test_post_write_refresh_rechecks_entry_when_timer_fires(
 
     assert coordinator.refreshes == (1 if replacement == "none" else 0)
     assert bucket.get("pending_refresh") is None
+
+
+def test_uncertain_field_keeps_other_overlays_and_known_unsent_marker(hass):
+    """Only ambiguity invalidates its own overlay and renews its marker."""
+    from aiohttp import ConnectionTimeoutError
+
+    optimistic_set(hass, "entry", "dev", "mode", "2")
+    optimistic_set(hass, "entry", "dev", "sleep_time", 60)
+    bucket = hass.data[DOMAIN]["entry"]
+    old_overlay = bucket["optimistic"]["dev"]["mode"]
+    helpers.mark_field_write_uncertain(
+        hass, "entry", bucket, "dev", "mode", ConnectionTimeoutError("unsent")
+    )
+    assert not bucket.get("uncertain_fields")
+    assert bucket["optimistic"]["dev"]["mode"] is old_overlay
+    helpers.mark_field_write_uncertain(
+        hass, "entry", bucket, "dev", "mode", TimeoutError("ambiguous")
+    )
+    marker = bucket["uncertain_fields"]["dev", "mode"]
+    assert "mode" not in bucket["optimistic"]["dev"]
+    assert optimistic_get(hass, "entry", "dev", "sleep_time", 30) == 60
+    helpers.mark_field_write_uncertain(
+        hass, "entry", bucket, "dev", "mode", ConnectionTimeoutError("unsent")
+    )
+    assert bucket["uncertain_fields"]["dev", "mode"] is marker
+    helpers.confirm_field_read(
+        bucket["uncertain_fields"],
+        {("dev", "mode"): marker},
+        "other",
+        {"mode": "1"},
+        {"mode"},
+    )
+    assert bucket["uncertain_fields"]["dev", "mode"] is marker
+
+
+@pytest.mark.parametrize("value", [None, "unknown", float("nan"), float("inf")])
+def test_invalid_number_read_does_not_resolve_uncertainty(value):
+    """A received but invalid number cannot authorize stale-value deduplication."""
+    key = ("dev", "sleep_time")
+    marker = object()
+    uncertain = {key: marker}
+    helpers.confirm_field_read(
+        uncertain, {key: marker}, "dev", {"sleep_time": value}, {"sleep_time"}
+    )
+    assert uncertain[key] is marker

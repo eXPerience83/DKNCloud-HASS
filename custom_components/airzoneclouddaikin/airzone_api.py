@@ -84,6 +84,10 @@ class CommandSuperseded(Exception):
     """A newer control intent or an unloaded entry prevented dispatch."""
 
 
+class CommandRejected(HomeAssistantError):
+    """A definitive HTTP rejection of a device command."""
+
+
 class CommandNotSentCooldown(HomeAssistantError):
     """A local cooldown rejected this invocation before any HTTP attempt."""
 
@@ -444,7 +448,7 @@ class AirzoneAPI:
                 if is_device_write and remaining > _MAX_WRITE_COOLDOWN_WAIT:
                     if attempt == 0:
                         raise CommandNotSentCooldown(self._cooldown_until)
-                    raise HomeAssistantError(
+                    raise CommandRejected(
                         "Cloud rate limit active; device command was not sent"
                     )
                 await self._sleep(remaining)
@@ -712,12 +716,15 @@ class AirzoneAPI:
                 422: "wserver_not_connected",
                 423: "machine_not_ready",
             }
+            error_type = (
+                CommandRejected if 400 <= cre.status < 500 else HomeAssistantError
+            )
             if cre.status in error_map:
-                raise HomeAssistantError(
+                raise error_type(
                     translation_domain=DOMAIN,
                     translation_key=error_map[cre.status],
                 ) from None
-            raise HomeAssistantError(
+            raise error_type(
                 translation_domain=DOMAIN,
                 translation_key="event_failed",
                 translation_placeholders={"status": str(cre.status)},
