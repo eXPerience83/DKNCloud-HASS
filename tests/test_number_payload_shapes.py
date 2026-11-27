@@ -621,3 +621,63 @@ async def test_explicit_number_restoration_after_failed_put(
         expected.append(("dev1", {field: initial}))
     assert api.calls == expected
     assert entity.native_value == initial
+
+
+@pytest.mark.parametrize(
+    ("entity_cls", "field", "initial", "changed"),
+    [
+        (DKNSleepTimeNumber, "sleep_time", 30, 60),
+        (DKNUnoccupiedHeatMinNumber, "min_temp_unoccupied", 16, 18),
+        (DKNUnoccupiedCoolMaxNumber, "max_temp_unoccupied", 26, 28),
+    ],
+)
+@pytest.mark.parametrize("evidence", ["old-get", "push", "partial-get", "fresh-get"])
+async def test_number_uncertainty_requires_fresh_applied_field(
+    hass,
+    dummy_coordinator_factory,
+    entity_cls,
+    field,
+    initial,
+    changed,
+    evidence,
+):
+    """An unrelated or older observation cannot resolve this field's uncertainty."""
+    from types import SimpleNamespace
+
+    from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
+
+    entity, api = _make_entity(
+        hass, dummy_coordinator_factory, entity_cls, device_data={field: initial}
+    )
+    bucket = hass.data[DOMAIN]["entry"]
+    bucket["sync_manager"] = Mock()
+    entry = SimpleNamespace(entry_id="entry", options={})
+    old = _sleep_get_context(bucket)
+    original_put = api.put_device_fields
+
+    async def ambiguous(device_id, payload, **_kwargs):
+        api.calls.append((device_id, payload))
+        raise TimeoutError("PUT acceptance unknown")
+
+    api.put_device_fields = ambiguous
+    with pytest.raises(TimeoutError):
+        await entity.async_set_native_value(changed)
+    current = _sleep_get_context(bucket)
+    _derive_state(
+        hass,
+        entry,
+        entity.coordinator.data,
+        sleep_gets=(
+            None
+            if evidence == "push"
+            else {"dev1": old if evidence == "old-get" else current}
+        ),
+        fresh_fields={"dev1": {"power" if evidence == "partial-get" else field}},
+        from_push=evidence == "push",
+    )
+    api.put_device_fields = original_put
+    await entity.async_set_native_value(initial)
+    expected = 1 if evidence == "fresh-get" else 2
+    assert len(api.calls) == expected
+    await entity.async_set_native_value(initial)
+    assert len(api.calls) == expected

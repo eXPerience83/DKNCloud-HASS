@@ -51,6 +51,7 @@ from .helpers import (
     active_entry_bucket,
     async_auto_exit_sleep_if_needed,
     cancel_post_write_refresh,
+    confirm_field_read,
     confirm_optimistic,
     device_supports_heat_cool,
     expire_optimistic,
@@ -275,6 +276,7 @@ def _sleep_get_context(bucket):
         },
         bucket.get("sleep_exit_pending", {}).copy(),
         bucket.get("uncertain_scenes", {}).copy(),
+        bucket.get("uncertain_fields", {}).copy(),
     )
 
 
@@ -479,6 +481,7 @@ async def _async_update_data(
             fresh_scenary_ids=fresh_scenary_ids,
             sleep_gets=sleep_gets,
             fresh_duration_ids=fresh_duration_ids,
+            fresh_fields={dev: set(data[dev]) for dev in sleep_gets},
         )
 
         return data
@@ -509,6 +512,7 @@ def _derive_state(
     fresh_scenary_ids: set[str] | None = None,
     fresh_duration_ids: set[str] | None = None,
     sleep_gets=None,
+    fresh_fields: dict[str, set[str]] | None = None,
     from_push: bool = False,
 ):
     """Recompute local scene state for snapshots, push and maintenance ticks."""
@@ -528,6 +532,14 @@ def _derive_state(
                 interrupted.off_observed = False
         raw_scenary = str(dev.get("scenary") or "").strip().lower()
         context = (sleep_gets or {}).get(dev_id)
+        if context is not None and fresh_fields is not None:
+            confirm_field_read(
+                bucket.get("uncertain_fields", {}),
+                context[4],
+                dev_id,
+                dev,
+                fresh_fields.get(dev_id, set()),
+            )
         uncertain_scenes = bucket.get("uncertain_scenes", {})
         if (
             (marker := uncertain_scenes.get(dev_id)) is not None
@@ -1231,6 +1243,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: AirzoneConfigEntry) -> b
                     dev for dev, keys in touched.items() if "sleep_time" in keys
                 },
                 sleep_gets=dict.fromkeys(touched, context) if context else None,
+                fresh_fields=touched,
                 from_push=remote and context is None,
             )
             bucket["last_data"] = data

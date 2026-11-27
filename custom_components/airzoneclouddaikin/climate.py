@@ -36,6 +36,7 @@ from .helpers import (
     clamp_temperature,
     delegated_power_intent,
     effective_preset,
+    mark_field_write_uncertain,
     optimistic_get,
     optimistic_invalidate,
     optimistic_set,
@@ -713,6 +714,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             needs_power = power_is_uncertain(intent) or not self._device_power_on()
             if (
                 not needs_power
+                and (self._device_id, "mode") not in bucket.get("uncertain_fields", {})
                 and self._hvac_from_device() == hvac_mode
                 and not normalize_fan_alias
             ):
@@ -738,6 +740,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                 )
             except (Exception, asyncio.CancelledError) as error:
                 if entry_active():
+                    mark_field_write_uncertain(
+                        self.hass, self._entry_id, bucket, self._device_id, "mode", error
+                    )
                     if powered_on:
                         if not power_is_on(self._device.get("power")):
                             # Keep the accepted overlay usable for its TTL.
@@ -765,6 +770,7 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
 
             if not entry_active():
                 return
+            bucket.get("uncertain_fields", {}).pop((self._device_id, "mode"), None)
             optimistic_set(
                 self.hass, self._entry_id, self._device_id, "mode", selected_mode
             )

@@ -3292,3 +3292,52 @@ async def test_explicit_mode_restoration_after_failed_p2(
     assert [(event["option"], event["value"]) for event in events] == expected
     api.put_device_fields.assert_not_awaited()
     assert entity.hvac_mode == initial_mode
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    ["old-get", "push", "partial-get", "invalid-get", "fresh-get", "newer-marker"],
+)
+async def test_p2_uncertainty_requires_fresh_applied_mode(
+    hass, dummy_coordinator_factory, monkeypatch, evidence
+):
+    """Only a valid applied GET for the current marker can restore mode dedup."""
+    from custom_components.airzoneclouddaikin import _derive_state, _sleep_get_context
+
+    entity, api = _climate(
+        hass, dummy_coordinator_factory, monkeypatch, mode="1", power="1"
+    )
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    bucket["sync_manager"] = Mock()
+    entry = SimpleNamespace(entry_id="climate-entry", options={})
+    data = entity.coordinator.data
+    old = _sleep_get_context(bucket)
+    api.send_event.side_effect = TimeoutError("P2 acceptance unknown")
+    with pytest.raises(TimeoutError):
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+    current = _sleep_get_context(bucket)
+    if evidence == "newer-marker":
+        with pytest.raises(TimeoutError):
+            await entity.async_set_hvac_mode(HVACMode.HEAT)
+    if evidence == "invalid-get":
+        data["unit-1"]["mode"] = "unknown"
+    _derive_state(
+        hass,
+        entry,
+        data,
+        sleep_gets=(
+            None
+            if evidence == "push"
+            else {"unit-1": old if evidence == "old-get" else current}
+        ),
+        fresh_fields={"unit-1": {"power" if evidence == "partial-get" else "mode"}},
+        from_push=evidence == "push",
+    )
+    data["unit-1"]["mode"] = "1"
+    api.send_event.side_effect = None
+    before = api.send_event.await_count
+    await entity.async_set_hvac_mode(HVACMode.COOL)
+    expected = before if evidence == "fresh-get" else before + 1
+    assert api.send_event.await_count == expected
+    await entity.async_set_hvac_mode(HVACMode.COOL)
+    assert api.send_event.await_count == expected

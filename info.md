@@ -443,6 +443,15 @@ other uncertain write result does not produce an optimistic success; it requests
 an authoritative readback instead. A known-unsent local cooldown needs no
 readback. No uncertain physical command is retried.
 
+P2 and the three Number fields also retain field-specific uncertainty after
+an ambiguous write. An explicit later selection cannot be deduplicated against
+that field's cached value until a new ACK or a valid applied GET dispatched
+after the uncertainty resolves it. Earlier GETs, unrelated fields and PUSH
+alone cannot resolve the marker. An ambiguous write invalidates only its
+previous field overlay; a known-unsent or definitively rejected command does
+not create or clear uncertainty. Normal deduplication and the existing
+readback cadence remain unchanged.
+
 ---
 
 ## 4) HVAC Modes (P2) — Mapping, Classification, and Display Equivalences
