@@ -234,9 +234,11 @@ class _BaseDKNNumber(CoordinatorEntity[AirzoneCoordinator], NumberEntity):
                 await self._api.put_device_fields(
                     self._device_id,
                     payload,
-                    **({"on_in_flight": dispatch} if tracking is not None else {}),
+                    on_in_flight=dispatch,
                 )
             except (Exception, asyncio.CancelledError) as error:
+                if isinstance(error, asyncio.CancelledError) and not dispatched:
+                    raise
                 if entry_active():
                     mark_field_write_uncertain(
                         self.hass,

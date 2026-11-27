@@ -733,21 +733,34 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
             selected_mode = (
                 fan_code if hvac_mode == HVACMode.FAN_ONLY else HVAC_TO_MODE[hvac_mode]
             )
+            dispatched = False
+
+            def dispatch(value: bool) -> None:
+                nonlocal dispatched
+                dispatched = value
+
             try:
                 intent.check_dispatch()
                 await self._send_p_event(
-                    "P2", selected_mode, on_start=intent.check_dispatch
+                    "P2",
+                    selected_mode,
+                    on_start=intent.check_dispatch,
+                    on_in_flight=dispatch,
                 )
             except (Exception, asyncio.CancelledError) as error:
+                cancelled_unsent = (
+                    isinstance(error, asyncio.CancelledError) and not dispatched
+                )
                 if entry_active():
-                    mark_field_write_uncertain(
-                        self.hass,
-                        self._entry_id,
-                        bucket,
-                        self._device_id,
-                        "mode",
-                        error,
-                    )
+                    if not cancelled_unsent:
+                        mark_field_write_uncertain(
+                            self.hass,
+                            self._entry_id,
+                            bucket,
+                            self._device_id,
+                            "mode",
+                            error,
+                        )
                     if powered_on:
                         if not power_is_on(self._device.get("power")):
                             # Keep the accepted overlay usable for its TTL.
@@ -759,8 +772,11 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
                                 self._device_id
                             ] = overlay.get("power") or object()
                         self.async_write_ha_state()
-                    if powered_on or not isinstance(
-                        error, (CommandSuperseded, CommandNotSentCooldown)
+                    if powered_on or (
+                        not cancelled_unsent
+                        and not isinstance(
+                            error, (CommandSuperseded, CommandNotSentCooldown)
+                        )
                     ):
                         request_ambiguous_control_readback(
                             self.hass,
@@ -818,7 +834,12 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
     # ---- Write helpers ---------------------------------------------------
 
     async def _send_p_event(
-        self, option: str, value: Any, *, on_start: Callable[[], None] | None = None
+        self,
+        option: str,
+        value: Any,
+        *,
+        on_start: Callable[[], None] | None = None,
+        on_in_flight: Callable[[bool], None] | None = None,
     ) -> None:
         """Send a P# command using the canonical 'modmaquina' payload.
 
@@ -835,7 +856,9 @@ class AirzoneClimate(CoordinatorEntity[AirzoneCoordinator], ClimateEntity):
         payload = modmaquina_payload(self._device_id, option, value)
         try:
             await api.send_event(
-                payload, **({"on_start": on_start} if on_start is not None else {})
+                payload,
+                **({"on_start": on_start} if on_start is not None else {}),
+                **({"on_in_flight": on_in_flight} if on_in_flight is not None else {}),
             )
         except CommandSuperseded:
             raise

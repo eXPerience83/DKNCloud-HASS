@@ -109,7 +109,7 @@ async def test_failed_number_write_preserves_backend_state(
         device_data={"sleep_time": 30},
     )
 
-    async def reject_write(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def reject_write(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         raise RuntimeError("Backend write failed")
 
     api.put_device_fields = reject_write
@@ -144,7 +144,8 @@ async def test_number_ambiguous_put_requests_readback_without_optimistic_success
     )
     requests: list[dict[str, Any]] = []
 
-    async def ambiguous_put(_device_id: str, payload: dict[str, Any]) -> None:
+    async def ambiguous_put(_device_id: str, payload: dict[str, Any], *, on_in_flight):
+        on_in_flight(True)
         requests.append(payload)
         raise failure("unknown PUT result")
 
@@ -176,7 +177,7 @@ async def test_number_known_unsent_cooldown_does_not_request_readback(
         device_data={"sleep_time": 30},
     )
 
-    async def unsent(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def unsent(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         raise CommandNotSentCooldown(hass.loop.time() + 60)
 
     api.put_device_fields = unsent
@@ -203,7 +204,7 @@ async def test_ambiguous_number_put_without_sync_manager_schedules_refresh(
         device_data={"sleep_time": 30},
     )
 
-    async def unknown_write(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def unknown_write(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         raise TimeoutError("unknown PUT acceptance")
 
     api.put_device_fields = unknown_write
@@ -248,7 +249,7 @@ async def test_late_successful_number_put_cannot_update_unloaded_entry(
     writes: list[dict[str, Any]] = []
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_put(_device_id: str, payload: dict[str, Any]) -> None:
+    async def held_put(_device_id: str, payload: dict[str, Any], **_kwargs) -> None:
         writes.append(payload)
         entered.set()
         await release.wait()
@@ -292,7 +293,7 @@ async def test_replaced_entry_ignores_late_ambiguous_number_put(
     )
     entered, release = asyncio.Event(), asyncio.Event()
 
-    async def held_error(_device_id: str, _payload: dict[str, Any]) -> None:
+    async def held_error(_device_id: str, _payload: dict[str, Any], **_kwargs) -> None:
         entered.set()
         await release.wait()
         raise TimeoutError("late response lost")
@@ -440,7 +441,7 @@ async def test_concurrent_number_writes_recheck_state_under_lock(
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def paused_put(device_id: str, payload: dict[str, Any]) -> None:
+    async def paused_put(device_id: str, payload: dict[str, Any], **_kwargs) -> None:
         api.calls.append((device_id, payload))
         if len(api.calls) == 1:
             entered.set()
@@ -598,7 +599,9 @@ async def test_explicit_number_restoration_after_failed_put(
         "cooldown": CommandNotSentCooldown(hass.loop.time() + 60),
     }[outcome]
 
-    async def fail_once(device_id, payload, **_kwargs):
+    async def fail_once(device_id, payload, *, on_in_flight):
+        if outcome != "cooldown":
+            on_in_flight(True)
         api.calls.append((device_id, payload))
         raise error
 

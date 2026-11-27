@@ -1913,7 +1913,11 @@ async def test_ambiguous_hvac_p2_only_failure_requests_readback(
     entity, api = _climate(
         hass, dummy_coordinator_factory, monkeypatch, mode="1", power="1"
     )
-    api.send_event.side_effect = failure("P2 may have been accepted")
+    async def ambiguous(_payload, *, on_in_flight, **_kwargs):
+        on_in_flight(True)
+        raise failure("P2 may have been accepted")
+
+    api.send_event.side_effect = ambiguous
     manager = Mock()
     if with_manager:
         hass.data[DOMAIN]["climate-entry"]["sync_manager"] = manager
@@ -2090,6 +2094,7 @@ async def test_ventilation_selection_normalizes_reported_eight_to_three(
             }
         },
         on_start=ANY,
+        on_in_flight=ANY,
     )
 
 
@@ -3271,7 +3276,12 @@ async def test_explicit_mode_restoration_after_failed_p2(
         "cancel": asyncio.CancelledError("unknown P2 acceptance"),
         "cooldown": CommandNotSentCooldown(hass.loop.time() + 60),
     }[outcome]
-    api.send_event.side_effect = error
+    async def fail_once(_payload, *, on_in_flight, **_kwargs):
+        if outcome != "cooldown":
+            on_in_flight(True)
+        raise error
+
+    api.send_event.side_effect = fail_once
     with pytest.raises(type(error)):
         await entity.async_set_hvac_mode(changed_mode)
 
@@ -3417,3 +3427,118 @@ async def test_p2_http_rejection_preserves_acknowledged_mode(
             assert received[-1]["value"] == "1"
             assert not bucket["uncertain_fields"]
         assert not api._pending
+
+
+@pytest.mark.parametrize(
+    "field", ["mode", "sleep_time", "min_temp_unoccupied", "max_temp_unoccupied"]
+)
+@pytest.mark.parametrize("phase", ["cooldown", "after-429", "in-flight"])
+async def test_cancelled_field_write_respects_dispatch(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    field,
+    phase,
+):
+    """Real traced API: only a potentially accepted cancellation fences the field."""
+    from aiohttp import ClientSession, web
+
+    from custom_components.airzoneclouddaikin import airzone_api
+    from custom_components.airzoneclouddaikin.number import (
+        DKNSleepTimeNumber,
+        DKNUnoccupiedCoolMaxNumber,
+        DKNUnoccupiedHeatMinNumber,
+    )
+
+    climate, _ = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    entered, release = asyncio.Event(), asyncio.Event()
+    received = []
+
+    async def handler(request):
+        received.append(await request.json())
+        if len(received) == 2:
+            if phase == "after-429":
+                return web.Response(status=429, headers={"Retry-After": "1"})
+            if phase == "in-flight":
+                entered.set()
+                await release.wait()
+        return web.Response(status=204)
+
+    async def held_sleep(_seconds):
+        entered.set()
+        await release.wait()
+
+    app = web.Application()
+    app.router.add_post(airzone_api.API_EVENTS, handler)
+    app.router.add_put(f"{airzone_api.API_DEVICES}/unit-1", handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+    async with ClientSession(
+        trace_configs=[airzone_api.request_dispatch_trace()]
+    ) as session:
+        api = climate.coordinator.api = airzone_api.AirzoneAPI(
+            "synthetic@example.invalid", session, token="synthetic-token"
+        )
+        if field == "mode":
+            setter = climate.async_set_hvac_mode
+            initial, accepted = HVACMode.COOL, HVACMode.HEAT
+        else:
+            cls, initial, accepted = {
+                "sleep_time": (DKNSleepTimeNumber, 30, 60),
+                "min_temp_unoccupied": (DKNUnoccupiedHeatMinNumber, 16, 18),
+                "max_temp_unoccupied": (DKNUnoccupiedCoolMaxNumber, 26, 28),
+            }[field]
+            climate.coordinator.data["unit-1"][field] = initial
+            number = cls(
+                coordinator=climate.coordinator,
+                api=api,
+                entry_id="climate-entry",
+                device_id="unit-1",
+            )
+            number.hass = hass
+            number.async_write_ha_state = Mock()
+            monkeypatch.setattr(
+                "custom_components.airzoneclouddaikin.number.schedule_post_write_refresh",
+                Mock(),
+            )
+            setter = number.async_set_native_value
+
+        await setter(accepted)
+        overlay = bucket["optimistic"]["unit-1"][field]
+        monkeypatch.setattr(api, "_sleep", held_sleep)
+        if phase == "cooldown":
+            api._cooldown_until = api._now() + 5
+
+        task = asyncio.create_task(setter(initial))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=3)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        assert not api._pending
+        assert len(received) == (1 if phase == "cooldown" else 2)
+        api._cooldown_until = 0
+        if phase == "in-flight":
+            assert ("unit-1", field) in bucket["uncertain_fields"]
+            assert field not in bucket.get("optimistic", {}).get("unit-1", {})
+            manager.request_recovery.assert_called_once_with(
+                "unit-1", require_fresh=True
+            )
+            await setter(initial)
+            assert len(received) == 3
+            assert not bucket["uncertain_fields"]
+        else:
+            assert not bucket.get("uncertain_fields")
+            assert bucket["optimistic"]["unit-1"][field] is overlay
+            manager.request_recovery.assert_not_called()
+            await setter(accepted)
+            assert len(received) == (1 if phase == "cooldown" else 2)

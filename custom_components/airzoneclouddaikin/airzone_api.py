@@ -448,7 +448,7 @@ class AirzoneAPI:
                 if is_device_write and remaining > _MAX_WRITE_COOLDOWN_WAIT:
                     if attempt == 0:
                         raise CommandNotSentCooldown(self._cooldown_until)
-                    raise HomeAssistantError(
+                    raise CommandRejected(
                         "Cloud rate limit active; device command was not sent"
                     )
                 await self._sleep(remaining)

@@ -449,8 +449,10 @@ that field's cached value until a new ACK or a valid applied GET dispatched
 after the uncertainty resolves it. Earlier GETs, unrelated fields and PUSH
 alone cannot resolve the marker. An ambiguous write invalidates only its
 previous field overlay; a known-unsent or definitively rejected command does
-not create or clear uncertainty. Normal deduplication and the existing
-readback cadence remain unchanged.
+not create or clear uncertainty. Cancellation before dispatch, including a
+cooldown following a rejected 429, preserves prior field certainty. Cancellation
+after dispatch remains ambiguous. Normal deduplication and the existing readback
+cadence remain unchanged.
 
 ---
 
