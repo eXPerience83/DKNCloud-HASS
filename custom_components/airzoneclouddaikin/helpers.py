@@ -35,7 +35,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .airzone_api import CommandNotSentCooldown, CommandSuperseded
+from .airzone_api import CommandNotSentCooldown, CommandRejected, CommandSuperseded
 from .commands import modmaquina_payload
 from .const import (
     DOMAIN,
@@ -235,6 +235,7 @@ def mark_field_write_uncertain(
         error,
         (
             CommandNotSentCooldown,
+            CommandRejected,
             CommandSuperseded,
             ClientConnectorError,
             ConnectionTimeoutError,

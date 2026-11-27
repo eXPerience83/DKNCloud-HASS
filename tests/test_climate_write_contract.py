@@ -3341,3 +3341,79 @@ async def test_p2_uncertainty_requires_fresh_applied_mode(
     assert api.send_event.await_count == expected
     await entity.async_set_hvac_mode(HVACMode.COOL)
     assert api.send_event.await_count == expected
+
+
+@pytest.mark.parametrize(
+    ("status", "translation_key"),
+    [
+        (422, "wserver_not_connected"),
+        (423, "machine_not_ready"),
+        (403, "event_failed"),
+        (503, "event_failed"),
+    ],
+)
+async def test_p2_http_rejection_preserves_acknowledged_mode(
+    hass,
+    dummy_coordinator_factory,
+    monkeypatch,
+    socket_enabled,
+    aiohttp_server,
+    status,
+    translation_key,
+):
+    """Use the real API so translated errors retain their write certainty."""
+    from aiohttp import ClientSession, web
+
+    from custom_components.airzoneclouddaikin import airzone_api
+
+    entity, _ = _climate(hass, dummy_coordinator_factory, monkeypatch)
+    bucket = hass.data[DOMAIN]["climate-entry"]
+    manager = bucket["sync_manager"] = Mock()
+    received = []
+
+    async def handler(request):
+        received.append((await request.json())["event"])
+        return web.Response(status=status if len(received) == 2 else 204)
+
+    app = web.Application()
+    app.router.add_post(airzone_api.API_EVENTS, handler)
+    server = await aiohttp_server(app)
+    monkeypatch.setattr(airzone_api, "BASE_URL", str(server.make_url("/")).rstrip("/"))
+
+    async with ClientSession() as session:
+        api = entity.coordinator.api = airzone_api.AirzoneAPI(
+            "hidden@example.invalid", session, token="hidden-token"
+        )
+        await entity.async_set_hvac_mode(HVACMode.HEAT)
+        overlay = bucket["optimistic"]["unit-1"]["mode"]
+        with pytest.raises(HomeAssistantError) as captured:
+            await entity.async_set_hvac_mode(HVACMode.COOL)
+
+        error = captured.value
+        assert error.translation_key == translation_key
+        assert error.translation_domain == DOMAIN
+        assert "hidden-token" not in str(error)
+        assert "hidden@example.invalid" not in repr(error)
+        assert isinstance(error, airzone_api.CommandRejected) == (status < 500)
+        manager.request_recovery.assert_called_once_with("unit-1", require_fresh=True)
+        assert [(e["option"], e["value"]) for e in received] == [
+            ("P2", "2"),
+            ("P2", "1"),
+        ]
+        if status < 500:
+            assert not bucket.get("uncertain_fields")
+            assert bucket["optimistic"]["unit-1"]["mode"] is overlay
+            assert entity.hvac_mode == HVACMode.HEAT
+            await entity.async_set_hvac_mode(HVACMode.HEAT)
+            assert len(received) == 2
+        else:
+            assert ("unit-1", "mode") in bucket["uncertain_fields"]
+            assert "mode" not in bucket["optimistic"]["unit-1"]
+            assert entity.hvac_mode == HVACMode.COOL
+            # Avoid sleeping for the existing 5xx cooldown in this fixture.
+            api._cooldown_until = 0
+            await entity.async_set_hvac_mode(HVACMode.COOL)
+            assert len(received) == 3
+            assert received[-1]["value"] == "1"
+            assert not bucket["uncertain_fields"]
+        assert not api._pending
