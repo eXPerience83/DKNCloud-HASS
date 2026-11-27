@@ -124,6 +124,10 @@ only OpenSSL `AES128-GCM-SHA256`, after modern suites, to a fresh verified HA
 trust context for that origin. TLS 1.2 or newer, certificate and hostname
 verification remain mandatory; redirects are rejected. REST and shared TLS
 contexts are unchanged. Static RSA encrypts traffic but lacks forward secrecy.
+On 2026-11-27 the maintainer accepted this scoped limitation for v0.6.0 stable
+(#60), not just the experimental releases. Without this compatibility, the
+observed server cannot provide PUSH; the existing REST fallback remains.
+A verified modern server alternative may be assessed separately.
 There is no automatic cipher fallback or user-facing configuration switch.
 Do not pin the service certificate fingerprint; normal certificate renewal
 must continue to pass standard trust and hostname verification.
@@ -695,9 +699,10 @@ The relevant device capability is whether it accepts/stores `"0"` for P3/P4.
 
 ### Sleep estimates and evidence limits
 
-The remaining minutes and end timestamp are local estimates. After reload or
-an uncertain duration change the estimate is unknown. Persistence is tracked
-in #243. For a known start, a possible ON anomaly follows the estimated end
+The remaining minutes and end timestamp are local estimates. A matching
+unexpired local ACK estimate can be restored from private storage after reload
+(#243); an uncertain duration change invalidates it. For a known start in
+the current runtime, a possible ON anomaly follows the estimated end
 plus five minutes and pertinent ON reports. For an unknown start with known
 duration, the diagnostic window starts at the first valid ON/Sleep observation
 and adds the duration plus five minutes. It neither predicts the end time nor

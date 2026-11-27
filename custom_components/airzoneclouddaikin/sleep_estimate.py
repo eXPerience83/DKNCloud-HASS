@@ -31,7 +31,12 @@ def _end(record: Any, now: datetime) -> datetime | None:
         return None
     minutes = record.get("minutes")
     start = record.get("start")
-    if type(minutes) is not int or minutes <= 0 or not isinstance(start, str):
+    if (
+        not isinstance(minutes, int)
+        or isinstance(minutes, bool)
+        or minutes <= 0
+        or not isinstance(start, str)
+    ):
         return None
     try:
         started = datetime.fromisoformat(start)
@@ -65,6 +70,8 @@ class SleepEstimateStore:
                 if isinstance(key, str) and _end(record, now) is not None
             }
             self._restored = set(self._records)
+            if self._records != data:
+                self._changed()
 
     def _changed(self) -> None:
         self._dirty = True

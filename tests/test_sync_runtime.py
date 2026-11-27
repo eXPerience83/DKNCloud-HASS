@@ -1659,3 +1659,29 @@ async def test_sleep_estimate_after_entry_reload(
     ) == writes
     assert data["sleep_estimated_end"] == (end.isoformat() if restore else None)
     assert data["sleep_remaining_estimated"] == (5 - elapsed if restore else None)
+
+    # The valid display estimate survives another reload; an invalidated
+    # record cannot reappear merely because the remote values match again.
+    remote.update(scenary="sleep", sleep_time=5)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    new_bucket = hass.data[DOMAIN][entry.entry_id]
+    data = new_bucket["coordinator"].data["dev1"]
+    assert data["sleep_estimated_end"] == (end.isoformat() if restore else None)
+    if restore:
+        new_manager = new_bucket["sync_manager"]
+        remote["sleep_time"] = 10
+        await new_manager.event(
+            "dev1", {"sleep_time": 10}, new_manager.state.generation
+        )
+        assert new_bucket["coordinator"].data["dev1"]["sleep_estimated_end"] is None
+        remote["sleep_time"] = 5
+        await new_manager.event(
+            "dev1", {"sleep_time": 5}, new_manager.state.generation
+        )
+        assert new_bucket["coordinator"].data["dev1"]["sleep_estimated_end"] is None
+    assert (
+        api.put_device_fields.await_count,
+        api.async_set_scenary.await_count,
+        api.send_event.await_count,
+    ) == writes
