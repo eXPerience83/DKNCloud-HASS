@@ -1676,9 +1676,7 @@ async def test_sleep_estimate_after_entry_reload(
         )
         assert new_bucket["coordinator"].data["dev1"]["sleep_estimated_end"] is None
         remote["sleep_time"] = 5
-        await new_manager.event(
-            "dev1", {"sleep_time": 5}, new_manager.state.generation
-        )
+        await new_manager.event("dev1", {"sleep_time": 5}, new_manager.state.generation)
         assert new_bucket["coordinator"].data["dev1"]["sleep_estimated_end"] is None
     assert (
         api.put_device_fields.await_count,

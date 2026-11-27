@@ -102,9 +102,7 @@ async def test_restored_estimate_is_entry_and_device_scoped(hass):
     second = sleep_estimate.SleepEstimateStore(hass, "entry-two")
     await second.async_load(now)
     assert (
-        second.estimate(
-            "dev1", now, 30, current_session_known=False, valid_scene=True
-        )
+        second.estimate("dev1", now, 30, current_session_known=False, valid_scene=True)
         is None
     )
     reloaded = sleep_estimate.SleepEstimateStore(hass, "entry-one")

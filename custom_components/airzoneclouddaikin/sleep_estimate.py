@@ -22,7 +22,11 @@ def _key(device_id: str) -> str:
 
 def _store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     return Store(
-        hass, 1, f"{DOMAIN}.{entry_id}.sleep_estimates", private=True, atomic_writes=True
+        hass,
+        1,
+        f"{DOMAIN}.{entry_id}.sleep_estimates",
+        private=True,
+        atomic_writes=True,
     )
 
 
