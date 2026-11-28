@@ -45,7 +45,7 @@ def test_artifact_and_base_checks_prevent_unvalidated_publication() -> None:
         'test "$remote_main" = "$BASE_SHA"',
         "expected_changes=$'pyproject.toml\\nuv.lock'",
         "git ls-remote --exit-code origin",
-        "gh pr list",
+        "gh api --paginate",
         "uv lock --check",
         "validate-lock",
         "uv run --locked --no-sync python -m pytest",
